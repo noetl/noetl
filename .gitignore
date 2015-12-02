@@ -1,0 +1,8 @@
+.idea
+*.iml
+*.pyc
+target
+.classpath
+.settings
+.project
+.pydevproject

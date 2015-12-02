@@ -1,0 +1,51 @@
+2015-09-16 16:31:03.420819  - INFO -  noetl  started using configuration file -  projects/github/noetl/conf/coursor.inherit.cfg.v1.json
+2015-09-16 16:31:03.420882  - INFO -  Task:  start , where next task:  task1 , and task description:  start: processing for noetl is started
+2015-09-16 16:31:03.420912  - INFO -  runTask for task:   start  STARTING STEPS:  {}
+2015-09-16 16:31:03.420937  - INFO - task:   start  execution time is:  0:00:00.000028
+2015-09-16 16:31:03.422140  - INFO -  Task:  task1 , where next task:  exit , and task description:  Create and remove a file in the temp directory
+2015-09-16 16:31:03.422173  - INFO -  runTask for task:   task1  STARTING STEPS:  {u'0': ['step1']}
+2015-09-16 16:31:03.422213  - INFO -  Step:  step1 , where next steps:  {u'0': ['step2']} , and step description:  List files in temp
+2015-09-16 16:31:03.422254  - INFO -  runStep for step:   step1  THREAD:  0  ; CURSOR_LIST_INDEX:  [0]  CURSOR:  ['0']  ACTION:  runShell
+2015-09-16 16:31:03.422492  - INFO -  Running cursorQueue job:  task.task1.step.step1.cur.0
+2015-09-16 16:31:03.422772  - INFO -  Executing command:  ls -ltr /tmp
+2015-09-16 16:31:03.422811  - INFO -  Executing command:  echo '~/projects/github/noetl'
+2015-09-16 16:31:03.422873  - INFO - step:   step1  execution time is:  0:00:00.000625
+2015-09-16 16:31:03.422923  - INFO -  Step:  step2 , where next steps:  {u'0': ['step3']} , and step description:  Create and write to file for each cursor
+2015-09-16 16:31:03.422972  - INFO -  runStep for step:   step2  THREAD:  0  ; CURSOR_LIST_INDEX:  [0, 1, 2]  CURSOR:  ['2011-09-01', '2011-10-01', '2011-11-01']  ACTION:  runShell
+2015-09-16 16:31:03.423256  - INFO -  Running cursorQueue job:  task.task1.step.step2.cur.2011-09-01
+2015-09-16 16:31:03.423447  - INFO -  Executing command:  echo "Cursor 201109" > /tmp/201109.test
+2015-09-16 16:31:03.423635  - INFO -  Running cursorQueue job:  task.task1.step.step2.cur.2011-10-01
+2015-09-16 16:31:03.423796  - INFO -  Executing command:  echo "Cursor 201110" > /tmp/201110.test
+2015-09-16 16:31:03.423955  - INFO -  Running cursorQueue job:  task.task1.step.step2.cur.2011-11-01
+2015-09-16 16:31:03.424130  - INFO -  Executing command:  echo "Cursor 201111" > /tmp/201111.test
+2015-09-16 16:31:03.424183  - INFO - step:   step2  execution time is:  0:00:00.001217
+2015-09-16 16:31:03.424224  - INFO -  Step:  step3 , where next steps:  {u'0': ['step4']} , and step description:  List cursor file
+2015-09-16 16:31:03.424272  - INFO -  runStep for step:   step3  THREAD:  0  ; CURSOR_LIST_INDEX:  [0, 1, 2, 3]  CURSOR:  ['2011-09-01', '2011-10-01', '2011-11-01', '2011-12-01']  ACTION:  runShell
+2015-09-16 16:31:03.424505  - INFO -  Running cursorQueue job:  task.task1.step.step3.cur.2011-09-01
+2015-09-16 16:31:03.424672  - INFO -  Executing command:  ls -ltr /tmp/201109.test
+2015-09-16 16:31:03.424849  - INFO -  Running cursorQueue job:  task.task1.step.step3.cur.2011-10-01
+2015-09-16 16:31:03.425017  - INFO -  Executing command:  ls -ltr /tmp/201110.test
+2015-09-16 16:31:03.425165  - INFO -  Running cursorQueue job:  task.task1.step.step3.cur.2011-11-01
+2015-09-16 16:31:03.425300  - INFO -  Executing command:  ls -ltr /tmp/201111.test
+2015-09-16 16:31:03.425462  - INFO -  Running cursorQueue job:  task.task1.step.step3.cur.2011-12-01
+2015-09-16 16:31:03.425629  - INFO -  Executing command:  ls -ltr /tmp/201112.test
+2015-09-16 16:31:03.425708  - INFO - step:   step3  execution time is:  0:00:00.001441
+2015-09-16 16:31:03.425746  - INFO -  Step:  step4 , where next steps:  {u'0': ['step5']} , and step description:  Remove all cursor files
+2015-09-16 16:31:03.425794  - INFO -  runStep for step:   step4  THREAD:  0  ; CURSOR_LIST_INDEX:  [0, 1, 2, 3]  CURSOR:  ['2011-09-01', '2011-10-01', '2011-11-01', '2011-12-01']  ACTION:  runShell
+2015-09-16 16:31:03.426028  - INFO -  Running cursorQueue job:  task.task1.step.step4.cur.2011-09-01
+2015-09-16 16:31:03.426241  - INFO -  Executing command:  rm /tmp/201109.test
+2015-09-16 16:31:03.426500  - INFO -  Running cursorQueue job:  task.task1.step.step4.cur.2011-10-01
+2015-09-16 16:31:03.426752  - INFO -  Executing command:  rm /tmp/201110.test
+2015-09-16 16:31:03.426991  - INFO -  Running cursorQueue job:  task.task1.step.step4.cur.2011-11-01
+2015-09-16 16:31:03.427218  - INFO -  Executing command:  rm /tmp/201111.test
+2015-09-16 16:31:03.427533  - INFO -  Running cursorQueue job:  task.task1.step.step4.cur.2011-12-01
+2015-09-16 16:31:03.427733  - INFO -  Executing command:  rm /tmp/201112.test
+2015-09-16 16:31:03.427859  - INFO - step:   step4  execution time is:  0:00:00.002072
+2015-09-16 16:31:03.427919  - INFO -  Step:  step5 , where next steps:  {u'0': ['exit']} , and step description:  List the cursor file
+2015-09-16 16:31:03.428009  - INFO -  runStep for step:   step5  THREAD:  0  ; CURSOR_LIST_INDEX:  [0]  CURSOR:  ['2011-12-31']  ACTION:  runShell
+2015-09-16 16:31:03.428317  - INFO -  Running cursorQueue job:  task.task1.step.step5.cur.2011-12-31
+2015-09-16 16:31:03.428569  - INFO -  Executing command:  ls -ltr /tmp/201112.test
+2015-09-16 16:31:03.428663  - INFO - step:   step5  execution time is:  0:00:00.000662
+2015-09-16 16:31:03.428715  - INFO - task:   task1  execution time is:  0:00:00.006547
+2015-09-16 16:31:03.428791  - INFO -  Task:  exit , where next task:   , and task description:  Data processing for noetl is finished
+2015-09-16 16:31:03.428836  - INFO -  noetl  finished with exitCode:  exit ; using configuration file -  projects/github/noetl/conf/coursor.inherit.cfg.v1.json
