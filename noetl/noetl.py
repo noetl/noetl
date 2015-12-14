@@ -285,11 +285,20 @@ def getStep(task, branch):
                 branch.curStep = step.success.values()[0][0]
                 if branch.traceBranch:                                      # trace link
                     if branch.curStep == branch.lastFail:                   # remove nextFail loop from links
-                        delStep = branch.curStep
-                        while delStep != branch.lastFail:
-                            delNext = task.links[delStep]
-                            del task.links[delStep]
-                            delStep = delNext
+                        def removeLink(step):
+                            if step in task.links:
+                                delNext = task.links[step]
+                                del task.links[step]
+                                for delN in delNext:
+                                    removeLink(delN)
+                        removeLink(step.stepName)
+                        branch.traceBranch = False
+
+                        # delStep = branch.curStep
+                        # while delStep != branch.lastFail:
+                        #     delNext = task.links[delStep]
+                        #     del task.links[delStep]
+                        #     delStep = delNext
                     else:
                         if branch.curStep in task.links.keys(): 
                             task.links[branch.curStep].append(step.stepName)
