@@ -244,6 +244,7 @@ def runStep(task, step, branch):
         if isinstance(step.cursor, list) and isinstance(step.cursorListIndex, list):
             thid = 0
             for cur in step.cursor:
+                #CHEN: jobs are run in batches of size THREAD. Not a good concurrency. This can be improved.
                 cursorQueue.put("task." + str(task.taskName) + ".step." + str(step.stepName) + ".cur." + str(cur) )
                 if THREAD <= thid: 
                     exitCode = thid = runThreads(step, cursorQueue) 
@@ -336,7 +337,12 @@ def getStep(task, branch):
                                 else:
                                     task.links[forkBranch] = [step.stepName]
                             branchQueue.put(task.branchesDict[forkBranch])
+                    #Chen: There is potential bug here.
+                    #Consider this case: task.start:{m1:[s1,s2]}. steps{s1.next.success{0:[m1,m2]}}
+                    #This code will run step m1 without checking the status of s2.
+                    #If s2 is not ready, m1 should not start. Add dependencies checks here.
                     exitCode = forkBranches(task, branchQueue)
+                #CHEN: incomplete if else conditions
         elif exitCode == -1:
             if (step.stepName in branch.failedSteps) or (step.nextFail == "exit"):   # step has failed before (broken link) - traceback
                 def traceback(stepName):
@@ -417,16 +423,18 @@ def runTask(task):
         # print(datetime.datetime.now()," - INFO - ","runTask for task:  ", task.taskName ," STARTING STEPS: ", task.start)
         print(datetime.datetime.now()," - INFO - ","runTask for task:  ", task.taskName , " STARTING STEPS: ", task.start,file = log)
         if isinstance(task.start, dict):
-            for mergeStep in task.start.keys():
-                if (len(task.start.values()[0]) > 1):
-                    branchQueue = Queue()
-                    for branchName in task.start[mergeStep]:
-                        branchQueue.put(task.branchesDict[branchName])
-                    exitCode = forkBranches(task, branchQueue)
-                elif (len(task.start.values()[0]) == 1):
-                    branchName = task.start.values()[0][0]
-                    branch = task.branchesDict[branchName]
-                    exitCode = getStep(task, branch)
+            allStartingSteps = []
+            for mergeStep, startSteps in task.start.iteritems():
+                allStartingSteps += startSteps
+            if (len(allStartingSteps) > 1):
+                branchQueue = Queue()
+                for branchName in allStartingSteps:
+                    branchQueue.put(task.branchesDict[branchName])
+                exitCode = forkBranches(task, branchQueue)
+            elif (len(allStartingSteps) == 1):
+                branchName = allStartingSteps[0]
+                branch = task.branchesDict[branchName]
+                exitCode = getStep(task, branch)
         if exitCode is None : exitCode = -1
         print(datetime.datetime.now()," - INFO - task:  ", task.taskName , " execution time is: ", datetime.datetime.now() - taskStartDate ,file = log)
     except:
@@ -520,12 +528,17 @@ def getTask(task):
             elif (len(task.start.values()) == 1) and (len(task.start.values()[0]) == 1):
                 firstStep = task.start.values()[0][0]
                 step = Step(task, firstStep)
+                if task.start.keys()[0] != "0":
+                    raise "You cannot define merge step when there is only one start step." \
+                          "This feature is currently not supported. Alternatively, you can move the merge step to" \
+                          "next.success"
                 branch = Branch(task, firstStep, "0")
                 branch.steps[firstStep] = step
                 task.stepObs[firstStep] = step # add step object to task
                 task.branchesDict[firstStep] = branch
                 task.branchValidDict[firstStep] = False
                 exitCode = makeBranches(task, branch, step) # create branch for each forked step
+            #CHEN: if condition not complete. This will fail start{a:[]}.
         print(datetime.datetime.now(), " - INFO - ", "Task: ", task.taskName ,  ", where next task: " , task.nextTask , ", and task description: " , task.taskDesc ,file = log)
         if (str(task.taskName) == "exit") or ("CONF_NOT_FOUND" in task.taskName):
             exitCode = str(task.taskName)
