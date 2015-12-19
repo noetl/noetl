@@ -6,3 +6,7 @@ target
 .settings
 .project
 .pydevproject
+.DS_Store
+*.log
+clusterManagement/out
+clusterManagement/clients

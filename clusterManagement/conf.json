@@ -1,0 +1,105 @@
+{
+  "accessKey": "",
+  "secretAccessKey": "",
+  "rootPath": "/Users/chenguo/Documents/noetl/dt/etl_prod/automation-pipeline",
+  "logFile": "/Users/chenguo/Documents/noetl/dt/etl_prod/automation-pipeline/automation.log",
+  "mailConf": {
+    "host": "smtp.office365.com",
+    "port": 587,
+    "sender": "amsterdam.datateam@noetlsolutions.com",
+    "senderPassword": "#noetl15",
+    "recipients": [
+      "chen.guo@noetlsolutions.com"
+    ],
+    "authentication": "true",
+    "starttls": "true"
+  },
+  "monitorConf": {
+    "expectedFiles": [
+      "noetl_DDA",
+      "noetl_SAV"
+    ],
+    "sftpConf": {
+      "source": "/Users/chenguo/Documents/noetl/dt/etl_prod/automation-pipeline/monitor",
+      "destination": "/Users/chenguo/Documents/noetl/dt/etl_prod/automation-pipeline/dest"
+    },
+    "s3Conf": {
+      "backUp": "s3://noetl-chen/stage/",
+      "stage": "s3://noetl-chen/stage/"
+    }
+  },
+  "clusterConf": {
+    "region": "us-west-2",
+    "spotPriceURL": "http://spot-price.s3.amazonaws.com/spot.js",
+    "currency": "USD",
+    "key": "data-key",
+    "cluster": {
+      "name": "italy",
+      "subnet": "subnet-id",
+      "version": "3.10",
+      "serviceRole": "serviceRole",
+      "jobFlowRole": "jobFlowRole",
+      "logURI": "s3://aws-emr-lg/",
+      "masterNode": {
+        "count": 1,
+        "instanceType": {
+          "type": "size",
+          "size": "m2.2xlarge"
+        },
+        "marketType": "on_demand",
+        "os": "linux"
+      },
+      "coreNode": {
+        "count": 1,
+        "instanceType": {
+          "type": "tier",
+          "tier": "high"
+        },
+        "marketType": "spot",
+        "os": "linux"
+      },
+      "installs": [
+        "Spark",
+        "Hive"
+      ],
+      "stepConfigs": [
+      ],
+      "bootStraps": [
+        {
+          "name": "Install HBase",
+          "script": "s3://elasticmapreduce/bootstrap-actions/setup-hbase"
+        }
+      ]
+    },
+    "tiers": {
+      "high": [
+        {
+          "size": "m3.2xlarge",
+          "premium": "0.140"
+        },
+        {
+          "size": "m3.xlarge",
+          "premium": "0.070"
+        },
+        {
+          "size": "m2.4xlarge",
+          "premium": "0.246"
+        }
+      ],
+      "medium": [
+        {
+          "size": "m2.2xlarge",
+          "premium": "0.123"
+        },
+        {
+          "size": "c3.4xlarge",
+          "premium": "0.210"
+        },
+        {
+          "size": "c3.2xlarge",
+          "premium": "0.105"
+        }
+      ]
+    }
+  }
+}

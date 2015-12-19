@@ -1,0 +1,11 @@
+{
+  "host": "smtp.office365.com",
+  "port": 587,
+  "sender": "amsterdam.datateam@noetlsolutions.com",
+  "senderPassword": "#noetl15",
+  "recipients": [
+    "chen.guo@noetlsolutions.com"
+  ],
+  "authentication": "true",
+  "starttls": "true"
+}
