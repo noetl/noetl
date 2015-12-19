@@ -20,38 +20,21 @@
 #   limitations under the License.
 
 from __future__ import print_function
-import sys, os, datetime, time, re, logging, json, subprocess
+
+import subprocess
+import time
 from Queue import *
 from threading import Thread
-from EvalJsonParser import parseConfig
-from distutils.command.config import config
+
+from noetl.noetlpkg.Branch import Branch
+from noetl.noetlpkg.EvalJsonParser import *
+from noetl.noetlpkg.InitiateLog import initiateLog
+from noetl.noetlpkg.Step import Step
+from noetl.noetlpkg.Task import Task
 
 bug7980 = datetime.datetime.strptime("20110101","%Y%m%d") #bug http://bugs.python.org/issue7980
 batchDateTime = datetime.datetime.now()
 
-def getConfig(cfg,confRequest, confCase=None):
-    try:
-        confList = confRequest.split(".")
-        for label in confList:
-            if isinstance(cfg, dict):
-                if label in cfg:
-                    cfg = cfg[label]
-                else:
-                    return "CONF_NOT_FOUND"
-            elif isinstance(cfg, list):
-                if not isinstance(label, unicode):
-                    label = unicode(label, 'utf-8')
-                if label.isnumeric():
-                    i = int(label)
-                    cfg = cfg[i]
-        if confCase == "LIST_INDEX" and isinstance(cfg, list):
-            cfg = [idx for idx,val in enumerate(cfg)]
-    except:
-        e = str(sys.exc_info()[0]) + str(sys.exc_info()[1]) + str(sys.exc_info()[2])
-        # print(datetime.datetime.now()," - ERROR - ","Error raised in getConfig with: ", e , " confRequest: " , confRequest, type(cfg))
-        print(datetime.datetime.now()," - ERROR - ","Error raised in getConfig with: ", e , " confRequest: " , confRequest, type(cfg),file = log)
-        cfg = "CONF_NOT_FOUND"
-    return cfg
 
 def getCursor(cursor, datatype, increment, dateFormat='%Y%m'):
     try:
@@ -97,36 +80,6 @@ def addTime(strDate1, strDate2, increment, incType='m', dateFormat="%Y%m"):
         print(datetime.datetime.now()," - ERROR - ","addTime failed with error: ",e)
     return currentCursor
 
-def inititateRep(batchDateTime):
-    global repid, config
-    try:
-        repDir = getConfig(config,"REPORT.FILE.DIRECTORY","None")
-        if not os.path.exists(repDir):
-            os.makedirs(repDir)
-        repFile = repDir + os.sep + str(getConfig(config,"REPORT.FILE.NAME"))
-        repid = open(repFile, "w")
-        repid.write(batchDateTime)
-        repid.close()
-    except:
-        return False
-    return True
-
-def initiateLog(logId): 
-    global log, logFile, config
-    try:
-        log = logging.getLogger(getConfig(config,"LOGGING." + logId +".NAME"))
-        logDir = getConfig(config,"LOGGING." + logId +".FILE.DIRECTORY","None")
-        if not os.path.exists(logDir):
-            os.makedirs(logDir)
-        logFile = logDir + os.sep + getConfig(config,"LOGGING." + logId +".FILE.NAME") + \
-             (batchDateTime.strftime('-%Y%m%d%H%M%S') if getConfig(config,"LOGGING." + logId +".FILE.PATTERN") in "datetime" else "") + \
-             "." + getConfig(config,"LOGGING." + logId +".FILE.EXTENTION")
-        log = open(logFile, "w",0)
-        print(batchDateTime," - INFO - ","LogFile",logFile)
-    except:
-        e = str(sys.exc_info()[0]) + str(sys.exc_info()[1]) + str(sys.exc_info()[2]) 
-        print(batchDateTime," - ERROR - ","Error raised when initiating the main log handler: ",logFile,e)
-    return 0
 
 def sendMail(confTag, confTagId):
     global config
@@ -139,24 +92,6 @@ def sendMail(confTag, confTagId):
     except:
         print(datetime.datetime.now()," - ERROR - ","Mailing send error code: ", exitCode, " cmd: ", mailCmd,file = log)
 
-def curPattern(valIn, cur = None, curType="date", dateFormat="%Y%m"):
-    try:
-        val = valIn
-        varPattern = re.compile('.*?\[(.*?)\].*?')
-        if cur is not None:
-            varList=varPattern.findall(val)
-            for varlistId in range(len(varList)):
-                if curType.lower() == "date":
-                    replaceCur = datetime.datetime.strptime(str(cur).strip(), dateFormat).date()
-                    replaceFormat = varList[varlistId]
-                    val = val.replace("["  + varList[varlistId] + "]", replaceCur.strftime(replaceFormat))
-                elif curType.lower() == "integer":
-                    val = val.replace("["  + varList[varlistId] + "]", cur)
-        return val
-    except:
-        e = sys.exc_info()
-        print(datetime.datetime.now()," - ERROR - ","curPattern failed: " , valIn , " cursor value: " , cur , " ; dateFormat: " , dateFormat , " error: ", e , file = log)
-        return "DATE_PATTERN_NOT_FOUND"
 
 def getWaittime(waittime):
     try:
@@ -172,28 +107,6 @@ def getWaittime(waittime):
         e = sys.exc_info()
         print(datetime.datetime.now()," - ERROR - ","getWaittime failed: ", waittime, " error: ", e , file = log)
 
-def runShell(task, step, cur):
-    global config,testIt
-    try:
-        exitCode = -1
-        curDatatype = getConfig(config,"WORKFLOW.TASKS." + str(task) + ".STEPS." + str(step) +".CALL.CURSOR.DATATYPE")
-        dateFormat = getConfig(config,"WORKFLOW.TASKS." + str(task) + ".STEPS." + str(step) +".CALL.CURSOR.FORMAT")
-        execLists = getConfig(config,"WORKFLOW.TASKS." + str(task) + ".STEPS." + str(step) +".CALL.EXEC.CMD")
-        for cmdList in execLists:
-            cmd = curPattern(" ".join(cmdList),cur,curDatatype,dateFormat)
-            print(step, ":", cmd) # delete
-            if (not testIt) and ("CONF_NOT_FOUND" not in cmd or "DATE_PATTERN_NOT_FOUND" not in cmd): 
-                exitCode = subprocess.call(cmd, shell=True)
-                print(datetime.datetime.now()," - INFO - ","runShell exitCode: ",exitCode, " Command: " , cmd, file = log)
-            elif testIt:
-                print(datetime.datetime.now()," - INFO - ", "Executing command: " , cmd,file = log)
-                exitCode = 0
-    except:
-        e = sys.exc_info()
-        print(datetime.datetime.now()," - ERROR - ", "Command: " , cmd , " cursor value: " , cur , " ; was failed with exit code: " , exitCode , " error: " , e)
-        print(datetime.datetime.now()," - ERROR - ", "Command: " , cmd , " cursor value: " , cur , " ; was failed with exit code: " , exitCode , " error: " , e,file = log)
-        exitCode = 1 
-    return exitCode
 
 def runQueue(step, cursorQueue):
     global config
@@ -253,7 +166,7 @@ def runStep(task, step, branch):
             if not cursorQueue.empty():
                 exitCode = runThreads(step, cursorQueue)
         elif "CONF_NOT_FOUND" not in step.action:
-            exitCode = eval(step.action + "(\"" + str(task.taskName) + "\",\"" + str(step.stepName) + "\",\"" + str(cur) + "\")" ) 
+            exitCode = eval(step.action + "(\"" + str(task.taskName) + "\",\"" + str(step.stepName) + "\")" )
         # print(datetime.datetime.now()," - INFO - step:  ", step.stepName , " execution time is: ", datetime.datetime.now() - stepStartDate)
         print(datetime.datetime.now()," - INFO - step:  ", step.stepName , " execution time is: ", datetime.datetime.now() - stepStartDate ,file = log)
         if len(step.cursorFail) != 0:
@@ -574,18 +487,18 @@ def doTest(configFileName):
                 print("getConfig:",getConfig(config,"WORKFLOW.TASKS.task1.STEPS.stepA1.CALL.CMDLIST"))
                 print("TASKS",getConfig(config,"WORKFLOW.TASKS"))
             elif "getTask" in testList: 
-                exitCode = initiateLog(str(0))
+                #log, logFile, config = initiateLog(str(0),batchDateTime)
                 print(datetime.datetime.now()," - INFO - ",getConfig(config,"LOGGING.0.NAME") , " started using configuration file - " , configFileName ,file = log)
                 task = Task("start") # new Task
                 # task = Task(Task("start").nextTask) # start task is just a pointer
                 exitCode = getTask(task)
                 print(datetime.datetime.now()," - INFO - ",getConfig(config,"LOGGING.0.NAME") , " finished with exitCode: " ,exitCode, "; using configuration file - " , configFileName ,file = log)    
-            elif "curPattern" in testList:
-                print("curPattern",curPattern("dasdf[%Y]ad[%m]sa[%Y%m]sdf","201405"))
-            elif "addTime" in testList:
-                print("addTime",addTime("201501", "201505", 2, "m", "%Y%m"))
-            elif "getCursor" in testList:
-                print("getCursor",getCursor(["200907:201405"],'%Y%m'))
+            # elif "curPattern" in testList:
+            #     print("curPattern",curPattern("dasdf[%Y]ad[%m]sa[%Y%m]sdf","201405"))
+            # elif "addTime" in testList:
+            #     print("addTime",addTime("201501", "201505", 2, "m", "%Y%m"))
+            # elif "getCursor" in testList:
+            #     print("getCursor",getCursor(["200907:201405"],'%Y%m'))
             else:
                 print("testList is empty")
         print("Done Testing")
@@ -597,7 +510,7 @@ class Usage(Exception):
         self.msg = msg
 
 def main(argv=None):
-    global config,testIt
+    global config,testIt,log, logFile, config
     if argv is None:
         argv = sys.argv
     try:   
@@ -607,7 +520,7 @@ def main(argv=None):
         config = json.load(configFile)
         configFile.close()
         config = parseConfig(config)
-        exitCode = initiateLog(str(0))
+        log, logFile, config, exitCode = initiateLog(str(0),batchDateTime)
         testIt = True if getConfig(config,"WORKFLOW.TEST.FLAG") == "True" else False
         if testIt: 
             doTest(configFileName)
@@ -636,54 +549,6 @@ def main(argv=None):
         print >>sys.stderr, "for help use --help"
         return 2
 
-class Task:
-    def __init__(self, taskName):
-        self.taskName = taskName
-        self.taskDesc = getConfig(config,"WORKFLOW.TASKS." + str(taskName) +".DESC") 
-        self.start = getConfig(config,"WORKFLOW.TASKS." + str(taskName) +".START")
-        self.steps = getConfig(config,"WORKFLOW.TASKS." + str(taskName) +".STEPS")
-        self.nextTask = getConfig(config,"WORKFLOW.TASKS." + str(taskName) +".NEXT.SUCCESS")
-        self.nextFail = getConfig(config,"WORKFLOW.TASKS." + str(taskName) +".NEXT.FAILURE")
-        self.branchesDict = {} # maps of branchName to branch object
-        self.branchValidDict = {} # for task validating purposes; map branch name to boolean
-        self.links = {}
-        self.restart = [] # list of failed steps; starting point for re-run
-        self.stepObs = {} # maps stepname to step object
-    
-class Branch:
-    def __init__(self, task, curStep, mergeStep):
-        self.task = task
-        self.branchName = curStep # branchName = first step in  branch
-        self.curStep = curStep # curStep name
-        self.mergeStep  = mergeStep # 0 if branch not the product of a fork
-        self.lastStep = None
-        self.steps = {} # map of step names to steps in branch
-        self.dependencies = [] # list of branch names
-        self.done = False # branch successfully completed
-        self.traceBranch = False # if branch needs to be tracked in the case of a failure
-        self.failedSteps = []
-        self.lastFail = None
-    
-class Step:
-    def __init__(self, task, stepName):
-        self.task = task
-        self.stepName = stepName
-        self.stepDesc = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".DESC") 
-        self.success = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".NEXT.SUCCESS")
-        self.nextFail = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".NEXT.FAILURE.NEXT_STEP")
-        self.maxFailures = int(getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".NEXT.FAILURE.MAX_FAILURES"))
-        self.waittime = getWaittime(getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".NEXT.FAILURE.WAITTIME"))
-        self.action = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.ACTION")
-        self.failures = 0
-        self.cursorFail = []
 
-        self.thread = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.THREAD") 
-        self.cursor = getCursor(getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.RANGE"), \
-                                getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.DATATYPE"), \
-                                getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.INCREMENT"), \
-                                getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.FORMAT"))
-        self.cursorListIndex = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.RANGE", "LIST_INDEX")
-        self.curInherit = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.INHERIT")
-        
 if __name__ == "__main__":
     sys.exit(main())

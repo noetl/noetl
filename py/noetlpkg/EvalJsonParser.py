@@ -22,8 +22,34 @@
 from __future__ import print_function
 import sys, re, os, json, datetime
 from distutils.command.config import config
+from EvalJsonParser import *
 
 test = True
+
+def getConfig(cfg, confRequest, confCase=None):
+    global log
+    try:
+        confList = confRequest.split(".")
+        for label in confList:
+            if isinstance(cfg, dict):
+                if label in cfg:
+                    cfg = cfg[label]
+                else:
+                    return "CONF_NOT_FOUND"
+            elif isinstance(cfg, list):
+                if not isinstance(label, unicode):
+                    label = unicode(label, 'utf-8')
+                if label.isnumeric():
+                    i = int(label)
+                    cfg = cfg[i]
+        if confCase == "LIST_INDEX" and isinstance(cfg, list):
+            cfg = [idx for idx,val in enumerate(cfg)]
+    except:
+        e = str(sys.exc_info()[0]) + str(sys.exc_info()[1]) + str(sys.exc_info()[2])
+        # print(datetime.datetime.now()," - ERROR - ","Error raised in getConfig with: ", e , " confRequest: " , confRequest, type(cfg))
+        print(datetime.datetime.now()," - ERROR - ","Error raised in getConfig with: ", e , " confRequest: " , confRequest, type(cfg),file = log)
+        cfg = "CONF_NOT_FOUND"
+    return cfg
 
 def parseConfig(configFile):
     global config
