@@ -1,2 +1,0 @@
-* * * * * bash /Users/chenguo/Documents/noetl/dt/etl_prod/automation-pipeline/monitorS3.sh false
-* * * * * bash /Users/chenguo/Documents/noetl/dt/etl_prod/automation-pipeline/runNoETL.sh
