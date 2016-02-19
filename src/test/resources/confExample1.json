@@ -1,0 +1,27 @@
+{
+  "OS_ENV": {
+    "HOST": "localhost",
+    "ROOT": "~/projects/github",
+    "TEMP": "/tmp"
+  },
+  "PROJECT": {
+    "NAME": "noetl",
+    "HOME": "${OS_ENV.ROOT}/noetl"
+  },
+  "LOGGING": [
+    {
+      "NAME": "${PROJECT.NAME}",
+      "FILE": {
+        "NAME": "${PROJECT.NAME}",
+        "DIRECTORY": "${OS_ENV.TEMP}/log",
+        "EXTENTION": "log",
+        "PATTERN": "datetime"
+      },
+      "MAIL": {
+        "SUBJECT": "${PROJECT.NAME}",
+        "LIST": "almightygc@gmail.com",
+        "CMD": "mail -s "
+      }
+    }
+  ]
+}
