@@ -1,0 +1,7 @@
+1. install nosetests for
+sudo pip install -upgrade nose
+
+2. find nosetests under /Library/Frameworks/Python.framework/Versions/2.7/bin
+
+3. run tests using
+python /Library/Frameworks/Python.framework/Versions/2.7/bin/nosetests testFile.py

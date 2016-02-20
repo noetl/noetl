@@ -4,7 +4,7 @@
     "ROOT": "~/projects/github"
   },
   "PROJECT": {
-    "HOME": "${OS_ENV.ROOT}/${PROJECT.NAME}",
+    "HOME": "${OS_ENV.NOT.EXIST}/${PROJECT.NAME}",
     "NAME": "noetl"
   },
   "LOGGING": [
