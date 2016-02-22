@@ -172,6 +172,81 @@ def getWaittime(waittime):
         e = sys.exc_info()
         print(datetime.datetime.now()," - ERROR - ","getWaittime failed: ", waittime, " error: ", e , file = log)
 
+def updateConfig(clusterId,MasterPublicDnsName):
+    global config
+    try:
+        config["PROJECT"]["EMR_CLUSTER_ID"] = clusterId
+        print(datetime.datetime.now()," - INFO - ", "updateConfig PROJECT.EMR_CLUSTER_ID: ",clusterId ,file = log)
+        config["PROJECT"]["EMR_MASTER_PUBLIC_DNS"] = MasterPublicDnsName
+        print(datetime.datetime.now()," - INFO - ", "updateConfig PROJECT.EMR_MASTER_PUBLIC_DNS: ",MasterPublicDnsName ,file = log)
+        configFileName = str(sys.argv[1])
+        configFile = open(configFileName, "w+")
+        configFile.write(json.dumps(config,indent=4))
+        print(datetime.datetime.now()," - INFO - ", "update config file: ",configFileName ,file = log)
+        configFile.close()
+        return 0
+    except:
+        e = sys.exc_info()
+        print(datetime.datetime.now()," - ERROR - ","updateConfig: ", config, "\error: ", e , file = log)
+        return -1
+
+
+def awsClusterProvisioning(task, step, cur):
+    global config,testIt
+    try:
+        exitCode = -1
+        curDatatype = getConfig(config,"WORKFLOW.TASKS." + str(task) + ".STEPS." + str(step) +".CALL.CURSOR.DATATYPE")
+        dateFormat = getConfig(config,"WORKFLOW.TASKS." + str(task) + ".STEPS." + str(step) +".CALL.CURSOR.FORMAT")
+        execLists = getConfig(config,"WORKFLOW.TASKS." + str(task) + ".STEPS." + str(step) +".CALL.EXEC.CMD")
+        for cmdList in execLists:
+            cmd = " ".join(cmdList)
+            print(step, ":", cmd) # delete
+            if (not testIt) and ("CONF_NOT_FOUND" not in cmd or "DATE_PATTERN_NOT_FOUND" not in cmd): 
+                process = subprocess.Popen('/bin/bash', stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+                out, err =  process.communicate(cmd)
+                print(datetime.datetime.now()," - INFO - ", "out: ",out, "\nerr: ",err,file = log)
+                exitCode = process.returncode
+                print(datetime.datetime.now()," - INFO - ", "exitcode: ",exitCode,file = log)
+                if exitCode == 0:
+                    clusterId = json.loads(out)["ClusterId"]
+                    print(datetime.datetime.now()," - INFO - ", "clusterId: " , clusterId ,file = log)
+
+                    cmd,MasterPublicDnsName = "aws emr describe-cluster --region us-west-2 --cluster-id " + clusterId,"CONF_NOT_FOUND"
+
+                    print(datetime.datetime.now()," - INFO - ","cmd - ",cmd,"\nMasterPublicDnsName: ",MasterPublicDnsName,file = log)
+
+                    while "CONF_NOT_FOUND" in MasterPublicDnsName:
+                        print("while: ",MasterPublicDnsName)
+                        time.sleep(60)
+                        process = subprocess.Popen('/bin/bash', stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+                        out, err =  process.communicate(cmd)
+                        print("out: ",out, "\nerr: ",err)
+                        exitCode = process.returncode
+                        print("exitcode:",exitCode)
+                        if exitCode == 0:
+                            try:
+                                MasterPublicDnsName = "CONF_NOT_FOUND" if json.loads(out)["Cluster"]["MasterPublicDnsName"] is None else json.loads(out)["Cluster"]["MasterPublicDnsName"]
+                            except TypeError:
+                                MasterPublicDnsName = "CONF_NOT_FOUND"
+                        else:
+                            return exitCode
+                    print(datetime.datetime.now()," - INFO - ","MasterPublicDnsName: ",MasterPublicDnsName,file = log)
+                    exitCode = updateConfig(clusterId,MasterPublicDnsName)
+
+                else:
+                    return exitCode
+
+                print(datetime.datetime.now()," - INFO - ","runShell exitCode: ",exitCode, " Command: " , cmd, file = log)
+            elif testIt:
+                print(datetime.datetime.now()," - INFO - ", "Executing command: " , cmd,file = log)
+                exitCode = 0
+    except:
+        e = sys.exc_info()
+        print(datetime.datetime.now()," - ERROR - ", "Command: " , cmd , " cursor value: " , cur , " ; was failed with exit code: " , exitCode , " error: " , e)
+        print(datetime.datetime.now()," - ERROR - ", "Command: " , cmd , " cursor value: " , cur , " ; was failed with exit code: " , exitCode , " error: " , e,file = log)
+        exitCode = 1 
+    return exitCode
+
 def runShell(task, step, cur):
     global config,testIt
     try:
@@ -253,7 +328,7 @@ def runStep(task, step, branch):
             if not cursorQueue.empty():
                 exitCode = runThreads(step, cursorQueue)
         elif "CONF_NOT_FOUND" not in step.action:
-            exitCode = eval(step.action + "(\"" + str(task.taskName) + "\",\"" + str(step.stepName) + "\",\"" + str(cur) + "\")" ) 
+            exitCode = eval(step.action + "(\"" + str(task.taskName) + "\",\"" + str(step.stepName) + "\",\"" + "str(0)" + "\")" )
         # print(datetime.datetime.now()," - INFO - step:  ", step.stepName , " execution time is: ", datetime.datetime.now() - stepStartDate)
         print(datetime.datetime.now()," - INFO - step:  ", step.stepName , " execution time is: ", datetime.datetime.now() - stepStartDate ,file = log)
         if len(step.cursorFail) != 0:
