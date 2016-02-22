@@ -1,0 +1,52 @@
+{
+  "WORKFLOW": {
+    "TASKS": {
+      "task1": {
+        "DESC": "Test task",
+        "START": {
+          "0": [
+            "step1"
+          ]
+        },
+        "STEPS": {
+          "step1": {
+            "DESC": "Test step",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "end"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "runShell",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "2011-09-01:2011-10-01"
+                ],
+                "DATATYPE": "date",
+                "FORMAT": "%Y-%m-%d",
+                "INCREMENT": "1M",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    "echo \"Cursor [%m/%d/%Y]\" > [%Y%m].test"
+                  ]
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

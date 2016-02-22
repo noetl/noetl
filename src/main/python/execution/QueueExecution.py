@@ -1,48 +1,50 @@
 import threading
 from threading import Thread
 
-from execution import ExecutionActionsUtil
-from execution.ExecutionActionsForProduction import SupportedProductActions
-from execution.ExecutionActionsForTests import SupportedTestActions
-from util.CommonPrinter import *
-from util.CommonPrinter import printErr
+from src.main.python.execution import ExecutionActionsUtil
+from src.main.python.execution.ExecutionActionsForProduction import SupportedProductActions
+from src.main.python.execution.ExecutionActionsForTests import SupportedTestActions
+from src.main.python.util.CommonPrinter import *
 
 
 # IMPORTANT CHANGE!!!! ONLY PASS CURSOR LIST HERE.
 def runThreads(config, stepObj, cursorQueue):
     try:
-        exitCode = 0
         for i in range(cursorQueue.qsize()):
+            # TODO: limit number of threads by stepObj.thread
             th = Thread(target=runQueue, args=(config, stepObj, cursorQueue,))
             th.setDaemon(True)
             th.start()
         cursorQueue.join()
+        return 0
     except:
         printErr('Run threads in parallel failed for the cursor queue [ {0} ]'.format("\n\t".join(cursorQueue)))
-        exitCode = -1
-    return exitCode
+        return 1
 
 
 def runQueue(config, stepObj, cursorQueue):
+    exitCode = 1
     if cursorQueue.empty():
         printInfo("runQueue - cursorQueue is empty")
-        return -1
+        return exitCode
     try:
         cursor = cursorQueue.get()
-        actionContext = getActionContext(stepObj.action)
-        if actionContext == "":
+        context = getActionContext(stepObj.action)
+        if context == "":
             raise RuntimeError(
                 "The action '{0}' for the step '{1}' is not supported.".format(stepObj.action, stepObj.stepPath))
-        action = "{0}.{1}(\"{2}\",\"{3}\",\"{4}\")" \
-            .format(actionContext, stepObj.action, stepObj.task.taskName, stepObj.stepName, cursor)
-        printInfo("At thread {0}, running cursorQueue job: {1}".format(threading.current_thread(), action))
-        exitCode = eval(action)
+        actionFormat = "{0}({1},\"{2}\",{3})"
+        if not isinstance(cursor, basestring):
+            actionFormat = "{0}({1},{2},{3})"
+        actionWOContext = actionFormat.format(stepObj.action, "stepObj", cursor, True)
+        actionWContext = "{0}.{1}".format(context, actionWOContext)
+        printInfo('At thread {0}, running "{1}"'.format(threading.current_thread(), actionWContext))
+        exitCode = eval(actionWContext)
         if exitCode != 0 and cursor not in stepObj.cursorFail:
-            printInfo("ExitCode is {1}. Execution failed for '{0}'".format(action, exitCode))
+            printInfo("ExitCode is {1} for '{0}'".format(actionWOContext, exitCode))
             stepObj.cursorFail.append(cursor)
     except:
         printErr("Queue job failed.")
-        exitCode = 1
     cursorQueue.task_done()
     return exitCode
 

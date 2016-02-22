@@ -1,9 +1,10 @@
 class SupportedTestActions:
     @staticmethod
-    def doTestJob(task, step, cur):
+    def doTestJob(stepObj, currentCursor, testMode):
         print("Executing...")
-        print(task)
-        print(step)
-        print("**** I am the cursor: {0} ****".format(cur))
+        print(stepObj.task.taskName)
+        print(stepObj.stepName)
+        print("**** I am the cursor: {0} ****".format(currentCursor))
         print("Done")
+        stepObj.successfulCursors.append(currentCursor)
         return 0

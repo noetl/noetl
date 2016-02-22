@@ -1,4 +1,4 @@
-from util.CommonPrinter import *
+from CommonPrinter import *
 
 REQUEST_FAILED = "CONF_NOT_FOUND"
 
@@ -56,8 +56,8 @@ def getCursor(cursorRangeList, dataType, increment, dateFormat):
                 if len(curList) == 2:
                     cursor.add(curList[0])
                     if dataType.lower() == "date":
-                        startDate = __toDate(curList[0], dateFormat)
-                        endDate = __toDate(curList[1], dateFormat)
+                        startDate = stringToDate(curList[0], dateFormat)
+                        endDate = stringToDate(curList[1], dateFormat)
                         expanded = __addTime(startDate, endDate, int(increment[:-1]), increment[-1], dateFormat)
                         for cur in expanded:
                             cursor.add(cur)
@@ -80,8 +80,8 @@ def getCursor(cursorRangeList, dataType, increment, dateFormat):
         sys.exit(1)
 
 
-def __toDate(dateString, dateFormat):
-    return datetime.datetime.strptime(dateString, dateFormat)
+def stringToDate(dateString, dateFormat):
+    return datetime.datetime.strptime(dateString.strip(), dateFormat.strip())
 
 
 def __addTime(startDate, endDate, increment, incType, dateFormat):

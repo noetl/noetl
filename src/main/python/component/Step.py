@@ -16,13 +16,16 @@ class Step:
         self.failures = 0
         self.cursorFail = []
         self.thread = processConfRequest(config, self.stepPath + ".CALL.THREAD")
-        self.cursor = getCursor(
-            processConfRequest(config, self.stepPath + ".CALL.CURSOR.RANGE"),
-            processConfRequest(config, self.stepPath + ".CALL.CURSOR.DATATYPE"),
-            processConfRequest(config, self.stepPath + ".CALL.CURSOR.INCREMENT"),
-            processConfRequest(config, self.stepPath + ".CALL.CURSOR.FORMAT"))
+
+        self.cursorRange = processConfRequest(config, self.stepPath + ".CALL.CURSOR.RANGE")
+        self.cursorDataType = processConfRequest(config, self.stepPath + ".CALL.CURSOR.DATATYPE")
+        self.cursorIncrement = processConfRequest(config, self.stepPath + ".CALL.CURSOR.INCREMENT")
+        self.cursorFormat = processConfRequest(config, self.stepPath + ".CALL.CURSOR.FORMAT")
+        self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement, self.cursorFormat)
         self.cursorListIndex = processConfRequest(config, self.stepPath + ".CALL.CURSOR.RANGE", True)
         self.curInherit = processConfRequest(config, self.stepPath + ".CALL.CURSOR.INHERIT")
+
+        self.execLists = processConfRequest(config, self.stepPath + ".CALL.EXEC.CMD")
 
     @staticmethod
     def getStepPath(taskName, stepName):
