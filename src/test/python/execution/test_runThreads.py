@@ -15,7 +15,9 @@ class TestRunThreads(TestCase):
         step = Step(task, "step1", config)
         queue = Queue()
         queue.put("0")
-        runThreads(config, step, queue)
+        queue.put("1")
+        queue.put("2")
+        self.assertEquals(0, runThreads(config, step, queue))
 
     def test_runThreads_emptyQueue(self):
         filePath = os.path.join(TEST_RESOURCES, "confRunThreadsTest.json")
