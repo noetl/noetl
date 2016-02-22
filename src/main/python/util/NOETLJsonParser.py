@@ -22,7 +22,7 @@ class NOETLJsonParser:
         except:
             printErr(str.format("Parsing configuration file `{0}` failed.", self.confFilePath))
             sys.exit(1)
-        printInfo("Successfully parsed configuration file.")
+        printInfo("Successfully parsed configuration file '{0}'.".format(self.confFilePath))
 
     def __dereferenceConfig(self, config):
         if isinstance(config, dict):

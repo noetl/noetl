@@ -1,11 +1,11 @@
-from src.main.python.util.Tools import *
+from Task import *
 
 
 class Step:
     def __init__(self, taskParent, stepName, config):
         self.task = taskParent
         self.stepName = stepName
-        self.stepPath = "{0}.STEPS.{1}".format(self.task.taskPath, self.stepName)
+        self.stepPath = Step.getStepPath(self.task.taskName, stepName)
 
         self.stepDesc = processConfRequest(config, self.stepPath + ".DESC")
         self.success = processConfRequest(config, self.stepPath + ".NEXT.SUCCESS")
@@ -23,3 +23,7 @@ class Step:
             processConfRequest(config, self.stepPath + ".CALL.CURSOR.FORMAT"))
         self.cursorListIndex = processConfRequest(config, self.stepPath + ".CALL.CURSOR.RANGE", True)
         self.curInherit = processConfRequest(config, self.stepPath + ".CALL.CURSOR.INHERIT")
+
+    @staticmethod
+    def getStepPath(taskName, stepName):
+        return "{0}.STEPS.{1}".format(Task.getTaskPath(taskName), stepName)

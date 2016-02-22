@@ -1,0 +1,52 @@
+{
+  "WORKFLOW": {
+    "TASKS": {
+      "task1": {
+        "DESC": "Test task",
+        "START": {
+          "0": [
+            "step1"
+          ]
+        },
+        "STEPS": {
+          "step1": {
+            "DESC": "Test step",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "end"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "doTestJob",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "0"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    "?????"
+                  ]
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

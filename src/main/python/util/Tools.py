@@ -10,6 +10,7 @@ def processConfRequest(cfg, confRequest, listIndexRequest=False):
             if isinstance(cfg, dict):
                 cfg = cfg.get(label)
                 if cfg is None:
+                    printInfo("The configuration request failed for '{0}'".format(confRequest))
                     return REQUEST_FAILED
             elif isinstance(cfg, list):
                 if not isinstance(label, unicode):

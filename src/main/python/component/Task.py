@@ -1,10 +1,10 @@
-from src.main.python.util.Tools import *
+from util.Tools import *
 
 
 class Task:
     def __init__(self, taskName, config):
         self.taskName = taskName
-        self.taskPath = "WORKFLOW.TASKS.{0}".format(str(self.taskName))
+        self.taskPath = Task.getTaskPath(self.taskName)
         self.taskDesc = processConfRequest(config, self.taskPath + ".DESC")
         self.start = processConfRequest(config, self.taskPath + ".START")
         self.steps = processConfRequest(config, self.taskPath + ".STEPS")
@@ -15,3 +15,7 @@ class Task:
         self.links = {}
         self.restart = []  # list of failed steps; starting point for re-run
         self.stepObs = {}  # maps stepname to step object
+
+    @staticmethod
+    def getTaskPath(taskName):
+        return "WORKFLOW.TASKS.{0}".format(str(taskName))
