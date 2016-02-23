@@ -1,13 +1,20 @@
 class Branch:
-    def __init__(self, taskParent, curStepName, mergeStepName):
-        self.task = taskParent
-        self.branchName = curStepName  # branchName = first step in  branch
-        self.curStep = curStepName  # curStep name
-        self.mergeStep = mergeStepName  # 0 if branch not the product of a fork
+    # TODO: a merge branch could be a sub class of Branch
+    def __init__(self, startStepObj, mergeStepName):
+        self.task = startStepObj.task
+        stepName = startStepObj.stepName
+        self.branchName = stepName  # branchName is its first step name
+        self.curStep = stepName  # current Step name
+        self.mergeStep = mergeStepName  # 0 if branch is not a merge branch, and dependencies should be empty
         self.lastStep = None
-        self.steps = {}  # map of step names to steps in branch
-        self.dependencies = []  # list of branch names
+        self.steps = {}  # step name -> step obj, for this branch
+        self.dependencies = []  # list of dependent branch names if it's a merge branch
         self.done = False  # branch successfully completed
         self.traceBranch = False  # if branch needs to be tracked in the case of a failure
         self.failedSteps = []
         self.lastFail = None
+
+        self.steps[stepName] = startStepObj  # add step to branch
+        self.task.stepObs[stepName] = startStepObj  # add step to task
+        self.task.branchesDict[stepName] = self  # add branch to task
+        self.task.branchValidDict[stepName] = False

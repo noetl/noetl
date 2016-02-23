@@ -15,11 +15,12 @@ class Task:
         self.nextTask = nextDict["SUCCESS"]
         self.nextFail = nextDict["FAILURE"]
 
-        self.branchesDict = {}  # maps of branchName to branch object
-        self.branchValidDict = {}  # for task validating purposes; map branch name to boolean
+        self.stepObs = {}                       # step name -> step obj, for this task
+        self.branchesDict = {}                  # branch name -> branch obj, for this task
+        self.branchValidDict = {}               # branch name -> boolean (false when initialized), for this task
+                                                # this serves task validation purposes;
         self.links = {}
-        self.restart = []  # list of failed steps; starting point for re-run
-        self.stepObs = {}  # maps stepname to step object
+        self.restart = []  # list of failed step names; starting point for re-run
 
     @staticmethod
     def getTaskPath(taskName):

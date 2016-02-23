@@ -2,10 +2,12 @@ from component.Branch import Branch
 from component.Step import Step
 from component.Task import Task
 from src.main.python.util.CommonPrinter import *
+from util import Tools
 from util.NOETLJsonParser import NOETLJsonParser
 from util.Tools import processConfRequest
 
 FIRST_TASK_NAME = "start"
+LAST_TASK_NAME = "exit"
 
 
 def main(argv=None):
@@ -47,59 +49,53 @@ def doTest(config):
 
 
 def getTask(config, taskObj, testMode):
+    if Tools.REQUEST_FAILED in taskObj.taskName:
+        return 1
     try:
-        exitCode = taskObj.taskName
-        if isinstance(taskObj.start, dict) and (taskObj.taskName != FIRST_TASK_NAME) and (
-                    taskObj.taskName != "exit"):  # validate task and create branchesDict
-            if len(taskObj.start.values()) > 1 or len(taskObj.start.values()[0]) > 1:  # forking branches
-                for merge in taskObj.start.keys():
-                    if merge != "0":  # if 0, branches don't merge
-                        mergeStep = Step(taskObj, merge)
-                        mergeBranch = Branch(taskObj, merge, "0")
-                        mergeBranch.steps[merge] = mergeStep
-                        taskObj.stepObs[merge] = mergeStep  # add step object to task
-                        taskObj.branchesDict[merge] = mergeBranch
-                        taskObj.branchValidDict[merge] = False
-                        for b in taskObj.start[merge]:
-                            mergeBranch.dependencies.append(b)  # put forked branch names in mergeBranch dependencies
-                            taskObj.branchValidDict[b] = False
-                for mergeStep in taskObj.start.keys():
-                    for branchName in taskObj.start[mergeStep]:
-                        newBranch = Branch(taskObj, branchName, mergeStep)
-                        step = Step(taskObj, branchName)
-                        newBranch.steps[branchName] = step
-                        taskObj.stepObs[branchName] = step  # add step object to task
-                        taskObj.branchesDict[branchName] = newBranch
-                        exitCode = makeBranches(taskObj, newBranch, step)  # create branch for each forked step
-            elif (len(taskObj.start.values()) == 1) and (len(taskObj.start.values()[0]) == 1):
-                firstStep = taskObj.start.values()[0][0]
-                step = Step(taskObj, firstStep)
-                if taskObj.start.keys()[0] != "0":
-                    raise "You cannot define merge step when there is only one start step." \
-                          "This feature is currently not supported. Alternatively, you can move the merge step to" \
-                          "next.success"
-                branch = Branch(taskObj, firstStep, "0")
-                branch.steps[firstStep] = step
-                taskObj.stepObs[firstStep] = step  # add step object to task
-                taskObj.branchesDict[firstStep] = branch
-                taskObj.branchValidDict[firstStep] = False
-                exitCode = makeBranches(taskObj, branch, step)  # create branch for each forked step
-                # CHEN: if condition not complete. This will fail start{a:[]}.
-        printInfo("Task: ", taskObj.taskName, ", where next task: ", taskObj.nextTask,
-                  ", and task description: ", taskObj.taskDesc)
-        if (str(taskObj.taskName) == "exit") or ("CONF_NOT_FOUND" in taskObj.taskName):
-            exitCode = str(taskObj.taskName)
+        printInfo("Getting task '{0}' with description '{1}'. Next task is '{2}'"
+                  .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextTask))
+        # Make branches for the task before execution.
+        startDictValues = taskObj.start.values()
+        if len(startDictValues) == 1 and len(startDictValues[0]) == 1:  # only 1 item in the dict, and have only 1 step.
+            stepObj = Step(taskObj, startDictValues[0][0], config)
+            if taskObj.start.keys()[0] != "0":
+                raise RuntimeError("You cannot define merge step when there is only one start step. "
+                                   "Alternatively, you can move the merge step to the step's next.success")
+            branch = Branch(stepObj, "0")
+            makeBranches(taskObj, branch, stepObj)
+        elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
+            for mergeStepName, branchNames in taskObj.start.iteritems():
+                if mergeStepName != "0":  # If 0, branches don't merge.
+                    # Otherwise, create merge branch and add forked branches as its dependency
+                    mergeStep = Step(taskObj, mergeStepName, config)
+                    mergeBranch = Branch(mergeStep, "0")
+                    for branchName in branchNames:
+                        mergeBranch.dependencies.append(branchName)
+                        # TODO: Not makeBranches for mergeBranch   ?????????????????????
+                for branchName in branchNames:
+                    stepObj = Step(taskObj, branchName, config)
+                    newBranch = Branch(stepObj, mergeStepName)
+                    makeBranches(taskObj, newBranch, stepObj)
         else:
+            # TODO: There are many cases we didn't cover, such as
+            # start:{0:[]}, start:{0:[1,2]}, start:{1:[]}, start:{2:[], 2:[1]}
+            # In reality, we are check the length of combined list of startDictValues
+            raise RuntimeError("Task '{0}' has empty or unsupported start steps '{1}'."
+                               .format(taskObj.taskName, taskObj.start))
+        # start task execution.
+        if taskObj.taskName == LAST_TASK_NAME:
+            return 0
+        if taskObj.taskName == FIRST_TASK_NAME:
             exitCode = runTask(taskObj)
-            # for branch in task.branchesDict.values(): # delete
-            # print("branch:", branch.branchName, " steps:", branch.steps.keys(), " last step:", branch.lastStep) # delete
-            if (exitCode == "CONF_NOT_FOUND") or (len(taskObj.restart) != 0):
-                printInfo("Task Failed: ", taskObj.taskName, ", Re-Start at steps: ", taskObj.restart)
-                for st in taskObj.restart:
-                    printInfo("STEP: ", st, " failed with cursors ", taskObj.stepObs[st].cursor)
-                    exitCode = getTask(Task(taskObj.nextFail, config), testMode)
-                else:
-                    exitCode = getTask(Task(taskObj.nextTask, config), testMode)
+            if exitCode == 1 or len(taskObj.restart) >= 0:
+                printInfo("Task '{0}' failed. Restart step(s) is(are) '{1}'."
+                          .format(taskObj.taskName, ",".join(taskObj.restart)))
+                for restartStepName in taskObj.restart:
+                    printInfo('Step "{0}" failed with cursors "{1}".'.format(restartStepName, str(
+                        taskObj.stepObs[restartStepName].cursorFail)))
+                return getTask(config, Task(taskObj.nextFail, config), testMode)
+            else:
+                return getTask(config, Task(taskObj.nextTask, config), testMode)
     except:
         printErr("getTask failed for task '{0}'".format(str(taskObj)))
         return 1
@@ -110,7 +106,7 @@ def makeBranches(taskObj, newBranch, step):
 
 
 def runTask(taskObj):
-    pass
+    return 1
 
 
 if __name__ == "__main__":

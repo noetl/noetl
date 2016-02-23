@@ -30,7 +30,8 @@ class Step:
         self.cursorDataType = cursor["DATATYPE"]
         self.cursorIncrement = cursor["INCREMENT"]
         self.cursorFormat = cursor["FORMAT"]
-        self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement, self.cursorFormat)
+        self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement,
+                                self.cursorFormat)  # immutable once initialized
 
         self.cursorListIndex = range(0, len(self.cursorRange))
         self.curInherit = cursor["INHERIT"]
