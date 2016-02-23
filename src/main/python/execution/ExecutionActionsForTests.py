@@ -6,5 +6,8 @@ class SupportedTestActions:
         print(stepObj.stepName)
         print("**** I am the cursor: {0} ****".format(currentCursor))
         print("Done")
-        stepObj.successfulCursors.append(currentCursor)
+        if testMode:
+            stepObj.successfulCursors.append(currentCursor)
+        else:
+            stepObj.successfulCursors.append(currentCursor + "Done")
         return 0

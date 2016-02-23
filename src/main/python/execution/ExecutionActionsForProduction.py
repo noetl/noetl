@@ -1,6 +1,5 @@
 import re
 import subprocess
-
 from src.main.python.util import Tools
 from src.main.python.util.Tools import *
 
@@ -22,6 +21,7 @@ class SupportedProductActions:
                 else:
                     exitCode = subprocess.call(dereferenceCmd, shell=True)
                     printInfo("runShell exitCode: {0} for the Command {1}.".format(exitCode, dereferenceCmd))
+                    return exitCode
         except:
             printErr(info + " failed.")
             return 1

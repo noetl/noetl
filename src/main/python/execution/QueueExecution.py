@@ -1,6 +1,5 @@
 import threading
 from threading import Thread
-
 from src.main.python.execution import ExecutionActionsUtil
 from src.main.python.execution.ExecutionActionsForProduction import SupportedProductActions
 from src.main.python.execution.ExecutionActionsForTests import SupportedTestActions
@@ -8,11 +7,11 @@ from src.main.python.util.CommonPrinter import *
 
 
 # IMPORTANT CHANGE!!!! ONLY PASS CURSOR LIST HERE.
-def runThreads(config, stepObj, cursorQueue):
+def runThreads(config, stepObj, cursorQueue, testMode):
     try:
         for i in range(cursorQueue.qsize()):
             # TODO: limit number of threads by stepObj.thread
-            th = Thread(target=runQueue, args=(config, stepObj, cursorQueue,))
+            th = Thread(target=runQueue, args=(config, stepObj, cursorQueue, testMode,))
             th.setDaemon(True)
             th.start()
         cursorQueue.join()
@@ -22,7 +21,7 @@ def runThreads(config, stepObj, cursorQueue):
         return 1
 
 
-def runQueue(config, stepObj, cursorQueue):
+def runQueue(config, stepObj, cursorQueue, testMode):
     exitCode = 1
     if cursorQueue.empty():
         printInfo("runQueue - cursorQueue is empty")
@@ -36,7 +35,7 @@ def runQueue(config, stepObj, cursorQueue):
         actionFormat = "{0}({1},\"{2}\",{3})"
         if not isinstance(cursor, basestring):
             actionFormat = "{0}({1},{2},{3})"
-        actionWOContext = actionFormat.format(stepObj.action, "stepObj", cursor, True)
+        actionWOContext = actionFormat.format(stepObj.action, "stepObj", cursor, testMode)
         actionWContext = "{0}.{1}".format(context, actionWOContext)
         printInfo('At thread {0}, running "{1}"'.format(threading.current_thread(), actionWContext))
         exitCode = eval(actionWContext)
