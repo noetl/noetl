@@ -3,7 +3,7 @@ from CommonPrinter import *
 REQUEST_FAILED = "CONF_NOT_FOUND"
 
 
-def processConfRequest(cfg, confRequest, listIndexRequest=False):
+def processConfRequest(cfg, confRequest):
     try:
         confList = confRequest.split(".")
         for label in confList:
@@ -22,11 +22,6 @@ def processConfRequest(cfg, confRequest, listIndexRequest=False):
                     raise RuntimeError(str.format('Bad configuration request path "{0}"', confRequest))
             else:
                 raise RuntimeError(str.format('Unknown config object type for "{0}".', cfg))
-        if listIndexRequest:
-            if isinstance(cfg, list):
-                cfg = range(0, len(cfg))
-            else:
-                raise RuntimeError(str.format('Bad list index request. "{0}" is not a list', cfg))
     except:
         printErr("Fail to process the configuration request: " + confRequest)
         cfg = REQUEST_FAILED

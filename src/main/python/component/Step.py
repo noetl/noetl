@@ -7,25 +7,35 @@ class Step:
         self.stepName = stepName
         self.stepPath = Step.getStepPath(self.task.taskName, stepName)
 
-        self.stepDesc = processConfRequest(config, self.stepPath + ".DESC")
-        self.success = processConfRequest(config, self.stepPath + ".NEXT.SUCCESS")
-        self.nextFail = processConfRequest(config, self.stepPath + ".NEXT.FAILURE.NEXT_STEP")
-        self.maxFailures = int(processConfRequest(config, self.stepPath + ".NEXT.FAILURE.MAX_FAILURES"))
-        self.waittime = getWaitTime(processConfRequest(config, self.stepPath + ".NEXT.FAILURE.WAITTIME"))
-        self.action = processConfRequest(config, self.stepPath + ".CALL.ACTION")
+        stepDict = processConfRequest(config, self.stepPath)
+        self.stepDesc = stepDict["DESC"]
+
+        nextDict = stepDict["NEXT"]
+        self.success = nextDict["SUCCESS"]
+        failDict = nextDict["FAILURE"]
+
+        self.nextFail = failDict["NEXT_STEP"]
+        self.maxFailures = failDict["MAX_FAILURES"]
+        self.waittime = getWaitTime(failDict["WAITTIME"])
+
         self.failures = 0
         self.cursorFail = []
-        self.thread = processConfRequest(config, self.stepPath + ".CALL.THREAD")
 
-        self.cursorRange = processConfRequest(config, self.stepPath + ".CALL.CURSOR.RANGE")
-        self.cursorDataType = processConfRequest(config, self.stepPath + ".CALL.CURSOR.DATATYPE")
-        self.cursorIncrement = processConfRequest(config, self.stepPath + ".CALL.CURSOR.INCREMENT")
-        self.cursorFormat = processConfRequest(config, self.stepPath + ".CALL.CURSOR.FORMAT")
+        callDict = stepDict["CALL"]
+        self.action = callDict["ACTION"]
+        self.thread = callDict["THREAD"]
+
+        cursor = callDict["CURSOR"]
+        self.cursorRange = cursor["RANGE"]
+        self.cursorDataType = cursor["DATATYPE"]
+        self.cursorIncrement = cursor["INCREMENT"]
+        self.cursorFormat = cursor["FORMAT"]
         self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement, self.cursorFormat)
-        self.cursorListIndex = processConfRequest(config, self.stepPath + ".CALL.CURSOR.RANGE", True)
-        self.curInherit = processConfRequest(config, self.stepPath + ".CALL.CURSOR.INHERIT")
 
-        self.callExec = processConfRequest(config, self.stepPath + ".CALL.EXEC")
+        self.cursorListIndex = range(0, len(self.cursorRange))
+        self.curInherit = cursor["INHERIT"]
+
+        self.callExec = callDict["EXEC"]
         self.execLists = self.callExec["CMD"]
 
     @staticmethod

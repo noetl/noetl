@@ -8,6 +8,10 @@
             "step1"
           ]
         },
+        "NEXT": {
+          "SUCCESS": "exit",
+          "FAILURE": "exit"
+        },
         "STEPS": {
           "step1": {
             "DESC": "Test step",

@@ -5,11 +5,16 @@ class Task:
     def __init__(self, taskName, config):
         self.taskName = taskName
         self.taskPath = Task.getTaskPath(self.taskName)
-        self.taskDesc = processConfRequest(config, self.taskPath + ".DESC")
-        self.start = processConfRequest(config, self.taskPath + ".START")
-        self.steps = processConfRequest(config, self.taskPath + ".STEPS")
-        self.nextTask = processConfRequest(config, self.taskPath + ".NEXT.SUCCESS")
-        self.nextFail = processConfRequest(config, self.taskPath + ".NEXT.FAILURE")
+        taskDict = processConfRequest(config, self.taskPath)
+
+        self.taskDesc = taskDict["DESC"]
+        self.start = taskDict["START"]
+        self.steps = taskDict["STEPS"]
+
+        nextDict = taskDict["NEXT"]
+        self.nextTask = nextDict["SUCCESS"]
+        self.nextFail = nextDict["FAILURE"]
+
         self.branchesDict = {}  # maps of branchName to branch object
         self.branchValidDict = {}  # for task validating purposes; map branch name to boolean
         self.links = {}

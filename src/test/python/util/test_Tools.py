@@ -1,6 +1,5 @@
 import os
 from unittest import TestCase
-
 from src.main.python.util.NOETLJsonParser import NOETLJsonParser
 from src.main.python.util.Tools import *
 from src.rootPath import TEST_RESOURCES
@@ -13,7 +12,6 @@ class TestTools(TestCase):
         self.assertEquals("localhost", processConfRequest(conf, "OS_ENV.HOST"))
         self.assertEquals("FUN", processConfRequest(conf, "LOGGING.1"))
         self.assertEquals("noetl", processConfRequest(conf, "LOGGING.0.NAME"))
-        self.assertEquals([0, 1], processConfRequest(conf, "LOGGING", True))
 
     def test_getDateCursor1(self):
         cursor = getCursor(["2011-09-01:2011-12-31"], "date", "1M", "%Y-%m-%d")
