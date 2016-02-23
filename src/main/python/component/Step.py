@@ -25,7 +25,8 @@ class Step:
         self.cursorListIndex = processConfRequest(config, self.stepPath + ".CALL.CURSOR.RANGE", True)
         self.curInherit = processConfRequest(config, self.stepPath + ".CALL.CURSOR.INHERIT")
 
-        self.execLists = processConfRequest(config, self.stepPath + ".CALL.EXEC.CMD")
+        self.callExec = processConfRequest(config, self.stepPath + ".CALL.EXEC")
+        self.execLists = self.callExec["CMD"]
 
     @staticmethod
     def getStepPath(taskName, stepName):
