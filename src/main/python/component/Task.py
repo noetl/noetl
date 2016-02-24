@@ -15,10 +15,12 @@ class Task:
         self.nextTask = nextDict["SUCCESS"]
         self.nextFail = nextDict["FAILURE"]
 
-        self.stepObs = {}                       # step name -> step obj, for this task
-        self.branchesDict = {}                  # branch name -> branch obj, for this task
-        self.branchValidDict = {}               # branch name -> boolean (false when initialized), for this task
-                                                # this serves task validation purposes;
+        self.stepObs = {}  # step name -> step obj, for this task
+        self.branchesDict = {}  # branch name -> branch obj, for this task
+        self.branchMakeComplete = {}
+        # this dictionary tells whether a branch construction completes or not
+        # branch name -> boolean (false when initialized), for branches in this task
+        # will be set to true once the branch construction completes.
         self.links = {}
         self.restart = []  # list of failed step names; starting point for re-run
 

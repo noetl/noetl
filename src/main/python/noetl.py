@@ -99,16 +99,10 @@ def makeBranches(taskObj, branchObj, stepObj, config):
             if nextStepName == "exit":
                 branchObj.setLastStep(stepObj.stepName)
                 return 0
-            if nextStepName == branchObj.mergeStep:  # done creating current fork branch; start new branch(es)
+            if nextStepName == branchObj.mergeStep:
                 branchObj.setLastStep(stepObj.stepName)
                 mergeBranch = taskObj.branchesDict[nextStepName]
-                mergeReady = True
-                for b in mergeBranch.dependencies:
-                    if not taskObj.branchValidDict[b]:
-                        # when reach mergeStep, stop and then do the mergeStep branch
-                        # TODO: why we need all dependencies valid before makeBranches for mergeBranch???
-                        mergeReady = False
-                if mergeReady:  # makeBranches for mergeBranch happens here
+                if mergeBranch.dependenciesMakeComplete:
                     return makeBranches(taskObj, mergeBranch, nextStep, config)
                 else:
                     return 0

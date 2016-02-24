@@ -17,12 +17,19 @@ class Branch:
         self.steps[stepName] = startStepObj  # add step to branch
         self.task.stepObs[stepName] = startStepObj  # add step to task
         self.task.branchesDict[stepName] = self  # add branch to task
-        self.task.branchValidDict[stepName] = False
+        self.task.branchMakeComplete[stepName] = False
 
     def addStep(self, stepObj):
         self.steps[stepObj.stepName] = stepObj
         self.task.stepObs[stepObj.stepName] = stepObj
 
     def setLastStep(self, lastStepName):
-        self.task.branchValidDict[self.branchName] = True
+        self.task.branchMakeComplete[self.branchName] = True
         self.lastStep = lastStepName
+
+    # We don't want to make mergeBranch (multiple times) if not all dependencies are complete
+    def dependenciesMakeComplete(self):
+        for b in self.dependencies:
+            if not self.task.branchMakeComplete[b]:
+                return False
+        return True
