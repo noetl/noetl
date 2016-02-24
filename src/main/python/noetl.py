@@ -1,3 +1,5 @@
+from Queue import Queue
+
 from component.Branch import Branch
 from component.Step import Step
 from component.Task import Task
@@ -138,7 +140,38 @@ def makeBranchesForForkingStep(forkingStepObj, config):  # make sure step is a f
 
 
 def runTask(taskObj):
-    return 1
+    try:
+        printInfo("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
+        exitCode, taskStartDate = 0, datetime.datetime.now()
+
+        startBranchNames = []
+        for mergeStepName, branchNames in taskObj.start.iteritems():
+            startBranchNames += branchNames
+        if len(startBranchNames) > 1:
+            branchQueue = Queue()
+            for branchName in startBranchNames:
+                branchQueue.put(taskObj.branchesDict[branchName])
+            exitCode = forkBranches(taskObj, branchQueue)
+        elif len(startBranchNames) == 1:
+            branchName = startBranchNames[0]
+            branch = taskObj.branchesDict[branchName]
+            exitCode = getStep(taskObj, branch)
+        else:
+            raise RuntimeError("No starting steps found for the task '{0}'".format(taskObj.taskName))
+    except:
+        printErr("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
+        return 1
+    printInfo("Execution time for task '{0}' is: {1}."
+              .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
+    return exitCode
+
+
+def forkBranches(task, branchQueue):
+    return 0
+
+
+def getStep(task, branch):
+    return 0
 
 
 if __name__ == "__main__":
