@@ -1,4 +1,4 @@
-class Branch:
+class Branch:  # branch is a sequential presentation of steps.
     # TODO: a merge branch could be a sub class of Branch
     def __init__(self, startStepObj, mergeStepName):
         self.task = startStepObj.task
@@ -33,3 +33,18 @@ class Branch:
             if not self.task.branchMakeComplete[b]:
                 return False
         return True
+
+    # We don't want to run mergeBranch (multiple times) if not all dependencies are complete
+    def dependenciesExecutionComplete(self):
+        for b in self.dependencies:
+            if not self.task.branchesDict[b].done:
+                return False
+        return True
+
+    def atLastStep(self):
+        return self.curStep == self.lastStep
+
+    def moveToNextStep(self):
+        nextStepName = self.steps[self.curStep].success.values()[0][0]
+        # This is safe because branch is a sequential presentation of steps
+        self.curStep = nextStepName
