@@ -62,20 +62,9 @@ def getTask(config, taskObj, testMode):
                 raise RuntimeError("You cannot define merge step when there is only one start step. "
                                    "Alternatively, you can move the merge step to the step's next.success")
             branch = Branch(stepObj, "0")
-            makeBranches(taskObj, branch, stepObj)
+            makeBranches(taskObj, branch, stepObj, config)
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
-            for mergeStepName, branchNames in taskObj.start.iteritems():
-                if mergeStepName != "0":  # If 0, branches don't merge.
-                    # Otherwise, create merge branch and add forked branches as its dependency
-                    mergeStep = Step(taskObj, mergeStepName, config)
-                    mergeBranch = Branch(mergeStep, "0")
-                    for branchName in branchNames:
-                        mergeBranch.dependencies.append(branchName)
-                        # TODO: Not makeBranches for mergeBranch   ?????????????????????
-                for branchName in branchNames:
-                    stepObj = Step(taskObj, branchName, config)
-                    newBranch = Branch(stepObj, mergeStepName)
-                    makeBranches(taskObj, newBranch, stepObj)
+            makeBranchesForForkingStep(taskObj.start, config)
         else:
             # TODO: There are many cases we didn't cover, such as
             # start:{0:[]}, start:{0:[1,2]}, start:{1:[]}, start:{2:[], 2:[1]}
@@ -101,8 +90,57 @@ def getTask(config, taskObj, testMode):
         return 1
 
 
-def makeBranches(taskObj, newBranch, step):
-    pass
+def makeBranches(taskObj, branchObj, stepObj, config):
+    try:
+        stepSuccessValues = stepObj.success.values()
+        if len(stepSuccessValues) == 1 and len(stepSuccessValues[0]) == 1:  # sequential steps.
+            nextStepName = stepSuccessValues[0][0]
+            nextStep = Step(taskObj, nextStepName, config)
+            if nextStepName == "exit":
+                branchObj.setLastStep(stepObj.stepName)
+                return 0
+            if nextStepName == branchObj.mergeStep:  # done creating current fork branch; start new branch(es)
+                branchObj.setLastStep(stepObj.stepName)
+                mergeBranch = taskObj.branchesDict[nextStepName]
+                mergeReady = True
+                for b in mergeBranch.dependencies:
+                    if not taskObj.branchValidDict[b]:
+                        # when reach mergeStep, stop and then do the mergeStep branch
+                        # TODO: why we need all dependencies valid before makeBranches for mergeBranch???
+                        mergeReady = False
+                if mergeReady:  # makeBranches for mergeBranch happens here
+                    return makeBranches(taskObj, mergeBranch, nextStep, config)
+                else:
+                    return 0
+            else:
+                branchObj.addStep(nextStep)
+                return makeBranches(taskObj, branchObj, nextStep, config)
+        if len(stepSuccessValues) > 1 or len(stepSuccessValues[0]) > 1:  # create new branches if forking
+            branchObj.setLastStep(stepObj.stepName)
+            makeBranchesForForkingStep(stepObj, config)
+        raise RuntimeError("Unsupported NEXT.SUCCESS configuration for the step '{0}': {1}"
+                           .format(stepObj.stepName, stepObj.success))
+    except:
+        printErr("MakeBranches failed for task:  ", taskObj.taskName, stepObj.stepName)
+        return 1
+
+
+def makeBranchesForForkingStep(forkingStepObj, config):  # make sure step is a forking one before you call it.
+    exitCode = 0
+    taskObj = forkingStepObj.task
+    for mergeStepName, branchNames in forkingStepObj.iteritems():
+        if mergeStepName != "0":  # If 0, branches don't merge.
+            # Otherwise, create merge branch and add forked branches as its dependency
+            mergeStep = Step(taskObj, mergeStepName, config)
+            mergeBranch = Branch(mergeStep, "0")
+            for branchName in branchNames:
+                mergeBranch.dependencies.append(branchName)
+                # makeBranches for mergeBranch happens somewhere in makeBranches
+        for branchName in branchNames:
+            stepObj = Step(taskObj, branchName, config)
+            newBranch = Branch(stepObj, mergeStepName)
+            exitCode += makeBranches(taskObj, newBranch, stepObj, config)
+    return min(1, exitCode)
 
 
 def runTask(taskObj):
