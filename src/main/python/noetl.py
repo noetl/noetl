@@ -1,4 +1,5 @@
 from Queue import Queue
+from threading import Thread
 
 from component.Branch import Branch
 from component.Step import Step
@@ -167,7 +168,20 @@ def runTask(taskObj):
 
 
 def forkBranches(task, branchQueue):
-    return 0
+    try:
+        for branchId in range(branchQueue.qsize()):
+            branch = Thread(target=runBranchQueue, args=(task, branchQueue,))
+            branch.setDaemon(True)
+            branch.start()
+        branchQueue.join()
+        return 0
+    except:
+        printErr("forkBranches execution failed.")
+        return 1
+
+
+def runBranchQueue():
+    pass
 
 
 def getStep(task, branch):
