@@ -167,10 +167,10 @@ def runTask(taskObj):
     return exitCode
 
 
-def forkBranches(task, branchQueue):
+def forkBranches(taskObj, branchQueue):
     try:
         for branchId in range(branchQueue.qsize()):
-            branch = Thread(target=runBranchQueue, args=(task, branchQueue,))
+            branch = Thread(target=runBranchQueue, args=(taskObj, branchQueue,))
             branch.setDaemon(True)
             branch.start()
         branchQueue.join()
@@ -180,8 +180,20 @@ def forkBranches(task, branchQueue):
         return 1
 
 
-def runBranchQueue():
-    pass
+def runBranchQueue(taskObj, branchQueue):
+    if branchQueue.empty():
+        printInfo("runBranchQueue - branchQueue is empty")
+        return 1
+    branch = None
+    try:
+        branch = branchQueue.get()
+        printInfo("Running branchQueue branch: " + branch.branchName)
+        exitCode = getStep(taskObj, branch)
+        branchQueue.task_done()
+        return exitCode
+    except:
+        printErr("branchQueue failed for branch: " + branch.branchName)
+        return 1
 
 
 def getStep(task, branch):
