@@ -38,8 +38,15 @@ def runQueue(config, stepObj, cursorQueue, testMode):
             actionFormat = "{0}({1},{2},{3})"
         actionWOContext = actionFormat.format(stepObj.action, "stepObj", cursor, testMode)
         actionWContext = "{0}.{1}".format(context, actionWOContext)
-        printInfo('At thread {0}, running "{1}"'.format(threading.current_thread(), actionWContext))
+        current_thread = str(threading.current_thread())
+        sys.stdout.flush()
+        print("CRT_THD: " + current_thread)
+        printInfo('At thread {0}, running "{1}"'.format(current_thread, actionWContext))
+        sys.stdout.flush()
         exitCode = eval(actionWContext)
+        sys.stdout.flush()
+        print("Finished step '{0}' with cursor '{1}.".format(stepObj.stepPath, cursor))
+        sys.stdout.flush()
         if exitCode != 0 and cursor not in stepObj.cursorFail:
             printInfo("ExitCode is {1} for '{0}'".format(actionWOContext, exitCode))
             stepObj.cursorFail.append(cursor)
