@@ -6,23 +6,36 @@ from src.main.python.execution.ExecutionActionsForTests import SupportedTestActi
 from src.main.python.util.CommonPrinter import *
 
 
-# IMPORTANT CHANGE!!!! ONLY PASS CURSOR LIST HERE.
 def runThreads(config, stepObj, cursorQueue, testMode):
     try:
+        if cursorQueue is None:
+            return 0
         threads = int(stepObj.thread) if stepObj.thread.isdigit() else 0
-        for i in range(cursorQueue.qsize()):
-            # TODO: limit number of threads by stepObj.thread
-            th = Thread(target=runQueue, args=(config, stepObj, cursorQueue, testMode,))
-            th.setDaemon(True)
-            th.start()
-        cursorQueue.join()
+        if threads <= 1:
+            printInfo("Use single thread to process.")
+            for i in range(cursorQueue.qsize()):
+                runQueue(config, stepObj, cursorQueue, testMode)
+        else:
+            printInfo("Spawning {0} threads to process for the step '{1}'.".
+                      format(threads, stepObj.stepPath))
+            semaphore = threading.Semaphore(threads)
+            cursorFailUpdate = threading.Lock()
+            for i in range(cursorQueue.qsize()):
+                semaphore.acquire()
+                threadCount = str(threading.active_count())
+                # TODO: should be able to reuse the thread like a thread pool or try other implementation
+                th = Thread(name="ThreadCount-" + threadCount, target=runQueue,
+                            args=(config, stepObj, cursorQueue, testMode, semaphore, cursorFailUpdate))
+                th.setDaemon(True)
+                th.start()
+            cursorQueue.join()
         return 0
     except:
         printErr('Run threads in parallel failed for the cursor queue [ {0} ]'.format("\n\t".join(cursorQueue)))
         return 1
 
 
-def runQueue(config, stepObj, cursorQueue, testMode):
+def runQueue(config, stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=None):
     exitCode = 1
     if cursorQueue.empty():
         printInfo("runQueue - cursorQueue is empty")
@@ -49,9 +62,17 @@ def runQueue(config, stepObj, cursorQueue, testMode):
         sys.stdout.flush()
         if exitCode != 0 and cursor not in stepObj.cursorFail:
             printInfo("ExitCode is {1} for '{0}'".format(actionWOContext, exitCode))
+            if cursorFailUpdate is not None:
+                cursorFailUpdate.acquire()
             stepObj.cursorFail.append(cursor)
+            if cursorFailUpdate is not None:
+                cursorFailUpdate.release()
     except:
+        if cursorFailUpdate is not None and cursorFailUpdate.locked():
+            cursorFailUpdate.release()
         printErr("Queue job failed.")
+    if semaphore is not None:
+        semaphore.release()
     cursorQueue.task_done()
     return exitCode
 
