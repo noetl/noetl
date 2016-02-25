@@ -13,7 +13,7 @@ class Task:
         self.steps = taskDict["STEPS"]
 
         nextDict = taskDict["NEXT"]
-        self.nextTask = nextDict["SUCCESS"]
+        self.nextSuccess = nextDict["SUCCESS"]
         self.nextFail = nextDict["FAILURE"]
 
         self.stepObs = {}  # step name -> step obj, for this task

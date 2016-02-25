@@ -56,7 +56,7 @@ def doTest(config):
 def getTask(config, taskObj):
     try:
         printInfo("Getting task '{0}' with description '{1}'. Next task is '{2}'"
-                  .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextTask))
+                  .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextSuccess))
         if taskObj.taskName == "exit":
             return 0
         # Make branches for the task before execution.
@@ -83,7 +83,7 @@ def getTask(config, taskObj):
                 printFailedInfo(taskObj)
                 return getTask(config, Task(taskObj.nextFail, config))
             else:
-                return getTask(config, Task(taskObj.nextTask, config))
+                return getTask(config, Task(taskObj.nextSuccess, config))
     except:
         printErr("getTask failed for task '{0}'".format(str(taskObj)))
         return 1
