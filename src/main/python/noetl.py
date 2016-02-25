@@ -295,8 +295,8 @@ def runBranch(taskObj, branchObj, config):
 def runStep(task, step, branch, config):
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
-        printInfo("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s).".format(step.stepName, step.cursor,
-                                                                                            step.thread))
+        printInfo("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s)."
+                  .format(step.stepName, step.cursor, step.thread))
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
@@ -312,6 +312,11 @@ def runStep(task, step, branch, config):
                 step.cursorFail = []
                 time.sleep(step.waittime)
                 return runStep(task, step, branch, config)
+            else:
+                printInfo("Run step '{0}' failed for '{1}' times reaching the step.maxFailures '{2}'."
+                          .format(step.stepPath, step.failures, step.maxFailures))
+                return 1
+        return 0
     except:
         printErr("RunStep failed for step '{0}'.".format(step.stepName))
         return 1
