@@ -23,7 +23,7 @@ class Task:
         # branch name -> boolean (false when initialized), for branches in this task
         # will be set to true once the branch construction completes.
         self.links = {}  # links the recovery step name to the RECOVERABLE step name who leads to the recovery step
-        self.restart = []  # list of failed step names; starting point for re-run
+        self.failedStepNames = []  # list of failed step names; starting point for re-run
 
     @staticmethod
     def getTaskPath(taskName):

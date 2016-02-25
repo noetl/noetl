@@ -16,7 +16,7 @@ class Step:
         failDict = nextDict["FAILURE"]
 
         self.nextFail = failDict["NEXT_STEP"]
-        self.maxFailures = failDict["MAX_FAILURES"]
+        self.maxFailures = int(failDict["MAX_FAILURES"])
         self.waittime = getWaitTime(failDict["WAITTIME"])
 
         self.failures = 0

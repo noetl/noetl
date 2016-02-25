@@ -1,3 +1,5 @@
+import os
+
 from CommonPrinter import *
 
 REQUEST_FAILED = "CONF_NOT_FOUND"
@@ -10,8 +12,8 @@ def processConfRequest(cfg, confRequest):
             if isinstance(cfg, dict):
                 cfg = cfg.get(label)
                 if cfg is None:
-                    printInfo("The configuration request failed for '{0}'".format(confRequest))
-                    return REQUEST_FAILED
+                    printInfo("FAILURE: The configuration request failed for '{0}'".format(confRequest))
+                    os._exit(1)
             elif isinstance(cfg, list):
                 if not isinstance(label, unicode):
                     label = unicode(label, 'utf-8')
@@ -19,13 +21,12 @@ def processConfRequest(cfg, confRequest):
                     i = int(label)
                     cfg = cfg[i]
                 else:
-                    raise RuntimeError(str.format('Bad configuration request path "{0}"', confRequest))
+                    raise RuntimeError()
             else:
                 raise RuntimeError(str.format('Unknown config object type for "{0}".', cfg))
+        return cfg
     except:
         printErr("Fail to process the configuration request: " + confRequest)
-        cfg = REQUEST_FAILED
-    return cfg
 
 
 def getWaitTime(waitTime):

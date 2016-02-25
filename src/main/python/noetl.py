@@ -6,14 +6,11 @@ from src.main.python.component.Branch import Branch
 from src.main.python.component.Step import Step
 from src.main.python.component.Task import Task
 from src.main.python.execution.QueueExecution import runThreads
-from src.main.python.util import Tools
 from src.main.python.util.CommonPrinter import *
 from src.main.python.util.NOETLJsonParser import NOETLJsonParser
 from src.main.python.util.Tools import processConfRequest
 
 FIRST_TASK_NAME = "start"
-LAST_TASK_NAME = "exit"
-
 testMode = False
 
 
@@ -22,10 +19,10 @@ def main(argv=None):
     if len(argv) != 2:
         raise RuntimeError("Expecting a configuration file path as its argument.")
 
-    configFilePath = str(argv[1])
-    printInfo('Using configuration file "{0}"'.format(configFilePath))
-    config = NOETLJsonParser(configFilePath).getConfig()
     try:
+        configFilePath = str(argv[1])
+        printInfo('Using configuration file "{0}"'.format(configFilePath))
+        config = NOETLJsonParser(configFilePath).getConfig()
         testMode = True if processConfRequest(config, "WORKFLOW.TEST.FLAG") == "True" else False
         if testMode:
             return doTest(config)
@@ -45,7 +42,7 @@ def doTest(config):
         printInfo('Log file is "{0}"'.format(logName))
 
         taskList = processConfRequest(config, "WORKFLOW.TASKS")
-        printInfo("LIST of TASKS:\n" + taskList)
+        printInfo("LIST of TASKS:\n" + str(taskList))
 
         task = Task(FIRST_TASK_NAME, config)
         exitCode = getTask(config, task)
@@ -57,11 +54,11 @@ def doTest(config):
 
 
 def getTask(config, taskObj):
-    if Tools.REQUEST_FAILED in taskObj.taskName:
-        return 1
     try:
         printInfo("Getting task '{0}' with description '{1}'. Next task is '{2}'"
                   .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextTask))
+        if taskObj.taskName == "exit":
+            return 0
         # Make branches for the task before execution.
         startDictValues = taskObj.start.values()
         if len(startDictValues) == 1 and len(startDictValues[0]) == 1:  # only 1 item in the dict, and have only 1 step.
@@ -80,22 +77,24 @@ def getTask(config, taskObj):
             raise RuntimeError("Task '{0}' has empty or unsupported start steps '{1}'."
                                .format(taskObj.taskName, taskObj.start))
         # start task execution.
-        if taskObj.taskName == LAST_TASK_NAME:
-            return 0
         if taskObj.taskName == FIRST_TASK_NAME:
             exitCode = runTask(taskObj)
-            if exitCode == 1 or len(taskObj.restart) >= 0:
-                printInfo("Task '{0}' failed. Restart step(s) is(are) '{1}'."
-                          .format(taskObj.taskName, ",".join(taskObj.restart)))
-                for restartStepName in taskObj.restart:
-                    printInfo('Step "{0}" failed with cursors "{1}".'.format(restartStepName, str(
-                        taskObj.stepObs[restartStepName].cursorFail)))
+            if exitCode == 1 or len(taskObj.failedStepNames) >= 0:
+                printFailedInfo(taskObj)
                 return getTask(config, Task(taskObj.nextFail, config))
             else:
                 return getTask(config, Task(taskObj.nextTask, config))
     except:
         printErr("getTask failed for task '{0}'".format(str(taskObj)))
         return 1
+
+
+def printFailedInfo(taskObj):
+    printInfo("Task '{0}' failed with step(s): '{1}'."
+              .format(taskObj.taskName, ",".join(taskObj.failedStepNames)))
+    for failedStep in taskObj.failedStepNames:
+        printInfo('Step "{0}" failed with cursors "{1}".'
+                  .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
 
 
 def makeBranches(branchObj, stepObj):
@@ -205,17 +204,17 @@ def runBranchQueue(branchQueue):
 def runBranch(branchObj):
     try:  # execute current step for branch
         taskObj = branchObj.task
-        currentStep = branchObj.steps[branchObj.curStep]
-        printInfo(
-            "Run branch at step '{0}' with failed cursor '{1}'.".format(currentStep.stepPath, currentStep.cursorFail))
+        currentStep = branchObj.steps[branchObj.currentStepName]
+        printInfo("Running step '{0}'. Failed cursors before resetting: '{1}'."
+                  .format(currentStep.stepPath, currentStep.cursorFail))
         currentStep.cursorFail = []  # reset before running again
         exitCode = runStep(currentStep)
 
         if exitCode == 0:
             if not branchObj.atLastStep():
-                branchObj.moveToNextStep()
+                branchObj.moveToNextSuccess()
                 if branchObj.traceBranch:
-                    if branchObj.curStep == branchObj.lastFail:  # remove nextFail loop from links
+                    if branchObj.currentStepName == branchObj.lastFail:  # remove nextFail loop from links
                         def removeLink(stepName):
                             delNext = taskObj.links.get(stepName)
                             if delNext is not None:
@@ -226,7 +225,7 @@ def runBranch(branchObj):
                         removeLink(currentStep.stepName)
                         branchObj.traceBranch = False
                     else:
-                        taskObj.linkRetry(branchObj.curStep, currentStep.stepName)
+                        taskObj.linkRetry(branchObj.currentStepName, currentStep.stepName)
                 return runBranch(branchObj)
             else:  # At branch last step. Start new branch.
                 branchObj.done = True
@@ -258,25 +257,19 @@ def runBranch(branchObj):
                     raise RuntimeError("Step '{0}' has empty or unsupported success configurations '{1}'."
                                        .format(currentStep.stepName, currentStep.success))
         else:  # when step failed
-            # step has failed before (broken link) - traceback
             if currentStep.stepName in branchObj.failedSteps or currentStep.nextFail == "exit":
-                def traceback(stepName):
+                def traceBackRecoveryPath(stepName):
+                    # Add all recoverable steps that can be reached from this stepName to failedStepNames.
                     if stepName in taskObj.links.keys():
                         for name in taskObj.links[stepName]:
-                            traceback(name)
-                    elif stepName not in taskObj.restart:
-                        # Add recoverable steps to restart list. This will be used for the task restart.
-                        taskObj.restart.append(stepName)
+                            traceBackRecoveryPath(name)
+                    elif stepName not in taskObj.failedStepNames:
+                        taskObj.failedStepNames.append(stepName)
 
-                traceback(currentStep.stepName)
+                traceBackRecoveryPath(currentStep.stepName)
                 return 1  # exitCode = 1
             else:  # fail for the first time and try to recover
-                recoverStep = Step(taskObj, currentStep.nextFail)
-                branchObj.traceBranch = True
-                branchObj.failedSteps.append(currentStep.stepName)
-                branchObj.lastFail = currentStep.stepName
-                branchObj.curStep = recoverStep.stepName
-                taskObj.linkRetry(recoverStep.stepName, currentStep.stepName)
+                recoverStep = branchObj.failAtStep(currentStep)
                 while recoverStep.stepName != "exit" and recoverStep.stepName not in branchObj.steps.keys() and \
                         (recoverStep.stepName != branchObj.lastStep):
                     # add nextFail steps to step list until failBranch merges with original branch or ends
@@ -289,7 +282,7 @@ def runBranch(branchObj):
                     branchObj.lastStep = "exit"
                 return runBranch(branchObj)
     except:
-        currentStep = branchObj.steps[branchObj.curStep]
+        currentStep = branchObj.steps[branchObj.currentStepName]
         printErr("Failed to get current step '{0}' with path '{1}'.".format(currentStep.stepName, currentStep.stepPath))
         return 1
 

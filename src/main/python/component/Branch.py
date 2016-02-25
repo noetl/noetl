@@ -1,10 +1,13 @@
+from component.Step import Step
+
+
 class Branch:  # branch is a sequential presentation of steps.
     # TODO: a merge branch could be a sub class of Branch
     def __init__(self, startStepObj, mergeStepName):
         self.task = startStepObj.task
         stepName = startStepObj.stepName
         self.branchName = startStepObj.stepName  # branchName is its first step name
-        self.curStep = startStepObj.stepName  # current Step name
+        self.currentStepName = startStepObj.stepName  # current Step name
         self.mergeStep = mergeStepName  # 0 if branch is not a merge branch, and dependencies should be empty
         self.lastStep = None  # last step name
         self.steps = {}  # step name -> step obj, for this branch
@@ -12,7 +15,7 @@ class Branch:  # branch is a sequential presentation of steps.
         self.done = False  # branch successfully completed
         self.traceBranch = False  # if branch needs to be tracked in the case of a failure
         self.failedSteps = []
-        self.lastFail = None
+        self.lastFail = None  # last failed step name
 
         self.addStep(startStepObj)
         self.task.branchesDict[stepName] = self  # add branch to task
@@ -42,9 +45,25 @@ class Branch:  # branch is a sequential presentation of steps.
         return True
 
     def atLastStep(self):
-        return self.curStep == self.lastStep
+        return self.currentStepName == self.lastStep
 
-    def moveToNextStep(self):
-        nextStepName = self.steps[self.curStep].success.values()[0][0]
+    def moveToNextSuccess(self):
+        nextStepName = self.steps[self.currentStepName].success.values()[0][0]
         # This is safe because branch is a sequential presentation of steps
-        self.curStep = nextStepName
+        self.currentStepName = nextStepName
+        return nextStepName
+
+    # def moveToNextFailure(self):
+    #     nextStepName = self.steps[self.currentStepName].step.nextFail
+    #     self.currentStepName = nextStepName
+    #     return nextStepName
+
+    def failAtStep(self, step):
+        self.traceBranch = True
+        failedStepName = step.stepName
+        self.failedSteps.append(failedStepName)
+        self.lastFail = failedStepName
+        recoverStep = Step(self.task, step.nextFail)
+        self.currentStepName = recoverStep.stepName
+        self.task.linkRetry(recoverStep.stepName, failedStepName)
+        return recoverStep

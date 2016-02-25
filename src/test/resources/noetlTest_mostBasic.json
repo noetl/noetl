@@ -1,0 +1,73 @@
+{
+  "LOGGING": [
+    {
+      "NAME": "XXX"
+    }
+  ],
+  "WORKFLOW": {
+    "TEST": {
+      "FLAG": "True"
+    },
+    "TASKS": {
+      "start": {
+        "DESC": "Test task",
+        "START": {
+          "0": [
+            "exit"
+          ]
+        },
+        "NEXT": {
+          "SUCCESS": "exit",
+          "FAILURE": "exit"
+        },
+        "STEPS": {
+          "exit": {
+            "DESC": "Exit test",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "exit"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "Exit",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "0"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    "?????"
+                  ]
+                ]
+              }
+            }
+          }
+        }
+      },
+      "exit": {
+        "DESC": "Exit Task",
+        "START": {},
+        "STEPS": {},
+        "NEXT": {
+          "SUCCESS": "",
+          "FAILURE": ""
+        }
+      }
+    }
+  }
+}
