@@ -4,6 +4,7 @@ from src.main.python.util.Tools import *
 class Task:
     def __init__(self, taskName, config):
         self.taskName = taskName
+        self.config = config
         self.taskPath = Task.getTaskPath(self.taskName)
         taskDict = processConfRequest(config, self.taskPath)
 

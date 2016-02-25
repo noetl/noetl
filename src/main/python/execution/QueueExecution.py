@@ -6,7 +6,7 @@ from src.main.python.execution.ExecutionActionsForTests import SupportedTestActi
 from src.main.python.util.CommonPrinter import *
 
 
-def runThreads(config, stepObj, cursorQueue, testMode):
+def runThreads(stepObj, cursorQueue, testMode):
     if cursorQueue is None:
         return
     try:
@@ -14,7 +14,7 @@ def runThreads(config, stepObj, cursorQueue, testMode):
         if threads <= 1:
             printInfo("Use single thread to process.")
             for i in range(cursorQueue.qsize()):
-                runQueue(config, stepObj, cursorQueue, testMode)
+                runQueue(stepObj, cursorQueue, testMode)
         else:
             printInfo("Spawning {0} threads to process for the step '{1}'.".
                       format(threads, stepObj.stepPath))
@@ -25,7 +25,7 @@ def runThreads(config, stepObj, cursorQueue, testMode):
                 threadCount = str(threading.active_count())
                 # TODO: should be able to reuse the thread like a thread pool or try other implementation
                 th = Thread(name="ThreadCount-" + threadCount, target=runQueue,
-                            args=(config, stepObj, cursorQueue, testMode, semaphore, cursorFailUpdate))
+                            args=(stepObj, cursorQueue, testMode, semaphore, cursorFailUpdate))
                 th.setDaemon(True)
                 th.start()
             cursorQueue.join()
@@ -33,7 +33,7 @@ def runThreads(config, stepObj, cursorQueue, testMode):
         printErr('Run threads in parallel failed for the cursor queue [ {0} ]'.format("\n\t".join(cursorQueue)))
 
 
-def runQueue(config, stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=None):
+def runQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=None):
     if stepObj is None or cursorQueue is None or cursorQueue.empty():
         printInfo("step is None or cursorQueue is empty")
         return

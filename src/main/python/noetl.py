@@ -65,14 +65,14 @@ def getTask(config, taskObj):
         # Make branches for the task before execution.
         startDictValues = taskObj.start.values()
         if len(startDictValues) == 1 and len(startDictValues[0]) == 1:  # only 1 item in the dict, and have only 1 step.
-            stepObj = Step(taskObj, startDictValues[0][0], config)
+            stepObj = Step(taskObj, startDictValues[0][0])
             if taskObj.start.keys()[0] != "0":
                 raise RuntimeError("You cannot define merge step when there is only one start step. "
                                    "Alternatively, you can move the merge step to the step's next.success")
             branch = Branch(stepObj, "0")
-            makeBranches(taskObj, branch, stepObj, config)
+            makeBranches(branch, stepObj)
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
-            makeBranchesForForkingStep(taskObj.start, config)
+            makeBranchesForForkingStep(taskObj.start)
         else:
             # TODO: There are many cases we didn't cover, such as
             # start:{0:[]}, start:{0:[1,2]}, start:{1:[]}, start:{2:[], 2:[1]}
@@ -83,7 +83,7 @@ def getTask(config, taskObj):
         if taskObj.taskName == LAST_TASK_NAME:
             return 0
         if taskObj.taskName == FIRST_TASK_NAME:
-            exitCode = runTask(taskObj, config)
+            exitCode = runTask(taskObj)
             if exitCode == 1 or len(taskObj.restart) >= 0:
                 printInfo("Task '{0}' failed. Restart step(s) is(are) '{1}'."
                           .format(taskObj.taskName, ",".join(taskObj.restart)))
@@ -98,28 +98,29 @@ def getTask(config, taskObj):
         return 1
 
 
-def makeBranches(taskObj, branchObj, stepObj, config):
+def makeBranches(branchObj, stepObj):
     try:
+        taskObj = branchObj.task
         stepSuccessValues = stepObj.success.values()
         if len(stepSuccessValues) == 1 and len(stepSuccessValues[0]) == 1:  # sequential steps.
             nextStepName = stepSuccessValues[0][0]
-            nextStep = Step(taskObj, nextStepName, config)
+            nextStep = Step(taskObj, nextStepName)
             if nextStepName == "exit":
-                branchObj.setLastStep(stepObj.stepName)
+                branchObj.setLastStep(stepObj)
                 return 0
             if nextStepName == branchObj.mergeStep:
-                branchObj.setLastStep(stepObj.stepName)
+                branchObj.setLastStep(stepObj)
                 mergeBranch = taskObj.branchesDict[nextStepName]
                 if mergeBranch.dependenciesMakeComplete():
-                    return makeBranches(taskObj, mergeBranch, nextStep, config)
+                    return makeBranches(mergeBranch, nextStep)
                 else:
                     return 0
             else:
                 branchObj.addStep(nextStep)
-                return makeBranches(taskObj, branchObj, nextStep, config)
+                return makeBranches(branchObj, nextStep)
         if len(stepSuccessValues) > 1 or len(stepSuccessValues[0]) > 1:  # create new branches if forking
-            branchObj.setLastStep(stepObj.stepName)
-            makeBranchesForForkingStep(stepObj, config)
+            branchObj.setLastStep(stepObj)
+            makeBranchesForForkingStep(stepObj)
         raise RuntimeError("Unsupported NEXT.SUCCESS configuration for the step '{0}': {1}"
                            .format(stepObj.stepName, stepObj.success))
     except:
@@ -127,25 +128,25 @@ def makeBranches(taskObj, branchObj, stepObj, config):
         return 1
 
 
-def makeBranchesForForkingStep(forkingStepObj, config):  # make sure step is a forking one before you call it.
+def makeBranchesForForkingStep(forkingStepObj):  # make sure step is a forking one before you call it.
     exitCode = 0
     taskObj = forkingStepObj.task
     for mergeStepName, branchNames in forkingStepObj.iteritems():
         if mergeStepName != "0":  # If 0, branches don't merge.
             # Otherwise, create merge branch and add forked branches as its dependency
-            mergeStep = Step(taskObj, mergeStepName, config)
+            mergeStep = Step(taskObj, mergeStepName)
             mergeBranch = Branch(mergeStep, "0")
             for branchName in branchNames:
                 mergeBranch.dependencies.append(branchName)
                 # makeBranches for mergeBranch happens somewhere in makeBranches
         for branchName in branchNames:
-            stepObj = Step(taskObj, branchName, config)
+            stepObj = Step(taskObj, branchName)
             newBranch = Branch(stepObj, mergeStepName)
-            exitCode += makeBranches(taskObj, newBranch, stepObj, config)
+            exitCode += makeBranches(newBranch, stepObj)
     return min(1, exitCode)
 
 
-def runTask(taskObj, config):
+def runTask(taskObj):
     try:
         printInfo("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
         exitCode, taskStartDate = 0, datetime.datetime.now()
@@ -157,11 +158,11 @@ def runTask(taskObj, config):
             branchQueue = Queue()
             for branchName in startBranchNames:
                 branchQueue.put(taskObj.branchesDict[branchName])
-            exitCode = forkBranches(taskObj, branchQueue, config)
+            exitCode = forkBranches(branchQueue)
         elif len(startBranchNames) == 1:
             branchName = startBranchNames[0]
             branch = taskObj.branchesDict[branchName]
-            exitCode = runBranch(taskObj, branch, config)
+            exitCode = runBranch(branch)
         else:
             raise RuntimeError("No starting steps found for the task '{0}'".format(taskObj.taskName))
     except:
@@ -172,10 +173,10 @@ def runTask(taskObj, config):
     return exitCode
 
 
-def forkBranches(taskObj, branchQueue, config):
+def forkBranches(branchQueue):
     try:
         for branchId in range(branchQueue.qsize()):
-            branch = Thread(target=runBranchQueue, args=(taskObj, branchQueue, config,))
+            branch = Thread(target=runBranchQueue, args=(branchQueue,))
             branch.setDaemon(True)
             branch.start()
         branchQueue.join()
@@ -185,7 +186,7 @@ def forkBranches(taskObj, branchQueue, config):
         return 1
 
 
-def runBranchQueue(taskObj, branchQueue, config):
+def runBranchQueue(branchQueue):
     if branchQueue.empty():
         printInfo("runBranchQueue - branchQueue is empty")
         return 1
@@ -193,7 +194,7 @@ def runBranchQueue(taskObj, branchQueue, config):
     try:
         branch = branchQueue.get()
         printInfo("Running branchQueue branch: " + branch.branchName)
-        exitCode = runBranch(taskObj, branch, config)
+        exitCode = runBranch(branch)
         branchQueue.task_done()
         return exitCode
     except:
@@ -201,13 +202,14 @@ def runBranchQueue(taskObj, branchQueue, config):
         return 1
 
 
-def runBranch(taskObj, branchObj, config):
+def runBranch(branchObj):
     try:  # execute current step for branch
+        taskObj = branchObj.task
         currentStep = branchObj.steps[branchObj.curStep]
         printInfo(
             "Run branch at step '{0}' with failed cursor '{1}'.".format(currentStep.stepPath, currentStep.cursorFail))
         currentStep.cursorFail = []  # reset before running again
-        exitCode = runStep(taskObj, currentStep, branchObj, config)
+        exitCode = runStep(currentStep)
 
         if exitCode == 0:
             if not branchObj.atLastStep():
@@ -225,7 +227,7 @@ def runBranch(taskObj, branchObj, config):
                         branchObj.traceBranch = False
                     else:
                         taskObj.linkRetry(branchObj.curStep, currentStep.stepName)
-                return runBranch(taskObj, branchObj, config)
+                return runBranch(branchObj)
             else:  # At branch last step. Start new branch.
                 branchObj.done = True
                 nextStepName = currentStep.success.values()[0][0]
@@ -237,7 +239,7 @@ def runBranch(taskObj, branchObj, config):
                         nextBranch.traceBranch = True
                         taskObj.linkRetry(nextStepName, currentStep.stepName)
                     if nextBranch.dependenciesExecutionComplete():
-                        return runBranch(taskObj, nextBranch, config)
+                        return runBranch(nextBranch)
                 elif len(currentStep.success.values()) > 1 or len(currentStep.success.values()[0]) > 1:
                     branchQueue = Queue()
                     for mergeStep, branchList in currentStep.success.iteritems():
@@ -251,7 +253,7 @@ def runBranch(taskObj, branchObj, config):
                     # Consider this case: task.start:{m1:[s1,s2]}. steps{s1.next.success{0:[m1,m2]}}
                     # This code will run step m1 without checking the status of s2.
                     # If s2 is not ready, m1 should not start. Add dependencies checks here.
-                    return forkBranches(taskObj, branchQueue, config)
+                    return forkBranches(branchQueue)
                 else:
                     raise RuntimeError("Step '{0}' has empty or unsupported success configurations '{1}'."
                                        .format(currentStep.stepName, currentStep.success))
@@ -269,7 +271,7 @@ def runBranch(taskObj, branchObj, config):
                 traceback(currentStep.stepName)
                 return 1  # exitCode = 1
             else:  # fail for the first time and try to recover
-                recoverStep = Step(taskObj, currentStep.nextFail, config)
+                recoverStep = Step(taskObj, currentStep.nextFail)
                 branchObj.traceBranch = True
                 branchObj.failedSteps.append(currentStep.stepName)
                 branchObj.lastFail = currentStep.stepName
@@ -282,17 +284,18 @@ def runBranch(taskObj, branchObj, config):
                         recoverStep.cursor = currentStep.cursor
                     branchObj.addStep(recoverStep)
                     # TODO: this assume that failure branch can only be a sequence of steps
-                    recoverStep = Step(taskObj, recoverStep.success.values()[0][0], config)
+                    recoverStep = Step(taskObj, recoverStep.success.values()[0][0])
                 if recoverStep.stepName == "exit":
                     branchObj.lastStep = "exit"
-                return runBranch(taskObj, branchObj, config)
+                return runBranch(branchObj)
     except:
         currentStep = branchObj.steps[branchObj.curStep]
         printErr("Failed to get current step '{0}' with path '{1}'.".format(currentStep.stepName, currentStep.stepPath))
         return 1
 
 
-def runStep(task, step, branch, config):
+def runStep(step):
+    global testMode
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
         printInfo("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s)."
@@ -300,7 +303,7 @@ def runStep(task, step, branch, config):
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
-        runThreads(config, step, cursorQueue, testMode)
+        runThreads(step, cursorQueue, testMode)
         printInfo(
             "Execution time for step '{0}' is: '{1}'.".format(step.stepName, datetime.datetime.now() - stepStartDate))
 
@@ -311,7 +314,7 @@ def runStep(task, step, branch, config):
             if step.failures < step.maxFailures:
                 step.cursorFail = []
                 time.sleep(step.waittime)
-                return runStep(task, step, branch, config)
+                return runStep(step)
             else:
                 printInfo("Run step '{0}' failed for '{1}' times reaching the step.maxFailures '{2}'."
                           .format(step.stepPath, step.failures, step.maxFailures))

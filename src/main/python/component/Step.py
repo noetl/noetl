@@ -2,12 +2,13 @@ from Task import *
 
 
 class Step:
-    def __init__(self, taskParent, stepName, config):
-        self.task = taskParent
+    def __init__(self, task, stepName):
+        self.task = task
+        self.branch = None
         self.stepName = stepName
         self.stepPath = Step.getStepPath(self.task.taskName, stepName)
 
-        stepDict = processConfRequest(config, self.stepPath)
+        stepDict = processConfRequest(task.config, self.stepPath)
         self.stepDesc = stepDict["DESC"]
 
         nextDict = stepDict["NEXT"]
