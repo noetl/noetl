@@ -1,31 +1,37 @@
+import time
 from Queue import Queue
 from threading import Thread
-from component.Branch import Branch
-from component.Step import Step
-from component.Task import Task
+
+from src.main.python.component.Branch import Branch
+from src.main.python.component.Step import Step
+from src.main.python.component.Task import Task
+from src.main.python.execution.QueueExecution import runThreads
+from src.main.python.util import Tools
 from src.main.python.util.CommonPrinter import *
-from util import Tools
-from util.NOETLJsonParser import NOETLJsonParser
-from util.Tools import processConfRequest
+from src.main.python.util.NOETLJsonParser import NOETLJsonParser
+from src.main.python.util.Tools import processConfRequest
 
 FIRST_TASK_NAME = "start"
 LAST_TASK_NAME = "exit"
 
+testMode = False
+
 
 def main(argv=None):
+    global testMode
     if len(argv) != 2:
         raise RuntimeError("Expecting a configuration file path as its argument.")
 
     configFilePath = str(argv[1])
     printInfo('Using configuration file "{0}"'.format(configFilePath))
     config = NOETLJsonParser(configFilePath).getConfig()
-    testMode = True if processConfRequest(config, "WORKFLOW.TEST.FLAG") == "True" else False
     try:
+        testMode = True if processConfRequest(config, "WORKFLOW.TEST.FLAG") == "True" else False
         if testMode:
             return doTest(config)
         else:
             task = Task(FIRST_TASK_NAME, config)
-            exitCode = getTask(config, task, False)
+            exitCode = getTask(config, task)
             return exitCode
     except:
         printErr("NOETL Failed.")
@@ -42,7 +48,7 @@ def doTest(config):
         printInfo("LIST of TASKS:\n" + taskList)
 
         task = Task(FIRST_TASK_NAME, config)
-        exitCode = getTask(config, task, True)
+        exitCode = getTask(config, task)
         printInfo("Finished test mode with exit code {0}".format(exitCode))
         return exitCode
     except:
@@ -50,7 +56,7 @@ def doTest(config):
         return 1
 
 
-def getTask(config, taskObj, testMode):
+def getTask(config, taskObj):
     if Tools.REQUEST_FAILED in taskObj.taskName:
         return 1
     try:
@@ -84,9 +90,9 @@ def getTask(config, taskObj, testMode):
                 for restartStepName in taskObj.restart:
                     printInfo('Step "{0}" failed with cursors "{1}".'.format(restartStepName, str(
                         taskObj.stepObs[restartStepName].cursorFail)))
-                return getTask(config, Task(taskObj.nextFail, config), testMode)
+                return getTask(config, Task(taskObj.nextFail, config))
             else:
-                return getTask(config, Task(taskObj.nextTask, config), testMode)
+                return getTask(config, Task(taskObj.nextTask, config))
     except:
         printErr("getTask failed for task '{0}'".format(str(taskObj)))
         return 1
@@ -201,7 +207,7 @@ def runBranch(taskObj, branchObj, config):
         printInfo(
             "Run branch at step '{0}' with failed cursor '{1}'.".format(currentStep.stepPath, currentStep.cursorFail))
         currentStep.cursorFail = []  # reset before running again
-        exitCode = runStep(taskObj, currentStep, branchObj)
+        exitCode = runStep(taskObj, currentStep, branchObj, config)
 
         if exitCode == 0:
             if not branchObj.atLastStep():
@@ -286,8 +292,29 @@ def runBranch(taskObj, branchObj, config):
         return 1
 
 
-def runStep(task, step, branch):
-    return 1
+def runStep(task, step, branch, config):
+    try:
+        exitCode, stepStartDate = 0, datetime.datetime.now()
+        printInfo("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s).".format(step.stepName, step.cursor,
+                                                                                            step.thread))
+        cursorQueue = Queue()
+        for cur in step.cursor:
+            cursorQueue.put(cur)
+        runThreads(config, step, cursorQueue, testMode)
+        printInfo(
+            "Execution time for step '{0}' is: '{1}'.".format(step.stepName, datetime.datetime.now() - stepStartDate))
+
+        if len(step.cursorFail) != 0:
+            printInfo("Step '{0}' failed with these cursors '{1}'.".format(step.stepPath, step.cursorFail))
+            step.cursor = step.cursorFail
+            step.failures += 1
+            if step.failures < step.maxFailures:
+                step.cursorFail = []
+                time.sleep(step.waittime)
+                return runStep(task, step, branch, config)
+    except:
+        printErr("RunStep failed for step '{0}'.".format(step.stepName))
+        return 1
 
 
 if __name__ == "__main__":

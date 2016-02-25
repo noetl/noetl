@@ -9,6 +9,7 @@ from src.main.python.util.CommonPrinter import *
 # IMPORTANT CHANGE!!!! ONLY PASS CURSOR LIST HERE.
 def runThreads(config, stepObj, cursorQueue, testMode):
     try:
+        threads = int(stepObj.thread) if stepObj.thread.isdigit() else 0
         for i in range(cursorQueue.qsize()):
             # TODO: limit number of threads by stepObj.thread
             th = Thread(target=runQueue, args=(config, stepObj, cursorQueue, testMode,))
