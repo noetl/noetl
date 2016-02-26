@@ -1,6 +1,5 @@
 import os
 from unittest import TestCase
-
 from src.main.python.execution.ExecutionActionsForTests import SupportedTestActionsUtils
 from src.main.python.noetl import *
 from src.rootPath import TEST_RESOURCES
@@ -44,7 +43,7 @@ class TestNOETL(TestCase):
 
         self.__sameSetupUp("noetlTest_simple3StepFailure_1.json", asserts)
 
-        """
+    """
     step1: cursor[-1], MaxFailure:1, Inherit: False
       |     \
       |      \F
@@ -64,3 +63,25 @@ class TestNOETL(TestCase):
             self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1_recovery", "-1")))
 
         self.__sameSetupUp("noetlTest_simple3StepFailure_2.json", asserts)
+
+    """
+    step1: cursor[-1], MaxFailure:1, Inherit: False
+      |     \      /\
+      |      \F      \ S
+      |S      \/      \
+      |     step1_recovery: cursor[1],  MaxFailure:1, Inherit: False
+      |     /
+      |    /F
+      |  \/
+    exit
+    """
+
+    def test_simple3StepFailure_3(self):
+        # This one tests recovery success.
+        def asserts(allLines):
+            self.assertEquals(3, len(allLines))
+            self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
+            self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1_recovery", "1")))
+            self.assertTrue(allLines[2].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
+
+        self.__sameSetupUp("noetlTest_simple3StepFailure_3.json", asserts)

@@ -1,6 +1,5 @@
 import json
 import re
-
 from CommonPrinter import *
 
 
@@ -17,6 +16,7 @@ class NOETLJsonParser:
     def __parseConfig(self):
         try:
             with open(self.confFilePath) as f:
+                # TODO: This doesn't enforce unique step names in the task
                 self.config = json.load(f)
                 self.__dereferenceConfig(self.config)
         except:

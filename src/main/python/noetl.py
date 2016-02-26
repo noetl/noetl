@@ -1,7 +1,6 @@
 import time
 from Queue import Queue
 from threading import Thread
-
 from src.main.python.component.Branch import Branch
 from src.main.python.component.Step import Step
 from src.main.python.component.Task import Task
@@ -73,7 +72,10 @@ def getTask(config, taskObj):
                                .format(taskObj.taskName, taskObj.start))
         # start task execution.
         if taskObj.taskName == FIRST_TASK_NAME:
+            taskStartDate = datetime.datetime.now()
             runTask(taskObj)
+            printInfo("Execution time for task '{0}' is: {1}."
+                      .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
             if len(taskObj.failedStepNames) > 0:
                 printFailedInfo(taskObj)
                 getTask(config, Task(taskObj.nextFail, config))
@@ -140,8 +142,6 @@ def makeBranchesForForkingStep(forkingStepObj):  # make sure step is a forking o
 def runTask(taskObj):
     try:
         printInfo("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
-        taskStartDate = datetime.datetime.now()
-
         startBranchNames = []
         for mergeStepName, branchNames in taskObj.start.iteritems():
             startBranchNames += branchNames
@@ -158,8 +158,6 @@ def runTask(taskObj):
             raise RuntimeError("No starting steps found for the task '{0}'".format(taskObj.taskName))
     except:
         printErr("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
-    printInfo("Execution time for task '{0}' is: {1}."
-              .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
 
 
 def forkBranches(branchQueue):
@@ -274,23 +272,24 @@ def runStep(step):
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
+        failureCount = 0
         runThreads(step, cursorQueue, testMode)
-        printInfo(
-            "Execution time for step '{0}' is: '{1}'.".format(step.stepName, datetime.datetime.now() - stepStartDate))
+        printInfo("Execution time for step '{0}' is: '{1}'."
+                  .format(step.stepName, datetime.datetime.now() - stepStartDate))
 
-        if len(step.cursorFail) != 0:
-            printInfo("Step '{0}' failed with these cursors '{1}'.".format(step.stepPath, step.cursorFail))
-            step.cursor = step.cursorFail
-            step.failures += 1
-            if step.failures < step.maxFailures:
-                step.cursorFail = []
-                time.sleep(step.waittime)
-                return runStep(step)
-            else:
-                printInfo("Run step '{0}' failed for '{1}' times reaching the step.maxFailures '{2}'."
-                          .format(step.stepPath, step.failures, step.maxFailures))
-                return 1
-        return 0
+        if len(step.cursorFail) == 0:
+            return 0
+
+        failureCount += 1
+        printInfo("Step '{0}' failed with cursors '{1}'. Failure Count: {2}, Maximum failure allowed: {3}."
+                  .format(step.stepPath, step.cursorFail, failureCount, step.maxFailures))
+        step.cursor = step.cursorFail
+        if failureCount < step.maxFailures:
+            step.cursorFail = []
+            time.sleep(step.waittime)
+            return runStep(step)
+        else:
+            return 1
     except:
         printErr("RunStep failed for step '{0}'.".format(step.stepName))
         return 1

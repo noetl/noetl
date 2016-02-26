@@ -16,10 +16,10 @@ class Step:
         failDict = nextDict["FAILURE"]
 
         self.nextFail = failDict["NEXT_STEP"]
+        # self.maxFailures controls how many times the cursor can fail for EACH step processing.
+        # This configuration seem to belong to call.cursor.
         self.maxFailures = int(failDict["MAX_FAILURES"])
         self.waittime = getWaitTime(failDict["WAITTIME"])
-
-        self.failures = 0
         self.cursorFail = []
 
         callDict = stepDict["CALL"]
@@ -37,8 +37,9 @@ class Step:
             self.cursorDataType = cursor["DATATYPE"]
             self.cursorIncrement = cursor["INCREMENT"]
             self.cursorFormat = cursor["FORMAT"]
+            # self.cursor keeps the cursors that need to be run. Will be updated to cursorFail if step failed.
             self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement,
-                                    self.cursorFormat)  # immutable once initialized
+                                    self.cursorFormat)
 
             self.cursorListIndex = range(0, len(self.cursorRange))
             self.curInherit = cursor["INHERIT"].lower() == 'true'

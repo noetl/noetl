@@ -19,10 +19,12 @@ class Task:
         self.stepObs = {}  # step name -> step obj, for this task
         self.branchesDict = {}  # branch name -> branch obj, for this task
         self.branchMakeComplete = {}
-        # this dictionary tells whether a branch construction completes or not
+        # self.branchMakeComplete tells whether the branch construction completes or not
         # branch name -> boolean (false when initialized), for branches in this task
         # will be set to true once the branch construction completes.
-        self.links = {}  # links the recovery step name to the RECOVERABLE step name who leads to the recovery step
+        self.links = {}
+        # self.links the recovery step name to the RECOVERABLE step name who leads to the recovery step
+        # the purpose of this field is to link all failed steps and add them all to self.failedStepNames
         self.failedStepNames = []  # list of failed step names; starting point for re-run
 
     @staticmethod
