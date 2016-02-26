@@ -41,7 +41,7 @@ class Step:
                                     self.cursorFormat)  # immutable once initialized
 
             self.cursorListIndex = range(0, len(self.cursorRange))
-            self.curInherit = cursor["INHERIT"]
+            self.curInherit = cursor["INHERIT"].lower() == 'true'
 
             self.callExec = callDict["EXEC"]
             self.execLists = self.callExec["CMD"]

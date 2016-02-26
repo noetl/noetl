@@ -36,11 +36,11 @@
               }
             },
             "CALL": {
-              "ACTION": "NOT EXIST",
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
               "THREAD": "0",
               "CURSOR": {
                 "RANGE": [
-                  "0"
+                  "-1"
                 ],
                 "DATATYPE": "integer",
                 "FORMAT": "",
@@ -72,11 +72,11 @@
               }
             },
             "CALL": {
-              "ACTION": "doTestJob_ExpandedStep",
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
               "THREAD": "0",
               "CURSOR": {
                 "RANGE": [
-                  "0"
+                  "1"
                 ],
                 "DATATYPE": "integer",
                 "FORMAT": "",
