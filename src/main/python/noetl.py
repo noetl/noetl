@@ -98,8 +98,8 @@ def printFailedInfo(taskObj):
 
 
 def makeBranches(branchObj, stepObj):
+    taskObj = branchObj.task
     try:
-        taskObj = branchObj.task
         stepSuccessValues = stepObj.success.values()
         if len(stepSuccessValues) == 1 and len(stepSuccessValues[0]) == 1:  # sequential steps.
             nextStepName = stepSuccessValues[0][0]
@@ -270,16 +270,8 @@ def runBranch(branchObj):
                 return 1  # exitCode = 1
             else:  # fail for the first time and try to recover
                 recoverStep = branchObj.failAtStep(currentStep)
-                while recoverStep.stepName != "exit" and recoverStep.stepName not in branchObj.steps.keys() and \
-                        (recoverStep.stepName != branchObj.lastStep):
-                    # add nextFail steps to step list until failBranch merges with original branch or ends
-                    if recoverStep.curInherit:
-                        recoverStep.cursor = currentStep.cursor
-                    branchObj.addStep(recoverStep)
-                    # TODO: this assume that failure branch can only be a sequence of steps
-                    recoverStep = Step(taskObj, recoverStep.success.values()[0][0])
                 if recoverStep.stepName == "exit":
-                    branchObj.lastStep = "exit"
+                    branchObj.lastStepName = "exit"
                 return runBranch(branchObj)
     except:
         currentStep = branchObj.steps[branchObj.currentStepName]

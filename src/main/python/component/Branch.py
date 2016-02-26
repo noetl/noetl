@@ -9,7 +9,7 @@ class Branch:  # branch is a sequential presentation of steps.
         self.branchName = startStepObj.stepName  # branchName is its first step name
         self.currentStepName = startStepObj.stepName  # current Step name
         self.mergeStep = mergeStepName  # 0 if branch is not a merge branch, and dependencies should be empty
-        self.lastStep = None  # last step name
+        self.lastStepName = None  # last step name, it could be the step immediately before "exit"
         self.steps = {}  # step name -> step obj, for this branch
         self.dependencies = []  # list of dependent branch names if it's a merge branch
         self.done = False  # branch successfully completed
@@ -28,7 +28,7 @@ class Branch:  # branch is a sequential presentation of steps.
 
     def setLastStep(self, lastStep):
         self.task.branchMakeComplete[self.branchName] = True
-        self.lastStep = lastStep.stepName
+        self.lastStepName = lastStep.stepName
 
     # We don't want to make mergeBranch (multiple times) if not all dependencies are complete
     def dependenciesMakeComplete(self):
@@ -45,7 +45,7 @@ class Branch:  # branch is a sequential presentation of steps.
         return True
 
     def isLastStep(self):
-        return self.currentStepName == self.lastStep
+        return self.currentStepName == self.lastStepName
 
     def moveToNextSuccess(self):
         nextStepName = self.steps[self.currentStepName].success.values()[0][0]
@@ -58,6 +58,9 @@ class Branch:  # branch is a sequential presentation of steps.
     #     self.currentStepName = nextStepName
     #     return nextStepName
 
+    def containsStep(self, stepName):
+        return stepName in self.steps.keys()
+
     def failAtStep(self, step):
         self.traceBranch = True
         failedStepName = step.stepName
@@ -66,4 +69,11 @@ class Branch:  # branch is a sequential presentation of steps.
         recoverStep = Step(self.task, step.nextFail)
         self.currentStepName = recoverStep.stepName
         self.task.linkRetry(recoverStep.stepName, failedStepName)
+        while not self.containsStep(recoverStep.stepName) and recoverStep.stepName != "exit":
+            # add nextFail steps to step list until failBranch merges with original branch or ends
+            if recoverStep.curInherit:
+                recoverStep.cursor = step.cursor
+            self.addStep(recoverStep)
+            # TODO: This assumes that recovery part is a sequence of steps. It is true for the immediately next step, but not necessarily true after that.
+            recoverStep = Step(self.task, recoverStep.success.values()[0][0])
         return recoverStep

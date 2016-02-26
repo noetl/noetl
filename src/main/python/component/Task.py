@@ -31,7 +31,7 @@ class Task:
 
     def linkRetry(self, recoverStepName, recoverableStepName):
         traceLinks = self.links.get(recoverStepName)
-        if len(traceLinks) == 0:
+        if traceLinks is None or len(traceLinks) == 0:
             self.links[recoverStepName] = [recoverableStepName]
         else:
             traceLinks.append(recoverableStepName)
