@@ -6,7 +6,7 @@
   ],
   "WORKFLOW": {
     "TEST": {
-      "FLAG": "True"
+      "FLAG": "False"
     },
     "TASKS": {
       "start": {

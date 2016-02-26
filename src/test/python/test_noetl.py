@@ -109,3 +109,24 @@ class TestNOETL(TestCase):
             self.assertTrue(allLines[4].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
 
         self.__sameSetupUp("noetlTest_simple3StepFailure_4.json", asserts)
+
+    """
+            start
+            /   \
+           /     \
+          /       \
+    step1:        step2:cursor[1]
+    cursor[1]
+
+
+            exit
+    """
+
+    def test_simpleFork_1(self):
+        # This one tests simple 2 forks without merge
+        def asserts(allLines):
+            self.assertEquals(2, len(allLines))
+            self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "1")))
+            self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step2", "1")))
+
+        self.__sameSetupUp("noetlTest_simpleFork_1.json", asserts)

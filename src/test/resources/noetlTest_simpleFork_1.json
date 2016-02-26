@@ -13,7 +13,8 @@
         "DESC": "Test task",
         "START": {
           "0": [
-            "step1"
+            "step1",
+            "step2"
           ]
         },
         "NEXT": {
@@ -22,7 +23,7 @@
         },
         "STEPS": {
           "step1": {
-            "DESC": "The step that fails.",
+            "DESC": "Forked Step1.",
             "NEXT": {
               "SUCCESS": {
                 "0": [
@@ -30,17 +31,17 @@
                 ]
               },
               "FAILURE": {
-                "NEXT_STEP": "step1_recovery",
+                "NEXT_STEP": "exit",
                 "MAX_FAILURES": "1",
                 "WAITTIME": "0s"
               }
             },
             "CALL": {
-              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking_SleepForFork",
               "THREAD": "0",
               "CURSOR": {
                 "RANGE": [
-                  "-1"
+                  "1"
                 ],
                 "DATATYPE": "integer",
                 "FORMAT": "",
@@ -57,8 +58,8 @@
               }
             }
           },
-          "step1_recovery": {
-            "DESC": "step1_recovery",
+          "step2": {
+            "DESC": "Forked Step2.",
             "NEXT": {
               "SUCCESS": {
                 "0": [
@@ -72,7 +73,7 @@
               }
             },
             "CALL": {
-              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking_SleepForFork",
               "THREAD": "0",
               "CURSOR": {
                 "RANGE": [

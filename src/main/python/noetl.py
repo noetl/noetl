@@ -63,7 +63,7 @@ def getTask(config, taskObj):
             branch = Branch(stepObj, "0")
             makeBranches(branch, stepObj)
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
-            makeBranchesForForkingStep(taskObj.start)
+            makeBranchesForForkingStep(taskObj, taskObj.start)
         else:
             # TODO: There are many cases we didn't cover, such as
             # start:{0:[]}, start:{0:[1,2]}, start:{1:[]}, start:{2:[], 2:[1]}
@@ -116,16 +116,15 @@ def makeBranches(branchObj, stepObj):
                 makeBranches(branchObj, nextStep)
         if len(stepSuccessValues) > 1 or len(stepSuccessValues[0]) > 1:  # create new branches if forking
             branchObj.setLastStep(stepObj)
-            makeBranchesForForkingStep(stepObj)
+            makeBranchesForForkingStep(taskObj, stepObj.success)
         raise RuntimeError("Unsupported NEXT.SUCCESS configuration for the step '{0}': {1}"
                            .format(stepObj.stepName, stepObj.success))
     except:
         printErr("MakeBranches failed for task:  ", taskObj.taskName, stepObj.stepName)
 
 
-def makeBranchesForForkingStep(forkingStepObj):  # make sure step is a forking one before you call it.
-    taskObj = forkingStepObj.task
-    for mergeStepName, branchNames in forkingStepObj.iteritems():
+def makeBranchesForForkingStep(taskObj, forkingDictionary):  # make sure step is a forking one before you call it.
+    for mergeStepName, branchNames in forkingDictionary.iteritems():
         if mergeStepName != "0":  # If 0, branches don't merge.
             # Otherwise, create merge branch and add forked branches as its dependency
             mergeStep = Step(taskObj, mergeStepName)

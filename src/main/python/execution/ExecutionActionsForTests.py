@@ -2,11 +2,11 @@ import datetime
 import os
 import random
 import time
-
 from src.rootPath import TEST_RESOURCES
 from util.CommonPrinter import printErr
 
 
+# TODO: This class should be moved to test
 class SupportedTestActions:
     def __init__(self):
         pass
@@ -59,6 +59,25 @@ class SupportedTestActions:
                         .format(SupportedTestActionsUtils.getPrefixString(stepObj.stepName, currentCursor),
                                 datetime.datetime.now(),
                                 os.linesep))
+            if int(currentCursor) <= 0:
+                return 1
+            else:
+                return 0
+        except:
+            printErr("doTestJob_CreateFile_ForOrderTracking failed.")
+            return 1
+
+    @staticmethod
+    def doTestJob_CreateFile_ForOrderTracking_SleepForFork(stepObj, currentCursor, testMode):
+        try:
+            filePath = os.path.join(TEST_RESOURCES, "ChenTestGeneratedFile")
+            print(filePath)
+            with open(filePath, 'aw') as f:
+                f.write("{0} at {1}.{2}"
+                        .format(SupportedTestActionsUtils.getPrefixString(stepObj.stepName, currentCursor),
+                                datetime.datetime.now(),
+                                os.linesep))
+            time.sleep(2)
             if int(currentCursor) <= 0:
                 return 1
             else:
