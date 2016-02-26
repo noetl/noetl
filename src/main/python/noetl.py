@@ -211,23 +211,7 @@ def runBranch(branchObj):
         exitCode = runStep(currentStep)
 
         if exitCode == 0:
-            if not branchObj.isLastStep():
-                branchObj.moveToNextSuccess()
-                if branchObj.traceBranch:
-                    if branchObj.currentStepName == branchObj.lastFail:  # remove nextFail loop from links
-                        def removeLink(stepName):
-                            delNext = taskObj.links.get(stepName)
-                            if delNext is not None:
-                                del taskObj.links[stepName]
-                                for delN in delNext:
-                                    removeLink(delN)
-
-                        removeLink(currentStep.stepName)
-                        branchObj.traceBranch = False
-                    else:
-                        taskObj.linkRetry(branchObj.currentStepName, currentStep.stepName)
-                return runBranch(branchObj)
-            else:  # At branch last step. Start new branch.
+            if branchObj.isLastStep():  # At branch last step. Start new branch.
                 branchObj.done = True
                 nextStepName = currentStep.success.values()[0][0]
                 if len(currentStep.success.values()) == 1 and len(currentStep.success.values()[0]) == 1:
@@ -256,6 +240,22 @@ def runBranch(branchObj):
                 else:
                     raise RuntimeError("Step '{0}' has empty or unsupported success configurations '{1}'."
                                        .format(currentStep.stepName, currentStep.success))
+            else:
+                branchObj.moveToNextSuccess()
+                if branchObj.traceBranch:
+                    if branchObj.currentStepName == branchObj.lastFail:  # remove nextFail loop from links
+                        def removeLink(stepName):
+                            delNext = taskObj.links.get(stepName)
+                            if delNext is not None:
+                                del taskObj.links[stepName]
+                                for delN in delNext:
+                                    removeLink(delN)
+
+                        removeLink(currentStep.stepName)
+                        branchObj.traceBranch = False
+                    else:
+                        taskObj.linkRetry(branchObj.currentStepName, currentStep.stepName)
+                return runBranch(branchObj)
         else:  # when step failed
             if currentStep.stepName in branchObj.failedSteps or currentStep.nextFail == "exit":
                 def traceBackRecoveryPath(stepName):
