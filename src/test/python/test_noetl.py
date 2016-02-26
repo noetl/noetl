@@ -11,8 +11,20 @@ class TestNOETL(TestCase):
         filePath = os.path.join(TEST_RESOURCES, "noetlTest_mostBasic.json")
         main([None, filePath])
 
-    def test_goThroughBasicFailure(self):
-        filePath = os.path.join(TEST_RESOURCES, "noetlTest_simple3StepFailure.json")
+    """
+    step1: cursor[-1], MaxFailure:1
+      |     \
+      |      \F
+      |S      \
+      |     step1_recovery: cursor[1],  MaxFailure:1, Inherit: False
+      |     /
+      |    /SF
+      |   /
+    exit
+    """
+
+    def test_goThroughBasicFailure_1(self):
+        filePath = os.path.join(TEST_RESOURCES, "noetlTest_simple3StepFailure_1.json")
         generatedFile = os.path.join(TEST_RESOURCES, "ChenTestGeneratedFile")
         if os.path.exists(generatedFile):
             os.remove(generatedFile)
