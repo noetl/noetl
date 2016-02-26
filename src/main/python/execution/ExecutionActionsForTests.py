@@ -78,6 +78,7 @@ class SupportedTestActions:
                                 datetime.datetime.now(),
                                 os.linesep))
             time.sleep(int(currentCursor))
+            return 0
         except:
             printErr("doTestJob_CreateFile_ForOrderTracking failed.")
             return 1

@@ -109,14 +109,14 @@ def makeBranches(branchObj, stepObj):
                 mergeBranch = taskObj.branchesDict[nextStepName]
                 if mergeBranch.dependenciesMakeComplete():
                     makeBranches(mergeBranch, nextStep)
-                else:
-                    return
             else:
                 branchObj.addStep(nextStep)
                 makeBranches(branchObj, nextStep)
+            return
         if len(stepSuccessValues) > 1 or len(stepSuccessValues[0]) > 1:  # create new branches if forking
             branchObj.setLastStep(stepObj)
             makeBranchesForForkingStep(taskObj, stepObj.success)
+            return
         raise RuntimeError("Unsupported NEXT.SUCCESS configuration for the step '{0}': {1}"
                            .format(stepObj.stepName, stepObj.success))
     except:
@@ -126,16 +126,16 @@ def makeBranches(branchObj, stepObj):
 def makeBranchesForForkingStep(taskObj, forkingDictionary):  # make sure step is a forking one before you call it.
     for mergeStepName, branchNames in forkingDictionary.iteritems():
         if mergeStepName != "0":  # If 0, branches don't merge.
-            # Otherwise, create merge branch and add forked branches as its dependency
             mergeStep = Step(taskObj, mergeStepName)
             mergeBranch = Branch(mergeStep, "0")
             for branchName in branchNames:
+                # don't makeBranches for mergeBranch until all dependencies are ready
                 mergeBranch.dependencies.append(branchName)
-                # makeBranches for mergeBranch happens somewhere in makeBranches
         for branchName in branchNames:
-            stepObj = Step(taskObj, branchName)
-            newBranch = Branch(stepObj, mergeStepName)
-            makeBranches(newBranch, stepObj)
+            Branch(Step(taskObj, branchName), mergeStepName)  # create the branches
+        for branchName in branchNames:
+            branchObj = taskObj.branchesDict[branchName]
+            makeBranches(branchObj, branchObj.steps[branchObj.currentStepName])
 
 
 def runTask(taskObj):
@@ -253,7 +253,6 @@ def runBranch(branchObj):
                         taskObj.failedStepNames.append(stepName)
 
                 traceBackRecoveryPath(currentStep.stepName)
-                return
             else:  # fail for the first time and try to recover
                 branchObj.failAtStep(currentStep)
                 runBranch(branchObj)
