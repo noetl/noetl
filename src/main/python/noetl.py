@@ -202,6 +202,9 @@ def runBranchQueue(branchQueue):
 
 
 def runBranch(branchObj):
+    if branchObj.currentStepName == "exit":
+        branchObj.done = True
+        return 0
     try:  # execute current step for branch
         taskObj = branchObj.task
         currentStep = branchObj.steps[branchObj.currentStepName]
@@ -269,9 +272,7 @@ def runBranch(branchObj):
                 traceBackRecoveryPath(currentStep.stepName)
                 return 1  # exitCode = 1
             else:  # fail for the first time and try to recover
-                recoverStep = branchObj.failAtStep(currentStep)
-                if recoverStep.stepName == "exit":
-                    branchObj.lastStepName = "exit"
+                branchObj.failAtStep(currentStep)
                 return runBranch(branchObj)
     except:
         currentStep = branchObj.steps[branchObj.currentStepName]

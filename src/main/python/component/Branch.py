@@ -69,11 +69,11 @@ class Branch:  # branch is a sequential presentation of steps.
         recoverStep = Step(self.task, step.nextFail)
         self.currentStepName = recoverStep.stepName
         self.task.linkRetry(recoverStep.stepName, failedStepName)
+        # add all downstream recovery steps to this branch until it reaches exit or merges with original branch
         while not self.containsStep(recoverStep.stepName) and recoverStep.stepName != "exit":
-            # add nextFail steps to step list until failBranch merges with original branch or ends
             if recoverStep.curInherit:
                 recoverStep.cursor = step.cursor
+            # TODO: This might be a problem if recoverStep points to a step in downstream branch that is in the same task.
             self.addStep(recoverStep)
             # TODO: This assumes that recovery part is a sequence of steps. It is true for the immediately next step, but not necessarily true after that.
             recoverStep = Step(self.task, recoverStep.success.values()[0][0])
-        return recoverStep
