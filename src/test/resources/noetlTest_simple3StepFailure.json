@@ -72,7 +72,25 @@
               }
             },
             "CALL": {
-              "ACTION": "Exit"
+              "ACTION": "doTestJob_ExpandedStep",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "0"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    ""
+                  ]
+                ]
+              }
             }
           },
           "exit": {

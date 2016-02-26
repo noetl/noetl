@@ -28,7 +28,7 @@
               }
             },
             "CALL": {
-              "ACTION": "doTestJobRandom",
+              "ACTION": "doTestJob_MimicReality",
               "THREAD": "3",
               "CURSOR": {
                 "RANGE": [

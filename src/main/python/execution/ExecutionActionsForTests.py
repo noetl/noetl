@@ -4,7 +4,7 @@ import time
 
 class SupportedTestActions:
     @staticmethod
-    def doTestJob(stepObj, currentCursor, testMode):
+    def doTestJob_ExpandedStep(stepObj, currentCursor, testMode):
         print(
             "Executing {0}-{1} cursor {2}"
                 .format(str(stepObj.task.taskName), str(stepObj.stepName), str(currentCursor)))
@@ -20,7 +20,7 @@ class SupportedTestActions:
         return 0
 
     @staticmethod
-    def doTestJobRandom(stepObj, currentCursor, testMode):
+    def doTestJob_MimicReality(stepObj, currentCursor, testMode):
         print(
             "Executing {0}-{1} cursor {2}"
                 .format(str(stepObj.task.taskName), str(stepObj.stepName), str(currentCursor)))

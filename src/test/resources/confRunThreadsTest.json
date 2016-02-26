@@ -28,7 +28,7 @@
               }
             },
             "CALL": {
-              "ACTION": "doTestJob",
+              "ACTION": "doTestJob_ExpandedStep",
               "THREAD": "0",
               "CURSOR": {
                 "RANGE": [

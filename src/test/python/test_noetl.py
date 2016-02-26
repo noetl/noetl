@@ -10,5 +10,5 @@ class TestNOETL(TestCase):
         main([None, filePath])
 
     def test_goThroughBasicFailure(self):
-        filePath = os.path.join(TEST_RESOURCES, "noetlTest_basicFailure.json")
+        filePath = os.path.join(TEST_RESOURCES, "noetlTest_simple3StepFailure.json")
         main([None, filePath])
