@@ -77,11 +77,7 @@ class SupportedTestActions:
                         .format(SupportedTestActionsUtils.getPrefixString(stepObj.stepName, currentCursor),
                                 datetime.datetime.now(),
                                 os.linesep))
-            time.sleep(2)
-            if int(currentCursor) <= 0:
-                return 1
-            else:
-                return 0
+            time.sleep(int(currentCursor))
         except:
             printErr("doTestJob_CreateFile_ForOrderTracking failed.")
             return 1

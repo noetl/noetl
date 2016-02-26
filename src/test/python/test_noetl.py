@@ -1,27 +1,29 @@
 import os
 from unittest import TestCase
+
 from src.main.python.execution.ExecutionActionsForTests import SupportedTestActionsUtils
 from src.main.python.noetl import *
 from src.rootPath import TEST_RESOURCES
+
+
+def sameSetupUp(fileName, asserts):
+    filePath = os.path.join(TEST_RESOURCES, fileName)
+    generatedFile = os.path.join(TEST_RESOURCES, "ChenTestGeneratedFile")
+    if os.path.exists(generatedFile):
+        os.remove(generatedFile)
+    main([None, filePath])
+    with open(generatedFile) as f:
+        all = f.readlines()
+        print(os.linesep)
+        print(os.linesep.join(all))
+        asserts(all)
+    os.remove(generatedFile)
 
 
 class TestNOETL(TestCase):
     def test_goThroughMostBasic(self):
         filePath = os.path.join(TEST_RESOURCES, "noetlTest_mostBasic.json")
         main([None, filePath])
-
-    def __sameSetupUp(self, fileName, asserts):
-        filePath = os.path.join(TEST_RESOURCES, fileName)
-        generatedFile = os.path.join(TEST_RESOURCES, "ChenTestGeneratedFile")
-        if os.path.exists(generatedFile):
-            os.remove(generatedFile)
-        main([None, filePath])
-        with open(generatedFile) as f:
-            all = f.readlines()
-            print(os.linesep)
-            print(os.linesep.join(all))
-            asserts(all)
-        os.remove(generatedFile)
 
     """
     step1: cursor[-1], MaxFailure:1, Inherit: False
@@ -41,7 +43,7 @@ class TestNOETL(TestCase):
             self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
             self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1_recovery", "1")))
 
-        self.__sameSetupUp("noetlTest_simple3StepFailure_1.json", asserts)
+        sameSetupUp("noetlTest_simple3StepFailure_1.json", asserts)
 
     """
     step1: cursor[-1], MaxFailure:1, Inherit: False
@@ -62,7 +64,7 @@ class TestNOETL(TestCase):
             self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
             self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1_recovery", "-1")))
 
-        self.__sameSetupUp("noetlTest_simple3StepFailure_2.json", asserts)
+        sameSetupUp("noetlTest_simple3StepFailure_2.json", asserts)
 
     """
     step1: cursor[-1], MaxFailure:1, Inherit: False
@@ -84,7 +86,7 @@ class TestNOETL(TestCase):
             self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1_recovery", "1")))
             self.assertTrue(allLines[2].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
 
-        self.__sameSetupUp("noetlTest_simple3StepFailure_3.json", asserts)
+        sameSetupUp("noetlTest_simple3StepFailure_3.json", asserts)
 
     """
     step1: cursor[-1], MaxFailure:2, Inherit: False
@@ -108,25 +110,4 @@ class TestNOETL(TestCase):
             self.assertTrue(allLines[3].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
             self.assertTrue(allLines[4].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
 
-        self.__sameSetupUp("noetlTest_simple3StepFailure_4.json", asserts)
-
-    """
-            start
-            /   \
-           /     \
-          /       \
-    step1:        step2:cursor[1]
-    cursor[1]
-
-
-            exit
-    """
-
-    def test_simpleFork_1(self):
-        # This one tests simple 2 forks without merge
-        def asserts(allLines):
-            self.assertEquals(2, len(allLines))
-            self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "1")))
-            self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step2", "1")))
-
-        self.__sameSetupUp("noetlTest_simpleFork_1.json", asserts)
+        sameSetupUp("noetlTest_simple3StepFailure_4.json", asserts)
