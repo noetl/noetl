@@ -79,7 +79,7 @@ def getTask(config, taskObj):
         # start task execution.
         if taskObj.taskName == FIRST_TASK_NAME:
             exitCode = runTask(taskObj)
-            if exitCode == 1 or len(taskObj.failedStepNames) >= 0:
+            if exitCode == 1 or len(taskObj.failedStepNames) > 0:
                 printFailedInfo(taskObj)
                 return getTask(config, Task(taskObj.nextFail, config))
             else:
@@ -90,10 +90,10 @@ def getTask(config, taskObj):
 
 
 def printFailedInfo(taskObj):
-    printInfo("Task '{0}' failed with step(s): '{1}'."
+    printInfo("FAILURE: Task '{0}' failed with step(s): '{1}'."
               .format(taskObj.taskName, ",".join(taskObj.failedStepNames)))
     for failedStep in taskObj.failedStepNames:
-        printInfo('Step "{0}" failed with cursors "{1}".'
+        printInfo('FAILURE: Step "{0}" failed with cursors "{1}".'
                   .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
 
 
@@ -103,10 +103,10 @@ def makeBranches(branchObj, stepObj):
         stepSuccessValues = stepObj.success.values()
         if len(stepSuccessValues) == 1 and len(stepSuccessValues[0]) == 1:  # sequential steps.
             nextStepName = stepSuccessValues[0][0]
-            nextStep = Step(taskObj, nextStepName)
             if nextStepName == "exit":
                 branchObj.setLastStep(stepObj)
                 return 0
+            nextStep = Step(taskObj, nextStepName)
             if nextStepName == branchObj.mergeStep:
                 branchObj.setLastStep(stepObj)
                 mergeBranch = taskObj.branchesDict[nextStepName]
@@ -211,7 +211,7 @@ def runBranch(branchObj):
         exitCode = runStep(currentStep)
 
         if exitCode == 0:
-            if not branchObj.atLastStep():
+            if not branchObj.isLastStep():
                 branchObj.moveToNextSuccess()
                 if branchObj.traceBranch:
                     if branchObj.currentStepName == branchObj.lastFail:  # remove nextFail loop from links

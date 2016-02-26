@@ -36,25 +36,7 @@
               }
             },
             "CALL": {
-              "ACTION": "Exit",
-              "THREAD": "0",
-              "CURSOR": {
-                "RANGE": [
-                  "0"
-                ],
-                "DATATYPE": "integer",
-                "FORMAT": "",
-                "INCREMENT": "1",
-                "INHERIT": "False"
-              },
-              "EXEC": {
-                "URL": "",
-                "CMD": [
-                  [
-                    "?????"
-                  ]
-                ]
-              }
+              "ACTION": "Exit"
             }
           }
         }

@@ -44,7 +44,7 @@ class Branch:  # branch is a sequential presentation of steps.
                 return False
         return True
 
-    def atLastStep(self):
+    def isLastStep(self):
         return self.currentStepName == self.lastStep
 
     def moveToNextSuccess(self):

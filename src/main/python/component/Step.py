@@ -24,21 +24,27 @@ class Step:
 
         callDict = stepDict["CALL"]
         self.action = callDict["ACTION"]
-        self.thread = callDict["THREAD"]
+        self.thread = "0"
+        self.cursor = []
+        self.curInherit = False
+        self.execLists = []
 
-        cursor = callDict["CURSOR"]
-        self.cursorRange = cursor["RANGE"]
-        self.cursorDataType = cursor["DATATYPE"]
-        self.cursorIncrement = cursor["INCREMENT"]
-        self.cursorFormat = cursor["FORMAT"]
-        self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement,
-                                self.cursorFormat)  # immutable once initialized
+        if self.action.lower() != "exit":
+            self.thread = callDict["THREAD"]
 
-        self.cursorListIndex = range(0, len(self.cursorRange))
-        self.curInherit = cursor["INHERIT"]
+            cursor = callDict["CURSOR"]
+            self.cursorRange = cursor["RANGE"]
+            self.cursorDataType = cursor["DATATYPE"]
+            self.cursorIncrement = cursor["INCREMENT"]
+            self.cursorFormat = cursor["FORMAT"]
+            self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement,
+                                    self.cursorFormat)  # immutable once initialized
 
-        self.callExec = callDict["EXEC"]
-        self.execLists = self.callExec["CMD"]
+            self.cursorListIndex = range(0, len(self.cursorRange))
+            self.curInherit = cursor["INHERIT"]
+
+            self.callExec = callDict["EXEC"]
+            self.execLists = self.callExec["CMD"]
 
     @staticmethod
     def getStepPath(taskName, stepName):
