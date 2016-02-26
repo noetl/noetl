@@ -223,7 +223,7 @@ def runBranch(branchObj):
                     nextBranch = taskObj.branchesDict[nextStepName]
                     if branchObj.traceBranch:
                         nextBranch.traceBranch = True
-                        taskObj.linkRetry(nextStepName, currentStep.stepName)
+                        taskObj.linkFailureHandling(nextStepName, currentStep.stepName)
                     if nextBranch.dependenciesExecutionComplete():
                         return runBranch(nextBranch)
                 elif len(currentStep.success.values()) > 1 or len(currentStep.success.values()[0]) > 1:
@@ -233,7 +233,7 @@ def runBranch(branchObj):
                             forkBranchName = taskObj.branchesDict[forkBranchName]
                             if branchObj.traceBranch:  # trace forked branches
                                 forkBranchName.traceBranch = True
-                                taskObj.linkRetry(forkBranchName, currentStep.stepName)
+                                taskObj.linkFailureHandling(forkBranchName, currentStep.stepName)
                             branchQueue.put(forkBranchName)
                     # Chen: There is potential bug here.
                     # Consider this case: task.start:{m1:[s1,s2]}. steps{s1.next.success{0:[m1,m2]}}
@@ -257,7 +257,7 @@ def runBranch(branchObj):
                         removeLink(currentStep.stepName)
                         branchObj.traceBranch = False
                     else:
-                        taskObj.linkRetry(branchObj.currentStepName, currentStep.stepName)
+                        taskObj.linkFailureHandling(branchObj.currentStepName, currentStep.stepName)
                 return runBranch(branchObj)
         else:  # when step failed
             if currentStep.stepName in branchObj.failedSteps or currentStep.nextFail == "exit":

@@ -29,7 +29,8 @@ class Task:
     def getTaskPath(taskName):
         return "WORKFLOW.TASKS.{0}".format(str(taskName))
 
-    def linkRetry(self, recoverStepName, recoverableStepName):
+    def linkFailureHandling(self, recoverStepName, recoverableStepName):
+        # recovery step is the handling step, recoverable step is the failed step
         traceLinks = self.links.get(recoverStepName)
         if traceLinks is None or len(traceLinks) == 0:
             self.links[recoverStepName] = [recoverableStepName]
