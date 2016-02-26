@@ -1,0 +1,127 @@
+{
+  "LOGGING": [
+    {
+      "NAME": "XXX"
+    }
+  ],
+  "WORKFLOW": {
+    "TEST": {
+      "FLAG": "True"
+    },
+    "TASKS": {
+      "start": {
+        "DESC": "Test task",
+        "START": {
+          "0": [
+            "step1"
+          ]
+        },
+        "NEXT": {
+          "SUCCESS": "exit",
+          "FAILURE": "exit"
+        },
+        "STEPS": {
+          "step1": {
+            "DESC": "The step that fails.",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "exit"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "step1_recovery",
+                "MAX_FAILURES": "2",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "-1"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    ""
+                  ]
+                ]
+              }
+            }
+          },
+          "step1_recovery": {
+            "DESC": "step1_recovery",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "step1"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "1"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    ""
+                  ]
+                ]
+              }
+            }
+          },
+          "exit": {
+            "DESC": "Exit test",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "exit"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "Exit"
+            }
+          }
+        }
+      },
+      "exit": {
+        "DESC": "Exit Task",
+        "START": {},
+        "STEPS": {},
+        "NEXT": {
+          "SUCCESS": "",
+          "FAILURE": ""
+        }
+      }
+    }
+  }
+}

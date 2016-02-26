@@ -263,7 +263,7 @@ def runBranch(branchObj):
         printErr("Failed to get current step '{0}' with path '{1}'.".format(currentStep.stepName, currentStep.stepPath))
 
 
-def runStep(step):
+def runStep(step, failureCount=0):
     global testMode
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
@@ -272,7 +272,6 @@ def runStep(step):
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
-        failureCount = 0
         runThreads(step, cursorQueue, testMode)
         printInfo("Execution time for step '{0}' is: '{1}'."
                   .format(step.stepName, datetime.datetime.now() - stepStartDate))
@@ -287,7 +286,7 @@ def runStep(step):
         if failureCount < step.maxFailures:
             step.cursorFail = []
             time.sleep(step.waittime)
-            return runStep(step)
+            return runStep(step, failureCount)
         else:
             return 1
     except:

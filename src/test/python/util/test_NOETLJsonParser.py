@@ -35,6 +35,20 @@ class TestNOETLJsonParser(TestCase):
             elif isinstance(logConf, basestring):
                 self.assertEquals("FUN", logConf)
 
+    def testGetGoodConfig2(self):
+        filePath = os.path.join(TEST_RESOURCES, "noetlTest_simple3StepFailure_4.json")
+        conf = NOETLJsonParser(filePath).getConfig()
+        workFlows = conf["WORKFLOW"]
+        self.assertEquals(2, len(workFlows))
+        startTaskSteps = workFlows["TASKS"]["start"]["STEPS"]
+        self.assertEquals(3, len(startTaskSteps))
+        step1Failure = startTaskSteps["step1"]["NEXT"]["FAILURE"]
+        self.assertEquals(3, len(step1Failure))
+        self.assertEquals("step1_recovery", step1Failure["NEXT_STEP"])
+        self.assertEquals("2", step1Failure["MAX_FAILURES"])
+        self.assertEquals("0s", step1Failure["WAITTIME"])
+
+
     def testGetBadConfig(self):
         filePath = os.path.join(TEST_RESOURCES, "confExample2_bad.json")
         with self.assertRaises(SystemExit):
