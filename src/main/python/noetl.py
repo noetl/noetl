@@ -1,10 +1,11 @@
 import time
 from Queue import Queue
 from threading import Thread
+
 from src.main.python.component.Branch import Branch
 from src.main.python.component.Step import Step
 from src.main.python.component.Task import Task
-from src.main.python.execution.QueueExecution import runThreads
+from src.main.python.execution.QueueExecution import runCursorQueue
 from src.main.python.util.CommonPrinter import *
 from src.main.python.util.NOETLJsonParser import NOETLJsonParser
 from src.main.python.util.Tools import processConfRequest
@@ -63,7 +64,7 @@ def getTask(config, taskObj):
             branch = Branch(stepObj, "0")
             makeBranches(branch, stepObj)
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
-            makeBranchesForForkingStep(taskObj, taskObj.start)
+            makeForkBranches(taskObj, taskObj.start)
         else:
             # TODO: There are many cases we didn't cover, such as
             # start:{0:[]}, start:{0:[1,2]}, start:{1:[]}, start:{2:[], 2:[1]}
@@ -115,7 +116,7 @@ def makeBranches(branchObj, stepObj):
             return
         if len(stepSuccessValues) > 1 or len(stepSuccessValues[0]) > 1:  # create new branches if forking
             branchObj.setLastStep(stepObj)
-            makeBranchesForForkingStep(taskObj, stepObj.success)
+            makeForkBranches(taskObj, stepObj.success)
             return
         raise RuntimeError("Unsupported NEXT.SUCCESS configuration for the step '{0}': {1}"
                            .format(stepObj.stepName, stepObj.success))
@@ -123,7 +124,7 @@ def makeBranches(branchObj, stepObj):
         printErr("MakeBranches failed for task:  ", taskObj.taskName, stepObj.stepName)
 
 
-def makeBranchesForForkingStep(taskObj, forkingDictionary):  # make sure step is a forking one before you call it.
+def makeForkBranches(taskObj, forkingDictionary):  # make sure step is a forking one before you call it.
     for mergeStepName, branchNames in forkingDictionary.iteritems():
         if mergeStepName != "0":  # If 0, branches don't merge.
             mergeStep = Step(taskObj, mergeStepName)
@@ -148,7 +149,7 @@ def runTask(taskObj):
             branchQueue = Queue()
             for branchName in startBranchNames:
                 branchQueue.put(taskObj.branchesDict[branchName])
-            forkBranches(branchQueue)
+            runBranchQueue(branchQueue)
         elif len(startBranchNames) == 1:
             branchName = startBranchNames[0]
             branch = taskObj.branchesDict[branchName]
@@ -159,10 +160,10 @@ def runTask(taskObj):
         printErr("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
 
 
-def forkBranches(branchQueue):
+def runBranchQueue(branchQueue):
     try:
         for branchId in range(branchQueue.qsize()):
-            branch = Thread(target=runBranchQueue, args=(branchQueue,))
+            branch = Thread(target=runOneBranchInQueue, args=(branchQueue,))
             branch.setDaemon(True)
             branch.start()
         branchQueue.join()
@@ -170,7 +171,7 @@ def forkBranches(branchQueue):
         printErr("forkBranches execution failed.")
 
 
-def runBranchQueue(branchQueue):
+def runOneBranchInQueue(branchQueue):
     if branchQueue.empty():
         printInfo("runBranchQueue - branchQueue is empty")
         return
@@ -222,7 +223,7 @@ def runBranch(branchObj):
                     # Consider this case: task.start:{m1:[s1,s2]}. steps{s1.next.success{0:[m1,m2]}}
                     # This code will run step m1 without checking the status of s2.
                     # If s2 is not ready, m1 should not start. Add dependencies checks here.
-                    forkBranches(branchQueue)
+                    runBranchQueue(branchQueue)
                 else:
                     raise RuntimeError("Step '{0}' has empty or unsupported success configurations '{1}'."
                                        .format(currentStep.stepName, currentStep.success))
@@ -270,7 +271,7 @@ def runStep(step, failureCount=0):
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
-        runThreads(step, cursorQueue, testMode)
+        runCursorQueue(step, cursorQueue, testMode)
         printInfo("Execution time for step '{0}' is: '{1}'."
                   .format(step.stepName, datetime.datetime.now() - stepStartDate))
 

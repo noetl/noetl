@@ -1,8 +1,8 @@
-import os
 from Queue import *
 from unittest import TestCase
+
 from src.main.python.component.Step import *
-from src.main.python.execution.QueueExecution import runThreads
+from src.main.python.execution.QueueExecution import runCursorQueue
 from src.main.python.util.NOETLJsonParser import NOETLJsonParser
 from src.rootPath import TEST_RESOURCES
 
@@ -15,7 +15,7 @@ class TestRunThreadsProduction(TestCase):
         step = Step(task, "step1")
         queue = Queue()
         queue.put("2011-09-01")
-        runThreads(step, queue, True)
+        runCursorQueue(step, queue, True)
         self.assertEquals([], step.cursorFail)
 
     def test_runThreads_runShell_createFile_ValueInQueue(self):
@@ -30,7 +30,7 @@ class TestRunThreadsProduction(TestCase):
         step = Step(task, "step1")
         queue = Queue()
         queue.put("2011-09-01")
-        runThreads(step, queue, False)
+        runCursorQueue(step, queue, False)
         self.assertEquals([], step.cursorFail)
 
         generatedFile = os.path.join(currentPath, "201109.test")

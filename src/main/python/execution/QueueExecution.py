@@ -1,12 +1,13 @@
 import threading
 from threading import Thread
+
 from src.main.python.execution import ExecutionActionsUtil
 from src.main.python.execution.ExecutionActionsForProduction import SupportedProductActions
 from src.main.python.execution.ExecutionActionsForTests import SupportedTestActions
 from src.main.python.util.CommonPrinter import *
 
 
-def runThreads(stepObj, cursorQueue, testMode):
+def runCursorQueue(stepObj, cursorQueue, testMode):
     if cursorQueue is None:
         return
     try:
@@ -14,7 +15,7 @@ def runThreads(stepObj, cursorQueue, testMode):
         if threads <= 1:
             printInfo("Use single thread to process.")
             for i in range(cursorQueue.qsize()):
-                runQueue(stepObj, cursorQueue, testMode)
+                runOneCursorInQueue(stepObj, cursorQueue, testMode)
         else:
             printInfo("Spawning {0} threads to process for the step '{1}'.".
                       format(threads, stepObj.stepPath))
@@ -24,7 +25,7 @@ def runThreads(stepObj, cursorQueue, testMode):
                 semaphore.acquire()
                 threadCount = str(threading.active_count())
                 # TODO: should be able to reuse the thread like a thread pool or try other implementation
-                th = Thread(name="ThreadCount-" + threadCount, target=runQueue,
+                th = Thread(name="ThreadCount-" + threadCount, target=runOneCursorInQueue,
                             args=(stepObj, cursorQueue, testMode, semaphore, cursorFailUpdate))
                 th.setDaemon(True)
                 th.start()
@@ -33,7 +34,7 @@ def runThreads(stepObj, cursorQueue, testMode):
         printErr('Run threads in parallel failed for the cursor queue [ {0} ]'.format("\n\t".join(cursorQueue)))
 
 
-def runQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=None):
+def runOneCursorInQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=None):
     if stepObj is None or cursorQueue is None or cursorQueue.empty():
         printInfo("step is None or cursorQueue is empty")
         return
@@ -41,7 +42,7 @@ def runQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=No
     actionWOContext = ""
     try:
         cursor = cursorQueue.get()
-        context = getActionContext(stepObj.action)
+        context = __getActionContext(stepObj.action)
         if context == "":
             raise RuntimeError(
                 "Action '{0}' for step '{1}' is not supported.".format(stepObj.action, stepObj.stepPath))
@@ -55,10 +56,10 @@ def runQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=No
         printInfo('Thread-{0} running "{1}"'.format(threadName, actionWOContext))
         sys.stdout.flush()
         if eval(actionWContext) != 0:
-            updateStepFailedCursors(cursor, cursorFailUpdate, stepObj)
+            __updateStepFailedCursors(cursor, cursorFailUpdate, stepObj)
             printInfo("Step '{0}' failed for action '{1}'.".format(stepObj.stepPath, actionWOContext))
     except:
-        updateStepFailedCursors(cursor, cursorFailUpdate, stepObj)
+        __updateStepFailedCursors(cursor, cursorFailUpdate, stepObj)
         printInfo("RunQueue failed at step '{0}' for action '{1}'.".format(stepObj.stepPath, actionWOContext))
     finally:
         if semaphore is not None:
@@ -66,7 +67,7 @@ def runQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=No
         cursorQueue.task_done()
 
 
-def updateStepFailedCursors(cursor, cursorFailUpdate, stepObj):
+def __updateStepFailedCursors(cursor, cursorFailUpdate, stepObj):
     if cursorFailUpdate is not None:
         try:
             cursorFailUpdate.acquire()
@@ -78,7 +79,7 @@ def updateStepFailedCursors(cursor, cursorFailUpdate, stepObj):
         stepObj.cursorFail.append(cursor)
 
 
-def getActionContext(action):
+def __getActionContext(action):
     productActions = ExecutionActionsUtil.getAllCallableMethods(SupportedProductActions())
     if action in productActions:
         return "SupportedProductActions"
