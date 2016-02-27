@@ -146,13 +146,13 @@ class TestNOETL_RecoveryTests(TestCase):
    """
 
     def test_simple3StepFailure_6(self):
-        # Test the recovery branch fork is not allowed.
+        # Test that the recovery branch fork is not allowed.
         # The program should stop at step1_recovery.
         def asserts(allLines):
             self.assertEquals(1, len(allLines))
             self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
 
-        TestUtils.sameSetupUp("noetlTest_simple3StepFailure_6.json", asserts)
+        TestUtils.sameSetupUp("noetlTest_simple3StepFailure_disallow1.json", asserts)
 
     """
     step1: cursor[-1], MaxFailure:1, Inherit: False

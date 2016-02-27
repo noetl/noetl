@@ -1,5 +1,4 @@
 from unittest import TestCase
-
 import TestUtils
 from src.main.python.execution.ExecutionActionsForTests import SupportedTestActionsUtils
 
@@ -83,6 +82,31 @@ class TestNOETL_ForkTests(TestCase):
             self.assertTrue(allLines[2].startswith(SupportedTestActionsUtils.getPrefixString("mergeStep", "1")))
 
         TestUtils.sameSetupUp("noetlTest_simpleFork_3.json", asserts)
+
+        """
+            start
+              |
+              |
+           FailedStep, 0:[step1, step2]
+            /   \
+          S/     \SF
+          /       \
+    step1:        step2:cursor[1]
+    cursor[1]
+
+
+            exit
+    """
+
+    def test_simpleFork_NextFailurePointingToADifferentBranch(self):
+        # Disallow the case that next failure points to a different branch.
+        # Next failure can only go to exit or merge with current branch.
+        # This program should stop at FailedStep
+        def asserts(allLines):
+            self.assertEquals(1, len(allLines))
+            self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("FailedStep", "-1")))
+
+        TestUtils.sameSetupUp("noetlTest_simpleFork_disallow1.json", asserts)
 
     """
             start,  exit:[step1, step2]

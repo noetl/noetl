@@ -65,10 +65,12 @@ class Branch:
         self.task.linkFailureHandling(recoverStep.stepName, failedStepName)
         # add all downstream recovery steps to this branch until it reaches exit or merges with original branch
         while not self.containsStep(recoverStep.stepName) and recoverStep.stepName != "exit":
+            for branchName, branchObj in self.task.branchesDict.iteritems():
+                if branchName != self.branchName and branchObj.containsStep(recoverStep.stepName):
+                    raise RuntimeError("The recovery step cannot be a step in a different branch.")
+
             if recoverStep.curInherit:
                 recoverStep.cursor = step.cursor
-            # TODO: This might be a problem if recoverStep points to a step in downstream branch that is in the same task.
-            # We should forbid branch jumping.
             self.addStep(recoverStep)
 
             successSteps = recoverStep.success.values()

@@ -261,8 +261,8 @@ def runBranch(branchObj):
                 branchObj.failAtStep(currentStep)
                 runBranch(branchObj)
     except:
-        currentStep = branchObj.steps[branchObj.currentStepName]
-        printErr("RunBranch failed at step '{0}'.".format(currentStep.stepPath))
+        # branch.currentStepObj might not be available here. Don't output it.
+        printErr("RunBranch '{0}' failed at step '{1}'.".format(branchObj.branchName, branchObj.currentStepName))
 
 
 def runStep(step):
