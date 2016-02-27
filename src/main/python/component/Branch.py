@@ -1,7 +1,7 @@
 from component.Step import Step
 
 
-class Branch:  # branch is a sequential presentation of steps.
+class Branch:
     # TODO: a merge branch could be a sub class of Branch
     def __init__(self, startStepObj, mergeStepName):
         self.task = startStepObj.task
@@ -49,14 +49,8 @@ class Branch:  # branch is a sequential presentation of steps.
 
     def moveToNextSuccess(self):
         nextStepName = self.steps[self.currentStepName].success.values()[0][0]
-        # This is safe because branch is a sequential presentation of steps
         self.currentStepName = nextStepName
         return nextStepName
-
-    # def moveToNextFailure(self):
-    #     nextStepName = self.steps[self.currentStepName].step.nextFail
-    #     self.currentStepName = nextStepName
-    #     return nextStepName
 
     def containsStep(self, stepName):
         return stepName in self.steps.keys()
@@ -76,5 +70,10 @@ class Branch:  # branch is a sequential presentation of steps.
             # TODO: This might be a problem if recoverStep points to a step in downstream branch that is in the same task.
             # We should forbid branch jumping.
             self.addStep(recoverStep)
-            # TODO: This assumes that recovery part is a sequence of steps. It is true for the immediately next step, but not necessarily true after that.
-            recoverStep = Step(self.task, recoverStep.success.values()[0][0])
+
+            successSteps = recoverStep.success.values()
+            if len(successSteps) > 1 or len(successSteps[0]) > 1:
+                raise RuntimeError(
+                    "Found forking success steps at '{0}'. Steps in the recovery part of the branch are not allowed to fork. It's against design that branch can ONLY be a sequence of steps.".format(
+                        recoverStep.stepPath))
+            recoverStep = Step(self.task, successSteps[0][0])

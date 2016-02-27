@@ -262,7 +262,7 @@ def runBranch(branchObj):
                 runBranch(branchObj)
     except:
         currentStep = branchObj.steps[branchObj.currentStepName]
-        printErr("Failed to get current step '{0}' with path '{1}'.".format(currentStep.stepName, currentStep.stepPath))
+        printErr("RunBranch failed at step '{0}'.".format(currentStep.stepPath))
 
 
 def runStep(step):

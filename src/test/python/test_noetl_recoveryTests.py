@@ -127,6 +127,34 @@ class TestNOETL_RecoveryTests(TestCase):
         TestUtils.sameSetupUp("noetlTest_simple3StepFailure_5.json", asserts)
 
     """
+   step1: cursor[-1], MaxFailure:1, Inherit: False
+     |  \
+     |   \F
+     |    \
+     |   step1_recovery: cursor[1],  MaxFailure:1, Inherit: False
+    S|   /  |   \
+     |  /   |    \S
+     | /F   |     \__step1_recovery_fork2: cursor[1],  MaxFailure:1, Inherit: False
+     |/     |S                                                                   |
+     |      |                                                                    |
+     |     step1_recovery_fork1: cursor[1],  MaxFailure:1, Inherit: False        |SF
+     |     /                                                                     /
+     |    /SF           ________________________________________________________/
+     |   /_____________/
+     |  /
+     exit
+   """
+
+    def test_simple3StepFailure_6(self):
+        # Test the recovery branch fork is not allowed.
+        # The program should stop at step1_recovery.
+        def asserts(allLines):
+            self.assertEquals(1, len(allLines))
+            self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
+
+        TestUtils.sameSetupUp("noetlTest_simple3StepFailure_6.json", asserts)
+
+    """
     step1: cursor[-1], MaxFailure:1, Inherit: False
       |     \                                     /\_________
       |      \F                                              \_________
