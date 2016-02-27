@@ -16,9 +16,11 @@ class Step:
         failDict = nextDict["FAILURE"]
 
         self.nextFail = failDict["NEXT_STEP"]
-        # self.maxFailures controls how many times the cursor can fail for EACH step processing.
-        # This configuration seem to belong to call.cursor.
+        # self.maxFailures controls how many times this step can fail for the FIRST time step processing.
+        # for later processing(like recovered from recover step) of this step, it can fail ONLY ONCE.
         self.maxFailures = int(failDict["MAX_FAILURES"])
+        # self.failureCount keeps the count of how many times this step fails for the FIRST time step processing.
+        self.failureCount = 0
         self.waittime = getWaitTime(failDict["WAITTIME"])
         self.cursorFail = []
 

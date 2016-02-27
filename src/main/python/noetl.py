@@ -261,7 +261,7 @@ def runBranch(branchObj):
         printErr("Failed to get current step '{0}' with path '{1}'.".format(currentStep.stepName, currentStep.stepPath))
 
 
-def runStep(step, failureCount=0):
+def runStep(step):
     global testMode
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
@@ -277,14 +277,14 @@ def runStep(step, failureCount=0):
         if len(step.cursorFail) == 0:
             return 0
 
-        failureCount += 1
+        step.failureCount += 1
         printInfo("Step '{0}' failed with cursors '{1}'. Failure Count: {2}, Maximum failure allowed: {3}."
-                  .format(step.stepPath, step.cursorFail, failureCount, step.maxFailures))
+                  .format(step.stepPath, step.cursorFail, step.failureCount, step.maxFailures))
         step.cursor = step.cursorFail
-        if failureCount < step.maxFailures:
+        if step.failureCount < step.maxFailures:
             step.cursorFail = []
             time.sleep(step.waittime)
-            return runStep(step, failureCount)
+            return runStep(step)
         else:
             return 1
     except:
