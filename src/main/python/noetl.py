@@ -229,8 +229,10 @@ def runBranch(branchObj):
             else:
                 branchObj.moveToNextSuccess()
                 if branchObj.traceBranch:
+                    # When the recovery branch points back to the original failed step
                     if branchObj.currentStepName == branchObj.lastFail:
-                        #
+                        # This is to break the bridge between failed step and recovery step
+                        # The idea is that recovery should happen once.
                         def removeLink(stepName):
                             delNext = taskObj.links.get(stepName)
                             if delNext is not None:
@@ -246,7 +248,8 @@ def runBranch(branchObj):
         else:  # when step failed
             if currentStep.stepName in branchObj.failedSteps or currentStep.nextFail == "exit":
                 def traceBackRecoveryPath(stepName):
-                    # Add all recoverable steps that can be reached from this stepName to failedStepNames.
+                    # Add all failed steps that can be reached from this stepName to
+                    # TASK's failedStepNames for next TASK rerun
                     if stepName in taskObj.links.keys():
                         for name in taskObj.links[stepName]:
                             traceBackRecoveryPath(name)
