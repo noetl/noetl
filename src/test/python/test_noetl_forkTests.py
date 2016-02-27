@@ -1,4 +1,7 @@
-from test_noetl import *
+from unittest import TestCase
+
+import TestUtils
+from src.main.python.execution.ExecutionActionsForTests import SupportedTestActionsUtils
 
 
 class TestNOETL_ForkTests(TestCase):
@@ -27,7 +30,7 @@ class TestNOETL_ForkTests(TestCase):
             else:
                 self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1", "1")))
 
-        sameSetupUp("noetlTest_simpleFork_1.json", asserts)
+        TestUtils.sameSetupUp("noetlTest_simpleFork_1.json", asserts)
 
     """
             start, exit:[step1, step2]
@@ -50,7 +53,7 @@ class TestNOETL_ForkTests(TestCase):
             else:
                 self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1", "1")))
 
-        sameSetupUp("noetlTest_simpleFork_2.json", asserts)
+        TestUtils.sameSetupUp("noetlTest_simpleFork_2.json", asserts)
 
     """
             start,  mergeStep:[step1, step2]
@@ -79,7 +82,7 @@ class TestNOETL_ForkTests(TestCase):
                 self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1", "1")))
             self.assertTrue(allLines[2].startswith(SupportedTestActionsUtils.getPrefixString("mergeStep", "1")))
 
-        sameSetupUp("noetlTest_simpleFork_3.json", asserts)
+        TestUtils.sameSetupUp("noetlTest_simpleFork_3.json", asserts)
 
     """
             start,  exit:[step1, step2]
@@ -113,7 +116,7 @@ class TestNOETL_ForkTests(TestCase):
             self.assertTrue(allLines[2].startswith(SupportedTestActionsUtils.getPrefixString("mergeStep", "1")))
             self.assertTrue(allLines[3].startswith(SupportedTestActionsUtils.getPrefixString("mergeStep", "1")))
 
-        sameSetupUp("noetlTest_simpleFork_4.json", asserts)
+        TestUtils.sameSetupUp("noetlTest_simpleFork_4.json", asserts)
 
     """
             start,  exit:[step1, step2]
@@ -153,4 +156,4 @@ class TestNOETL_ForkTests(TestCase):
             self.assertTrue(allLines[4].startswith(SupportedTestActionsUtils.getPrefixString("step_share2", "1")))
             self.assertTrue(allLines[5].startswith(SupportedTestActionsUtils.getPrefixString("step_share2", "1")))
 
-        sameSetupUp("noetlTest_simpleFork_5.json", asserts)
+        TestUtils.sameSetupUp("noetlTest_simpleFork_5.json", asserts)

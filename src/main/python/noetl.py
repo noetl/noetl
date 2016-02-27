@@ -229,7 +229,8 @@ def runBranch(branchObj):
             else:
                 branchObj.moveToNextSuccess()
                 if branchObj.traceBranch:
-                    if branchObj.currentStepName == branchObj.lastFail:  # remove nextFail loop from links
+                    if branchObj.currentStepName == branchObj.lastFail:
+                        #
                         def removeLink(stepName):
                             delNext = taskObj.links.get(stepName)
                             if delNext is not None:
