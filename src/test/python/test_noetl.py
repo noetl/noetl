@@ -1,6 +1,5 @@
 import os
 from unittest import TestCase
-
 from src.main.python.execution.ExecutionActionsForTests import SupportedTestActionsUtils
 from src.main.python.noetl import *
 from src.rootPath import TEST_RESOURCES
@@ -13,10 +12,10 @@ def sameSetupUp(fileName, asserts):
         os.remove(generatedFile)
     main([None, filePath])
     with open(generatedFile) as f:
-        all = f.readlines()
+        allLines = f.readlines()
         print(os.linesep)
-        print(os.linesep.join(all))
-        asserts(all)
+        print(os.linesep.join(allLines))
+        asserts(allLines)
     os.remove(generatedFile)
 
 
@@ -111,3 +110,31 @@ class TestNOETL(TestCase):
             self.assertTrue(allLines[4].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
 
         sameSetupUp("noetlTest_simple3StepFailure_4.json", asserts)
+
+    """
+    step1: cursor[-2:2], MaxFailure:1, Inherit: False
+      |     \      /\
+      |      \F      \ S
+      |S      \/      \
+      |     step1_recovery: cursor[1],  MaxFailure:1, Inherit: False
+      |     /
+      |    /F
+      |  \/
+    exit
+    """
+
+    def test_simple3StepFailure_5(self):
+        # This one tests that only failed cursors will be picked for next step run.
+        def asserts(allLines):
+            self.assertEquals(9, len(allLines))
+            self.assertTrue(allLines[0].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
+            self.assertTrue(allLines[1].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-2")))
+            self.assertTrue(allLines[2].startswith(SupportedTestActionsUtils.getPrefixString("step1", "0")))
+            self.assertTrue(allLines[3].startswith(SupportedTestActionsUtils.getPrefixString("step1", "1")))
+            self.assertTrue(allLines[4].startswith(SupportedTestActionsUtils.getPrefixString("step1", "2")))
+            self.assertTrue(allLines[5].startswith(SupportedTestActionsUtils.getPrefixString("step1_recovery", "1")))
+            self.assertTrue(allLines[6].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-1")))
+            self.assertTrue(allLines[7].startswith(SupportedTestActionsUtils.getPrefixString("step1", "-2")))
+            self.assertTrue(allLines[8].startswith(SupportedTestActionsUtils.getPrefixString("step1", "0")))
+
+        sameSetupUp("noetlTest_simple3StepFailure_5.json", asserts)

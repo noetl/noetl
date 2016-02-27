@@ -1,0 +1,164 @@
+{
+  "LOGGING": [
+    {
+      "NAME": "XXX"
+    }
+  ],
+  "WORKFLOW": {
+    "TEST": {
+      "FLAG": "False"
+    },
+    "TASKS": {
+      "start": {
+        "DESC": "Test task",
+        "START": {
+          "exit": [
+            "step1",
+            "step2"
+          ]
+        },
+        "NEXT": {
+          "SUCCESS": "exit",
+          "FAILURE": "exit"
+        },
+        "STEPS": {
+          "step1": {
+            "DESC": "Forked Step1.",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "mergeStep"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking_SleepForFork",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "1"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    ""
+                  ]
+                ]
+              }
+            }
+          },
+          "step2": {
+            "DESC": "Forked Step2.",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "mergeStep"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking_SleepForFork",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "1"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    ""
+                  ]
+                ]
+              }
+            }
+          },
+          "mergeStep": {
+            "DESC": "Merge Step.",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "exit"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking_SleepForFork",
+              "THREAD": "0",
+              "CURSOR": {
+                "RANGE": [
+                  "1"
+                ],
+                "DATATYPE": "integer",
+                "FORMAT": "",
+                "INCREMENT": "1",
+                "INHERIT": "False"
+              },
+              "EXEC": {
+                "URL": "",
+                "CMD": [
+                  [
+                    ""
+                  ]
+                ]
+              }
+            }
+          },
+          "exit": {
+            "DESC": "Exit test",
+            "NEXT": {
+              "SUCCESS": {
+                "0": [
+                  "exit"
+                ]
+              },
+              "FAILURE": {
+                "NEXT_STEP": "exit",
+                "MAX_FAILURES": "1",
+                "WAITTIME": "0s"
+              }
+            },
+            "CALL": {
+              "ACTION": "Exit"
+            }
+          }
+        }
+      },
+      "exit": {
+        "DESC": "Exit Task",
+        "START": {},
+        "STEPS": {},
+        "NEXT": {
+          "SUCCESS": "",
+          "FAILURE": ""
+        }
+      }
+    }
+  }
+}

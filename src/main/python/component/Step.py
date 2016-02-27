@@ -24,7 +24,7 @@ class Step:
 
         callDict = stepDict["CALL"]
         self.action = callDict["ACTION"]
-        # TODO: self.thread only limits the number of cursors can be run for each step.
+        # NOTE: self.thread only limits the number of cursors can be run for each step.
         # It doesn't control how many branches or steps can be running at the same time.
         # So you may end up running with more threads configured here.
         self.thread = "0"

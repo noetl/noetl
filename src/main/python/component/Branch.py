@@ -74,6 +74,7 @@ class Branch:  # branch is a sequential presentation of steps.
             if recoverStep.curInherit:
                 recoverStep.cursor = step.cursor
             # TODO: This might be a problem if recoverStep points to a step in downstream branch that is in the same task.
+            # We should forbid branch jumping.
             self.addStep(recoverStep)
             # TODO: This assumes that recovery part is a sequence of steps. It is true for the immediately next step, but not necessarily true after that.
             recoverStep = Step(self.task, recoverStep.success.values()[0][0])

@@ -1,7 +1,6 @@
 import time
 from Queue import Queue
 from threading import Thread
-
 from src.main.python.component.Branch import Branch
 from src.main.python.component.Step import Step
 from src.main.python.component.Task import Task
@@ -62,12 +61,12 @@ def getTask(config, taskObj):
                 raise RuntimeError("You cannot define merge step when there is only one start step. "
                                    "Alternatively, you can move the merge step to the step's next.success")
             branch = Branch(stepObj, "0")
-            makeBranches(branch, stepObj)
+            extendBranchFromStep(branch, stepObj)
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
             makeForkBranches(taskObj, taskObj.start)
         else:
             # TODO: There are many cases we didn't cover, such as
-            # start:{0:[]}, start:{0:[1,2]}, start:{1:[]}, start:{2:[], 2:[1]}
+            # start:{1:[1]}, start:{5:[1,2], 5:[3,4]}, start:{5:[1,2], 2:[5]}, start:{2:[], 2:[1]}
             # In reality, we are check the length of combined list of startDictValues
             raise RuntimeError("Task '{0}' has empty or unsupported start steps '{1}'."
                                .format(taskObj.taskName, taskObj.start))
@@ -95,7 +94,7 @@ def printFailedInfo(taskObj):
                   .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
 
 
-def makeBranches(branchObj, stepObj):
+def extendBranchFromStep(branchObj, stepObj):
     taskObj = branchObj.task
     try:
         stepSuccessValues = stepObj.success.values()
@@ -109,10 +108,10 @@ def makeBranches(branchObj, stepObj):
                 branchObj.setLastStep(stepObj)
                 mergeBranch = taskObj.branchesDict[nextStepName]
                 if mergeBranch.dependenciesMakeComplete():
-                    makeBranches(mergeBranch, nextStep)
+                    extendBranchFromStep(mergeBranch, nextStep)
             else:
                 branchObj.addStep(nextStep)
-                makeBranches(branchObj, nextStep)
+                extendBranchFromStep(branchObj, nextStep)
             return
         if len(stepSuccessValues) > 1 or len(stepSuccessValues[0]) > 1:  # create new branches if forking
             branchObj.setLastStep(stepObj)
@@ -136,7 +135,7 @@ def makeForkBranches(taskObj, forkingDictionary):  # make sure step is a forking
             Branch(Step(taskObj, branchName), mergeStepName)  # create the branches
         for branchName in branchNames:
             branchObj = taskObj.branchesDict[branchName]
-            makeBranches(branchObj, branchObj.steps[branchObj.currentStepName])
+            extendBranchFromStep(branchObj, branchObj.steps[branchObj.currentStepName])
 
 
 def runTask(taskObj):
