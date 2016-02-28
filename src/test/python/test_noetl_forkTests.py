@@ -181,3 +181,38 @@ class TestNOETL_ForkTests(TestCase):
             self.assertTrue(allLines[5].startswith(SupportedTestActionsUtils.getPrefixString("step_share2", "1")))
 
         TestUtils.sameSetupUp("noetlTest_simpleFork_5.json", asserts)
+
+    """
+       start,  merge1:[step1, step2], finalMerge:[merge1, step3]
+        |              |                         |
+        |              |                         |
+        |              |                         |
+    step1:        step2:cursor[1]           step3:cursor[1]
+    cursor[1]      /                             |
+         \        /                              |
+        MN\      /MN                             |
+           \    /                     ___________/
+           merge1: cursor[1]         /
+              \                     /
+             MN\________           /
+                        \         /
+                        finalMerge: cursor[1]
+                             |
+                             |
+                             |
+                            exit
+
+    """
+
+    def test_complicatedFork_1(self):
+        # This version cannot be supported because of current design.
+        # The problem is that merge1-finalMerge is a merge branch from left side.
+        # But merge1 is a forking branch from right side.
+        # Will be supported in the further if the design changes to tree transverse
+        # rather than task-branch-step.
+        # The other problem with current design is that
+        pass
+        # def asserts(allLines):
+        #     self.assertEquals(0, len(allLines))
+        #
+        # TestUtils.sameSetupUp("noetlTest_complicatedFork_1.json", asserts)

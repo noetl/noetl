@@ -55,6 +55,21 @@ def getTask(config, taskObj):
             return
         # Make branches for the task before execution.
         startDictValues = taskObj.start.values()
+        checkUniqueSteps = set()  # This feature will be supported in the further version.
+        for steps in startDictValues:
+            for step in steps:
+                if step in checkUniqueSteps:
+                    raise RuntimeError("The step '{0}' exists more than once in your task start config"
+                                       .format(step, taskObj.start))
+                else:
+                    checkUniqueSteps.add(step)
+        for step in taskObj.start.keys():
+            if step in checkUniqueSteps:
+                raise RuntimeError("The step '{0}' exists more than once in your task start config"
+                                   .format(step, taskObj.start))
+            else:
+                checkUniqueSteps.add(step)
+
         if len(startDictValues) == 1 and len(startDictValues[0]) == 1:  # only 1 item in the dict, and have only 1 step.
             stepObj = Step(taskObj, startDictValues[0][0])
             if taskObj.start.keys()[0] != "0":
@@ -64,12 +79,6 @@ def getTask(config, taskObj):
             extendBranchFromStep(branch, stepObj)
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
             makeForkBranches(taskObj, taskObj.start)
-        else:
-            # TODO: There are many cases we didn't cover, such as
-            # start:{1:[1]}, start:{5:[1,2], 5:[3,4]}, start:{5:[1,2], 2:[5]}, start:{2:[], 2:[1]}
-            # In reality, we are check the length of combined list of startDictValues
-            raise RuntimeError("Task '{0}' has empty or unsupported start steps '{1}'."
-                               .format(taskObj.taskName, taskObj.start))
         # start task execution.
         if taskObj.taskName == FIRST_TASK_NAME:
             taskStartDate = datetime.datetime.now()
@@ -218,7 +227,7 @@ def runBranch(branchObj):
                                 forkBranchName.traceBranch = True
                                 taskObj.linkFailureHandling(forkBranchName, currentStep.stepName)
                             branchQueue.put(forkBranchName)
-                    # Chen: There is potential bug here.
+                    # TODO: The problem is that we are creating steps without checking their existence.
                     # Consider this case: task.start:{m1:[s1,s2]}. steps{s1.next.success{0:[m1,m2]}}
                     # This code will run step m1 without checking the status of s2.
                     # If s2 is not ready, m1 should not start. Add dependencies checks here.

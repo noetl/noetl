@@ -37,7 +37,7 @@
               }
             },
             "CALL": {
-              "ACTION": "doTestJob_CreateFile_ForOrderTracking_SleepForFork",
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
               "THREAD": "0",
               "CURSOR": {
                 "RANGE": [
@@ -73,7 +73,7 @@
               }
             },
             "CALL": {
-              "ACTION": "doTestJob_CreateFile_ForOrderTracking_SleepForFork",
+              "ACTION": "doTestJob_CreateFile_ForOrderTracking",
               "THREAD": "0",
               "CURSOR": {
                 "RANGE": [
