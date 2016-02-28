@@ -7,7 +7,7 @@ class NOETLPrinter:
     def __init__(self, log):
         self.log = log
 
-    def err(self, msg):
+    def err(self, *msg):
         errorMsg = "{0} - ERROR - {1}".format(str(datetime.datetime.now()), " ".join(str(m) for m in msg))
         exc_type, exc_obj, exc_tb = sys.exc_info()
         exceptionLocation = "{0} @ line {1}: ".format(exc_tb.tb_frame.f_code.co_filename,
@@ -18,7 +18,7 @@ class NOETLPrinter:
             print(errorMsg, file=self.log)
             print(exceptionLocation, exc_type, exc_obj, file=self.log)
 
-    def info(self, msg):
+    def info(self, *msg):
         infoMsg = "{0} - INFO - {1}".format(str(datetime.datetime.now()), " ".join(str(m) for m in msg))
         print(infoMsg)
         if self.log is not None:
