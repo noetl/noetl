@@ -3,7 +3,7 @@ import os
 import random
 import time
 from src.rootPath import TEST_RESOURCES
-from util.CommonPrinter import printErr
+from util.CommonPrinter import printer
 
 
 # TODO: This class should be moved to test
@@ -26,7 +26,7 @@ class SupportedTestActions:
                 stepObj.successfulCursors.append(currentCursor + "Done")
             return 0
         except:
-            printErr("doTestJob_MimicReality failed.")
+            printer.printErr("doTestJob_MimicReality failed.")
             return 1
 
     @staticmethod
@@ -46,7 +46,7 @@ class SupportedTestActions:
                 raise RuntimeError("This thread work failed.")
             return 0
         except:
-            printErr("doTestJob_MimicReality failed.")
+            printer.printErr("doTestJob_MimicReality failed.")
             return 1
 
     @staticmethod
@@ -64,7 +64,7 @@ class SupportedTestActions:
             else:
                 return 0
         except:
-            printErr("doTestJob_CreateFile_ForOrderTracking failed.")
+            printer.printErr("doTestJob_CreateFile_ForOrderTracking failed.")
             return 1
 
     @staticmethod
@@ -80,7 +80,7 @@ class SupportedTestActions:
             time.sleep(int(currentCursor))
             return 0
         except:
-            printErr("doTestJob_CreateFile_ForOrderTracking failed.")
+            printer.printErr("doTestJob_CreateFile_ForOrderTracking failed.")
             return 1
 
 

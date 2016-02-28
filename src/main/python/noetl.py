@@ -13,13 +13,10 @@ from src.main.python.util.CommonPrinter import *
 from src.main.python.util.NOETLJsonParser import NOETLJsonParser
 from src.main.python.util.Tools import processConfRequest
 
-FIRST_TASK_NAME = "start"
 testMode = False
 
 
 def main(argv=None):
-    global testMode
-    log = None
     try:
         parser = argparse.ArgumentParser(description="""
         Run noetl.""", usage='%(prog)s [OPTIONS]', formatter_class=argparse.RawTextHelpFormatter)
@@ -30,48 +27,46 @@ def main(argv=None):
               .format(str(len(sys.argv)), str(json.dumps(vars(args)))))
 
         configFilePath = args.conf_file
-        config, log, testMode = _main(configFilePath, False)
+        _main(configFilePath, False)
         return 0
     except:
-        printErr("NOETL Failed.")
-        if log is not None:
-            log.close()
+        printer.printErr("NOETL Failed.")
+        printer.close()
         return 1
 
 
 def _main(configFilePath, forUnitTest):
-    testMode, log = True, None
+    global testMode
     config = NOETLJsonParser(configFilePath).getConfig()
     if not forUnitTest:
-        log = initiateLog(config, str(0))
+        initiateLog(config, 0)
     testMode = True if processConfRequest(config, "WORKFLOW.TEST.FLAG") == "True" else False
     if testMode:
         return doTest(config)
     else:
-        task = Task(FIRST_TASK_NAME, config)
+        task = Task("start", config)
         getTask(config, task)
-    return config, log, testMode
 
 
 def doTest(config):
     try:
-        printInfo("In test mode...")
+        printer.printInfo("In test mode...")
         logName = processConfRequest(config, "LOGGING.0.NAME")
-        printInfo('Log file is "{0}"'.format(logName))
+        printer.printInfo('Log file is "{0}"'.format(logName))
 
         taskList = processConfRequest(config, "WORKFLOW.TASKS")
-        printInfo("LIST of TASKS:\n" + str(taskList))
+        printer.printInfo("LIST of TASKS:\n" + str(taskList))
 
-        task = Task(FIRST_TASK_NAME, config)
+        task = Task("start", config)
         getTask(config, task)
     except:
-        printErr("Test mode failed.")
+        printer.printErr("Test mode failed.")
 
 
 def getTask(config, taskObj):
     try:
-        printInfo("Getting task '{0}' with description '{1}'. Next task is '{2}'"
-                  .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextSuccess))
+        printer.printInfo("Getting task '{0}' with description '{1}'. Next task is '{2}'"
+                          .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextSuccess))
         if taskObj.taskName == "exit":
             return
         # Make branches for the task before execution.
@@ -101,27 +96,27 @@ def getTask(config, taskObj):
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
             makeForkBranches(taskObj, taskObj.start)
         # start task execution.
-        if taskObj.taskName == FIRST_TASK_NAME:
+        if taskObj.taskName == "start":
             taskStartDate = datetime.datetime.now()
             runTask(taskObj)
-            printInfo("Execution time for task '{0}' is: {1}."
-                      .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
+            printer.printInfo("Execution time for task '{0}' is: {1}."
+                              .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
             if len(taskObj.failedStepNames) > 0:
                 printFailedInfo(taskObj)
                 getTask(config, Task(taskObj.nextFail, config))
             else:
-                printInfo("Task '{0}' finished successfully.".format(taskObj.taskName))
+                printer.printInfo("Task '{0}' finished successfully.".format(taskObj.taskName))
                 getTask(config, Task(taskObj.nextSuccess, config))
     except:
-        printErr("getTask failed for task '{0}'".format(str(taskObj)))
+        printer.printErr("getTask failed for task '{0}'".format(str(taskObj)))
 
 
 def printFailedInfo(taskObj):
-    printInfo("FAILURE: Task '{0}' failed with step(s): '{1}'."
-              .format(taskObj.taskName, ",".join(taskObj.failedStepNames)))
+    printer.printInfo("FAILURE: Task '{0}' failed with step(s): '{1}'."
+                      .format(taskObj.taskName, ",".join(taskObj.failedStepNames)))
     for failedStep in taskObj.failedStepNames:
-        printInfo('FAILURE: Step "{0}" failed with cursors "{1}".'
-                  .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
+        printer.printInfo('FAILURE: Step "{0}" failed with cursors "{1}".'
+                          .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
 
 
 def extendBranchFromStep(branchObj, stepObj):
@@ -150,7 +145,7 @@ def extendBranchFromStep(branchObj, stepObj):
         raise RuntimeError("Unsupported NEXT.SUCCESS configuration for the step '{0}': {1}"
                            .format(stepObj.stepName, stepObj.success))
     except:
-        printErr("MakeBranches failed for task:  ", taskObj.taskName, stepObj.stepName)
+        printer.printErr("MakeBranches failed for task:  ", taskObj.taskName, stepObj.stepName)
 
 
 def makeForkBranches(taskObj, forkingDictionary):  # make sure step is a forking one before you call it.
@@ -170,7 +165,7 @@ def makeForkBranches(taskObj, forkingDictionary):  # make sure step is a forking
 
 def runTask(taskObj):
     try:
-        printInfo("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
+        printer.printInfo("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
         startBranchNames = []
         for mergeStepName, branchNames in taskObj.start.iteritems():
             startBranchNames += branchNames
@@ -186,7 +181,7 @@ def runTask(taskObj):
         else:
             raise RuntimeError("No starting steps found for the task '{0}'".format(taskObj.taskName))
     except:
-        printErr("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
+        printer.printErr("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
 
 
 def runBranchQueue(branchQueue):
@@ -197,21 +192,21 @@ def runBranchQueue(branchQueue):
             branch.start()
         branchQueue.join()
     except:
-        printErr("forkBranches execution failed.")
+        printer.printErr("forkBranches execution failed.")
 
 
 def runOneBranchInQueue(branchQueue):
     if branchQueue.empty():
-        printInfo("runBranchQueue - branchQueue is empty")
+        printer.printInfo("runBranchQueue - branchQueue is empty")
         return
     branch = None
     try:
         branch = branchQueue.get()
-        printInfo("Running branchQueue branch: " + branch.branchName)
+        printer.printInfo("Running branchQueue branch: " + branch.branchName)
         runBranch(branch)
         branchQueue.task_done()
     except:
-        printErr("branchQueue failed for branch: " + branch.branchName)
+        printer.printErr("branchQueue failed for branch: " + branch.branchName)
 
 
 def runBranch(branchObj):
@@ -221,8 +216,8 @@ def runBranch(branchObj):
     try:  # execute current step for branch
         taskObj = branchObj.task
         currentStep = branchObj.steps[branchObj.currentStepName]
-        printInfo("Running step '{0}'. Failed cursors before resetting: '{1}'."
-                  .format(currentStep.stepPath, currentStep.cursorFail))
+        printer.printInfo("Running step '{0}'. Failed cursors before resetting: '{1}'."
+                          .format(currentStep.stepPath, currentStep.cursorFail))
         currentStep.cursorFail = []  # reset before running again
         exitCode = runStep(currentStep)
 
@@ -292,28 +287,29 @@ def runBranch(branchObj):
                 runBranch(branchObj)
     except:
         # branch.currentStepObj might not be available here. Don't output it.
-        printErr("RunBranch '{0}' failed at step '{1}'.".format(branchObj.branchName, branchObj.currentStepName))
+        printer.printErr(
+            "RunBranch '{0}' failed at step '{1}'.".format(branchObj.branchName, branchObj.currentStepName))
 
 
 def runStep(step):
     global testMode
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
-        printInfo("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s)."
-                  .format(step.stepName, step.cursor, step.thread))
+        printer.printInfo("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s)."
+                          .format(step.stepName, step.cursor, step.thread))
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
         runCursorQueue(step, cursorQueue, testMode)
-        printInfo("Execution time for step '{0}' is: '{1}'."
-                  .format(step.stepName, datetime.datetime.now() - stepStartDate))
+        printer.printInfo("Execution time for step '{0}' is: '{1}'."
+                          .format(step.stepName, datetime.datetime.now() - stepStartDate))
 
         if len(step.cursorFail) == 0:
             return 0
 
         step.failureCount += 1
-        printInfo("Step '{0}' failed with cursors '{1}'. Failure Count: {2}, Maximum failure allowed: {3}."
-                  .format(step.stepPath, step.cursorFail, step.failureCount, step.maxFailures))
+        printer.printInfo("Step '{0}' failed with cursors '{1}'. Failure Count: {2}, Maximum failure allowed: {3}."
+                          .format(step.stepPath, step.cursorFail, step.failureCount, step.maxFailures))
         step.cursor = step.cursorFail
         if step.failureCount < step.maxFailures:
             step.cursorFail = []
@@ -322,30 +318,37 @@ def runStep(step):
         else:
             return 1
     except:
-        printErr("RunStep failed for step '{0}'.".format(step.stepName))
+        printer.printErr("RunStep failed for step '{0}'.".format(step.stepName))
         return 1
 
 
 def initiateLog(config, logId):
     batchDateTime = datetime.datetime.now()
-    log = None
     try:
-        log_id = "LOGGING." + logId
-        logDir = processConfRequest(config, log_id + ".FILE.DIRECTORY")
+        logConfig = processConfRequest(config, "LOGGING.{0}.FILE".format(logId))
+        logDir = logConfig["DIRECTORY"]
+        if logDir.strip() == "":
+            logDir = os.path.dirname(__file__)
         if not os.path.exists(logDir):
             os.makedirs(logDir)
 
-        logFile = logDir + os.sep + processConfRequest(config, log_id + ".FILE.NAME") + \
-                  (batchDateTime.strftime('-%Y%m%d%H%M%S')
-                   if processConfRequest(config, log_id + ".FILE.PATTERN") in "datetime" else "") + \
-                  "." + processConfRequest(config, log_id + ".FILE.EXTENTION")
+        extension = logConfig.get("EXTENTION")
+        if extension is None:
+            extension = ""
+        pattern = logConfig.get("PATTERN")
+        if pattern is not None and pattern.lower() == "datetime":
+            extension = batchDateTime.strftime('-%Y%m%d%H%M%S') + "." + extension
+
+        logFile = logDir + os.sep + logConfig["NAME"] + extension
         print("Using LogFile: {0}".format(logFile))
+        global printer
         log = open(logFile, "w", 0)
+        printer = NOETLPrinter(log)
     except:
         e = str(sys.exc_info()[0]) + str(sys.exc_info()[1]) + str(sys.exc_info()[2])
         print("{0} - ERROR - Error raised when initiating the main log handler: ".format(str(batchDateTime)), str(e))
-    return log
 
 
 if __name__ == "__main__":
     sys.exit(main())
+    # _main("/Users/chenguo/Documents/noetl/noetl/src/test/resources/noetlTest_simpleFork_1.json", False)
