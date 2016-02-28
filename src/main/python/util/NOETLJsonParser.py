@@ -20,9 +20,9 @@ class NOETLJsonParser:
                 self.config = json.load(f)
                 self.__dereferenceConfig(self.config)
         except:
-            printer.printErr(str.format("Parsing configuration file `{0}` failed.", self.confFilePath))
+            printer.err(str.format("Parsing configuration file `{0}` failed.", self.confFilePath))
             sys.exit(1)
-        printer.printInfo("Successfully parsed configuration file '{0}'.".format(self.confFilePath))
+        printer.info("Successfully parsed configuration file '{0}'.".format(self.confFilePath))
 
     def __dereferenceConfig(self, config):
         if isinstance(config, dict):

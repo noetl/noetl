@@ -18,15 +18,15 @@ class SupportedProductActions:
                 if not success:
                     return 1
                 info = "Executing '{0}' for step '{1}'.".format(dereferenceCmd, stepObj.stepPath)
-                printer.printInfo(info)
+                printer.info(info)
                 if testMode:
                     return 0
                 else:
                     exitCode = subprocess.call(dereferenceCmd, shell=True)
-                    printer.printInfo("runShell exitCode: {0} for the Command {1}.".format(exitCode, dereferenceCmd))
+                    printer.info("runShell exitCode: {0} for the Command {1}.".format(exitCode, dereferenceCmd))
                     return exitCode
         except:
-            printer.printErr(info + " failed.")
+            printer.err(info + " failed.")
             return 1
 
     @staticmethod
@@ -35,10 +35,10 @@ class SupportedProductActions:
             restExec = stepObj.callExec
             print("The restexec dictionary is: " + str(restExec))
             resp = SupportedProductActions.rest_eval(**restExec)
-            printer.printInfo("RESTful Response: {0} Type: {1}".format(str(resp), str(type(resp))))
+            printer.info("RESTful Response: {0} Type: {1}".format(str(resp), str(type(resp))))
             return 0
         except:
-            printer.printErr("runRESTful failed.")
+            printer.err("runRESTful failed.")
             return 1
 
     @staticmethod
@@ -60,7 +60,7 @@ class SupportedProductActions:
                     raise RuntimeError("Unknown cursorType '{0}'".format(cursorType))
             return cmd, True
         except:
-            printer.printErr(
+            printer.err(
                 'Dereference [cursor] in command "{0}" failed for the cursor value "{1}" with format "{2}"'
                     .format(origCmd, origCursorValue, cursorDateFormat))
             return origCmd, False

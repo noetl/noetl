@@ -30,7 +30,7 @@ def main(argv=None):
         _main(configFilePath, False)
         return 0
     except:
-        printer.printErr("NOETL Failed.")
+        printer.err("NOETL Failed.")
         printer.close()
         return 1
 
@@ -50,22 +50,22 @@ def _main(configFilePath, forUnitTest):
 
 def doTest(config):
     try:
-        printer.printInfo("In test mode...")
+        printer.info("In test mode...")
         logName = processConfRequest(config, "LOGGING.0.NAME")
-        printer.printInfo('Log file is "{0}"'.format(logName))
+        printer.info('Log file is "{0}"'.format(logName))
 
         taskList = processConfRequest(config, "WORKFLOW.TASKS")
-        printer.printInfo("LIST of TASKS:\n" + str(taskList))
+        printer.info("LIST of TASKS:\n" + str(taskList))
 
         task = Task("start", config)
         getTask(config, task)
     except:
-        printer.printErr("Test mode failed.")
+        printer.err("Test mode failed.")
 
 
 def getTask(config, taskObj):
     try:
-        printer.printInfo("Getting task '{0}' with description '{1}'. Next task is '{2}'"
+        printer.info("Getting task '{0}' with description '{1}'. Next task is '{2}'"
                           .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextSuccess))
         if taskObj.taskName == "exit":
             return
@@ -99,23 +99,23 @@ def getTask(config, taskObj):
         if taskObj.taskName == "start":
             taskStartDate = datetime.datetime.now()
             runTask(taskObj)
-            printer.printInfo("Execution time for task '{0}' is: {1}."
+            printer.info("Execution time for task '{0}' is: {1}."
                               .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
             if len(taskObj.failedStepNames) > 0:
                 printFailedInfo(taskObj)
                 getTask(config, Task(taskObj.nextFail, config))
             else:
-                printer.printInfo("Task '{0}' finished successfully.".format(taskObj.taskName))
+                printer.info("Task '{0}' finished successfully.".format(taskObj.taskName))
                 getTask(config, Task(taskObj.nextSuccess, config))
     except:
-        printer.printErr("getTask failed for task '{0}'".format(str(taskObj)))
+        printer.err("getTask failed for task '{0}'".format(str(taskObj)))
 
 
 def printFailedInfo(taskObj):
-    printer.printInfo("FAILURE: Task '{0}' failed with step(s): '{1}'."
+    printer.info("FAILURE: Task '{0}' failed with step(s): '{1}'."
                       .format(taskObj.taskName, ",".join(taskObj.failedStepNames)))
     for failedStep in taskObj.failedStepNames:
-        printer.printInfo('FAILURE: Step "{0}" failed with cursors "{1}".'
+        printer.info('FAILURE: Step "{0}" failed with cursors "{1}".'
                           .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
 
 
@@ -145,7 +145,7 @@ def extendBranchFromStep(branchObj, stepObj):
         raise RuntimeError("Unsupported NEXT.SUCCESS configuration for the step '{0}': {1}"
                            .format(stepObj.stepName, stepObj.success))
     except:
-        printer.printErr("MakeBranches failed for task:  ", taskObj.taskName, stepObj.stepName)
+        printer.err("MakeBranches failed for task:  ", taskObj.taskName, stepObj.stepName)
 
 
 def makeForkBranches(taskObj, forkingDictionary):  # make sure step is a forking one before you call it.
@@ -165,7 +165,7 @@ def makeForkBranches(taskObj, forkingDictionary):  # make sure step is a forking
 
 def runTask(taskObj):
     try:
-        printer.printInfo("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
+        printer.info("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
         startBranchNames = []
         for mergeStepName, branchNames in taskObj.start.iteritems():
             startBranchNames += branchNames
@@ -181,7 +181,7 @@ def runTask(taskObj):
         else:
             raise RuntimeError("No starting steps found for the task '{0}'".format(taskObj.taskName))
     except:
-        printer.printErr("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
+        printer.err("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
 
 
 def runBranchQueue(branchQueue):
@@ -192,21 +192,21 @@ def runBranchQueue(branchQueue):
             branch.start()
         branchQueue.join()
     except:
-        printer.printErr("forkBranches execution failed.")
+        printer.err("forkBranches execution failed.")
 
 
 def runOneBranchInQueue(branchQueue):
     if branchQueue.empty():
-        printer.printInfo("runBranchQueue - branchQueue is empty")
+        printer.info("runBranchQueue - branchQueue is empty")
         return
     branch = None
     try:
         branch = branchQueue.get()
-        printer.printInfo("Running branchQueue branch: " + branch.branchName)
+        printer.info("Running branchQueue branch: " + branch.branchName)
         runBranch(branch)
         branchQueue.task_done()
     except:
-        printer.printErr("branchQueue failed for branch: " + branch.branchName)
+        printer.err("branchQueue failed for branch: " + branch.branchName)
 
 
 def runBranch(branchObj):
@@ -216,7 +216,7 @@ def runBranch(branchObj):
     try:  # execute current step for branch
         taskObj = branchObj.task
         currentStep = branchObj.steps[branchObj.currentStepName]
-        printer.printInfo("Running step '{0}'. Failed cursors before resetting: '{1}'."
+        printer.info("Running step '{0}'. Failed cursors before resetting: '{1}'."
                           .format(currentStep.stepPath, currentStep.cursorFail))
         currentStep.cursorFail = []  # reset before running again
         exitCode = runStep(currentStep)
@@ -287,7 +287,7 @@ def runBranch(branchObj):
                 runBranch(branchObj)
     except:
         # branch.currentStepObj might not be available here. Don't output it.
-        printer.printErr(
+        printer.err(
             "RunBranch '{0}' failed at step '{1}'.".format(branchObj.branchName, branchObj.currentStepName))
 
 
@@ -295,20 +295,20 @@ def runStep(step):
     global testMode
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
-        printer.printInfo("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s)."
+        printer.info("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s)."
                           .format(step.stepName, step.cursor, step.thread))
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
         runCursorQueue(step, cursorQueue, testMode)
-        printer.printInfo("Execution time for step '{0}' is: '{1}'."
+        printer.info("Execution time for step '{0}' is: '{1}'."
                           .format(step.stepName, datetime.datetime.now() - stepStartDate))
 
         if len(step.cursorFail) == 0:
             return 0
 
         step.failureCount += 1
-        printer.printInfo("Step '{0}' failed with cursors '{1}'. Failure Count: {2}, Maximum failure allowed: {3}."
+        printer.info("Step '{0}' failed with cursors '{1}'. Failure Count: {2}, Maximum failure allowed: {3}."
                           .format(step.stepPath, step.cursorFail, step.failureCount, step.maxFailures))
         step.cursor = step.cursorFail
         if step.failureCount < step.maxFailures:
@@ -318,7 +318,7 @@ def runStep(step):
         else:
             return 1
     except:
-        printer.printErr("RunStep failed for step '{0}'.".format(step.stepName))
+        printer.err("RunStep failed for step '{0}'.".format(step.stepName))
         return 1
 
 

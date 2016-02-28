@@ -12,11 +12,11 @@ def runCursorQueue(stepObj, cursorQueue, testMode):
     try:
         threads = int(stepObj.thread) if stepObj.thread.isdigit() else 0
         if threads <= 1:
-            printer.printInfo("Use single thread to process.")
+            printer.info("Use single thread to process.")
             for i in range(cursorQueue.qsize()):
                 runOneCursorInQueue(stepObj, cursorQueue, testMode)
         else:
-            printer.printInfo("Spawning {0} threads to process for the step '{1}'.".
+            printer.info("Spawning {0} threads to process for the step '{1}'.".
                               format(threads, stepObj.stepPath))
             semaphore = threading.Semaphore(threads)
             cursorFailUpdate = threading.Lock()
@@ -30,12 +30,12 @@ def runCursorQueue(stepObj, cursorQueue, testMode):
                 th.start()
             cursorQueue.join()
     except:
-        printer.printErr('Run threads in parallel failed for the cursor queue [ {0} ]'.format("\n\t".join(cursorQueue)))
+        printer.err('Run threads in parallel failed for the cursor queue [ {0} ]'.format("\n\t".join(cursorQueue)))
 
 
 def runOneCursorInQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFailUpdate=None):
     if stepObj is None or cursorQueue is None or cursorQueue.empty():
-        printer.printInfo("step is None or cursorQueue is empty")
+        printer.info("step is None or cursorQueue is empty")
         return
     cursor = None
     actionWOContext = ""
@@ -52,14 +52,14 @@ def runOneCursorInQueue(stepObj, cursorQueue, testMode, semaphore=None, cursorFa
         actionWContext = "{0}.{1}".format(context, actionWOContext)
         threadName = str(threading.current_thread())
         sys.stdout.flush()
-        printer.printInfo('Thread-{0} running "{1}"'.format(threadName, actionWOContext))
+        printer.info('Thread-{0} running "{1}"'.format(threadName, actionWOContext))
         sys.stdout.flush()
         if eval(actionWContext) != 0:
             __updateStepFailedCursors(cursor, cursorFailUpdate, stepObj)
-            printer.printInfo("Step '{0}' failed for action '{1}'.".format(stepObj.stepPath, actionWOContext))
+            printer.info("Step '{0}' failed for action '{1}'.".format(stepObj.stepPath, actionWOContext))
     except:
         __updateStepFailedCursors(cursor, cursorFailUpdate, stepObj)
-        printer.printInfo("RunQueue failed at step '{0}' for action '{1}'.".format(stepObj.stepPath, actionWOContext))
+        printer.info("RunQueue failed at step '{0}' for action '{1}'.".format(stepObj.stepPath, actionWOContext))
     finally:
         if semaphore is not None:
             semaphore.release()

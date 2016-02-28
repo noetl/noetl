@@ -12,7 +12,7 @@ def processConfRequest(cfg, confRequest):
             if isinstance(cfg, dict):
                 cfg = cfg.get(label)
                 if cfg is None:
-                    printer.printInfo("FAILURE: The configuration request failed for '{0}'".format(confRequest))
+                    printer.info("FAILURE: The configuration request failed for '{0}'".format(confRequest))
                     os._exit(1)
             elif isinstance(cfg, list):
                 if not isinstance(label, unicode):
@@ -26,7 +26,7 @@ def processConfRequest(cfg, confRequest):
                 raise RuntimeError(str.format('Unknown config object type for "{0}".', cfg))
         return cfg
     except:
-        printer.printErr("Fail to process the configuration request: " + confRequest)
+        printer.err("Fail to process the configuration request: " + confRequest)
 
 
 def getWaitTime(waitTime):
@@ -40,7 +40,7 @@ def getWaitTime(waitTime):
         if measure == 'h':
             return timeLength * 3600
     except:
-        printer.printErr("getWaitTime failed for " + waitTime)
+        printer.err("getWaitTime failed for " + waitTime)
 
 
 def getCursor(cursorRangeList, dataType, increment, dateFormat):
@@ -71,7 +71,7 @@ def getCursor(cursorRangeList, dataType, increment, dateFormat):
                 cursor.add(curVal)
         return sorted(cursor)
     except:
-        printer.printErr(str.format("Failed to construct cursor for `Range:{0},DateType:{1},Format:{2},Increment:{3}`",
+        printer.err(str.format("Failed to construct cursor for `Range:{0},DateType:{1},Format:{2},Increment:{3}`",
                             cursorRangeList, dataType, dateFormat, increment))
         sys.exit(1)
 
