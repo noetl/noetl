@@ -1,3 +1,5 @@
+import argparse
+import json
 import time
 from Queue import Queue
 from threading import Thread
@@ -15,11 +17,17 @@ testMode = False
 
 def main(argv=None):
     global testMode
-    if len(argv) != 2:
-        raise RuntimeError("Expecting a configuration file path as its argument.")
-
     try:
-        configFilePath = str(argv[1])
+        parser = argparse.ArgumentParser(description="""
+        Run noetl.""", usage='%(prog)s [OPTIONS]', formatter_class=argparse.RawTextHelpFormatter)
+        parser.add_argument("--conf_file", help="specify the path to the noetl configuration file.",
+                            default="")
+
+        args = parser.parse_args()
+        print("Number of input arguments is: {0}\nGiven arguments are: {1}"
+              .format(str(len(sys.argv)), str(json.dumps(vars(args)))))
+
+        configFilePath = args.conf_file
         printInfo('Using configuration file "{0}"'.format(configFilePath))
         config = NOETLJsonParser(configFilePath).getConfig()
         testMode = True if processConfRequest(config, "WORKFLOW.TEST.FLAG") == "True" else False
@@ -28,8 +36,10 @@ def main(argv=None):
         else:
             task = Task(FIRST_TASK_NAME, config)
             getTask(config, task)
+        return 0
     except:
         printErr("NOETL Failed.")
+        return 1
 
 
 def doTest(config):
@@ -306,4 +316,4 @@ def runStep(step):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

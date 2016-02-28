@@ -1,3 +1,6 @@
+0.(Permanently) Add the noetl src to your PYTHONPATH
+export PYTHONPATH="${PYTHONPATH}:/your/path/to/noetl/noetl/src"
+
 1. install nosetests for
 sudo pip install -upgrade nose
 
@@ -5,3 +8,4 @@ sudo pip install -upgrade nose
 
 3. run tests using
 python /Library/Frameworks/Python.framework/Versions/2.7/bin/nosetests testFile.py
+
