@@ -1,8 +1,10 @@
 import argparse
 import json
+import os
 import time
 from Queue import Queue
 from threading import Thread
+
 from src.main.python.component.Branch import Branch
 from src.main.python.component.Step import Step
 from src.main.python.component.Task import Task
@@ -17,29 +19,38 @@ testMode = False
 
 def main(argv=None):
     global testMode
+    log = None
     try:
         parser = argparse.ArgumentParser(description="""
         Run noetl.""", usage='%(prog)s [OPTIONS]', formatter_class=argparse.RawTextHelpFormatter)
-        parser.add_argument("--conf_file", help="specify the path to the noetl configuration file.",
-                            default="")
+        parser.add_argument("--conf_file", help="specify the path to the noetl configuration file.", default="")
 
         args = parser.parse_args()
         print("Number of input arguments is: {0}\nGiven arguments are: {1}"
               .format(str(len(sys.argv)), str(json.dumps(vars(args)))))
 
         configFilePath = args.conf_file
-        printInfo('Using configuration file "{0}"'.format(configFilePath))
-        config = NOETLJsonParser(configFilePath).getConfig()
-        testMode = True if processConfRequest(config, "WORKFLOW.TEST.FLAG") == "True" else False
-        if testMode:
-            return doTest(config)
-        else:
-            task = Task(FIRST_TASK_NAME, config)
-            getTask(config, task)
+        config, log, testMode = _main(configFilePath, False)
         return 0
     except:
         printErr("NOETL Failed.")
+        if log is not None:
+            log.close()
         return 1
+
+
+def _main(configFilePath, forUnitTest):
+    testMode, log = True, None
+    config = NOETLJsonParser(configFilePath).getConfig()
+    if not forUnitTest:
+        log = initiateLog(config, str(0))
+    testMode = True if processConfRequest(config, "WORKFLOW.TEST.FLAG") == "True" else False
+    if testMode:
+        return doTest(config)
+    else:
+        task = Task(FIRST_TASK_NAME, config)
+        getTask(config, task)
+    return config, log, testMode
 
 
 def doTest(config):
@@ -313,6 +324,27 @@ def runStep(step):
     except:
         printErr("RunStep failed for step '{0}'.".format(step.stepName))
         return 1
+
+
+def initiateLog(config, logId):
+    batchDateTime = datetime.datetime.now()
+    log = None
+    try:
+        log_id = "LOGGING." + logId
+        logDir = processConfRequest(config, log_id + ".FILE.DIRECTORY")
+        if not os.path.exists(logDir):
+            os.makedirs(logDir)
+
+        logFile = logDir + os.sep + processConfRequest(config, log_id + ".FILE.NAME") + \
+                  (batchDateTime.strftime('-%Y%m%d%H%M%S')
+                   if processConfRequest(config, log_id + ".FILE.PATTERN") in "datetime" else "") + \
+                  "." + processConfRequest(config, log_id + ".FILE.EXTENTION")
+        print("Using LogFile: {0}".format(logFile))
+        log = open(logFile, "w", 0)
+    except:
+        e = str(sys.exc_info()[0]) + str(sys.exc_info()[1]) + str(sys.exc_info()[2])
+        print("{0} - ERROR - Error raised when initiating the main log handler: ".format(str(batchDateTime)), str(e))
+    return log
 
 
 if __name__ == "__main__":

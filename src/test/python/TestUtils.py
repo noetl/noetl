@@ -1,6 +1,6 @@
 import os
 
-from noetl import main
+from noetl import _main
 from src.rootPath import TEST_RESOURCES
 
 
@@ -9,7 +9,7 @@ def sameSetupUp(fileName, asserts):
     generatedFile = os.path.join(TEST_RESOURCES, "ChenTestGeneratedFile")
     if os.path.exists(generatedFile):
         os.remove(generatedFile)
-    main([None, filePath])
+    _main(filePath, True)
     with open(generatedFile) as f:
         allLines = f.readlines()
         print(os.linesep)

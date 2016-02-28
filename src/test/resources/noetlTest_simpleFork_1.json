@@ -1,7 +1,11 @@
 {
   "LOGGING": [
     {
-      "NAME": "XXX"
+      "NAME": "chenlog",
+      "FILE": {
+        "NAME": "chenlog",
+        "DIRECTORY": ""
+      }
     }
   ],
   "WORKFLOW": {
