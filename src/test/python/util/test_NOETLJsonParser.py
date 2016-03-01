@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from src.main.python.util.NOETLJsonParser import NOETLJsonParser
+from util.NOETLJsonParser import NOETLJsonParser
 from src.rootPath import *
 
 __author__ = 'chenguo'

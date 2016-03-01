@@ -1,9 +1,9 @@
 from Queue import *
 from unittest import TestCase
 
-from src.main.python.component.Step import *
-from src.main.python.execution.QueueExecution import runCursorQueue
-from src.main.python.util.NOETLJsonParser import NOETLJsonParser
+from component.Step import *
+from execution.QueueExecution import runCursorQueue
+from util.NOETLJsonParser import NOETLJsonParser
 from src.rootPath import TEST_RESOURCES
 
 

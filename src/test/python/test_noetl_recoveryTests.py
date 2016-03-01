@@ -3,7 +3,7 @@ from unittest import TestCase
 
 import TestUtils
 from src.main.python.execution.ExecutionActionsForTests import SupportedTestActionsUtils
-from src.main.python.noetl import *
+from noetl import *
 from src.rootPath import TEST_RESOURCES
 
 

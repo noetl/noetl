@@ -1,7 +1,7 @@
 import os
 from unittest import TestCase
-from src.main.python.util.NOETLJsonParser import NOETLJsonParser
-from src.main.python.util.Tools import *
+from util.NOETLJsonParser import NOETLJsonParser
+from util.Tools import *
 from src.rootPath import TEST_RESOURCES
 
 

@@ -1,4 +1,4 @@
-from src.main.python.util.Tools import *
+from util.Tools import *
 
 
 class Task:

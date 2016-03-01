@@ -1,9 +1,9 @@
 import threading
 from threading import Thread
-from src.main.python.execution import ExecutionActionsUtil
-from src.main.python.execution.ExecutionActionsForProduction import SupportedProductActions
-from src.main.python.execution.ExecutionActionsForTests import SupportedTestActions
-from src.main.python.util.CommonPrinter import *
+from execution import ExecutionActionsUtil
+from execution.ExecutionActionsForProduction import SupportedProductActions
+from execution.ExecutionActionsForTests import SupportedTestActions
+from util.CommonPrinter import *
 
 
 def runCursorQueue(stepObj, cursorQueue, testMode):

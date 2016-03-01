@@ -3,8 +3,8 @@ import subprocess
 
 import requests
 
-from src.main.python.util import Tools
-from src.main.python.util.Tools import *
+from util import Tools
+from util.Tools import *
 
 
 class SupportedProductActions:

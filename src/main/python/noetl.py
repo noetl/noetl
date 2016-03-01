@@ -5,13 +5,13 @@ import time
 from Queue import Queue
 from threading import Thread
 
-from src.main.python.component.Branch import Branch
-from src.main.python.component.Step import Step
-from src.main.python.component.Task import Task
-from src.main.python.execution.QueueExecution import runCursorQueue
-from src.main.python.util.CommonPrinter import *
-from src.main.python.util.NOETLJsonParser import NOETLJsonParser
-from src.main.python.util.Tools import processConfRequest
+from component.Branch import Branch
+from component.Step import Step
+from component.Task import Task
+from execution.QueueExecution import runCursorQueue
+from util.CommonPrinter import *
+from util.NOETLJsonParser import NOETLJsonParser
+from util.Tools import processConfRequest
 
 testMode = False
 
