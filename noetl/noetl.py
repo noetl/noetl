@@ -1,23 +1,19 @@
 #!/usr/bin/python
 #
-# TITLE: noetl
-# AUTHORS: Alexey Kuksin, Casey Takahashi
-# DATE: 16-08-2015
-# OBJECTIVE: Manage process execution 
-#   
-#   Copyright 2015 ALEXEY KUXIN
+# Copyright (C) 2015-2016 noetl.io
 #
-#   Licensed under the Apache License, Version 2.0 (the "License");
-#   you may not use this file except in compliance with the License.
-#   You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#       http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
-#   Unless required by applicable law or agreed to in writing, software
-#   distributed under the License is distributed on an "AS IS" BASIS,
-#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#   See the License for the specific language governing permissions and
-#   limitations under the License.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
 from __future__ import print_function
 import sys, os, datetime, time, re, logging, json, subprocess
@@ -26,8 +22,11 @@ from threading import Thread
 from EvalJsonParser import parseConfig
 from distutils.command.config import config
 
+
 bug7980 = datetime.datetime.strptime("20110101","%Y%m%d") #bug http://bugs.python.org/issue7980
+
 batchDateTime = datetime.datetime.now()
+
 
 def getConfig(cfg,confRequest, confCase=None):
     try:
@@ -48,10 +47,10 @@ def getConfig(cfg,confRequest, confCase=None):
             cfg = [idx for idx,val in enumerate(cfg)]
     except:
         e = str(sys.exc_info()[0]) + str(sys.exc_info()[1]) + str(sys.exc_info()[2])
-        # print(datetime.datetime.now()," - ERROR - ","Error raised in getConfig with: ", e , " confRequest: " , confRequest, type(cfg))
         print(datetime.datetime.now()," - ERROR - ","Error raised in getConfig with: ", e , " confRequest: " , confRequest, type(cfg),file = log)
         cfg = "CONF_NOT_FOUND"
     return cfg
+
 
 def getCursor(cursor, datatype, increment, dateFormat='%Y%m'):
     try:
@@ -78,7 +77,8 @@ def getCursor(cursor, datatype, increment, dateFormat='%Y%m'):
         e = sys.exc_info() 
         print(datetime.datetime.now()," - ERROR - ","getCursor failed with error: ",e)
         return sorted(set(cursor))
-    
+
+
 def addTime(strDate1, strDate2, increment, incType='m', dateFormat="%Y%m"):
     try:
         date1, date2 = datetime.datetime.strptime(strDate1,dateFormat), datetime.datetime.strptime(strDate2,dateFormat)
@@ -97,6 +97,7 @@ def addTime(strDate1, strDate2, increment, incType='m', dateFormat="%Y%m"):
         print(datetime.datetime.now()," - ERROR - ","addTime failed with error: ",e)
     return currentCursor
 
+
 def inititateRep(batchDateTime):
     global repid, config
     try:
@@ -110,6 +111,7 @@ def inititateRep(batchDateTime):
     except:
         return False
     return True
+
 
 def initiateLog(logId): 
     global log, logFile, config
@@ -128,6 +130,7 @@ def initiateLog(logId):
         print(batchDateTime," - ERROR - ","Error raised when initiating the main log handler: ",logFile,e)
     return 0
 
+
 def sendMail(confTag, confTagId):
     global config
     mailSubject = str(getConfig(config,"LOGGING.0.MAIL.SUBJECT"))
@@ -138,6 +141,7 @@ def sendMail(confTag, confTagId):
         print(datetime.datetime.now()," - INFO - ","Mail sent as: ", exitCode, " cmd: ", mailCmd,file = log) 
     except:
         print(datetime.datetime.now()," - ERROR - ","Mailing send error code: ", exitCode, " cmd: ", mailCmd,file = log)
+
 
 def curPattern(valIn, cur = None, curType="date", dateFormat="%Y%m"):
     try:
@@ -158,6 +162,7 @@ def curPattern(valIn, cur = None, curType="date", dateFormat="%Y%m"):
         print(datetime.datetime.now()," - ERROR - ","curPattern failed: " , valIn , " cursor value: " , cur , " ; dateFormat: " , dateFormat , " error: ", e , file = log)
         return "DATE_PATTERN_NOT_FOUND"
 
+
 def getWaittime(waittime):
     try:
         measure = waittime[len(waittime) - 1].lower()
@@ -171,6 +176,7 @@ def getWaittime(waittime):
     except:
         e = sys.exc_info()
         print(datetime.datetime.now()," - ERROR - ","getWaittime failed: ", waittime, " error: ", e , file = log)
+
 
 def updateConfig(clusterId,MasterPublicDnsName):
     global config
@@ -247,6 +253,7 @@ def awsClusterProvisioning(task, step, cur):
         exitCode = 1 
     return exitCode
 
+
 def runShell(task, step, cur):
     global config,testIt
     try:
@@ -269,6 +276,7 @@ def runShell(task, step, cur):
         print(datetime.datetime.now()," - ERROR - ", "Command: " , cmd , " cursor value: " , cur , " ; was failed with exit code: " , exitCode , " error: " , e,file = log)
         exitCode = 1 
     return exitCode
+
 
 def runQueue(step, cursorQueue):
     global config
@@ -293,7 +301,8 @@ def runQueue(step, cursorQueue):
         print(datetime.datetime.now()," - ERROR - ","Queue job failed: ", job, " error: ",e, file = log)
         exitCode = 1
     return exitCode
-    
+
+
 def runThreads(step, cursorQueue):
     try:
         exitCode = 0
@@ -308,11 +317,11 @@ def runThreads(step, cursorQueue):
         exitCode = -1
     return exitCode
 
+
 def runStep(task, step, branch):
     global config
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
-        # print(datetime.datetime.now()," - INFO - ","runStep for step:  ", step.stepName ," THREAD: ",step.thread, " ; CURSOR_LIST_INDEX: ",step.cursorListIndex, " CURSOR: ", step.cursor ," ACTION: ", step.action)
         print(datetime.datetime.now()," - INFO - ","runStep for step:  ", step.stepName ," THREAD: ",step.thread, " ; CURSOR_LIST_INDEX: ",step.cursorListIndex, " CURSOR: ", step.cursor ," ACTION: ", step.action,file = log)
         cursorQueue = Queue()
         THREAD = int(step.thread) if step.thread.isdigit() else 0
@@ -329,7 +338,6 @@ def runStep(task, step, branch):
                 exitCode = runThreads(step, cursorQueue)
         elif "CONF_NOT_FOUND" not in step.action:
             exitCode = eval(step.action + "(\"" + str(task.taskName) + "\",\"" + str(step.stepName) + "\",\"" + "str(0)" + "\")" )
-        # print(datetime.datetime.now()," - INFO - step:  ", step.stepName , " execution time is: ", datetime.datetime.now() - stepStartDate)
         print(datetime.datetime.now()," - INFO - step:  ", step.stepName , " execution time is: ", datetime.datetime.now() - stepStartDate ,file = log)
         if len(step.cursorFail) != 0:
             print(datetime.datetime.now()," - STEP FAILED - ","Branch:", branch.branchName,", Step:",step.stepName,", Step Description:", step.stepDesc,", Failed Cursors:",step.cursorFail)
@@ -347,6 +355,7 @@ def runStep(task, step, branch):
         print(datetime.datetime.now()," - ERROR - ","Exception occurred in runStep for step:  ", step.stepName , " error: ", e)
         print(datetime.datetime.now()," - ERROR - ","Exception occurred in runStep for step:  ", step.stepName , " error: ", e ,file = log)
     return exitCode 
+
 
 def getStep(task, branch):
     try:
@@ -458,6 +467,7 @@ def getStep(task, branch):
  
     return exitCode
 
+
 def runBranchQueue(task, branchQueue):
     global config
     if branchQueue.empty():
@@ -476,6 +486,7 @@ def runBranchQueue(task, branchQueue):
         print(datetime.datetime.now()," - ERROR - ","branchQueue failed: ", branch.branchName, " error: ",e, file = log)
         return -1
 
+
 def forkBranches(task, branchQueue): 
     try:
         exitCode = 0
@@ -490,6 +501,7 @@ def forkBranches(task, branchQueue):
         print(datetime.datetime.now()," - ERROR - ","Branches failed with error: ",e, file = log)
         exitCode = -1 
     return exitCode
+
 
 def runTask(task):
     global config
@@ -520,9 +532,9 @@ def runTask(task):
         return exitCode
     return exitCode 
 
+
 def makeBranches(task, curBranch, step): # when reach mergeStep, stop and then do the mergeStep branch
     try:
-        # print("CURSOR: ", step.cursor) # delete
         exitCode = 0
         if (len(step.success.values()) == 1) and (len(step.success.values()[0]) == 1):
             next = step.success.values()[0][0]
@@ -573,6 +585,7 @@ def makeBranches(task, curBranch, step): # when reach mergeStep, stop and then d
         print(datetime.datetime.now()," - ERROR - ","Exception occurred in makeBranches for task:  ", task.taskName , " error: ", e ,file = log)
         exitCode = -1
     return exitCode
+
 
 def getTask(task):
     global config 
@@ -639,6 +652,7 @@ def getTask(task):
       "; and task description: " , task.taskDesc , "; with exitCode: ", exitCode, " error: ",e ,file = log)
     return exitCode
 
+
 def doTest(configFileName):
     global config
     try:
@@ -667,9 +681,11 @@ def doTest(configFileName):
     except:
         raise
 
+
 class Usage(Exception):
     def __init__(self, msg):
         self.msg = msg
+
 
 def main(argv=None):
     global config,testIt
@@ -711,6 +727,7 @@ def main(argv=None):
         print >>sys.stderr, "for help use --help"
         return 2
 
+
 class Task:
     def __init__(self, taskName):
         self.taskName = taskName
@@ -738,7 +755,8 @@ class Branch:
         self.traceBranch = False # if branch needs to be tracked in the case of a failure
         self.failedSteps = []
         self.lastFail = None
-    
+
+
 class Step:
     def __init__(self, task, stepName):
         self.task = task
@@ -759,6 +777,7 @@ class Step:
                                 getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.FORMAT"))
         self.cursorListIndex = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.RANGE", "LIST_INDEX")
         self.curInherit = getConfig(config,"WORKFLOW.TASKS." + str(task.taskName) + ".STEPS." + str(stepName) +".CALL.CURSOR.INHERIT")
-        
+
+
 if __name__ == "__main__":
     sys.exit(main())
