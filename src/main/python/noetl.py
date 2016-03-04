@@ -70,28 +70,28 @@ def getTask(config, taskObj):
         __configurationValidationCheck(startDictValues, taskObj)
         if len(startDictValues) == 1 and len(startDictValues[0]) == 1:
             stepObj = Step(taskObj, startDictValues[0][0])
-            if taskObj.start.keys()[0] != "0":
-                raise RuntimeError("You cannot define merge step when there is only one start step. "
-                                   "Alternatively, you can move the merge step to the step's next.success")
-            branch = Branch(stepObj, "0")
+            # if taskObj.start.keys()[0] != "0":
+            #     raise RuntimeError("You cannot define merge step when there is only one start step. "
+            #                        "Alternatively, you can move the merge step to the step's next.success")
+            branch = Branch(stepObj, taskObj.start.keys()[0])
             extendBranchFromStep(branch, stepObj)
-        elif taskObj.taskName == "start" and len(startDictValues) == 0:
-            makeForkBranches(taskObj, taskObj.nextSuccess.start)
+        elif taskObj.taskName == "start" and len(startDictValues) == 0:  # allow empty start dictionary for start task
+            getTask(config, Task(taskObj.nextSuccess, config))
+            return
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
             makeForkBranches(taskObj, taskObj.start)
 
         # start task execution.
-        if taskObj.taskName == "start":
-            taskStartDate = datetime.datetime.now()
-            runTask(taskObj)
-            printer.info("Execution time for task '{0}' is: {1}."
-                         .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
-            if len(taskObj.failedStepNames) > 0:
-                printFailedInfo(taskObj)
-                getTask(config, Task(taskObj.nextFail, config))
-            else:
-                printer.info("Task '{0}' finished successfully.".format(taskObj.taskName))
-                getTask(config, Task(taskObj.nextSuccess, config))
+        taskStartDate = datetime.datetime.now()
+        runTask(taskObj)
+        printer.info("Execution time for task '{0}' is: {1}."
+                     .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
+        if len(taskObj.failedStepNames) > 0:
+            printFailedInfo(taskObj)
+            getTask(config, Task(taskObj.nextFail, config))
+        else:
+            printer.info("Task '{0}' finished successfully.".format(taskObj.taskName))
+            getTask(config, Task(taskObj.nextSuccess, config))
     except:
         printer.err("getTask failed for task '{0}'".format(str(taskObj)))
 
@@ -166,24 +166,21 @@ def makeForkBranches(taskObj, forkingDictionary):  # make sure step is a forking
 
 
 def runTask(taskObj):
-    try:
-        printer.info("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
-        startBranchNames = []
-        for mergeStepName, branchNames in taskObj.start.iteritems():
-            startBranchNames += branchNames
-        if len(startBranchNames) > 1:
-            branchQueue = Queue()
-            for branchName in startBranchNames:
-                branchQueue.put(taskObj.branchesDict[branchName])
-            runBranchQueue(branchQueue)
-        elif len(startBranchNames) == 1:
-            branchName = startBranchNames[0]
-            branch = taskObj.branchesDict[branchName]
-            runBranch(branch)
-        else:
-            raise RuntimeError("No starting steps found for the task '{0}'".format(taskObj.taskName))
-    except:
-        printer.err("Exception occurred in runTask for task '{0}'.".format(taskObj.taskName))
+    printer.info("Running task '{0}' with starting steps '{1}'.".format(taskObj.taskName, taskObj.start))
+    startBranchNames = []
+    for mergeStepName, branchNames in taskObj.start.iteritems():
+        startBranchNames += branchNames
+    if len(startBranchNames) > 1:
+        branchQueue = Queue()
+        for branchName in startBranchNames:
+            branchQueue.put(taskObj.branchesDict[branchName])
+        runBranchQueue(branchQueue)
+    elif len(startBranchNames) == 1:
+        branchName = startBranchNames[0]
+        branch = taskObj.branchesDict[branchName]
+        runBranch(branch)
+    else:
+        raise RuntimeError("No starting steps found for the task '{0}'".format(taskObj.taskName))
 
 
 def runBranchQueue(branchQueue):

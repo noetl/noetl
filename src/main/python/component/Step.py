@@ -40,14 +40,15 @@ class Step:
             cursor = callDict["CURSOR"]
             self.cursorRange = cursor["RANGE"]
             self.cursorDataType = cursor["DATATYPE"]
-            self.cursorIncrement = cursor["INCREMENT"]
-            self.cursorFormat = cursor["FORMAT"]
+            self.cursorIncrement = cursor.get("INCREMENT")
+            self.cursorFormat = cursor.get("FORMAT")
             # self.cursor keeps the cursors that need to be run. Will be updated to cursorFail if step failed.
             self.cursor = getCursor(self.cursorRange, self.cursorDataType, self.cursorIncrement,
                                     self.cursorFormat)
 
             self.cursorListIndex = range(0, len(self.cursorRange))
-            self.curInherit = cursor["INHERIT"].lower() == 'true'
+            inherit_ = cursor.get("INHERIT")
+            self.curInherit = False if inherit_ is None else inherit_.lower() == 'true'
 
             self.callExec = callDict["EXEC"]
             self.execLists = self.callExec["CMD"]
