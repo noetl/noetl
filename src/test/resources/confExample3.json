@@ -1,0 +1,45 @@
+{
+  "OS_ENV": {
+    "HOST": "localhost",
+    "HADOOP_HOME": "/home/hadoop",
+    "USER": "hadoop"
+  },
+  "PROJECT": {
+    "ROOT": "/mnt",
+    "VERT": "Deposits",
+    "NAME": "italy",
+    "VERSION": "pr4"
+  },
+  "LOGGING": [
+    {
+      "NAME": "${PROJECT.NAME}",
+      "TYPE": "OS",
+      "HOST": "${OS_ENV.HOST}",
+      "FILE": {
+        "NAME": "${PROJECT.NAME}",
+        "DIRECTORY": "${PROJECT.ROOT}",
+        "EXTENTION": "log",
+        "PATTERN": "datetime"
+      },
+      "MAIL": {
+        "SUBJECT": "${PROJECT.NAME}",
+        "LIST": "chen.guo@nomissolutions.com",
+        "CMD": "mail -s "
+      }
+    }
+  ],
+  "WORKFLOW": {
+    "TEST": {
+      "FLAG": "False",
+      "FUNCTIONS": [
+        "getTask"
+      ]
+    },
+    "pipelineRoot": "${PROJECT.ROOT}/italy-deposits/${PROJECT.VERSION}",
+    "scriptRoot": "${WORKFLOW.pipelineRoot}/script",
+    "hqlRoot": "${WORKFLOW.pipelineRoot}/hql",
+    "hiveDBName": "${PROJECT.NAME}_${PROJECT.VERSION}",
+    "previousMonth": "201512",
+    "currentMonth": "201601"
+  }
+}

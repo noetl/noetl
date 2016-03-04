@@ -1,5 +1,4 @@
 from unittest import TestCase
-
 from util.NOETLJsonParser import NOETLJsonParser
 from src.rootPath import *
 
@@ -19,7 +18,7 @@ class TestNOETLJsonParser(TestCase):
         self.assertEqual("Hello", varList[0])
         self.assertEqual("World", varList[1])
 
-    def testGetGoodConfig(self):
+    def testGetGoodConfig1(self):
         filePath = os.path.join(TEST_RESOURCES, "confExample1.json")
         conf = NOETLJsonParser(filePath).getConfig()
         self.assertEquals("localhost", conf["OS_ENV"]["HOST"])
@@ -36,6 +35,14 @@ class TestNOETLJsonParser(TestCase):
             elif isinstance(logConf, basestring):
                 self.assertEquals("FUN", logConf)
 
+    def testGetGoodConfig3(self):
+        filePath = os.path.join(TEST_RESOURCES, "confExample3.json")
+        conf = NOETLJsonParser(filePath).getConfig()
+        workFlowConf = conf["WORKFLOW"]
+        self.assertEquals("/mnt/italy-deposits/pr4/script", workFlowConf["scriptRoot"])
+        self.assertEquals("/mnt/italy-deposits/pr4/hql", workFlowConf["hqlRoot"])
+        self.assertEquals("italy_pr4", workFlowConf["hiveDBName"])
+
     def testGetGoodConfig2(self):
         filePath = os.path.join(TEST_RESOURCES, "noetlTest_simple3StepFailure_4.json")
         conf = NOETLJsonParser(filePath).getConfig()
@@ -48,7 +55,6 @@ class TestNOETLJsonParser(TestCase):
         self.assertEquals("step1_recovery", step1Failure["NEXT_STEP"])
         self.assertEquals("2", step1Failure["MAX_FAILURES"])
         self.assertEquals("0s", step1Failure["WAITTIME"])
-
 
     def testGetBadConfig(self):
         filePath = os.path.join(TEST_RESOURCES, "confExample2_bad.json")

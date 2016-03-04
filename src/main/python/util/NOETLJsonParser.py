@@ -32,29 +32,53 @@ class NOETLJsonParser:
             for id, element in enumerate(config):
                 config[id] = self.__dereferenceConfig(element)
         elif isinstance(config, basestring):
-            config = self.__getDereferencedString(self.config, config)
+            config = self.__getDereferencedString(config)
         else:
             raise RuntimeError("Unknown/Unexpected configuration type")
         return config
 
-    @staticmethod
-    def __getDereferencedString(config, jsonStr):
+    def __getDereferencedString(self, jsonStr):
         varList = NOETLJsonParser.getCurlyBraceReferences(jsonStr)
         if len(varList) != 0:
             for id, var in enumerate(varList):
-                replaceVal = str(NOETLJsonParser.__getReplacedString(config, var))
+                replaceVal = str(self.__getReplacedString(var))
                 jsonStr = jsonStr.replace("${" + varList[id] + "}", replaceVal)
         return jsonStr
 
-    @staticmethod
-    def __getReplacedString(config, jsonPath):
+    def __getReplacedString(self, jsonPath):
         jsonList = jsonPath.split(".")
+        config = self.config
         for label in jsonList:
-            config = config.get(label)
-            if config is None:
-                raise RuntimeError(
-                    "Dereferencing failed for ${{{0}}}. The property {1} doesn't exist.".format(str(jsonPath), label))
+            if isinstance(config, dict):
+                config = self.__getJsonMap(config, label)
+            elif isinstance(config, list):
+                config = self.__getJsonList(config, label)
+        if isinstance(config, basestring):
+            return self.__getDereferencedString(str(config))
         return config
+
+    def __getJsonMap(self, confMap, jsonLabel):
+        for key, val in confMap.iteritems():
+            if str(key) in jsonLabel:
+                if isinstance(val, basestring):
+                    return self.__getDereferencedString(str(val))
+                return val
+        raise RuntimeError("Failed to get value for " + str(jsonLabel))
+
+    def __getJsonList(self, listConf, jsonLabel):
+        if not isinstance(jsonLabel, unicode):
+            jsonLabel = unicode(jsonLabel, 'utf-8')
+        if jsonLabel.isnumeric():
+            i = int(jsonLabel)
+            return listConf[i]
+        else:
+            listCopy = []
+            for i in range(len(listConf)):
+                if isinstance(listConf[i], basestring):
+                    listCopy.append(self.__getDereferencedString(str(listConf[i])))
+                else:
+                    listCopy.append(listConf[i])
+            return listCopy
 
     @staticmethod
     def getCurlyBraceReferences(jsonValue):
