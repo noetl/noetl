@@ -4,7 +4,6 @@ import os
 import time
 from Queue import Queue
 from threading import Thread
-
 from component.Branch import Branch
 from component.Step import Step
 from component.Task import Task
@@ -51,9 +50,6 @@ def _main(configFilePath, forUnitTest):
 def doTest(config):
     try:
         printer.info("In test mode...")
-        logName = processConfRequest(config, "LOGGING.0.NAME")
-        printer.info('Log file is "{0}"'.format(logName))
-
         taskList = processConfRequest(config, "WORKFLOW.TASKS")
         printer.info("LIST of TASKS:\n" + str(taskList))
 
@@ -66,41 +62,30 @@ def doTest(config):
 def getTask(config, taskObj):
     try:
         printer.info("Getting task '{0}' with description '{1}'. Next task is '{2}'"
-                          .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextSuccess))
+                     .format(taskObj.taskName, taskObj.taskDesc, taskObj.nextSuccess))
         if taskObj.taskName == "exit":
             return
         # Make branches for the task before execution.
         startDictValues = taskObj.start.values()
-        checkUniqueSteps = set()  # This feature will be supported in the further version.
-        for steps in startDictValues:
-            for step in steps:
-                if step in checkUniqueSteps:
-                    raise RuntimeError("The step '{0}' exists more than once in your task start config"
-                                       .format(step, taskObj.start))
-                else:
-                    checkUniqueSteps.add(step)
-        for step in taskObj.start.keys():
-            if step in checkUniqueSteps:
-                raise RuntimeError("The step '{0}' exists more than once in your task start config"
-                                   .format(step, taskObj.start))
-            else:
-                checkUniqueSteps.add(step)
-
-        if len(startDictValues) == 1 and len(startDictValues[0]) == 1:  # only 1 item in the dict, and have only 1 step.
+        __configurationValidationCheck(startDictValues, taskObj)
+        if len(startDictValues) == 1 and len(startDictValues[0]) == 1:
             stepObj = Step(taskObj, startDictValues[0][0])
             if taskObj.start.keys()[0] != "0":
                 raise RuntimeError("You cannot define merge step when there is only one start step. "
                                    "Alternatively, you can move the merge step to the step's next.success")
             branch = Branch(stepObj, "0")
             extendBranchFromStep(branch, stepObj)
+        elif taskObj.taskName == "start" and len(startDictValues) == 0:
+            makeForkBranches(taskObj, taskObj.nextSuccess.start)
         elif len(startDictValues) > 1 or len(startDictValues[0]) > 1:  # forking branches
             makeForkBranches(taskObj, taskObj.start)
+
         # start task execution.
         if taskObj.taskName == "start":
             taskStartDate = datetime.datetime.now()
             runTask(taskObj)
             printer.info("Execution time for task '{0}' is: {1}."
-                              .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
+                         .format(taskObj.taskName, datetime.datetime.now() - taskStartDate))
             if len(taskObj.failedStepNames) > 0:
                 printFailedInfo(taskObj)
                 getTask(config, Task(taskObj.nextFail, config))
@@ -111,12 +96,29 @@ def getTask(config, taskObj):
         printer.err("getTask failed for task '{0}'".format(str(taskObj)))
 
 
+def __configurationValidationCheck(startDictValues, taskObj):
+    checkUniqueSteps = set()  # This feature will be supported in the further version.
+    for steps in startDictValues:
+        for step in steps:
+            if step in checkUniqueSteps:
+                raise RuntimeError("The step '{0}' exists more than once in your task start config"
+                                   .format(step, taskObj.start))
+            else:
+                checkUniqueSteps.add(step)
+    for step in taskObj.start.keys():
+        if step in checkUniqueSteps:
+            raise RuntimeError("The step '{0}' exists more than once in your task start config"
+                               .format(step, taskObj.start))
+        else:
+            checkUniqueSteps.add(step)
+
+
 def printFailedInfo(taskObj):
     printer.info("FAILURE: Task '{0}' failed with step(s): '{1}'."
-                      .format(taskObj.taskName, ",".join(taskObj.failedStepNames)))
+                 .format(taskObj.taskName, ",".join(taskObj.failedStepNames)))
     for failedStep in taskObj.failedStepNames:
         printer.info('FAILURE: Step "{0}" failed with cursors "{1}".'
-                          .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
+                     .format(failedStep, taskObj.stepObs[failedStep].cursorFail))
 
 
 def extendBranchFromStep(branchObj, stepObj):
@@ -217,7 +219,7 @@ def runBranch(branchObj):
         taskObj = branchObj.task
         currentStep = branchObj.steps[branchObj.currentStepName]
         printer.info("Running step '{0}'. Failed cursors before resetting: '{1}'."
-                          .format(currentStep.stepPath, currentStep.cursorFail))
+                     .format(currentStep.stepPath, currentStep.cursorFail))
         currentStep.cursorFail = []  # reset before running again
         exitCode = runStep(currentStep)
 
@@ -296,20 +298,20 @@ def runStep(step):
     try:
         exitCode, stepStartDate = 0, datetime.datetime.now()
         printer.info("RunStep for step '{0}' with cursors '{1}' using '{2}' thread(s)."
-                          .format(step.stepName, step.cursor, step.thread))
+                     .format(step.stepName, step.cursor, step.thread))
         cursorQueue = Queue()
         for cur in step.cursor:
             cursorQueue.put(cur)
         runCursorQueue(step, cursorQueue, testMode)
         printer.info("Execution time for step '{0}' is: '{1}'."
-                          .format(step.stepName, datetime.datetime.now() - stepStartDate))
+                     .format(step.stepName, datetime.datetime.now() - stepStartDate))
 
         if len(step.cursorFail) == 0:
             return 0
 
         step.failureCount += 1
         printer.info("Step '{0}' failed with cursors '{1}'. Failure Count: {2}, Maximum failure allowed: {3}."
-                          .format(step.stepPath, step.cursorFail, step.failureCount, step.maxFailures))
+                     .format(step.stepPath, step.cursorFail, step.failureCount, step.maxFailures))
         step.cursor = step.cursorFail
         if step.failureCount < step.maxFailures:
             step.cursorFail = []
