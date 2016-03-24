@@ -63,7 +63,7 @@ class NOETLJsonParser:
                 if isinstance(val, basestring):
                     return self.__getDereferencedString(str(val))
                 return val
-        raise RuntimeError("Failed to get value for " + str(jsonLabel))
+        raise RuntimeError("__getJsonMap: Failed to get value for " + str(jsonLabel))
 
     def __getJsonList(self, listConf, jsonLabel):
         if not isinstance(jsonLabel, unicode):
