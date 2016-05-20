@@ -2,11 +2,13 @@
   "OS_ENV": {
     "HOST": "localhost",
     "ROOT":"~/projects/github",
-    "TEMP":"/tmp"
+    "TEMP":"/tmp",
+	  "CHA":"CHA"
   },
   "PROJECT": {
     "NAME":"noetl",
-    "HOME": "${OS_ENV.ROOT}/noetl"
+    "HOME": "${OS_ENV.ROOT}/noetl",
+    "CUST": "noetl"
   },
   "LOGGING": [
     {
@@ -27,6 +29,7 @@
   "WORKFLOW": {
     "HOST": "${OS_ENV.HOST}",
     "STAGING":"${OS_ENV.TEMP}",
+	"TASKSEP":"-",
     "TEST": {
       "FLAG": "True",
 	  "FUNCTIONS":[
