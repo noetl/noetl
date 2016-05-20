@@ -25,8 +25,6 @@
   },
   "homepage": "https://noetl.io",
   "dependencies": {
-    "UserAPI": "file:api/user",
-    "WorkflowAPI": "file:api/workflow",
     "babel-polyfill": "^6.8.0",
     "co": "^4.6.0",
     "koa": "^0.20.0",

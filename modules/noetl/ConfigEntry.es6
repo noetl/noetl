@@ -18,7 +18,7 @@ module.exports = class ConfigEntry{
         if (validatedConfigEntry) {
             this._entryId = this.configEntryName;
             this._entryPath = this.configEntryPath;
-            Object.assign(this, ConfigEntry.translateConfigEntryReferences({},validatedConfigEntry));
+            Object.assign(this, ConfigEntry.translateConfigEntryReference({},validatedConfigEntry));
         }
     }
     static configEntry() {
@@ -69,27 +69,27 @@ module.exports = class ConfigEntry{
     };
 
     /**
-     * translateConfigEntryReferences makes a deep copy of an object replacing values for the referenced values.
+     * translateConfigEntryReference makes a deep copy of an object replacing values for the referenced values.
      * @param refValue
      * @param srcValue
      * @returns {object} || [array] || string
      */
-    static translateConfigEntryReferences(refValue, srcValue) {
+    static translateConfigEntryReference(refValue, srcValue) {
         const REGEX = /\${(.*?)}/g;
         if (ConfigEntry.isObject(refValue) && ConfigEntry.isObject(srcValue))  {
             Object.keys(srcValue).forEach(key => {
                 if (ConfigEntry.isObject(srcValue[key])) {
                     if (!refValue[key]) Object.assign(refValue, { [key]: {} });
-                    ConfigEntry.translateConfigEntryReferences(refValue[key], srcValue[key]);
+                    ConfigEntry.translateConfigEntryReference(refValue[key], srcValue[key]);
                 } else {
-                    Object.assign(refValue, { [key]: ConfigEntry.translateConfigEntryReferences(null,srcValue[key]) });
+                    Object.assign(refValue, { [key]: ConfigEntry.translateConfigEntryReference(null,srcValue[key]) });
                 }
             });
         } else if (Array.isArray(srcValue)) {
-                return  srcValue.map(item => { return ConfigEntry.translateConfigEntryReferences(null,item);})
+                return  srcValue.map(item => { return ConfigEntry.translateConfigEntryReference(null,item);})
         } else if (REGEX.test(srcValue)) {
                 let val = srcValue.replace(REGEX, (match,p1) => {return nconf.get(p1.replace(/\./g, ":"));});
-                return ConfigEntry.translateConfigEntryReferences( ConfigEntry.isObject(val) ? {} : null, val);
+                return ConfigEntry.translateConfigEntryReference( ConfigEntry.isObject(val) ? {} : null, val);
         } else {
             return srcValue;
         }
