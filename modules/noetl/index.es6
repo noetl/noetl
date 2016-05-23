@@ -42,7 +42,7 @@ var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
 
 console.log("VARTATSKS: ",tasks);
 
-var translatedEntry = ConfigEntry.translateConfigEntryReferences({},tasks[1].STEPS.step1);
+var translatedEntry = ConfigEntry.translateConfigEntryReference({},tasks[1].STEPS.step1);
 
 console.log("translatedEntry", translatedEntry);
 

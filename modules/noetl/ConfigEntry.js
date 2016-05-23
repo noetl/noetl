@@ -63,7 +63,7 @@ module.exports = function () {
         if (validatedConfigEntry) {
             this._entryId = this.configEntryName;
             this._entryPath = this.configEntryPath;
-            (0, _assign2.default)(this, ConfigEntry.translateConfigEntryReferences({}, validatedConfigEntry));
+            (0, _assign2.default)(this, ConfigEntry.translateConfigEntryReference({}, validatedConfigEntry));
         }
     }
 
@@ -146,35 +146,35 @@ module.exports = function () {
             return validatedConfigValue;
         }
     }, {
-        key: 'translateConfigEntryReferences',
+        key: 'translateConfigEntryReference',
 
 
         /**
-         * translateConfigEntryReferences makes a deep copy of an object replacing values for the referenced values.
+         * translateConfigEntryReference makes a deep copy of an object replacing values for the referenced values.
          * @param refValue
          * @param srcValue
          * @returns {object} || [array] || string
          */
-        value: function translateConfigEntryReferences(refValue, srcValue) {
+        value: function translateConfigEntryReference(refValue, srcValue) {
             var REGEX = /\${(.*?)}/g;
             if (ConfigEntry.isObject(refValue) && ConfigEntry.isObject(srcValue)) {
                 (0, _keys2.default)(srcValue).forEach(function (key) {
                     if (ConfigEntry.isObject(srcValue[key])) {
                         if (!refValue[key]) (0, _assign2.default)(refValue, (0, _defineProperty3.default)({}, key, {}));
-                        ConfigEntry.translateConfigEntryReferences(refValue[key], srcValue[key]);
+                        ConfigEntry.translateConfigEntryReference(refValue[key], srcValue[key]);
                     } else {
-                        (0, _assign2.default)(refValue, (0, _defineProperty3.default)({}, key, ConfigEntry.translateConfigEntryReferences(null, srcValue[key])));
+                        (0, _assign2.default)(refValue, (0, _defineProperty3.default)({}, key, ConfigEntry.translateConfigEntryReference(null, srcValue[key])));
                     }
                 });
             } else if (Array.isArray(srcValue)) {
                 return srcValue.map(function (item) {
-                    return ConfigEntry.translateConfigEntryReferences(null, item);
+                    return ConfigEntry.translateConfigEntryReference(null, item);
                 });
             } else if (REGEX.test(srcValue)) {
                 var val = srcValue.replace(REGEX, function (match, p1) {
                     return nconf.get(p1.replace(/\./g, ":"));
                 });
-                return ConfigEntry.translateConfigEntryReferences(ConfigEntry.isObject(val) ? {} : null, val);
+                return ConfigEntry.translateConfigEntryReference(ConfigEntry.isObject(val) ? {} : null, val);
             } else {
                 return srcValue;
             }
