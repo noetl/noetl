@@ -1,4 +1,13 @@
 "use strict";
+
+// www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
+// www.noetl.io //////////////// NoETL /////////////////////////////////////////////////////////////////////////////////
+// www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+/**
+ * NoETL module dependencies
+ */
 var fs    = require('fs'),
     nconf = require('nconf'),
     co = require('co'),
@@ -8,38 +17,43 @@ var fs    = require('fs'),
     count = 0;
 require("babel-polyfill");
 
-const PROJECT = 'PROJECT',
-      WORKFLOW = 'WORKFLOW', TASKS = 'TASKS',
-      START = 'start', EXIT = 'exit';//,
-      //SEP = [' ',':','.',',',';','|','-'];
+var keys = Object.keys;
+var assign = Object.assign;
 
-//Read configuration file
+// Config keys
+const PROJECT = 'PROJECT',
+    WORKFLOW = 'WORKFLOW', TASKS = 'TASKS',
+    START = 'start', EXIT = 'exit';//,
+//SEP = [' ',':','.',',',';','|','-'];
+
+// Read configuration file
 nconf.argv()
     .env()
-    .file({ file: '../../conf/coursor.inherit.cfg.v1.json' });
+    .file({ file: '../../conf/coursor.inherit.cfg.v2.json' });
 
-
+// Validate config file for main entries
 nconf.required([`${WORKFLOW}:${TASKS}:${START}`,`${WORKFLOW}:${TASKS}:${EXIT}`]);
 
-
-function* generateTaskList(task,sep=''){
+/**
+ * @function generateTaskList
+ * Iterate over all tasks of workflow.
+ * @returns { Iterator.<Task> }
+ * @example
+ * var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
+ */
+function* generateTaskList(task,sep='-'){
     yield task;
-    if (task._entryPath !== 'exit' && task.nextSuccess) {
-        yield  *generateTaskList(ConfigEntry.configEntry(sep,WORKFLOW,TASKS,task.nextSuccess));
+    if (!['exit'].find(x => x === task._entryPath) && task.nextSuccess) {
+        yield  *generateTaskList(Task.task(sep,WORKFLOW,TASKS,task.nextSuccess));
     }
 };
 
-// Initiate a starting task to push workflow
-
-let startTask = new Task('-',WORKFLOW,TASKS,'start');
-//
-console.log(count++,"!!!startConfig:", startTask);
-console.log(count++,`startConfig.entryId: ${startTask.entryId}`);
-console.log(count++," ,startConfig.entryId",startTask.entryId);
-console.log(count++," ,startConfig.nextSuccess",startTask.nextSuccess);
-
+// Initiate a task list to push workflow
 var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
 
+<<<<<<< HEAD
+console.log("object: ",Object.keys(tasks[0].START).length);
+=======
 console.log("VARTATSKS: ",tasks);
 
 var translatedEntry = ConfigEntry.translateConfigEntryReference({},tasks[1].STEPS.step1);
@@ -52,3 +66,4 @@ console.log("translatedEntry1",translatedEntry.CALL.EXEC.CMD);
 //let tasks = Array.from(WorkflowTasks).
 
 
+>>>>>>> 993f4501ea1cde00513c0ee0423a27c0e7aad1d4

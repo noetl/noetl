@@ -1,32 +1,53 @@
 "use strict";
 var nconf = require('nconf');
 
-/**
- * ConfigEntry class creates an object for given config path.
- * @param configEntryPath {Object}
- */
+// www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
+// www.noetl.io ///////////////// NoETL ConfigEntry class //////////////////////////////////////////////////////////////
+// www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+const _confEntryName       = Symbol("config entry name");
+const _confEntryPath       = Symbol("config entry path");
+const _entryId             = Symbol("object entry id");
+const _entryPath           = Symbol("object entry path");
+const _getConfigEntryName  = Symbol("retrieve entry name");
+const _getConfEntryPath    = Symbol("retrieve entry path");
+
+/**
+ * @class ConfigEntry
+ * @classdesc The main class to be used to access configuration entries.
+ *
+ * @description class creates an object for given config path
+ * @param ...arguments
+ * @example
+ * var workflow = new ConfigEntry(
+ * '-',                                     // delimiter to be used as for this._confEntryName
+ * 'WORKFLOW',
+ * 'TIMESTAMP'
+ * );
+ */
 module.exports = class ConfigEntry{
     constructor() {
         let [confEntryName,confEntryPath] = ConfigEntry.getConfigEntryPath(...arguments)
-        this._confEntryName = confEntryName
-        this._confEntryPath = confEntryPath
-        this.getConfigEntryName = () => { return this._confEntryName || undefined}
-        this.getConfEntryPath = () => { return this._confEntryPath || undefined}
+        this[_confEntryName] = confEntryName
+        this[_confEntryPath] = confEntryPath
+        this[_getConfigEntryName] = () => { return this[_confEntryName] || undefined}
+        this[_getConfEntryPath] = () => { return this[_confEntryPath] || undefined}
         //configEntryPath = (arguments.length>1) ? ConfigEntryPath.configEntryPath(...arguments) : configEntryPath;
-        let validatedConfigEntry = ConfigEntry.validateConfigEntry(this.getConfEntryPath());
+        let validatedConfigEntry = ConfigEntry.validateConfigEntry(this[_getConfEntryPath]());
         if (validatedConfigEntry) {
-            this._entryId = this.configEntryName;
-            this._entryPath = this.configEntryPath;
+            this[_entryId] = this.configEntryName;
+            this[_entryPath] = this.configEntryPath;
             Object.assign(this, ConfigEntry.translateConfigEntryReference({},validatedConfigEntry));
         }
     }
+
     static configEntry() {
         return new ConfigEntry(...arguments)
     }
+
     /**
      * isObject checks if input is an object and not is an array and not is null.
-     * @param item
+     * @param item {object}
      * @returns {boolean}
      */
     static isObject(item) {
@@ -44,18 +65,31 @@ module.exports = class ConfigEntry{
         let checkDelimiter = arg => arg.length==1 && ConfigEntry.getDelimiter().indexOf(arg)>-1, configEntryPath = checkDelimiter(keys[0])  ? [keys.slice(1).join(keys[0]),keys.slice(1).join(':')] : [keys.join(':'),keys.join(':') ]  // checkDelimiter returns true if separator exists as a first argument of configEntryPath function that returns array of "Entry Path Name" and "Entry Path"
         return configEntryPath
     }
+
     static getDelimiter(sep = [' ',':','.',',',';','|','-']) {return sep;};
+
     set configEntryName(confName) {
-        this._confEntryName = confName
+        this[_confEntryName] = confName
     }
+
     set configEntryPath(confPath) {
-        this._confEntryPath = confPath
+        this[_confEntryPath] = confPath
     }
+
     get configEntryName() {
-        return this._confEntryName || undefined;
+        return this[_confEntryName] || undefined;
     }
+
     get configEntryPath() {
-        return this._confEntryPath || undefined;
+        return this[_confEntryPath] || undefined;
+    }
+
+    get entryId() {
+        return this[_entryId] || undefined;
+    }
+
+    get entryPath() {
+        return this[_entryPath] || undefined;
     }
 
     /**
@@ -86,19 +120,14 @@ module.exports = class ConfigEntry{
                 }
             });
         } else if (Array.isArray(srcValue)) {
-                return  srcValue.map(item => { return ConfigEntry.translateConfigEntryReference(null,item);})
+            return  srcValue.map(item => { return ConfigEntry.translateConfigEntryReference(null,item);})
         } else if (REGEX.test(srcValue)) {
-                let val = srcValue.replace(REGEX, (match,p1) => {return nconf.get(p1.replace(/\./g, ":"));});
-                return ConfigEntry.translateConfigEntryReference( ConfigEntry.isObject(val) ? {} : null, val);
+            let val = srcValue.replace(REGEX, (match,p1) => {return nconf.get(p1.replace(/\./g, ":"));});
+            return ConfigEntry.translateConfigEntryReference( ConfigEntry.isObject(val) ? {} : null, val);
         } else {
             return srcValue;
         }
-
         return refValue;
-    }
-
-    get entryId (){
-        return this._entryId || undefined;
     }
 
 };
