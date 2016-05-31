@@ -40,15 +40,15 @@ var ConfigEntry = require('./ConfigEntry');
 // www.noetl.io //////////////// NoETL Step class //////////////////////////////////////////////////////////////////////
 // www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-var _ancestor = (0, _symbol2.default)("list of incoming steps");
-var _child = (0, _symbol2.default)("list of next steps");
-var _branch = (0, _symbol2.default)("branch name");
-var _status = "status of step"; // [READY||RUNNING||WAITING||FINISHED||FAILED]
+var _ancestor = (0, _symbol2.default)("incoming steps"),
+    _child = (0, _symbol2.default)("next steps"),
+    _branch = (0, _symbol2.default)("branch name"),
+    _status = "step status"; // [READY||RUNNING||WAITING||FINISHED||FAILED]
 
 /**
  * @class Step
  * @classdesc Workflow Step's handler.
- * @extends Task
+ * @extends ConfigEntry
  */
 module.exports = function (_ConfigEntry) {
     (0, _inherits3.default)(Step, _ConfigEntry);
@@ -60,8 +60,8 @@ module.exports = function (_ConfigEntry) {
 
         _this[_ancestor] = new _set2.default();
         _this[_child] = new _set2.default();
-        _this[_branch] = undefined;
-        _this[_status] = "READY";
+        _this[_branch] = "0";
+        _this[_status] = undefined;
         if (arguments[0] === "root") {
             _this.NEXT = { "SUCCESS": (0, _assign2.default)({}, arguments[1]) };
         }
@@ -70,57 +70,75 @@ module.exports = function (_ConfigEntry) {
     }
 
     (0, _createClass3.default)(Step, [{
-        key: "ancestor",
-        set: function set() {
-            var _ancestor2;
+        key: "setAncestor",
+        value: function setAncestor() {
+            var _this2 = this;
 
-            (_ancestor2 = this[_ancestor]).add.apply(_ancestor2, arguments);
-        },
-        get: function get() {
+            for (var _len = arguments.length, ancestor = Array(_len), _key = 0; _key < _len; _key++) {
+                ancestor[_key] = arguments[_key];
+            }
+
+            ancestor.forEach(function (item) {
+                return _this2[_ancestor].add(item);
+            });
+        }
+    }, {
+        key: "setChild",
+        value: function setChild() {
+            var _this3 = this;
+
+            for (var _len2 = arguments.length, child = Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
+                child[_key2] = arguments[_key2];
+            }
+
+            child.forEach(function (item) {
+                return _this3[_child].add(item);
+            });
+        }
+    }, {
+        key: "setBranch",
+        value: function setBranch(branch) {
+            this[_branch] = branch;
+        }
+    }, {
+        key: "getAncestor",
+        value: function getAncestor() {
             return this[_ancestor] || undefined;
         }
     }, {
-        key: "child",
-        set: function set() {
-            var _child2;
-
-            (_child2 = this[_child]).add.apply(_child2, arguments);
-        },
-        get: function get() {
+        key: "getChild",
+        value: function getChild() {
             return this[_child] || undefined;
         }
     }, {
-        key: "branch",
-        set: function set(branch) {
-            this[_branch] = branch || undefined;
-        },
-        get: function get() {
+        key: "getBranch",
+        value: function getBranch() {
             return this[_branch] || undefined;
+        }
+    }, {
+        key: "getCall",
+        value: function getCall() {
+            return this.CALL || undefined;
+        }
+    }, {
+        key: "getCursor",
+        value: function getCursor() {
+            return this.CURSOR || undefined;
+        }
+    }, {
+        key: "getAction",
+        value: function getAction() {
+            return this.ACTION || undefined;
         }
     }, {
         key: "nextSuccess",
         get: function get() {
-            return this["NEXT"] || undefined;
+            return this.NEXT.SUCCESS || undefined;
         }
     }, {
         key: "nextFailure",
         get: function get() {
             return this.NEXT.FAILURE || undefined;
-        }
-    }, {
-        key: "getCall",
-        get: function get() {
-            return this.CALL || undefined;
-        }
-    }, {
-        key: "getCursor",
-        get: function get() {
-            return this.CURSOR || undefined;
-        }
-    }, {
-        key: "getAction",
-        get: function get() {
-            return this.ACTION || undefined;
         }
     }], [{
         key: "step",

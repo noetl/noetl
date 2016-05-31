@@ -5,66 +5,65 @@ var ConfigEntry = require('./ConfigEntry');
 // www.noetl.io //////////////// NoETL Step class //////////////////////////////////////////////////////////////////////
 // www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const _ancestor      = Symbol("list of incoming steps");
-const _child         = Symbol("list of next steps");
-const _branch        = Symbol("branch name");
-const _status       = "status of step" // [READY||RUNNING||WAITING||FINISHED||FAILED]
+const   _ancestor      = Symbol("incoming steps"),
+        _child         = Symbol("next steps"),
+        _branch        = Symbol("branch name"),
+        _status        = "step status"; // [READY||RUNNING||WAITING||FINISHED||FAILED]
 
 /**
  * @class Step
  * @classdesc Workflow Step's handler.
- * @extends Task
+ * @extends ConfigEntry
  */
 module.exports = class Step extends ConfigEntry{
     constructor() {
         super(...arguments);
-        this[_ancestor] = new Set();
-        this[_child]    = new Set();
-        this[_branch]   = undefined;
-        this[_status]   = "READY"
+        this[_ancestor] = new Set()
+        this[_child]    = new Set()
+        this[_branch]   = "0"
+        this[_status]   = undefined
          if (arguments[0] === "root") {
-            this.NEXT = {"SUCCESS":Object.assign({},arguments[1])};
+            this.NEXT = {"SUCCESS":Object.assign({},arguments[1])}
         }
 
     }
     static step() {
         return new Step(...arguments)
     }
-    set ancestor(...ancestor) {
-        this[_ancestor].add(...ancestor);
+    setAncestor(...ancestor) {
+        ancestor.forEach((item) => this[_ancestor].add(item))
     }
-    set child(...child) {
-        this[_child].add(...child);
+    setChild(...child) {
+        child.forEach((item) => this[_child].add(item))
     }
-    set branch(branch) {
-        this[_branch] = branch || undefined;
+    setBranch(branch) {
+        this[_branch] = branch
     }
-    get ancestor() {
-        return this[_ancestor] || undefined;
+    getAncestor () {
+        return this[_ancestor] || undefined
     }
-    get child() {
-        return this[_child] || undefined;
+    getChild () {
+        return this[_child] || undefined
     }
-    get branch() {
-        return this[_branch] || undefined;
+    getBranch () {
+        return this[_branch] || undefined
     }
     get nextSuccess () {
-        return this["NEXT"] || undefined;
+        return this.NEXT.SUCCESS || undefined
     }
     get nextFailure () {
-        return this.NEXT.FAILURE || undefined;
+        return this.NEXT.FAILURE || undefined
     }
-    get getCall(){
-        return this.CALL || undefined;
+    getCall(){
+        return this.CALL || undefined
     }
-    get getCursor (){
-        return this.CURSOR || undefined;
+    getCursor (){
+        return this.CURSOR || undefined
     }
-    get getAction (){
-        return this.ACTION || undefined;
+    getAction (){
+        return this.ACTION || undefined
     }
 
-    
 };
 
 

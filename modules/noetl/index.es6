@@ -8,23 +8,25 @@
 /**
  * NoETL module dependencies
  */
-var fs    = require('fs'),
-    nconf = require('nconf'),
-    co = require('co'),
+//require("babel-polyfill");
+
+var fs          = require('fs'),
+    nconf       = require('nconf'),
+    co          = require('co'),
     ConfigEntry = require('./ConfigEntry'),
-    Task = require('./Task'),
-    Step = require('./Step'),
-    count = 0;
-require("babel-polyfill");
+    Task        = require('./Task'),
+    Step        = require('./Step');
+
 
 var keys = Object.keys;
 var assign = Object.assign;
 
 // Config keys
-const PROJECT = 'PROJECT',
-    WORKFLOW = 'WORKFLOW', TASKS = 'TASKS',
-    START = 'start', EXIT = 'exit';//,
-//SEP = [' ',':','.',',',';','|','-'];
+const   PROJECT     = 'PROJECT',
+        WORKFLOW    = 'WORKFLOW',
+        TASKS       = 'TASKS',
+        START       = 'start',
+        EXIT        = 'exit'; //SEP = [' ',':','.',',',';','|','-'];
 
 // Read configuration file
 nconf.argv()
@@ -51,19 +53,17 @@ function* generateTaskList(task,sep='-'){
 // Initiate a task list to push workflow
 var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
 
-<<<<<<< HEAD
-console.log("object: ",Object.keys(tasks[0].START).length);
-=======
-console.log("VARTATSKS: ",tasks);
 
-var translatedEntry = ConfigEntry.translateConfigEntryReference({},tasks[1].STEPS.step1);
-
-console.log("translatedEntry", translatedEntry);
-
-console.log("translatedEntry1",translatedEntry.CALL.EXEC.CMD);
+//console.log("object: ",Object.keys(tasks[0].START).length);
+//console.log("VARTATSKS: ",tasks);
+//
+//var translatedEntry = ConfigEntry.translateConfigEntryReference({},tasks[1].STEPS.step1);
+//
+//console.log("translatedEntry", translatedEntry);
+//
+//console.log("translatedEntry1",translatedEntry.CALL.EXEC.CMD);
 
 
 //let tasks = Array.from(WorkflowTasks).
 
 
->>>>>>> 993f4501ea1cde00513c0ee0423a27c0e7aad1d4

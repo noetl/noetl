@@ -5,12 +5,12 @@ var nconf = require('nconf');
 // www.noetl.io ///////////////// NoETL ConfigEntry class //////////////////////////////////////////////////////////////
 // www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const _confEntryName       = Symbol("config entry name");
-const _confEntryPath       = Symbol("config entry path");
-const _entryId             = Symbol("object entry id");
-const _entryPath           = Symbol("object entry path");
-const _getConfigEntryName  = Symbol("retrieve entry name");
-const _getConfEntryPath    = Symbol("retrieve entry path");
+const   _confEntryName       = Symbol("config entry name"),
+        _confEntryPath       = Symbol("config entry path"),
+        _entryId             = Symbol("object entry id"),
+        _entryPath           = Symbol("object entry path"),
+        _getConfigEntryName  = Symbol("retrieve entry name"),
+        _getConfEntryPath    = Symbol("retrieve entry path");
 
 /**
  * @class ConfigEntry
@@ -129,6 +129,7 @@ module.exports = class ConfigEntry{
         }
         return refValue;
     }
+
 
 };
 //export {ConfigEntry}

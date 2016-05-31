@@ -40,12 +40,12 @@ var nconf = require('nconf');
 // www.noetl.io ///////////////// NoETL ConfigEntry class //////////////////////////////////////////////////////////////
 // www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-var _confEntryName = (0, _symbol2.default)("config entry name");
-var _confEntryPath = (0, _symbol2.default)("config entry path");
-var _entryId = (0, _symbol2.default)("object entry id");
-var _entryPath = (0, _symbol2.default)("object entry path");
-var _getConfigEntryName = (0, _symbol2.default)("retrieve entry name");
-var _getConfEntryPath = (0, _symbol2.default)("retrieve entry path");
+var _confEntryName = (0, _symbol2.default)("config entry name"),
+    _confEntryPath = (0, _symbol2.default)("config entry path"),
+    _entryId = (0, _symbol2.default)("object entry id"),
+    _entryPath = (0, _symbol2.default)("object entry path"),
+    _getConfigEntryName = (0, _symbol2.default)("retrieve entry name"),
+    _getConfEntryPath = (0, _symbol2.default)("retrieve entry path");
 
 /**
  * @class ConfigEntry
@@ -84,13 +84,8 @@ module.exports = function () {
         //configEntryPath = (arguments.length>1) ? ConfigEntryPath.configEntryPath(...arguments) : configEntryPath;
         var validatedConfigEntry = ConfigEntry.validateConfigEntry(this[_getConfEntryPath]());
         if (validatedConfigEntry) {
-<<<<<<< HEAD
             this[_entryId] = this.configEntryName;
             this[_entryPath] = this.configEntryPath;
-=======
-            this._entryId = this.configEntryName;
-            this._entryPath = this.configEntryPath;
->>>>>>> 993f4501ea1cde00513c0ee0423a27c0e7aad1d4
             (0, _assign2.default)(this, ConfigEntry.translateConfigEntryReference({}, validatedConfigEntry));
         }
     }
@@ -180,11 +175,7 @@ module.exports = function () {
             return validatedConfigValue;
         }
     }, {
-<<<<<<< HEAD
         key: "translateConfigEntryReference",
-=======
-        key: 'translateConfigEntryReference',
->>>>>>> 993f4501ea1cde00513c0ee0423a27c0e7aad1d4
 
 
         /**

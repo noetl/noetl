@@ -9,9 +9,13 @@ var ConfigEntry = require('./ConfigEntry'),
 
 
 
-const _steps        = Symbol("steps");
-const _getStepsRoot = Symbol("retrieve the starting reference form task START");
-const _root         = "root"; // root is not a step, but just a forkable entry point for the steps.
+const   _getStepsRoot = Symbol("steps start reference"),
+        _steps        = Symbol("steps");
+
+const   ROOT         =  "root", // root is not a step, but just a forkable entry point for the steps.
+        STEPS         = "STEPS",
+        START         = "START",
+        NEXT          = "NEXT";
 
 /**
  * @class
@@ -22,50 +26,46 @@ module.exports = class Task extends ConfigEntry{
     constructor() {
         super(...arguments)
         this[_steps] = new Map()
-        this[_getStepsRoot] = () => { return this.START || undefined}
-        if (keys(this[_getStepsRoot] () ).length > 0) {
-            this[_steps].set(_root, new Step(_root, this[_getStepsRoot]() ) )
-            console.log("this[_steps]", this[_steps])
+        this[_getStepsRoot] = () => { return this[START] || undefined}
+        try {
+            if (keys(this[_getStepsRoot] () ).length > 0) {
+                this[_steps].set(ROOT, new Step(ROOT, this[_getStepsRoot]()))
+                let entryPathList = this.entryPath.split(':');
+                keys(this[STEPS]).forEach(key => {
+                    this[_steps].set(key, new Step(...entryPathList, STEPS, key))
+                });
+                for (let entry of this[_steps]) {
+                  let stepName = entry[0], step = entry[1], nextSuccessSteps = step.nextSuccess;
+                  keys(nextSuccessSteps).forEach(key => {
+                     this[_steps].get(stepName).setChild(...nextSuccessSteps[key])
+                        nextSuccessSteps[key].forEach((item, i, arr) => {
+                          this[_steps].get(item).setAncestor(stepName)
+                          this[_steps].get(item).setBranch(['0', ''].find(x => x === key) ? item : key)
+                      })
+                    })
+                }
+            } else {
+                throw new Error("Steps starting entry point doesn't exists");
+            }
         }
-        console.log("entryId", this.entryPath)
-        let entryPathList = this.entryPath.split(':');
-        if (keys(this.STEPS).length > 0) {
-            keys(this.STEPS).forEach(key => {console.log("Task key: ", key); this[_steps].set(key,new Step(...entryPathList,"STEPS",key))});
-            keys(this[_steps]).forEach(key => {
-                let nextStep = this[_steps].get(key);
-                console.log("this[_steps].get(key).nextSuccess(): ",nextStep)
-            });
+        catch (e) {
+                console.error("Task initializing error ", e.message);
+        }  finally {
+            console.log("this[_steps]: ", this[_steps]);
         }
-        if(this[_steps].size - 1 > 0 && (keys(this.STEPS).length === this[_steps].size - 1)) {
-
-        }
-        console.log("this[_steps]: ", this[_steps])
     }
 
     static task () {
         return new Task(...arguments)
     }
+
     get nextSuccess () {
-        return this.NEXT.SUCCESS || undefined;
+        return this[NEXT].SUCCESS || undefined;
     }
+
     get nextFailure () {
-        return this.NEXT.FAILURE || undefined;
+        return this[NEXT].FAILURE || undefined;
     }
-    *defineDependences (step,branch) {
-        let done = new Map();
-        for (let from of this[_steps].keys()) {
-            done.set(from, new Set());
-            for (let to of this[_steps].get(from).keys()) {
-                if (this.hasStep(from, to) && !done.get(from).has(to)) {
-                    done.get(from).add(to);
-                    yield [from, to, this[_steps].get(from).get(to)];
-                }
-            }
-        }
-    }
-
-
-
 
 };
 
