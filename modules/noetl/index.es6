@@ -44,7 +44,7 @@ nconf.required([`${WORKFLOW}:${TASKS}:${START}`,`${WORKFLOW}:${TASKS}:${EXIT}`])
  */
 function* generateTaskList(task,sep='-'){
     yield task;
-    if (!['exit'].find(x => x === task._entryPath) && task.nextSuccess) {
+    if (!['exit'].find(x => x === task.entryPath) && task.nextSuccess) {
         yield  *generateTaskList(Task.task(sep,WORKFLOW,TASKS,task.nextSuccess));
     }
 };
