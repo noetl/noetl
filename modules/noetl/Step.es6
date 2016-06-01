@@ -25,8 +25,8 @@ module.exports = class Step extends ConfigEntry{
          if (arguments[0] === "root") {
             this.NEXT = {"SUCCESS":Object.assign({},arguments[1])}
         }
-
     }
+
     static step() {
         return new Step(...arguments)
     }
@@ -58,7 +58,7 @@ module.exports = class Step extends ConfigEntry{
         return this.CALL || undefined
     }
     getCursor (){
-        return this.CURSOR || undefined
+        return this.CALL.CURSOR || undefined
     }
     getAction (){
         return this.ACTION || undefined

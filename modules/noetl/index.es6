@@ -17,7 +17,6 @@ var fs          = require('fs'),
     Task        = require('./Task'),
     Step        = require('./Step');
 
-
 var keys = Object.keys;
 var assign = Object.assign;
 
@@ -63,7 +62,7 @@ var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
 //
 //console.log("translatedEntry1",translatedEntry.CALL.EXEC.CMD);
 
+var testCoursor = tasks[1].getStep('step2').getCursor();
 
-//let tasks = Array.from(WorkflowTasks).
-
+console.log("testCoursor",testCoursor)
 
