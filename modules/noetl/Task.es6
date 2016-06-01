@@ -35,23 +35,26 @@ module.exports = class Task extends ConfigEntry{
                     this[_steps].set(key, new Step(...entryPathList, STEPS, key))
                 });
                 for (let entry of this[_steps]) {
-                  let stepName = entry[0], step = entry[1], nextSuccessSteps = step.nextSuccess;
-                  keys(nextSuccessSteps).forEach(key => {
-                     this[_steps].get(stepName).setChild(...nextSuccessSteps[key])
+                    let stepName = entry[0], step = entry[1], nextSuccessSteps = step.nextSuccess;
+                    keys(nextSuccessSteps).forEach(key => {
+                        this[_steps].get(stepName).setChild(...nextSuccessSteps[key])
                         nextSuccessSteps[key].forEach((item, i, arr) => {
-                          this[_steps].get(item).setAncestor(stepName)
-                          this[_steps].get(item).setBranch(['0', ''].find(x => x === key) ? item : key)
-                      })
+                            this[_steps].get(item).setAncestor(stepName)
+                            this[_steps].get(item).setBranch(['0', ''].find(x => x === key) ? item : key)
+                        })
                     })
                 }
             } else {
                 throw new Error("Steps starting entry point doesn't exists");
             }
-        }
-        catch (e) {
-                console.error("Task initializing error ", e.message);
-        }  finally {
-            console.log("this[_steps]: ", this[_steps]);
+        } catch (e) {
+                console.warn(`Task ${this.entryPath} initializing error ${e.message}`);
+        } finally {
+                console.log("Task: ",this.entryPath)
+                this[_steps].forEach(function(step, stepName) {
+                    console.log(`Step -> ${stepName}; ancestors-> `, Array.from(step.getAncestor()).join(','),"; followers -> ",Array.from(step.getChild()).join(','));
+                })
+
         }
     }
 

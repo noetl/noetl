@@ -155,7 +155,7 @@
 				"step3a" : {
         			"DESC": "Create missing cursor files",
         			"NEXT": {
-          				"SUCCESS": {"0":["step3"]},
+          				"SUCCESS": {"0":["exit"]},
           				"FAILURE": {
           					"NEXT_STEP": "exit",
    							"MAX_FAILURES": "1",
