@@ -4,6 +4,7 @@
 // www.noetl.io //////////////// NoETL /////////////////////////////////////////////////////////////////////////////////
 // www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// for cursor npm install date_format --save https://www.npmjs.com/package/date_format
 
 /**
  * NoETL module dependencies
@@ -53,16 +54,20 @@ function* generateTaskList(task,sep='-'){
 var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
 
 
-//console.log("object: ",Object.keys(tasks[0].START).length);
-//console.log("VARTATSKS: ",tasks);
-//
-//var translatedEntry = ConfigEntry.translateConfigEntryReference({},tasks[1].STEPS.step1);
-//
-//console.log("translatedEntry", translatedEntry);
-//
-//console.log("translatedEntry1",translatedEntry.CALL.EXEC.CMD);
-
 var testCoursor = tasks[1].getStep('step2').getCursor();
 
 console.log("testCoursor",testCoursor)
+
+let testdate = testCoursor.RANGE;
+
+
+
+
+
+//var str = "-2011-10-31";
+//
+//
+//
+//console.log("ddd ",Step.toDate(str,'-YYYY-%m-%d'))
+
 
