@@ -5,10 +5,11 @@ var ConfigEntry = require('./ConfigEntry');
 // www.noetl.io //////////////// NoETL Step class //////////////////////////////////////////////////////////////////////
 // www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const   _ancestor      = Symbol("incoming steps"),
-        _child         = Symbol("next steps"),
-        _branch        = Symbol("branch name"),
-        _status        = "step status"; // [READY||RUNNING||WAITING||FINISHED||FAILED]
+const   _ancestor           = Symbol("incoming steps"),
+        _child              = Symbol("next steps"),
+        _branch             = Symbol("branch name"),
+        _generateCursorCall = Symbol("cursor items"),
+        _status             = "step status"; // [READY||RUNNING||WAITING||FINISHED||FAILED]
 
 /**
  * @class Step
@@ -63,24 +64,48 @@ module.exports = class Step extends ConfigEntry{
     getAction (){
         return this.ACTION || undefined
     }
+    generateCursorCall(cur, end = null, dataType = "integer",  step = 1) {
+        return this[_generateCursorCall](cur, end = null, dataType = "integer",  step = 1);
+    }
+    * [_generateCursorCall](cur, end = null, dataType = "integer",  step = 1){
+        let from = Step.isDate(cur) ? new Date(cur.getTime()) : cur, to = end;
+        if(ConfigEntry.isObject(cur)) {
+            let {from: start,to: stop} = cur;
+            from = (dataType === "date" ) ? Step.toDate(start) : start, to =  (dataType === "date" ) ? Step.toDate(stop)  : stop;
+        }
+        yield from;
+        if (from < to) {
+            let nextVal;
+            if (from instanceof Date) {
+                nextVal = new Date(from.getTime());
+                nextVal.setDate(nextVal.getDate() + step)
+            } else {
+                nextVal =  from + step;
+            }
+            yield  *[_generateCursorCall](nextVal, to , dataType, step);
+        }
+    }
 
+    static isDate(date) {
+        return date instanceof Date && !isNaN(+date);
+    }
 
     /**
      * toDate function returns date object from a given string format.
      * @param dt
      * @param format
      * Date format options are:
-     * [%m || MM]	Numeric month as a zero-padded decimal number.	01, 02, ..., 12
-     * [%y || YY]	Last two digit of the year without century as a zero-padded decimal number.	00, 01, ..., 99
-     * [%Y || YYYY]	4 digit year with century as a decimal number.	1970, 1988, 2001, 2013
-     * [%H || HH24]	Hour of day (24-hour clock) as a zero-padded decimal number.	(00-23)
-     * [%M || MI]	Minute as a zero-padded decimal number.	(00-59)
-     * ]%S || SS]	Second as a zero-padded decimal number.	(00-59)
+     * [%Y || YYYY]    4 digit year with century as a decimal number.    1970, 1988, 2001, 2013
+     * [%y || YY]    Last two digit of the year without century as a zero-padded decimal number.    00, 01, ..., 99
+     * [%m || MM]    Numeric month as a zero-padded decimal number.    01, 02, ..., 12
+     * [%H || HH]    Hour of day (24-hour clock) as a zero-padded decimal number.    (00-23)
+     * [%M || MI]    Minute as a zero-padded decimal number.    (00-59)
+     * ]%S || SS]    Second as a zero-padded decimal number.    (00-59)
      * @returns {date}
      */
-    static toDate(dt, format) {
+    static toDate(dt, format = "YYYY-MM-DD") {
         let date = new Date(1970, 1, 1)
-        let regexp = /(%Y|YYYY)|(%y|YY)|(%d|DD)|(%m|MM)|(%H|HH24)|(%M|MI)|(%S|SS)/g;
+        let regexp = /(%Y|YYYY)|(%y|YY)|(%d|DD)|(%m|MM)|(%H|HH)|(%M|MI)|(%S|SS)/g;
         let match, startPos = 0, prevMatchLastIndex = 0,len = 0;
         while (match = regexp.exec(format)) {
             startPos = startPos + match.index - prevMatchLastIndex;
@@ -124,6 +149,5 @@ module.exports = class Step extends ConfigEntry{
     }
 
 };
-
 
 //export  {Step}

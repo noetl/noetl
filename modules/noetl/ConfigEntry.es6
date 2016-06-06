@@ -25,6 +25,7 @@ const   _confEntryName       = Symbol("config entry name"),
  * 'TIMESTAMP'
  * );
  */
+
 module.exports = class ConfigEntry{
     constructor() {
         let [confEntryName,confEntryPath] = ConfigEntry.getConfigEntryPath(...arguments)
@@ -51,9 +52,10 @@ module.exports = class ConfigEntry{
      * @returns {boolean}
      */
     static isObject(item) {
-        return (item && typeof item === 'object' && !Array.isArray(item) && item !== null);
+        return (item && typeof item === 'object' && !Array.isArray(item) && item !== null && !(item instanceof Date && !isNaN(+item)));
     }
 
+    
     /**
      * getConfigEntryPath method gets list of strings ['W','D','A'] and returns 'W:D:A' string.
      * if first item is ':' or ',' or ';', like ['|','W','D','A'] the first item will be used as
