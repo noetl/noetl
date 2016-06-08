@@ -132,6 +132,67 @@ module.exports = class ConfigEntry{
         return refValue;
     }
 
+    static isDate(date) {
+        return date instanceof Date && !isNaN(+date);
+    }
+
+    /**
+     * toDate function returns date object from a given string format.
+     * @param dt
+     * @param format
+     * Date format options are:
+     * [%Y || YYYY]    4 digit year with century as a decimal number.    1970, 1988, 2001, 2013
+     * [%y || YY]    Last two digit of the year without century as a zero-padded decimal number.    00, 01, ..., 99
+     * [%m || MM]    Numeric month as a zero-padded decimal number.    01, 02, ..., 12
+     * [%H || HH]    Hour of day (24-hour clock) as a zero-padded decimal number.    (00-23)
+     * [%M || MI]    Minute as a zero-padded decimal number.    (00-59)
+     * ]%S || SS]    Second as a zero-padded decimal number.    (00-59)
+     * @returns {date}
+     */
+    static toDate(dt, format = "YYYY-MM-DD") {
+        let date = new Date(1970, 1, 1)
+        let regexp = /(%Y|YYYY)|(%y|YY)|(%d|DD)|(%m|MM)|(%H|HH)|(%M|MI)|(%S|SS)/g;
+        let match, startPos = 0, prevMatchLastIndex = 0,len = 0;
+        while (match = regexp.exec(format)) {
+            startPos = startPos + match.index - prevMatchLastIndex;
+            len = (/(%Y|YYYY)/.test(match[0])) ? 4 : 2;
+            switch (match[0]) {
+                case "%Y":
+                case "YYYY":
+                    date.setFullYear(parseInt(dt.substr(startPos,len)));
+                    break;
+                case "%y":
+                case "YY":
+                    date.setYear(parseInt(dt.substr(startPos,len)));
+                    break;
+                case "%m":
+                case "MM":
+                    date.setMonth(parseInt(dt.substr(startPos,len))-1);
+                    break;
+                case "%d":
+                case "DD":
+                    date.setDate(parseInt(dt.substr(startPos,len)));
+                    break;
+                case "%H":
+                case "HH24":
+                    date.setUTCHours(parseInt(dt.substr(startPos,len)));
+                    break;
+                case "%M":
+                case "MI":
+                    date.setMinutes(parseInt(dt.substr(startPos,len)));
+                    break;
+                case "%S":
+                case "SS":
+                    date.setMinutes(parseInt(dt.substr(startPos,len)));
+                    break;
+                default:
+                    throw new Error("toDate failed to match format");
+            }
+            startPos = startPos + len;
+            prevMatchLastIndex = regexp.lastIndex;
+        }
+        return date
+    }
 
 };
 //export {ConfigEntry}

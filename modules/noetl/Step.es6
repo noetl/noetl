@@ -26,7 +26,10 @@ module.exports = class Step extends ConfigEntry{
          if (arguments[0] === "root") {
             this.NEXT = {"SUCCESS":Object.assign({},arguments[1])}
         }
+
     }
+    // returns a cursor values, have to return execution
+    [Symbol.iterator]() { return this[_generateCursorCall](this.getCursorRange(), this.getCursorIncrement(), this.getCursorDataType()) }
 
     static step() {
         return new Step(...arguments)
@@ -61,92 +64,59 @@ module.exports = class Step extends ConfigEntry{
     getCursor (){
         return this.CALL.CURSOR || undefined
     }
+    getCursorRange(){
+        return this.getCursor().RANGE || undefined
+    }
+    getCursorDataType(){
+        return this.getCursor().DATATYPE || undefined
+    }
+    getCursorIncrement(){
+        return this.getCursor().INCREMENT || undefined
+    }
     getAction (){
         return this.ACTION || undefined
     }
-    generateCursorCall(cur, end = null, dataType = "integer",  step = 1) {
-        return this[_generateCursorCall](cur, end = null, dataType = "integer",  step = 1);
-    }
-    * [_generateCursorCall](cur, end = null, dataType = "integer",  step = 1){
-        let from = Step.isDate(cur) ? new Date(cur.getTime()) : cur, to = end;
-        if(ConfigEntry.isObject(cur)) {
-            let {from: start,to: stop} = cur;
-            from = (dataType === "date" ) ? Step.toDate(start) : start, to =  (dataType === "date" ) ? Step.toDate(stop)  : stop;
-        }
-        yield from;
-        if (from < to) {
-            let nextVal;
-            if (from instanceof Date) {
-                nextVal = new Date(from.getTime());
-                nextVal.setDate(nextVal.getDate() + step)
-            } else {
-                nextVal =  from + step;
+
+    * [_generateCursorCall](cursorRange, increment = 0, dataType = "integer", end = null) {
+
+        if (Array.isArray(cursorRange)) {
+            for (let cur of cursorRange) {
+                yield *this[_generateCursorCall](cur, increment, dataType, end)
             }
-            yield  *[_generateCursorCall](nextVal, to , dataType, step);
+        } else {
+            let from = ConfigEntry.isDate(cursorRange) ? new Date(cursorRange.getTime()) : cursorRange, to = end;
+            if(ConfigEntry.isObject(cursorRange)) {
+                let {from: start,to: stop} = cursorRange;
+                from = (dataType === "date" ) ? ConfigEntry.toDate(start) : start, to =  (dataType === "date" ) ? ConfigEntry.toDate(stop)  : stop;
+            }
+            yield from;
+            if (from < to) {
+                let nextVal;
+                if (from instanceof Date) {
+                    nextVal = new Date(from.getTime());
+                    let matchResult = increment.toString().match(/(Y)|(M)|(D)/i);
+                    switch (matchResult[0].toLowerCase()) {
+                        case "y":
+                            nextVal.setFullYear(nextVal.getFullYear() + parseInt(increment))
+                            break;
+                        case "m":
+                            nextVal.setMonth(nextVal.getMonth() + parseInt(increment))
+                            break;
+                        case "d":
+                            nextVal.setDate(nextVal.getDate() + parseInt(increment))
+                            break;
+                        default:
+                            nextVal.setDate(nextVal.getDate() + parseInt(increment))
+                    }
+                } else {
+                    nextVal =  from + parseInt(increment);
+                }
+                yield  *this[_generateCursorCall](nextVal, increment, dataType, to );
+            }
         }
     }
 
-    static isDate(date) {
-        return date instanceof Date && !isNaN(+date);
-    }
 
-    /**
-     * toDate function returns date object from a given string format.
-     * @param dt
-     * @param format
-     * Date format options are:
-     * [%Y || YYYY]    4 digit year with century as a decimal number.    1970, 1988, 2001, 2013
-     * [%y || YY]    Last two digit of the year without century as a zero-padded decimal number.    00, 01, ..., 99
-     * [%m || MM]    Numeric month as a zero-padded decimal number.    01, 02, ..., 12
-     * [%H || HH]    Hour of day (24-hour clock) as a zero-padded decimal number.    (00-23)
-     * [%M || MI]    Minute as a zero-padded decimal number.    (00-59)
-     * ]%S || SS]    Second as a zero-padded decimal number.    (00-59)
-     * @returns {date}
-     */
-    static toDate(dt, format = "YYYY-MM-DD") {
-        let date = new Date(1970, 1, 1)
-        let regexp = /(%Y|YYYY)|(%y|YY)|(%d|DD)|(%m|MM)|(%H|HH)|(%M|MI)|(%S|SS)/g;
-        let match, startPos = 0, prevMatchLastIndex = 0,len = 0;
-        while (match = regexp.exec(format)) {
-            startPos = startPos + match.index - prevMatchLastIndex;
-            len = (/(%Y|YYYY)/.test(match[0])) ? 4 : 2;
-            switch (match[0]) {
-                case "%Y":
-                case "YYYY":
-                    date.setFullYear(parseInt(dt.substr(startPos,len)));
-                    break;
-                case "%y":
-                case "YY":
-                    date.setYear(parseInt(dt.substr(startPos,len)));
-                    break;
-                case "%m":
-                case "MM":
-                    date.setMonth(parseInt(dt.substr(startPos,len))-1);
-                    break;
-                case "%d":
-                case "DD":
-                    date.setDate(parseInt(dt.substr(startPos,len)));
-                    break;
-                case "%H":
-                case "HH24":
-                    date.setUTCHours(parseInt(dt.substr(startPos,len)));
-                    break;
-                case "%M":
-                case "MI":
-                    date.setMinutes(parseInt(dt.substr(startPos,len)));
-                    break;
-                case "%S":
-                case "SS":
-                    date.setMinutes(parseInt(dt.substr(startPos,len)));
-                    break;
-                default:
-                    throw new Error("toDate failed to match format");
-            }
-            startPos = startPos + len;
-            prevMatchLastIndex = regexp.lastIndex;
-        }
-        return date
-    }
 
 };
 

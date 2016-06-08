@@ -59,45 +59,24 @@ var testCoursor = tasks[1].getStep('step2').getCursor();
 
 console.log("testCoursor",testCoursor)
 
-let testdate = testCoursor.RANGE;
+let testRange = testCoursor.RANGE;
+
 
 
 // to avoid delimiter problem like ["2011-01-01:2012-01-01"] => path ["2011-01-01 12:00:00 : 2011-12-12 12:00:00"] = failed  we need to change to range object instead {from:"2011-10-01 12:00:00",to:"2012-01-01 12:00:00"}
-let range = [
-    {from:"2011-10-01",to:"2012-01-01"},"2013-10-01"
-]
 
-let range1 = [
-    {from:1,to:2},10
-]
+//console.log("Step.toDate(start) ",ConfigEntry.toDate("-2012-11-11",'-YYYY-%m-%d'))
 
-console.log(range)
+var testtest = tasks[1].getStep('step2')
 
-console.log("Step.toDate(start) ",Step.toDate("-2012-11-11",'-YYYY-%m-%d'))
+console.log("testtest",testtest)
 
-function* generateCursorCall(cur, end = null, dataType = "integer",  step = 1){
-    let from = Step.isDate(cur) ? new Date(cur.getTime()) : cur, to = end;
-    if(ConfigEntry.isObject(cur)) {
-        let {from: start,to: stop} = cur;
-        from = (dataType === "date" ) ? Step.toDate(start) : start, to =  (dataType === "date" ) ? Step.toDate(stop)  : stop;
-    }
-    yield from;
-    if (from < to) {
-        let nextVal;
-        if (from instanceof Date) {
-            nextVal = new Date(from.getTime());
-            nextVal.setDate(nextVal.getDate() + step)
-        } else {
-            nextVal =  from + step;
-        }
-        yield  *generateCursorCall(nextVal, to , dataType, step);
-    }
-};
+let count = 0;
+for (let test of testtest) {
+    console.log("test", count++,test)
+}
 
-
-
-console.log("int cursors",[...generateCursorCall({from:1,to:4})])
-
-var cursors = [...generateCursorCall({ from: '2011-10-01', to: '2011-10-05' },null,"date")];
-
-console.log("date cursors",cursors)
+//let variter = [...testtest]
+//
+//
+//console.log("variter",variter)
