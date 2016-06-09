@@ -78,16 +78,19 @@ module.exports = class Step extends ConfigEntry{
     }
 
     * [_generateCursorCall](cursorRange, increment = 0, dataType = "integer", end = null) {
-
         if (Array.isArray(cursorRange)) {
             for (let cur of cursorRange) {
                 yield *this[_generateCursorCall](cur, increment, dataType, end)
             }
         } else {
-            let from = ConfigEntry.isDate(cursorRange) ? new Date(cursorRange.getTime()) : cursorRange, to = end;
+            let from,to = end;
             if(ConfigEntry.isObject(cursorRange)) {
                 let {from: start,to: stop} = cursorRange;
                 from = (dataType === "date" ) ? ConfigEntry.toDate(start) : start, to =  (dataType === "date" ) ? ConfigEntry.toDate(stop)  : stop;
+            } else if (dataType === "date" ) {
+                from = ConfigEntry.isDate(cursorRange) ? new Date(cursorRange.getTime()) : ConfigEntry.toDate(cursorRange)
+            } else {
+                from = cursorRange
             }
             yield from;
             if (from < to) {
