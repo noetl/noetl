@@ -92,7 +92,7 @@ module.exports = class Step extends ConfigEntry{
              return item.join().replace(/\[([^\]]+)\]/g, (match, p1) => {
                 return  (dataType === "date") ?  ConfigEntry.formatDate(cur, match) : cur })
          })
-        return Object.assign({}, {action: this.getAction(), thread: this.getThread(), url: this.getExecUrl(),  cmd: execCmd });
+        return Object.assign({}, {action: this.getAction(), url: this.getExecUrl(),  cmd: execCmd });
     }
 
     * [_generateCursorCall](cursorRange, dataType = "integer", increment = 0, end = null) {
