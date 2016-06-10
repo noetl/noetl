@@ -195,7 +195,7 @@ module.exports = class ConfigEntry{
     }
 
     /**
-     * formatDate function returns date object from a given string format.
+     * formatDate function returns formatted string by a given string format.
      * @param dt
      * @param format
      * Date format options are:
@@ -223,7 +223,7 @@ module.exports = class ConfigEntry{
                     break;
                 case "%m":
                 case "MM":
-                    formatedDate += dt.getMonth() < 10 ? "0" +(dt.getMonth() + 1).toString(): dt.getMonth().toString();
+                    formatedDate += (dt.getMonth()+1).toString().length < 2 ? "0" +(dt.getMonth() + 1).toString(): (dt.getMonth() +1).toString();
                     break;
                 case "%d":
                 case "DD":
@@ -248,7 +248,7 @@ module.exports = class ConfigEntry{
                     formatedDate += match[0];
                     break;
                 default:
-                    throw new Error("toDate failed to match format");
+                    throw new Error("formatDate failed to match format");
             }
         }
         return formatedDate
