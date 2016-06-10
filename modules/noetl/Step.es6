@@ -9,6 +9,8 @@ const   _ancestor           = Symbol("incoming steps"),
         _child              = Symbol("next steps"),
         _branch             = Symbol("branch name"),
         _generateCursorCall = Symbol("cursor items"),
+        _generateAction = Symbol("set cursor for action"),
+        _applyCursor = Symbol("apply cursor value"),
         _status             = "step status"; // [READY||RUNNING||WAITING||FINISHED||FAILED]
 
 /**
@@ -29,7 +31,7 @@ module.exports = class Step extends ConfigEntry{
 
     }
     // returns a cursor values, have to return execution
-    [Symbol.iterator]() { return this[_generateCursorCall](this.getCursorRange(), this.getCursorIncrement(), this.getCursorDataType()) }
+    [Symbol.iterator]() { return this[_generateCursorCall](this.getCursorRange(), this.getCursorDataType()) }
 
     static step() {
         return new Step(...arguments)
@@ -70,28 +72,46 @@ module.exports = class Step extends ConfigEntry{
     getCursorDataType(){
         return this.getCursor().DATATYPE || undefined
     }
-    getCursorIncrement(){
-        return this.getCursor().INCREMENT || undefined
-    }
     getAction (){
         return this.ACTION || undefined
     }
+    getThread (){
+        return this.THREAD || undefined
+    }
+    getExec (){
+        return this.EXEC || undefined
+    }
+    getExecUrl (){
+        return this.getExec().URL || undefined
+    }
+    getExecCmd (){
+        return this.EXEC || undefined
+    }
 
-    * [_generateCursorCall](cursorRange, increment = 0, dataType = "integer", end = null) {
+    //generateAction(cur,dataType) {
+        // let execCmd = this.getExecCmd().map((item) => {return item.replace(/\[([^\]]+)\]/g, (match, p1) => {
+        //     return  (dataType === "date") ?  ConfigEntry.formatDate(cur, match) : cur })
+        // })
+        // return Object.create({}, { action: this.getAction(), thread: this.getThread(), url: this.getExecUrl(), cmd: execCmd });
+   // }
+
+    * [_generateCursorCall](cursorRange, dataType = "integer", increment = 0, end = null) {
         if (Array.isArray(cursorRange)) {
             for (let cur of cursorRange) {
-                yield *this[_generateCursorCall](cur, increment, dataType, end)
+                yield *this[_generateCursorCall](cur, dataType, increment, end)
             }
         } else {
             let from,to = end;
             if(ConfigEntry.isObject(cursorRange)) {
-                let {from: start,to: stop} = cursorRange;
-                from = (dataType === "date" ) ? ConfigEntry.toDate(start) : start, to =  (dataType === "date" ) ? ConfigEntry.toDate(stop)  : stop;
+                let {FROM, TO, INCREMENT} = cursorRange;
+                from = (dataType === "date" ) ? ConfigEntry.toDate(FROM) : FROM, to =  (dataType === "date" ) ? ConfigEntry.toDate(TO)  : TO, increment = INCREMENT;
             } else if (dataType === "date" ) {
                 from = ConfigEntry.isDate(cursorRange) ? new Date(cursorRange.getTime()) : ConfigEntry.toDate(cursorRange)
             } else {
                 from = cursorRange
             }
+            //let execCmd = this.generateAction(from,dataType);
+            //console.log(execCmd)
             yield from;
             if (from < to) {
                 let nextVal;
@@ -111,10 +131,11 @@ module.exports = class Step extends ConfigEntry{
                         default:
                             nextVal.setDate(nextVal.getDate() + parseInt(increment))
                     }
+
                 } else {
                     nextVal =  from + parseInt(increment);
                 }
-                yield  *this[_generateCursorCall](nextVal, increment, dataType, to );
+                yield  *this[_generateCursorCall]((nextVal<=to) ? nextVal : to, dataType, increment, to );
             }
         }
     }

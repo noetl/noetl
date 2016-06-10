@@ -174,7 +174,7 @@ module.exports = class ConfigEntry{
                     date.setDate(parseInt(dt.substr(startPos,len)));
                     break;
                 case "%H":
-                case "HH24":
+                case "HH":
                     date.setUTCHours(parseInt(dt.substr(startPos,len)));
                     break;
                 case "%M":
@@ -192,6 +192,66 @@ module.exports = class ConfigEntry{
             prevMatchLastIndex = regexp.lastIndex;
         }
         return date
+    }
+
+    /**
+     * formatDate function returns date object from a given string format.
+     * @param dt
+     * @param format
+     * Date format options are:
+     * [%Y || YYYY]    4 digit year with century as a decimal number.    1970, 1988, 2001, 2013
+     * [%y || YY]    Last two digit of the year without century as a zero-padded decimal number.    00, 01, ..., 99
+     * [%m || MM]    Numeric month as a zero-padded decimal number.    01, 02, ..., 12
+     * [%H || HH]    Hour of day (24-hour clock) as a zero-padded decimal number.    (00-23)
+     * [%M || MI]    Minute as a zero-padded decimal number.    (00-59)
+     * ]%S || SS]    Second as a zero-padded decimal number.    (00-59)
+     * @returns String
+     */
+    static formatDate(dt, format = "YYYY-MM-DD") {
+        //let date = new Date(1970, 1, 1)
+        let regexp = /(%Y|YYYY)|(%y|YY)|(%d|DD)|(%m|MM)|(%H|HH)|(%M|MI)|(%S|SS)|(-|:|\/| )/g;
+        let match, formatedDate = ""
+        while (match = regexp.exec(format)) {
+            switch (match[0]) {
+                case "%Y":
+                case "YYYY":
+                    formatedDate += dt.getFullYear().toString();
+                    break;
+                case "%y":
+                case "YY":
+                    formatedDate += dt.getYear().toString();
+                    break;
+                case "%m":
+                case "MM":
+                    formatedDate += dt.getMonth() < 10 ? "0" +(dt.getMonth() + 1).toString(): dt.getMonth().toString();
+                    break;
+                case "%d":
+                case "DD":
+                    formatedDate += dt.getDate().toString().length < 2 ? "0" + dt.getDate().toString() : dt.getDate().toString();
+                    break;
+                case "%H":
+                case "HH":
+                    formatedDate += dt.getUTCHours().toString().length < 2 ? "0" + dt.getUTCHours().toString() : dt.getUTCHours().toString();
+                    break;
+                case "%M":
+                case "MI":
+                    formatedDate += dt.getMinutes().toString().length < 2 ? "0" + dt.getMinutes().toString() : dt.getMinutes().toString();
+                    break;
+                case "%S":
+                case "SS":
+                    formatedDate += dt.getMinutes().toString().length < 2 ? "0" + dt.getMinutes().toString() : dt.getMinutes().toString();
+                    break;
+                case "-":
+                case ":":
+                case "/":
+                case " ":
+                    formatedDate += match[0];
+                    break;
+                default:
+                    throw new Error("toDate failed to match format");
+            }
+        }
+        return formatedDate
     }
 
 };

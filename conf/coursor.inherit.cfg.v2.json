@@ -41,7 +41,7 @@
     "DIRECTORY": "${PROJECT.HOME}",
     "CURSOR": {
     	"RANGE": [
-      		"2011-09-01:2011-12-31"
+			{"FROM":"2011-09-01","TO":"2011-12-31","INCREMENT": "1m"}
     	], 
     	"DATEFORMAT": "%Y%m"
     },  
@@ -80,7 +80,6 @@
     						], 
     						"DATATYPE": "integer",
     						"FORMAT": "",
-    						"INCREMENT": "1",
     						"INHERIT": "False"
     					},  
           				"EXEC": {
@@ -107,11 +106,10 @@
           				"THREAD": "0",
     					"CURSOR": {
     						"RANGE": [
-								{"from":"2011-09-01","to":"2011-12-01"},{"from":"2012-01-01","to":"2012-02-01"},"2015-01-01"
+								{"FROM":"2011-09-01","TO":"2011-12-01","INCREMENT": "1m"},"2016-01-01",{"FROM":"2012-01-01","TO":"2013-02-01","INCREMENT": "1m"},"2015-01-01"
     						], 
     						"DATATYPE": "date",
     						"FORMAT": "%Y-%m-%d",
-    						"INCREMENT": "1M",
     						"INHERIT": "False"
     					},  
           				"EXEC": {
@@ -137,11 +135,10 @@
           				"THREAD": "0",
     					"CURSOR": {
     						"RANGE": [
-								{"from":"2011-09-01","to":"2011-12-31"}
+								{"FROM":"2011-09-01","TO":"2011-12-31","INCREMENT": "1M"}
     						], 
     						"DATATYPE": "date",
     						"FORMAT": "%Y-%m-%d",
-    						"INCREMENT": "1M",
     						"INHERIT": "False"
     					},  
           				"EXEC": {
@@ -171,7 +168,6 @@
     						], 
     						"DATATYPE": "date",
     						"FORMAT": "%Y-%m-%d",
-    						"INCREMENT": "1M",
     						"INHERIT": "True"
     					},  
           				"EXEC": {
@@ -197,11 +193,10 @@
           				"THREAD": "0",
     					"CURSOR": {
     						"RANGE": [
-								{"from":"2011-09-01", "to":"2011-12-31"},"2012-01-01"
+								{"FROM":"2011-09-01", "TO":"2011-12-31","INCREMENT": "1M"},"2012-01-01"
     						], 
     						"DATATYPE": "date",
     						"FORMAT": "%Y-%m-%d",
-    						"INCREMENT": "1M",
     						"INHERIT": "False"
     					},  
           				"EXEC": {
@@ -231,7 +226,6 @@
     						], 
     						"DATATYPE": "date",
     						"FORMAT": "%Y-%m-%d",
-    						"INCREMENT": "1M",
     						"INHERIT": "False"
     					},  
           				"EXEC": {
