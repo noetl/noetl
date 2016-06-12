@@ -115,7 +115,8 @@
           				"EXEC": {
           					"URL": "${WORKFLOW.HOST}",
           					"CMD": [
-            					["echo \"Cursor [%Y%m]\" > ${WORKFLOW.STAGING}/[%Y%m].test"]
+            					["echo \"Cursor [%Y%m]\" > ${WORKFLOW.STAGING}/[%Y%m].test"],
+								["cat ${WORKFLOW.STAGING}/[%Y%m].test"]
           					]
           				}
         	 		}
