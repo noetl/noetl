@@ -72,7 +72,6 @@ module.exports = class Task extends ConfigEntry{
     getStep(stepName) {
         return this[_steps].get(stepName);
     }
-
 };
 
 //export {Task}

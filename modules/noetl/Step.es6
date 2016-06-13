@@ -89,7 +89,7 @@ module.exports = class Step extends ConfigEntry{
 
     [_generateAction](cur,dataType) {
          let execCmd = this.getExecCmd().map((item) => {
-             return item.join().replace(/\[([^\]]+)\]/g, (match, p1) => {
+             return item.join().replace(/\[([^\]]*)\]/g, (match, p1) => {
                 return  (dataType === "date") ?  ConfigEntry.formatDate(cur, match) : cur })
          })
         return Object.assign({}, {action: this.getAction(), url: this.getExecUrl(),  cmd: execCmd });
@@ -104,7 +104,11 @@ module.exports = class Step extends ConfigEntry{
             let from,to = end;
             if(ConfigEntry.isObject(cursorRange)) {
                 let {FROM, TO, INCREMENT} = cursorRange;
-                from = (dataType === "date" ) ? ConfigEntry.toDate(FROM) : FROM, to =  (dataType === "date" ) ? ConfigEntry.toDate(TO)  : TO, increment = INCREMENT;
+                if (dataType === "date" ) {
+                    from = ConfigEntry.toDate(FROM) , to =  ConfigEntry.toDate(TO), increment = INCREMENT;
+                } else {
+                    from = parseInt(FROM), to = parseInt(TO), increment = parseInt(INCREMENT);
+                }
             } else if (dataType === "date" ) {
                 from = ConfigEntry.isDate(cursorRange) ? new Date(cursorRange.getTime()) : ConfigEntry.toDate(cursorRange)
             } else {
@@ -137,9 +141,6 @@ module.exports = class Step extends ConfigEntry{
             }
         }
     }
-
-
-
 };
 
 //export  {Step}
