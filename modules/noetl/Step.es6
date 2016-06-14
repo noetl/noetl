@@ -115,11 +115,11 @@ module.exports = class Step extends ConfigEntry{
                 from = cursorRange
             }
             yield this[_generateAction](from,dataType);
-            if (from < to) {
-                let nextVal;
-                if (from instanceof Date) {
-                    nextVal = new Date(from.getTime());
-                    let matchResult = increment.toString().match(/(Y)|(M)|(D)/i);
+            let nextVal;
+            if (from instanceof Date) {
+                nextVal = new Date(from.getTime());
+                let matchResult = increment.toString().match(/(Y)|(M)|(D)/i);
+                if (matchResult) {
                     switch (matchResult[0].toLowerCase()) {
                         case "y":
                             nextVal.setFullYear(nextVal.getFullYear() + parseInt(increment))
@@ -133,14 +133,17 @@ module.exports = class Step extends ConfigEntry{
                         default:
                             nextVal.setDate(nextVal.getDate() + parseInt(increment))
                     }
-
-                } else {
-                    nextVal =  from + parseInt(increment);
                 }
-                yield  *this[_generateCursorCall]((nextVal<=to) ? nextVal : to, dataType, increment, to );
+            }
+            else {
+                nextVal =  from + parseInt(increment);
+            }
+            if (nextVal <= to) {
+                //yield  *this[_generateCursorCall]((nextVal <= to) ? nextVal : to, dataType, increment, to);
+                yield  *this[_generateCursorCall](nextVal, dataType, increment, to);
             }
         }
     }
-};
+}
 
 //export  {Step}
