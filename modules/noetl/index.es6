@@ -66,7 +66,7 @@ let testRange = testCoursor.RANGE;
 
 //console.log("Step.toDate(start) ",ConfigEntry.toDate("-2012-11-11",'-YYYY-%m-%d'))
 
-var testtest = tasks[1].getStep('step1')
+var testtest = tasks[1].getStep('step2')
 
 console.log("testtest",testtest)
 
