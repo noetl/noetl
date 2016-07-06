@@ -27,7 +27,6 @@ module.exports = class Step extends ConfigEntry{
          if (arguments[0] === "root") {
             this.NEXT = {"SUCCESS":Object.assign({},arguments[1])}
         }
-
     }
     // returns a cursor values, have to return execution
     [Symbol.iterator]() { return this[_generateCursorCall](this.getCursorRange(), this.getCursorDataType()) }

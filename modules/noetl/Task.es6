@@ -22,6 +22,7 @@ const   ROOT         =  "root", // root is not a step, but just a forkable entry
  * @classdesc Workflow Task's handler.
  * @extends ConfigEntry
  */
+
 module.exports = class Task extends ConfigEntry{
     constructor() {
         super(...arguments)

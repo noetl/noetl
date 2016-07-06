@@ -43,16 +43,17 @@ nconf.required([`${WORKFLOW}:${TASKS}:${START}`,`${WORKFLOW}:${TASKS}:${EXIT}`])
  * @example
  * var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
  */
+
 function* generateTaskList(task,sep='-'){
     yield task;
-    if (!['exit'].find(x => x === task.entryPath) && task.nextSuccess) {
+    if (![EXIT].find(x => x === task.entryPath) && task.nextSuccess) {
         yield  *generateTaskList(Task.task(sep,WORKFLOW,TASKS,task.nextSuccess));
     }
-};
+}
 
 
 // Initiate a task list to push workflow
-var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,'start'),'-')];
+var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,START),'-')];
 
 
 var testCoursor = tasks[1].getStep('step2').getCursor();
@@ -66,9 +67,9 @@ let testRange = testCoursor.RANGE;
 
 //console.log("Step.toDate(start) ",ConfigEntry.toDate("-2012-11-11",'-YYYY-%m-%d'))
 
-var testtest = tasks[1].getStep('step2')
+var testtest = tasks[1].getStep('step2');
 
-console.log("testtest",testtest)
+console.log("testtest",testtest);
 
 let count = 0;
 for (let test of testtest) {

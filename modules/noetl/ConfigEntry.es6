@@ -64,11 +64,12 @@ module.exports = class ConfigEntry{
      * @returns configEntryPath {object}
      */
     static getConfigEntryPath(...keys) {
-        let checkDelimiter = arg => arg.length==1 && ConfigEntry.getDelimiter().indexOf(arg)>-1, configEntryPath = checkDelimiter(keys[0])  ? [keys.slice(1).join(keys[0]),keys.slice(1).join(':')] : [keys.join(':'),keys.join(':') ]  // checkDelimiter returns true if separator exists as a first argument of configEntryPath function that returns array of "Entry Path Name" and "Entry Path"
+        let checkDelimiter = arg => arg.length==1 && ConfigEntry.getDelimiter().indexOf(arg)>-1, configEntryPath = checkDelimiter(keys[0])  ? [keys.slice(1).join(keys[0]),keys.slice(1).join(':')] : [keys.join(':'),keys.join(':') ]
+        // checkDelimiter returns true if separator exists as a first argument of configEntryPath function that returns array of "Entry Path Name" and "Entry Path"
         return configEntryPath
     }
 
-    static getDelimiter(sep = [' ',':','.',',',';','|','-']) {return sep;};
+    static getDelimiter(sep = [' ',':','.',',',';','|','-']) {return sep}
 
     set configEntryName(confName) {
         this[_confEntryName] = confName

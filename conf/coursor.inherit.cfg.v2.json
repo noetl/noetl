@@ -106,14 +106,14 @@
           				"THREAD": "0",
     					"CURSOR": {
     						"RANGE": [
-								{"FROM":"2011-09-01","TO":"2011-12-01","INCREMENT": "2m"},"2016-01-01",{"FROM":"2013-01-01","TO":"2013-02-01","INCREMENT": "1m"},"2015-01-01"
+								{"FROM":"2011-09-01","TO":"2011-12-01","INCREMENT": "2m"},"2016-01-01",{"FROM":"2011-12-01","TO":"2012-02-01","INCREMENT": "1m"},"2015-01-01"
     						], 
     						"DATATYPE": "date",
     						"FORMAT": "%Y-%m-%d",
     						"INHERIT": "False"
     					},  
           				"EXEC": {
-          					"URL": "${WORKFLOW.HOST}",
+          					"URL": ["${WORKFLOW.HOST}"],
           					"CMD": [
             					["echo \"Cursor [%Y%m]\" > ${WORKFLOW.STAGING}/[%Y%m].test"],
 								["cat ${WORKFLOW.STAGING}/[%Y%m].test"]
