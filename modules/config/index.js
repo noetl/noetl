@@ -22,9 +22,9 @@ switch(process.env.NODEENV) {
         nconf.file('custom', { file: './modules/config/prod-config.json' });
         break;
 
-    case 'DENALI':
+    case 'NOETL':
         console.log('Loading DENALI Configuration Settings');
-        nconf.file('custom', { file: './modules/config/denali-config.json' });
+        nconf.file('custom', { file: './modules/config/noetl-config.json' });
         break;
 
     default:

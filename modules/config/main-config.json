@@ -28,7 +28,7 @@
       "apis": {
         "validate": {
           "method": "POST",
-          "baseURL": "/nomisMetadata/v1/admin/users/authenticate"
+          "baseURL": "/noetlMetadata/v1/admin/users/authenticate"
         }
       }
     },
@@ -36,7 +36,7 @@
     "metadata": {
       "host_port": "localhost:8080",
       "port": 8080,
-      "apiVersion": "/nomisMetadata/v1/",
+      "apiVersion": "/noetlMetadata/v1/",
       "apis": {
         "getMetadata": {
           "method": "GET",
@@ -47,41 +47,19 @@
   },
 
   "data": {
-    "dbname": "ratesheetDB",
+    "dbname": "noetlDB",
     "adminDB": "adminDB",
     "metadataDB": "metadataDB",
-    "configDB":"configDB",
-    "modelDB":"modelDB",
-    "npoDB": "npo45",
-    "npoUserId": "npo45",
-    "npoPassword": "npo45",
-    "esappDB" : "esapp-dev"
-  },
-
-  "amqp": {
-    "host": "localhost"
+    "configDB":"configDB"
   },
 
   "MONGODB_PORT_27017_TCP_ADDR": "localhost",
-  "MONGODB_DENALI_PORT_27017_TCP_ADDR": "50.112.169.28",
+  "MONGODB_NOETL_PORT_27017_TCP_ADDR": "101.101.101.101",
   "MONGODB_PORT_27017_TCP_PORT": 27017,
   "MYSQLDB_TCP_ADDR": "localhost",
 
   "METADATA_PORT_8080_TCP_ADDR": "localhost",
   "METADATA_PORT_8080_TCP_PORT": 8080,
 
-  "RMQ_PORT_5672_TCP_ADDR": "localhost",
-
-  "nomisOnlineHost": "localhost",
-  "nomisOnlinePort": 9000,
-
-  "PRICING_STRUCTURE_FILE_PATH": "/Users/larionvasilkovsky/Development/npo45/install/dev/config/xml",
-  "PRICING_STRUCTURE_FILE_NAME": "PricingStructure.xml",
-
-  "FILEPATH": "",
-
-  "accessKeyId": "AKIAIISAN7FNY4BBVRFQ",
-  "secretAccessKey": "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",
-  "region": "us-east-1",
-  "awsRegions" : ["us-west-2", "us-east-1", "us-west-1"]
+  "RMQ_PORT_5672_TCP_ADDR": "localhost"
 }
