@@ -14,19 +14,20 @@
 var fs          = require('fs'),
     nconf       = require('nconf'),
     co          = require('co'),
-    ConfigEntry = require('./ConfigEntry'),
-    Task        = require('./Task'),
-    Step        = require('./Step');
+    ConfigEntry = require('./ConfigEntry.es6'),
+    Task        = require('./Task.es6'),
+    Step        = require('./Step.es6');
 
 var keys = Object.keys;
 var assign = Object.assign;
-
+var RunShell = require('./RunShell.es6')
+var Connection = require('./Connection.es6')
 // Config keys
 const   PROJECT     = 'PROJECT',
-        WORKFLOW    = 'WORKFLOW',
-        TASKS       = 'TASKS',
-        START       = 'start',
-        EXIT        = 'exit'; //SEP = [' ',':','.',',',';','|','-'];
+    WORKFLOW    = 'WORKFLOW',
+    TASKS       = 'TASKS',
+    START       = 'start',
+    EXIT        = 'exit'; //SEP = [' ',':','.',',',';','|','-'];
 
 // Read configuration file
 nconf.argv()
@@ -56,7 +57,7 @@ function* generateTaskList(task,sep='-'){
 var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,START),'-')];
 
 
-var testCoursor = tasks[1].getStep('step2').getCursor();
+var testCoursor = tasks[1].getStep('step1').getCursor();
 
 console.log("testCoursor",testCoursor)
 
@@ -67,13 +68,41 @@ let testRange = testCoursor.RANGE;
 
 //console.log("Step.toDate(start) ",ConfigEntry.toDate("-2012-11-11",'-YYYY-%m-%d'))
 
-var testtest = tasks[1].getStep('step2');
+var testtest = tasks[1].getStep('step1');
 
 console.log("testtest",testtest);
 
 let count = 0;
+
+
 for (let test of testtest) {
     console.log("test", count++,test)
-    
 }
 
+var CMD = tasks[1].getStep('step1').getExecCmd();
+var thread = tasks[1].getStep('step1').getThread();
+var Host= tasks[1].getStep('step1').getExecUrl();
+
+function* sshExec(opts) {
+    yield opts;
+}
+
+var cmdStringVal = '';
+for (let i = 1; i <= thread; i++) {
+    for (let cmd in CMD) {
+        if (cmd ==0)
+            cmdStringVal += CMD[cmd][0].replace('[]', i).replace('[]', i) + " && "
+        else
+            cmdStringVal += CMD[cmd][0].replace('[]', i).replace('[]', i)+" "
+
+    }
+}
+var opts = {
+    host: '',
+    user: 'root',
+};
+
+for (let host in Host) {
+    opts.host=Host[host];
+    sshExec(new RunShell(cmdStringVal,opts))
+}

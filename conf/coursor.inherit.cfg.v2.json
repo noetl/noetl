@@ -73,7 +73,7 @@
         			},
         			"CALL": {
           				"ACTION": "runShell",
-          				"THREAD": "0",
+          				"THREAD": "4",
     					"CURSOR": {
     						"RANGE": [
 								{"FROM":"1","TO":"10", "INCREMENT":"2"},"12","14"
@@ -81,14 +81,11 @@
     						"DATATYPE": "integer",
     						"FORMAT": "",
     						"INHERIT": "False"
-    					},  
-          				"EXEC": {
-          					"URL": "${WORKFLOW.HOST}",
-          					"CMD": [
-            					["ls -ltr ${WORKFLOW.STAGING}[]"],
-            					["echo [] '${PROJECT.HOME}'"]
-          					]
-          				}
+    					},
+						"EXEC": {
+							"URL": ["10.10.10.1","10.10.10.2","10.10.10.3","10.10.10.4","10.10.10.5"],
+							"CMD": [ ["echo \"HelloWorld []\" > /tmp/HelloWorld[].test"], ["cat /tmp/HelloWorld[].test"] ]
+						}
         	 		}
       	  		},
 				"step2" : {
@@ -98,7 +95,7 @@
           				"FAILURE": {
           					"NEXT_STEP": "exit",
    							"MAX_FAILURES": "1",
-   							"WAITTIME": "0s"
+   							"WAITTIME": "10s"
           				}
         			},
         			"CALL": {

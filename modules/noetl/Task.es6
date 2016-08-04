@@ -1,6 +1,6 @@
 "use strict";
-var ConfigEntry = require('./ConfigEntry'),
-    Step = require('./Step'),
+var ConfigEntry = require('./ConfigEntry.es6'),
+    Step = require('./Step.es6'),
     keys = Object.keys;
 
 // www.noetl.io ////////////////////////////////////////////////////////////////////////////////////////////////////////
