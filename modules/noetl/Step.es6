@@ -29,7 +29,7 @@ module.exports = class Step extends ConfigEntry{
         }
     }
     // returns a cursor values, have to return execution
-    [Symbol.iterator]() { return this[_generateCursorCall](this.getCursorRange(), this.getCursorDataType()) }
+    [Symbol.iterator]() {return this[_generateCursorCall](this.getCursorRange(), this.getCursorDataType()) }
 
     static step() {
         return new Step(...arguments)

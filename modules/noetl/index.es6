@@ -56,23 +56,33 @@ function* generateTaskList(task,sep='-'){
 var tasks = [...generateTaskList(new Task('-',WORKFLOW,TASKS,START),'-')];
 
 
-var testCoursor = tasks[1].getStep('step2').getCursor();
+// var testCoursor = tasks[1].getStep('step2').getCursor();
 
-console.log("testCoursor",testCoursor)
+// console.log("testCoursor",testCoursor)
 
-let testRange = testCoursor.RANGE;
+// let testRange = testCoursor.RANGE;
 
 
 // to avoid delimiter problem like ["2011-01-01:2012-01-01"] => path ["2011-01-01 12:00:00 : 2011-12-12 12:00:00"] = failed  we need to change to range object instead {from:"2011-10-01 12:00:00",to:"2012-01-01 12:00:00"}
 
 //console.log("Step.toDate(start) ",ConfigEntry.toDate("-2012-11-11",'-YYYY-%m-%d'))
 
-var testtest = tasks[1].getStep('step2');
+// var testtest = tasks[1].getStep('step2');
+//
+// console.log("testtest",testtest);
+//
+// let count = 0;
+// for (let test of testtest) {
+//     console.log("test", count++,test)
+// }
 
-console.log("testtest",testtest);
+let taskCount = 0;
 
-let count = 0;
-for (let test of testtest) {
-    console.log("test", count++,test)
+for (let task of tasks) {
+    console.log("task", taskCount++,task)
+    let stepCount = 0;
+    for (let step of task.getSteps()) {
+        console.log("step",stepCount++,step)
+    }
 }
 

@@ -12,7 +12,7 @@ var ConfigEntry = require('./ConfigEntry'),
 const   _getStepsRoot = Symbol("steps start reference"),
         _steps        = Symbol("steps");
 
-const   ROOT         =  "root", // root is not a step, but just a forkable entry point for the steps.
+const   ROOT          =  "root", // root is not a step, but just a forkable entry point for the steps.
         STEPS         = "STEPS",
         START         = "START",
         NEXT          = "NEXT";
@@ -49,11 +49,11 @@ module.exports = class Task extends ConfigEntry{
                 throw new Error("steps starting entry point doesn't exists");
             }
         } catch (e) {
-                console.warn(`Steps initializing warning "${e.message}" for ${this.entryPath}`);
+                console.warn(`Steps initializing warning "${e.message}" for ${this.entryPath}`)
         } finally {
                 console.log(`Task: ${this.entryPath}`)
                 this[_steps].forEach(function(step, stepName) {
-                    console.log(`Step -> ${stepName}; ancestors ->  ${Array.from(step.getAncestor()).join(',')}; followers -> ${Array.from(step.getChild()).join(',')}`);
+                    console.log(`Step -> ${stepName}; ancestors ->  ${Array.from(step.getAncestor()).join(',')}; followers -> ${Array.from(step.getChild()).join(',')}`)
                 })
         }
     }
@@ -63,15 +63,23 @@ module.exports = class Task extends ConfigEntry{
     }
 
     get nextSuccess () {
-        return this[NEXT].SUCCESS || undefined;
+        return this[NEXT].SUCCESS || undefined
     }
 
     get nextFailure () {
-        return this[NEXT].FAILURE || undefined;
+        return this[NEXT].FAILURE || undefined
     }
 
     getStep(stepName) {
-        return this[_steps].get(stepName);
+        return this[_steps].get(stepName)
+    }
+
+    getSteps() {
+        return this[_steps] || new Map()
+    }
+
+    validateBranch(step) {
+         return undefined
     }
 };
 
