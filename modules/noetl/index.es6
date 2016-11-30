@@ -16,7 +16,8 @@ var fs          = require('fs'),
     co          = require('co'),
     ConfigEntry = require('./ConfigEntry'),
     Task        = require('./Task'),
-    Step        = require('./Step');
+    Step        = require('./Step'),
+    AWS = require('aws-sdk');
 
 var keys = Object.keys;
 var assign = Object.assign;
@@ -86,3 +87,18 @@ for (let task of tasks) {
     }
 }
 
+var s3 = new AWS.S3();
+
+var params = {
+    Bucket: 'elastic-mapreduce' /* required */
+};
+
+s3.getBucketLifecycleConfiguration(params, function(err, data) {
+    if (err) console.log(err, err.stack); // an error occurred
+    else     console.log(data);           // successful response
+});
+
+s3.getBucketPolicy(params, function(err, data) {
+    if (err) console.log(err, err.stack); // an error occurred
+    else     console.log(data);           // successful response
+});
