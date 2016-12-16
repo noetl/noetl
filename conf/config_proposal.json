@@ -1,0 +1,111 @@
+{
+  "WORKFLOW": {
+    "ID": "PRPSL",
+    "DESCR": "ID must be unique in workflow scope and must be used in ACTION,WORKFLOW",
+    "VAR": {
+      "EXPL": {
+        "A": "Variable can have any structure.",
+        "B": "after appear in context, vars are not removed from context",
+        "C": "Subject to discuss"
+      },
+      "STAGING": "/temp",
+      "PROJECT": {
+        "NOETL": "File design",
+        "VER": 1,
+        "DEVELOPER": [
+          "Alex",
+          "Davit",
+          "Kostia",
+          "Zura"
+        ]
+      }
+    },
+
+    "ACTION": {
+      "ID": "1",
+      "TYPE": "CLI",
+      "DESCR": ["Prints Executing: 1",
+                "ID can contain '0..1 A..Z -' "
+      ],
+      "EXEC": "echo \"Executing:\" ${noetl.currentActionID}"
+      "NEXT": ["2"]
+    },
+
+    "ACTION": {
+      "ID": "2",
+      "TYPE": "CLI",
+      "EXEC": "ls -l",
+      "NEXT": [
+        "3",
+        "4"
+      ],
+      "DESCR": "Here is used uncoditional fork"
+    },
+
+    "ACTION": {
+      "ID": "3",
+      "DESCR": "Transfer execution to another WF. If used 'next' , then not returns here, if 'exec' then execution returns here",
+      "TYPE": "REF",
+      "EXEC": {
+        "WF":"./another_wf_return.json",
+        "ARGS": [" ${WORKFLOW.STAGING}","abcd",1]
+      },
+      "NEXT": ["./another_wf_noreturn.json"]
+    },
+
+    "ACTION": {
+      "ID": "4",
+      "DESCR": "MULTIPLICATOR = cursor. Multiplies next task(s)"
+      "TYPE": "MULT",
+      "EXEC": {
+        "RANGE": [
+          "2011-09-01:2011-12-01"
+        ],
+        "DATATYPE": "date",
+        "FORMAT": "%Y-%m-%d",
+        "INCREMENT": "1M",
+        "INHERIT": "False",
+        "THREAD": "10"
+      },
+      "NEXT":["5"]
+    },
+
+    "ACTION" : {
+      "ID":"5",
+      "DESC": ["This task is multiplied(forked) by action '4'.",
+               "It is possible to reference any previous task result or var.",
+               "Here ID.1 = result of action '1' ",
+               "ID.2.[1] = the 2nd line (starts from zero) of action '2' ",
+               "ID.4.%Y%m = cursor generated value for this instance of ID 5"],
+
+      "EXEC": "echo \"${ID.1} Cursor [%Y%m]\" > ${WORKFLOW.STAGING}/${ID.2.[1]}${ID.4.%Y%m}.test",
+      "NEXT": ["6"]
+    },
+
+    "ACTION" : {
+      "ID":"6",
+      "TYPE":"WAIT",
+      "DESCR":"",
+      "EXEC":{
+        "AND":[{ /*AND,OR,XOR,NOT ... up to our fantasy and time*/
+          "FOR": "${ID.5}", /* Expression */
+          "VALUE":"0", /*Value of expr*/
+          "ATLEAST": "7" /* at least 7 threads of action '5' must finish with value 0 to go*/
+        },{
+          "FOR":"0",
+          "VALUE":"0" /*always will pass, just to demo. 'atleast' is optional*/
+
+        },{
+          "FOR":"${ID.1}",
+          "ATLEAST":"1" /*always will pass, just to demo. 'value' is optional*/
+        },{
+          "OR":{ /*build complex logic*/
+            "FOR":"1",
+            "ATLEAST": 1 /*always will pass, just to demo.*/
+          }
+        }]
+      },
+      "NEXT":["7"]
+    }
+  }
+}
