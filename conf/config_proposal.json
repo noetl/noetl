@@ -1,8 +1,9 @@
 {
   "WORKFLOW": {
     "ID": "PRPSL",
-    "DESCR": "ID must be unique in workflow scope and must be used in ACTION,WORKFLOW",
-    "VAR": {
+    "DESCR": "ID must be unique in workflow scope",
+    "START": "1",  /* from which action start workflow */
+    "PROPERTIES": {
       "EXPL": {
         "A": "Variable can have any structure.",
         "B": "after appear in context, vars are not removed from context",
@@ -20,92 +21,125 @@
         ]
       }
     },
+    "ACTIONS": {
+      /* specfies from which action to start*/
 
-    "ACTION": {
-      "ID": "1",
-      "TYPE": "CLI",
-      "DESCR": ["Prints Executing: 1",
-                "ID can contain '0..1 A..Z -' "
-      ],
-      "EXEC": "echo \"Executing:\" ${noetl.currentActionID}"
-      "NEXT": ["2"]
-    },
-
-    "ACTION": {
-      "ID": "2",
-      "TYPE": "CLI",
-      "EXEC": "ls -l",
-      "NEXT": [
-        "3",
-        "4"
-      ],
-      "DESCR": "Here is used uncoditional fork"
-    },
-
-    "ACTION": {
-      "ID": "3",
-      "DESCR": "Transfer execution to another WF. If used 'next' , then not returns here, if 'exec' then execution returns here",
-      "TYPE": "REF",
-      "EXEC": {
-        "WF":"./another_wf_return.json",
-        "ARGS": [" ${WORKFLOW.STAGING}","abcd",1]
-      },
-      "NEXT": ["./another_wf_noreturn.json"]
-    },
-
-    "ACTION": {
-      "ID": "4",
-      "DESCR": "MULTIPLICATOR = cursor. Multiplies next task(s)"
-      "TYPE": "MULT",
-      "EXEC": {
-        "RANGE": [
-          "2011-09-01:2011-12-01"
+      "1": {
+        "TYPE": "CLI",
+        "DESCR": [
+          "Prints Executing: 1",
+          "ACT can contain '0..1 A..Z -' "
         ],
-        "DATATYPE": "date",
-        "FORMAT": "%Y-%m-%d",
-        "INCREMENT": "1M",
-        "INHERIT": "False",
-        "THREAD": "10"
+        "EXEC": "echo \"Executing:\" ${noetl.currentActionID}"
+        "NEXT": [
+          "2"
+        ]
       },
-      "NEXT":["5"]
-    },
-
-    "ACTION" : {
-      "ID":"5",
-      "DESC": ["This task is multiplied(forked) by action '4'.",
-               "It is possible to reference any previous task result or var.",
-               "Here ID.1 = result of action '1' ",
-               "ID.2.[1] = the 2nd line (starts from zero) of action '2' ",
-               "ID.4.%Y%m = cursor generated value for this instance of ID 5"],
-
-      "EXEC": "echo \"${ID.1} Cursor [%Y%m]\" > ${WORKFLOW.STAGING}/${ID.2.[1]}${ID.4.%Y%m}.test",
-      "NEXT": ["6"]
-    },
-
-    "ACTION" : {
-      "ID":"6",
-      "TYPE":"WAIT",
-      "DESCR":"",
-      "EXEC":{
-        "AND":[{ /*AND,OR,XOR,NOT ... up to our fantasy and time*/
-          "FOR": "${ID.5}", /* Expression */
-          "VALUE":"0", /*Value of expr*/
-          "ATLEAST": "7" /* at least 7 threads of action '5' must finish with value 0 to go*/
-        },{
-          "FOR":"0",
-          "VALUE":"0" /*always will pass, just to demo. 'atleast' is optional*/
-
-        },{
-          "FOR":"${ID.1}",
-          "ATLEAST":"1" /*always will pass, just to demo. 'value' is optional*/
-        },{
-          "OR":{ /*build complex logic*/
-            "FOR":"1",
-            "ATLEAST": 1 /*always will pass, just to demo.*/
-          }
-        }]
+      "2": {
+        "TYPE": "CLI",
+        "EXEC": "ls -l",
+        "NEXT": [
+          "3",
+          "4"
+        ],
+        "DESCR": "Here is used uncoditional fork"
       },
-      "NEXT":["7"]
+      "3": {
+        "DESCR": "Transfer execution to another WF. If used 'next' , then not returns here, if 'exec' then execution returns here",
+        "TYPE": "REF",
+        "EXEC": {
+          "WF": "./another_wf_return.json",
+          "ARGS": [
+            " ${WORKFLOW.STAGING}",
+            "abcd",
+            1
+          ]
+        },
+        "NEXT": [
+          "./another_wf_noreturn.json"
+        ]
+      },
+      "4": {
+        "DESCR": "MULTIPLICATOR = cursor. Multiplies next task(s)"
+        "TYPE": "MULT",
+        "EXEC": {
+          "RANGE": [
+            "2011-09-01:2011-12-01"
+          ],
+          "DATATYPE": "date",
+          "FORMAT": "%Y-%m-%d",
+          "INCREMENT": "1M",
+          "INHERIT": "False",
+          "THREAD": "10"
+        },
+        "NEXT": [
+          "5"
+        ]
+      },
+      "5": {
+        "DESC": [
+          "This task is multiplied(forked) by action '4'.",
+          "It is possible to reference any previous task result or var.",
+          "Here ACT.1 = result of action '1' ",
+          "ACT.2.[1] = the 2nd line (starts from zero) of action '2' ",
+          "ACT.4.%Y%m = cursor generated value for this instance of ACT 5"
+        ],
+        "EXEC": "echo \"${ACT.1} Cursor [%Y%m]\" > ${WORKFLOW.STAGING}/${ACT.2.[1]}${ACT.4.%Y%m}.test",
+        "NEXT": [
+          "6"
+        ]
+      },
+
+      "6":{
+          "TYPE":"WAIT",
+          "EXEC":"and( wait(${ACT.5},0,7),wait(0,0),wait(${ACT.1},null,1),or(wait(1,null,1),wait(${ACT.3},1,1)) )",
+          "NEXT" : ["7"]
+      } ,
+
+      "6": {
+        "TYPE": "WAIT",
+        "DESCR": "",
+        "EXEC": {
+          "AND": [
+            {
+              /*AND,OR,XOR,NOT ... up to our fantasy and time*/
+              "FOR": "${ACT.5}",
+              /* Expression */
+              "VALUE": "0",
+              /*Value of expr*/
+              "ATLEAST": "7"
+              /* at least 7 threads of action '5' must finish with value 0 to go*/
+            },
+            {
+              "FOR": "0", "VALUE": "0"
+              /*always will pass, just to demo. 'atleast' is optional*/
+            },
+            {
+              "FOR": "${ACT.1}", "ATLEAST": "1"
+              /*always will pass, just to demo. 'value' is optional*/
+            },
+            {
+              "OR": {
+                /*build complex logic*/
+                "FOR": "1", "ATLEAST": "1"
+                /*always will pass, just to demo.*/
+              }
+            }
+          ]
+        },
+        "NEXT": [
+          "7"
+        ]
+      },
+      "7": {
+        "TYPE":"JS",
+        "EXEC": "customFunc(${ACT.2},${noetl.currentActCounter})", /*currentActCounter is counter of current action*/
+        "SWITCH2NEXT":{
+          "0": ["8","11","12"],
+          "1": ["9"],
+          "${ACT.ERR}": ["7"]
+        }
+      }
+      }
     }
   }
-}
