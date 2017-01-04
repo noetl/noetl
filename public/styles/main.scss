@@ -1,0 +1,1504 @@
+@font-face {
+  font-family: GothaProReg;
+  src: url(fonts/GothaProReg.otf);
+}
+a{
+  text-decoration: none;
+  color:inherit;
+}
+
+
+
+.float_fix{
+  float: none;
+  clear: both;
+}
+
+.height_100{
+  height: 100%;
+}
+
+.description{
+  font-family: GothaProReg;
+  font-size: 1em;
+}
+
+.text-right{
+  text-align: right;
+}
+
+.text-center{
+  text-align: center;
+}
+
+
+
+.your-favorite-image {
+  object-fit: cover;
+  font-family: 'object-fit: contain;'
+}
+
+.ngdialog.ngdialog-theme-default .ngdialog-content{
+  border-radius:0;
+  padding:0;
+}
+
+.kv{
+  font-family: GothaProReg;
+  font-size: 1em;
+}
+
+
+
+.md-tab{
+  @extend .kv;
+}
+
+@font-face {
+  font-family: GothaProMed;
+  src: url(fonts/GothaProMed.otf);
+}
+
+@font-face {
+  font-family: GothaProBol;
+  src: url(fonts/GothaProBol.otf);
+}
+
+
+$bm:30px;
+$height: 60px;
+
+$color1: #56ccc8;
+$border1: 1px solid #56ccc8;
+$color2: #2980b9;
+$color3: #c5cdd1;
+$color4: #4fc6f8;
+$color5: #475055;
+$color666: #656d68;
+$color7: #b2b9bd;
+$color8: #efbf88;
+$color9: #f9684b;
+
+.color_1{
+  color: $color1;
+}
+.color_2{
+  color: $color2;
+}
+
+
+$border: 1px solid #ccc;
+$border2: 1px solid #ff0000;
+$border3: 1px dotted green;
+$bgr: #fff;
+
+
+.uTag{
+  float: left;
+  text-align: center;
+  background: $color2;
+  color: #fff;
+  @extend .kv;
+  padding: 3px;
+  padding-left: 10px;
+  padding-right: 10px;
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
+.default{
+  box-shadow: 0 1px 3px 0 rgba(0,0,0,.2),0 1px 1px 0 rgba(0,0,0,.14),0 2px 1px -1px rgba(0,0,0,.12);
+  color: rgba(0,0,0,0.87);
+  background-color: rgb(255,255,255);
+  position: relative;
+  overflow: hidden;
+}
+
+.mTop{margin-top: $bm;}
+.mBottom{margin-bottom: $bm;}
+.mLeft{margin-left: $bm;}
+.mRight{margin-right: $bm;}
+
+.flex-offset-2{
+  margin-left: $bm;
+}
+
+
+// HEADER
+.md-toolbar-tools, .in-row{
+  padding: 0 ;
+  width:85%;
+  margin: 0 auto;
+}
+
+.md-toolbar-tools{
+  @extend .default;
+}
+
+
+
+footer>div{
+  @extend .default;
+
+}
+
+
+body {
+  background: #efefef url('../images/blocks/background/bg3.jpg') no-repeat;
+  min-height: 100%;
+  min-width: 1313px;
+  height: auto;
+  background-size: cover;
+  background-attachment: fixed;
+  padding-bottom: $bm;
+}
+
+header.md-default-theme, header:not(.md-menu-toolbar) {
+    background: transparent;
+
+  }
+.logo{
+  background: $color1;
+  height: inherit;
+}
+.logo a{
+  height: inherit;
+  display: block;
+}
+.logo a img{
+  height: inherit;
+}
+
+
+.nav {
+  color: #656d68;
+  @extend .kv;
+  font-size:.9em;
+}
+
+.nav > a:nth-child(1){
+  margin-left:$bm;
+}
+
+.nav > a:nth-child(2){
+  margin-left:$bm;
+  margin-right:$bm;
+}
+
+.nav > a:nth-child(3){
+  margin-right:$bm;
+}
+
+.toolbar {
+  color: #656d68;
+  text-align: right;
+  background: $bgr;
+  @extend .kv;
+  @extend .mRight;
+
+}
+
+header.md-default-theme:not(.md-menu-toolbar) md-icon, header:not(.md-menu-toolbar) md-icon{
+  color: #656d68;
+
+}
+
+
+header{
+  margin-top: $bm * 2;
+  margin-bottom: $bm;
+}
+
+footer{
+  display: none;
+  margin-top: $bm;
+  margin-bottom: $bm;
+}
+
+.tabActive {
+  background: $color1;
+}
+
+$mdHeight: 60px;
+$mdWidth: 230px;
+$smHeight: 48px;
+$smWidth: 173px;
+
+.leftmenu_heading{
+  text-align: center;
+  font-family: GothaProReg;
+  font-size: 1.25vw;
+  display: block;
+  padding-bottom: 18px;
+}
+
+.leftmenu_comments{
+  padding-top: 18px;
+  background: $color4;
+  color: #fff;
+  overflow: hidden;
+  div.title{
+    @extend .leftmenu_heading;
+    font-size: .98em;
+    color: #fff;
+    md-icon{
+      color:#fff;
+    }
+  }
+  div.content{
+    font-family: GothaProReg;
+    padding: 0 25px;
+    border-top: 1px solid #7bd4fa;
+    word-break: break-all;
+    line-height: 1.3;
+  }
+
+}
+.leftmenu_subscriptions{
+  overflow: hidden;
+  padding: 18px 25px;
+  .title{
+    @extend .leftmenu_heading;
+    color: $color5;
+  }
+  .content{
+
+
+  }
+
+}
+
+
+
+
+.leftmenu_md{
+  @extend .default;
+  display: block;
+  list-style-type: none;
+
+    li{
+        height: $mdHeight;
+        width: $mdWidth;
+        line-height: $mdHeight;
+
+
+        a{
+          display: block;
+          color: #656d68;
+          padding: 0 23px;
+          text-decoration: none;
+          @extend .kv;
+          border-bottom:1px solid #e1e5e7;
+        }
+        a:hover{
+          background: #56ccc8;
+          color: #fff;
+          text-decoration: none;
+          border-top:1px solid #4ac4c4;
+          border-bottom:1px solid #4ac4c4;
+        }
+    }
+
+    li.tabActive>a{
+      color: #fff;
+    }
+
+}
+.leftmenu_sm{
+  @extend .default;
+  display: block;
+  list-style-type: none;
+
+  li{
+    height: $smHeight;
+    width: $smWidth;
+    line-height: $smHeight;
+    border-bottom:1px solid #e1e5e7;
+
+    a{
+      display: block;
+      color: #656d68;
+      padding: 0 23px;
+      text-decoration: none;
+      @extend .kv;
+    }
+    a:hover{
+      background: #56ccc8;
+      color: #fff;
+      text-decoration: none;
+    }
+  }
+  li.tabActive>a{
+    color: #fff;
+  }
+
+}
+
+
+
+//-------------------------------------------------
+md-content{
+  background: transparent;
+}
+
+md-card{
+  margin:0;
+  position: relative;
+
+  .md-card-image{
+    height: 52%;
+    background-size: cover;
+    background-position: center center;
+  }
+  .md-card-image-feed{
+    height: 72%;
+    background-size: cover;
+    background-position: center center;
+  }
+
+
+  md-content{
+    padding-left: 8%;
+  }
+
+  .card_icon{
+    position: absolute;
+    top:13px;
+    left:0;
+    text-align: center;
+    background: $color1;
+    width: 43px;
+    height: 46px;
+    line-height: 46px;
+
+    md-icon{
+      color:#fff;
+    }
+  }
+  .card_tags{
+    position: absolute;
+    top:20px;
+    right:0;
+
+    .tag{
+      float: right;
+      margin: 5px;
+      text-align: center;
+      background: $color2;
+      color: #fff;
+      @extend .kv;
+      padding: 3px;
+      border-radius: 3px;
+
+    }
+
+
+  }
+  md-card-title-text a{
+    font-family: GothaProReg;
+    font-size: 1.5em;
+    text-decoration: none;
+    color: $color666;
+  }
+  md-card-content{
+    @extend .description;
+    color: $color666;
+  }
+
+  md-card-actions{
+    @extend .description;
+    color: $color666;
+    div{
+      margin-right: 10px;
+    }
+  }
+
+
+}
+
+
+//-------------------------------------------------
+
+.noShadow{
+  box-shadow: 0 0 0 0 rgba(0,0,0,.2),0 1px 0 0 rgba(0,0,0,.14),0 2px 1px -1px rgba(0,0,0,.12);
+}
+.tabs{
+  background: transparent;
+
+  .md-tab{
+    overflow:visible;
+  }
+
+  md-pagination-wrapper, md-pagination-wrapper, md-tabs-wrapper{
+    transform: none !important;
+  }
+
+  md-tabs-canvas{
+    overflow: visible;
+  }
+  md-tab-item{
+    //border:$border2;
+    background: $color3;
+    color: #fff;
+
+  }
+
+
+  md-tabs md-tab-item:nth-child(1){
+    width: 208px;
+    margin-right:4px;
+  }
+
+  md-tabs md-tab-item:nth-child(3){
+    margin-left:4px;
+  }
+
+
+
+  md-tab-item:nth-child(4){
+    margin-left:4px;
+  }
+
+  md-pagination-wrapper{
+    width:100%!important;
+  }
+
+  md-tab-item.md-active{
+    background: $color2;
+    color:#fff;
+  }
+
+  md-tab-item.md-active:after {
+    border-top: 10px solid $color2;
+    border-left: 10px solid transparent;
+    border-right: 10px solid transparent;
+
+    content: "";
+    position: absolute;
+    left: 43%;
+    top: 46px;
+    width: 0;
+    height: 0;
+    z-index: 666;
+  }
+
+  md-content{
+    background: #fff;
+  }
+
+}
+
+
+
+md-ink-bar{
+  display: none;
+}
+
+
+.tab_table{
+  //border:$border2;
+  overflow: hidden;
+  display: block;
+  padding-top: 10px;
+
+  // Ng-Repeat
+  div{
+    float: left;
+    margin-bottom: 5px;
+    width: 49%;
+
+    // In Ng-Repeat
+
+    div{
+
+      //border: $border2;
+      width: auto;
+      a{
+        color: $color1;
+        font-family: GothaProMed;
+        font-size:1em;
+        text-decoration: underline;
+        text-decoration-color: #dcf3f2;
+      }
+    }
+
+    div.color_1{
+      float: left;
+    }
+    div.color_2{
+      @extend .kv;
+      float: right;
+      background: $color2;
+      color: #fff;
+      border-radius: 2px;
+      padding:3px;
+    }
+  }
+  div:nth-child(even){
+    margin-left: 2%;
+  }
+}
+
+.popular{
+  padding-top: 5px;
+  padding: 20px;
+  .popularTitle{
+    font-family: GothaProReg;
+    font-size:1.5em;
+    color: #656d68;
+    border-bottom: 1px solid $color3;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+  }
+  .popularInfo{
+    overflow: hidden;
+    .popularUnit{
+      width: 25%;
+      float: left;
+      position: relative;
+      .popularUnitDescTitle{
+        overflow: hidden;
+
+        a{
+          font-family: GothaProMed;
+          font-size: 1em;
+          color: $color666;
+          text-decoration: none;
+          display: inline-block;
+          margin-left: 15px;
+        }
+      }
+      .popularUnitDescActions{
+        font-family: GothaProReg;
+        font-style: italic;
+        font-size: 1em;
+        color: $color7;
+        text-decoration: none;
+        position: absolute;
+        bottom: 0;
+        left: 85px;
+      }
+      .popularUnitImg{
+        float: left;
+        width: 70px;
+        height: 70px;
+        overflow: hidden;
+        background-size: cover;
+        background-position: center center;
+      }
+      .popularUnitDesc{}
+    }
+
+  }
+
+}
+
+
+// -------------------------------------------------
+
+.block_2{
+  border:$border2;
+  overflow: hidden;
+
+  div{
+
+    overflow: hidden;
+    width: 48%;
+  }
+
+  div.tabs{
+    float: left;
+  }
+  div.postBox{
+    @extend .flex-offset-2;
+    float: right;
+  }
+}
+
+// -------------------------------------------------
+
+.postBox{
+  @extend .default;
+  overflow: hidden;
+  box-sizing: border-box;
+
+  .postImg{
+    .postImgBg{
+      display: block;
+      overflow: hidden;
+      height: 356px;
+      background: no-repeat;
+      background-size: cover;
+
+      img{width:100%;transition: all 1s ease-out;}
+      img:hover{
+        -webkit-transform: scale(1.1);
+        -moz-transform: scale(1.1);
+        -o-transform: scale(1.1);
+      }
+    }
+
+
+
+    .postImgBgNormalize{
+      height: auto;
+    }
+  }
+  .postImgNormalize{
+    height: 420px!important;
+    .postImgBg{
+      height: 420px!important;
+    }
+  }
+
+
+
+
+  .choice{
+    background: $color2;
+    color: #fff;
+    @extend .kv;
+    position: absolute;
+    top:3%;
+    right: 3%;
+    padding: 3px;
+    border-radius: 3px;
+    user-select: none;
+  }
+  .postContent{
+    position: relative;
+    overflow: hidden;
+    padding-right:9px;
+    .postIcon{
+      position: absolute;
+      top:13px;
+      left:0;
+      text-align: center;
+      background: $color1;
+      width: 8%;
+      height: 46px;
+      line-height: 46px;
+      md-icon{
+        color:#fff;
+        user-select: none;
+      }
+    }
+    .postInfo{
+      width: 90%;
+      height: 100%;
+      position: relative;
+      float: right;
+
+      overflow: hidden;
+      .postTitle{
+        margin-top:23px;
+        a{
+          font-family: GothaProReg;
+          font-size: 1.5em;
+          text-decoration: none;
+          color: $color666;
+        }
+      }
+      .postDescription{
+        @extend .description;
+        margin-top:13px;
+        color: $color666;
+        a{
+          @extend .kv;
+          text-decoration: none;
+          color: $color1;
+
+        }
+      }
+      .postContent{
+        @extend .description;
+        margin-top:13px;
+        color: $color666;
+      }
+      .postActions{
+        overflow: hidden;
+        @extend .description;
+        color: $color666;
+        margin-top:25px;
+        margin-bottom:20px;
+        div{
+          float: left;
+          margin-right: 10px;
+        }
+      }
+    }
+  }
+  .postTags{
+    position: absolute;
+    top:20px;
+    right:0;
+    .tag{
+      float: right;
+      margin: 5px;
+      text-align: center;
+      background: $color2;
+      color: #fff;
+      @extend .kv;
+      padding: 3px;
+      border-radius: 3px;
+
+    }
+  }
+}
+.postBoxTop{
+  min-height: 580px;
+  div.postImg{
+    height: 356px;
+  }
+}
+
+
+.projectBox{
+  @extend .default;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 15px;
+  float: none;
+  clear: both;
+  div{
+    float: left;
+  }
+  .projectIcon{
+    height: 304px;
+    min-width:169px;
+    background: $color1;
+    background-size: cover;
+    background-position: center center;
+  }
+  .projectDescription{
+
+    @extend .mLeft;
+    height: 304px;
+    .descToolbar{
+      margin-bottom: 15px;
+      .toolbarTitle{
+        font-size: 1.5em;
+        color: $color1;
+        font-family: GothaProBol;
+      }
+      .toolbarStatus{
+        text-align: center;
+        color: #fff;
+        @extend .kv;
+        padding: 3px;
+        border-radius: 3px;
+        margin-left:15px;
+        margin-top: 2px;
+        padding-left: 10px;
+        padding-right: 10px;
+      }
+      .works{
+        background: $color2;
+      }
+      .problems{
+        background: $color8;
+      }
+      .scam{
+        background: $color9;
+      }
+      .toolbarOutdoor{
+        overflow: hidden;
+        position: absolute;
+        right:15px;
+        font-family: GothaProBol;
+        font-size: 1.1em;
+        color: $color1;
+        margin-top: 5px;
+        .toolbarRefback{
+          margin-right: $bm / 2;
+        }
+        .toolbarInvestment{}
+        b{
+          color:$color666;
+        }
+      }
+    }
+    .descDetails{
+      overflow: hidden;
+      float: none;
+      clear: both;
+      div{
+        color:$color666;
+        font-family: GothaProReg;
+        display: block;
+        float: none;
+        margin-top: 8px;
+        b{
+          font-family: GothaProBol;
+
+          font-size: .9em;
+        }
+      }
+    }
+  }
+  .projectButton{
+    cursor:pointer;
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    background: $color2;
+    overflow: hidden;
+
+    font-size:1.1vw;
+    font-family: GothaProReg;
+    a{
+      display: block;
+      height: 100%;
+      width:100%;
+      color:#fff;
+      text-align: center;
+      padding:9px 15px;
+      overflow:hidden;
+      box-sizing: border-box;
+      md-icon{color: inherit;dislpay:block;float:left;}
+      span{
+        color: inherit;
+        dislpay:block;
+        float:left;
+        margin-top: 3.5px;
+        margin-left: 4px;
+      }
+    }
+  }
+  .projectRating{
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+    height: $bm*1.5;
+    padding-right: $bm/2;
+    padding-left: $bm/2;
+
+    .likes{
+      margin-top: 12px;
+      margin-right: 7px;
+      display: block;
+      float:left;
+      font-family: GothaProReg;
+      color:$color666;
+      font-family: GothaProBol;
+      font-size: 1.1em;
+    }
+    md-icon{
+      margin-top: 7px;
+      display: block;
+      float:left;
+      font-size: 2em;
+      color: $color9;
+      cursor: pointer;
+
+    }
+    md-icon:focus{
+      outline: none;
+    }
+  }
+  .projectButtonDelete{
+    background: $color9;
+  }
+}
+.projectBoxFix{
+  border: 1px solid #c4c4c4;
+  box-shadow:none;
+}
+.reflink-refback{
+  font-family: GothaProReg;
+  color:$color666;
+  padding: $bm/2;
+
+  overflow: hidden;
+  div{
+    overflow: hidden;
+
+  }
+  .reflink-refback-toolbar{
+    text-align: center;
+    margin-bottom: $bm/2;
+    *{display: block;}
+
+    span{margin-bottom: $bm/3;}
+    a{
+      font-family: GothaProMed;
+      font-size: 1.1em;
+      padding: 10px;
+      color:#fff;
+      text-align: center;
+    }
+    .reflink-refback-toolbar-reflink{
+      background: $color2;
+      margin-bottom: $bm/2;
+    }
+    .reflink-refback-toolbar-refback{
+      background: $color9;
+    }
+  }
+  .reflink-refback-description{
+
+
+    span{margin-bottom: $bm/3;}
+
+  }
+}
+
+.commentBox{
+  color:$color666;
+
+  .commentWorld{
+
+    overflow: hidden;
+    float: right;
+    padding-top: $bm;
+    margin-right: $bm/2;
+
+    .commentTitle{
+      margin-bottom: $bm/2;
+      font-family: GothaProBol;
+      md-icon{
+        color: $color2;
+      }
+    }
+
+    .commentUnit{
+      padding: $bm / 2;
+      padding-left: 0;
+      margin-bottom: $bm / 2;
+      border-bottom: 1px solid #e5e8e9;
+      overflow: hidden;
+      position: relative;
+      .commentImg{
+        width:50px;
+        height:50px;
+        //background: $color2;
+        float: left;
+        background: url(/images/user/user.png) 100% 100% no-repeat;
+        background-size: cover;
+
+
+      }
+      .commentInfo{
+
+        width: 80%;
+        margin-left: $bm/2;
+        float: left;
+
+        word-wrap: break-word;
+        overflow: hidden;
+        font-family: GothaProReg;
+        .commentUsername{}
+        .commentText{
+          word-wrap: break-word;
+          overflow: hidden;
+          margin-top: 5px;
+          font-size: .8em;
+        }
+        .commentDate{
+          font-style: italic;
+          font-size: .8em;
+          margin-top: 5px;
+        }
+        .commentDelete{
+          cursor: pointer;
+          position: absolute;
+          top: $bm/2;
+          right: 0;
+
+        }
+
+      }
+    }
+    .commentUnit:last-child{
+      border-bottom: 0;
+    }
+  }
+  .commentWorldNormalize{
+    float:none;
+    margin-left: $bm/2;
+  }
+  .commentForm{
+    width: 90%;
+    float: right;
+    display: block;
+    overflow: hidden;
+    margin-right: $bm;
+    padding-bottom: $bm;
+    textarea{
+      border: 1px solid $color3;
+      box-sizing: border-box;
+      padding: 10px;
+      font-family: GothaProReg;
+      font-size: .9em;
+    }
+    textarea:focus{
+      border: 1px solid $color3;
+    }
+    button{
+      float: right;
+    }
+  }
+  .commentFormNormalize{
+    float:none;
+    margin-left: $bm/2;
+    margin-right: $bm/2;
+    width: auto;
+  }
+  .commentFormAuth{
+    color: $color666;
+    font-family: GothaProReg;
+    text-align: center;
+    margin-bottom:$bm;
+
+    span{
+      font-family: GothaProBol;
+      color: $color2;
+      cursor:pointer;
+    }
+  }
+  .commentFormAuth span:focus, .commentFormAuth span:active{
+    outline: none;
+  }
+}
+
+
+// BUTTONS
+
+.btn{
+  border-radius: 4px;
+  border: none;
+  color:#fff;
+  font-size:1.2vw;
+  padding:13px 17px;
+  font-family: GothaProMed;
+}
+.btn:focus{
+  outline: none;
+}
+
+.primary{
+  background: $color2;
+}
+.primary:hover{
+  background: $color1;
+}
+
+.scam{
+  background: $color9;
+}
+.scam:hover{
+  background: $color1;
+}
+
+.problems{
+  background: $color8;
+}
+.problems:hover{
+  background: $color1;
+}
+
+.btn-normalize{
+  float: right;
+  margin-bottom: $bm / 2;
+}
+
+// Input Field
+
+.inp{
+  font-size:1.5vw;
+  width: 100%;
+  padding:9px 5%;
+  box-sizing: border-box;
+  font-family: GothaProReg;
+  border: $border;
+  margin-bottom: 16px;
+}
+
+.inp:focus{
+  outline: none;
+  border: $border1;
+}
+
+.inp-normilize{
+  padding:9px 15px;
+}
+
+
+
+.cabinetHeading{
+  color:$color1;
+  font-size:1.5em;
+  float: left;
+  font-family: GothaProBol;
+  margin-top: 10px;
+}
+
+.cabinetToolbar{
+  font-family: GothaProBol;
+  padding:20px;
+  .toolbarTitle{
+    color:$color1;
+    font-size:1.5em;
+    float: left;
+  }
+  .toolbarInvested{
+    float: right;
+    margin-top: 5px;
+    margin-right: $bm / 2;
+    span{
+      font-size:.9em;
+      color: $color7;
+      b{
+        color: $color2;
+        font-size: 0.9em;
+      }
+    }
+
+
+  }
+  .toolbarRefbacks{
+    float: right;
+    margin-top: 5px;
+    span{
+      font-size:.9em;
+      color: $color7;
+      b{
+        color: $color1;
+        font-size: 0.9em;
+      }
+    }
+  }
+}
+
+.cabinetMessage{
+  @extend .float_fix;
+  font-family: GothaProBol;
+  color: $color666;
+}
+
+.refbackBox{
+
+  .refbackToolbar{
+    overflow: hidden;
+    padding:12px;
+    color:#fff;
+    background: $color2;
+    font-family: GothaProReg;
+    .toolbarRequest{float: left;a{color:inherit}}
+    .toolbarDate{float: right;}
+  }
+  .refbackInfo{
+    .infoRequest{
+      padding: $bm/2;
+      float: left;
+      overflow: hidden;
+      margin-right: $bm;
+      .infoRequestNormalize{
+        float: left;
+        margin-right: $bm/2;
+        width: 215px;
+        .infoRequestTitle{
+          @extend .float_fix;
+          display:block;
+          font-size:1.1em;
+          font-family: GothaProBol;
+          color: $color1;
+          margin-top: 10px;
+        }
+        .infoRequestSum{
+          @extend .float_fix;
+          display:block;
+          font-family: GothaProReg;
+          color: $color666;
+          margin-top: 5px;
+        }
+      }
+      .infoRequestPaysys{
+        display:block;
+      }
+
+    }
+    .infoResponse{
+      float: left;
+      overflow: hidden;
+      padding: $bm/2;
+
+      .infoResponseTitle{
+        @extend .float_fix;
+        display:block;
+        font-size:1.1em;
+        font-family: GothaProBol;
+        color: $color1;
+        margin-top: 10px;
+      }
+      .infoResponseSum{
+        @extend .float_fix;
+        display:block;
+        font-family: GothaProReg;
+        color: $color666;
+        margin-top: 5px;
+      }
+    }
+    .infoStatus{
+      float: right;
+      overflow: hidden;
+      padding: $bm/2;
+      span{
+        @extend .float_fix;
+        display:block;
+        font-size:1.1em;
+        font-family: GothaProBol;
+        color: $color1;
+        margin-top: 10px;
+      }
+      b{
+        @extend .float_fix;
+        display:block;
+        font-family: GothaProReg;
+        color: $color666;
+        margin-top: 5px;
+      }
+    }
+  }
+
+}
+
+.refbackRequest{
+  overflow: hidden;
+  display: block;
+  div{
+    overflow: hidden;
+    @extend .float_fix;
+    width: 100%;
+  }
+  .calc{
+    color:$color1;
+    font-size:1.5em;
+    font-family: GothaProBol;
+    margin-top: -6px;
+    margin-bottom: -13px;
+  }
+  .close{
+    cursor: pointer;
+    position: absolute;
+    top: 10px;
+    right: 10px;
+  }
+}
+
+
+.projectCalc{
+  padding:$bm/2;
+  color: $color666;
+  .projectCalcHeader{
+    .calcHeaderTitle{
+      font-family: GothaProBol;
+      font-size: 1.2em;
+      color:$color1;
+    }
+    .calcHeaderDescription{
+      font-family: GothaProReg;
+      margin-top:$bm/2;
+      margin-bottom:$bm/2;
+    }
+  }
+  .projectCalcTable{
+    overflow: hidden;
+    .calcTableHeader{
+      text-align: center;
+      border-top:1px solid $color3;
+      overflow: hidden;
+      padding: $bm/2 0;
+      div{
+        font-family: GothaProBol;
+        color: $color2;
+        float:left;
+        width: 16.6%;
+      }
+    }
+    .calcTableContent{
+      text-align: center;
+      overflow: hidden;
+      >div:first-child{
+        font-family: GothaProBol;
+        color: $color1;
+        font-size: 1.2em;
+      }
+      >div{
+        border-top:1px solid $color3;
+        padding: $bm/2 0;
+      }
+      div{
+        float:left;
+        width: 16.6%;
+        font-family: GothaProReg;
+      }
+    }
+    .calcTableContent:hover{
+      cursor: pointer;
+    }
+    .calcTableActive{
+      background: #eee;
+      outline: none;
+
+    }
+    .calcTableContent:focus, .calcTableContent:active{
+      background: #eee;
+      outline: none;
+    }
+
+
+
+  }
+  .projectCalcFooter{
+    overflow: hidden;
+    .calcTableHeader{
+      text-align: center;
+      background: $color2;
+      overflow: hidden;
+      padding: $bm/2 0;
+      div{
+        font-family: GothaProMed;
+        font-size: .8em;
+        color: #fff;
+        float:left;
+        width: 16.6%;
+      }
+    }
+    .calcTableContent{
+      text-align: center;
+      overflow: hidden;
+      >div:first-child{
+        font-family: GothaProBol;
+        color: $color1;
+        font-size: 1.2em;
+        padding-left: $bm/2;
+        padding-right: $bm/2;
+        box-sizing: border-box;
+        input{
+          @extend .inp;
+          position: relative;
+
+          height: 35px;
+          top: -9px;
+          display: block;
+          margin: 0 auto;
+          box-sizing: border-box;
+          padding-left: 10px;
+          padding-right: 10px;
+        }
+      }
+      >div{
+        border-top:1px solid $color3;
+        padding: $bm/2 0;
+        input{
+          box-sizing: border-box;
+          width: 90%;
+        }
+      }
+      div{
+        float:left;
+        width: 16.6%;
+        font-family: GothaProReg;
+        overflow: hidden;
+      }
+    }
+  }
+}
+
+
+.authForm{
+  display: block;
+  overflow: hidden;
+  padding-top:$bm/2;
+  button{
+    float:right;
+  }
+}
+
+slick{
+
+  height: 100%;
+  .slick-list{
+    height: 100%;
+    margin-bottom:0;
+    .slick-track{
+      height: 100%;
+      .sliderSlide{
+        overflow: hidden;
+        position: relative;
+        height:100%;
+
+
+
+        z-index: 14;
+
+        .sliderSlideIn{
+          overflow: hidden;
+          width:100%;
+          position: absolute;
+          bottom: 0;
+          padding-left: $bm;
+          padding-right: $bm;
+          z-index: 800;
+          color: #fff;
+
+          $sliderTextShadow : -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+
+          .sliderTitle{
+            text-shadow: $sliderTextShadow;
+            font-family: GothaProReg;
+            color:inherit;
+            font-weight: lighter;
+            z-index: 10;
+            display: block;
+            position: relative;
+
+          }
+          .sliderDescription{
+            text-shadow: $sliderTextShadow;
+            font-family: GothaProReg;
+            color:inherit;
+            z-index: 10;
+            display: block;
+            position: relative;
+          }
+          .sliderButton{
+            text-shadow: $sliderTextShadow;
+            width: 170px;
+            display: block;
+            text-align: center;
+            border:1px solid #fff;
+            border-radius:3px;
+            padding-top:10px;
+            padding-bottom:10px;
+            margin-bottom:$bm;
+            font-family: GothaProReg;
+            color:inherit;
+            z-index: 10;
+            display: block;
+            position: relative;
+          }
+
+        }
+        .sliderSlideInBg {
+          overflow: hidden;
+          //filter: blur(1px);
+          width: 100%;
+          height: 100%;
+          position: absolute;
+          top: 0;
+          left: 0;
+          background-size: cover;
+        }
+
+
+      }
+    }
+  }
+
+
+}
+
+

@@ -2,9 +2,9 @@
   "name": "noetl",
   "version": "0.0.2",
   "description": "The application to manage process flow",
-  "main": "index.js",
   "scripts": {
-    "start": "node --harmony index.js prod",
+    "start": "node-dev ./bin/www",
+    "startuem": "node --harmony index.js prod",
     "startLocal": "nodemon --harmony index.js",
     "test": "./node_modules/mocha/bin/mocha --harmony-generators -u bdd -R spec"
   },
@@ -20,29 +20,48 @@
   ],
   "author": "noetl @noetlio",
   "license": "MIT",
+  "homepage": "https://noetl.io",
   "bugs": {
     "url": "https://github.com/noetl/noetl/issues"
   },
-  "homepage": "https://noetl.io",
-  "dependencies": {
-    "babel-polyfill": "^6.8.0",
-    "co": "^4.6.0",
-    "date_format": "^0.1.1",
-    "koa": "^0.20.0",
-    "koa-basic-auth": "^1.1.2",
-    "koa-mount": "^1.3.0",
-    "moment": "^2.13.0",
-    "mongodb": "^1.4.40",
-    "mongoose": "^4.1.12",
-    "nconf": "^0.8.4",
-    "underscore": "^1.8.3"
-  },
   "devDependencies": {
+    "gulp": "^3.9.1",
+    "gulp-clean-css": "^2.0.11",
+    "gulp-imagemin": "^3.0.2",
+    "gulp-livereload": "^3.8.1",
+    "gulp-sass": "^2.3.2",
+    "gulp-sourcemaps": "^1.6.0",
+    "gulp-util": "^3.0.7",
     "babel": "^6.5.2",
     "babel-cli": "^6.8.0",
     "babel-plugin-transform-runtime": "^6.8.0",
     "babel-preset-es2015": "^6.6.0",
     "mocha": "^2.2.4",
     "supertest": "^0.15.0"
+  },
+  "dependencies": {
+    "body-parser": "~1.15.1",
+    "cookie-parser": "~1.4.3",
+    "debug": "~2.2.0",
+    "express": "~4.13.4",
+    "helmet": "^3.0.0",
+    "jsonwebtoken": "^7.1.7",
+    "mongoose": "^4.5.7",
+    "morgan": "~1.7.0",
+    "passport": "^0.3.2",
+    "passport-local": "^1.0.0",
+    "passport-local-mongoose": "^4.0.0",
+    "serve-favicon": "~2.3.0",
+    "babel-polyfill": "^6.8.0",
+    "co": "^4.6.0",
+    "date_format": "^0.1.1",
+    "//": [
+      "koa:^0.20.0",
+      "koa-basic-auth:^1.1.2",
+      "koa-mount:^1.3.0"],
+    "moment": "^2.13.0",
+    "mongodb": "^1.4.40",
+    "nconf": "^0.8.4",
+    "underscore": "^1.8.3"
   }
 }

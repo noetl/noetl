@@ -1,0 +1,66 @@
+<!doctype html>
+<html ng-app="noetlApp" ng-cloak>
+  <head>
+    <title ng-bind="$title">NoETL</title>
+    <base href="/">
+    <meta charset="utf-8">
+    <meta name="description" content="">
+    <!--<meta name="viewport" content="width=device-width, initial-scale=1.0">-->
+
+    <link href="bower_components/ng-dialog/css/ngDialog.min.css" rel="stylesheet">
+    <link href="bower_components/ng-dialog/css/ngDialog-theme-default.min.css" rel="stylesheet">
+
+    <link rel="shortcut icon" type="image/png" href="favicon.png"/>
+    <link rel="stylesheet" href="bower_components/ngprogress/ngProgress.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link rel="stylesheet" href="bower_components/angular-material/angular-material.min.css">
+
+     <link rel="stylesheet" href="bower_components/slick-carousel/slick/slick.css">
+     <link rel="stylesheet" href="bower_components/slick-carousel/slick/slick-theme.css">
+
+    <link rel="stylesheet" href="styles/main.css">
+
+  </head>
+
+  <body ng-controller="GlobalController" layout="column">
+
+
+  <header ui-view="header"></header>
+  <main><div class="in-row" ui-view="content"></div></main>
+  <footer ui-view="footer"></footer>
+
+
+  <script src="bower_components/jquery/dist/jquery.min.js"></script>
+  <script src="bower_components/angular/angular.min.js"></script>
+  <script src="bower_components/angular-ui-router/release/angular-ui-router.min.js"></script>
+  <script src="bower_components/angular-ui-router-title/angular-ui-router-title.js"></script>
+  <script src="bower_components/angular-resource/angular-resource.min.js"></script>
+
+  <script src="bower_components/ng-dialog/js/ngDialog.min.js"></script>
+
+
+
+  <script src="bower_components/ngprogress/build/ngprogress.min.js"></script>
+
+
+  <script src="bower_components/angular-animate/angular-animate.min.js"></script>
+  <script src="bower_components/angular-sanitize/angular-sanitize.min.js"></script>
+  <script src="bower_components/angular-aria/angular-aria.min.js"></script>
+
+  <script src="bower_components/tinymce/tinymce.min.js"></script>
+  <script src="bower_components/angular-ui-tinymce/src/tinymce.js"></script>
+
+  <script src="bower_components/angular-material/angular-material.min.js"></script>
+
+  <script src="bower_components/slick-carousel/slick/slick.min.js"></script>
+  <script src="bower_components/angular-slick/dist/slick.js"></script>
+
+  <script src="scripts/app.js"></script>
+  <script src="scripts/controllers/controllers.js"></script>
+  <script src="scripts/services/services.js"></script>
+
+
+
+
+  </body>
+</html>

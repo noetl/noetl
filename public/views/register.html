@@ -1,0 +1,26 @@
+<div class="ngdialog-message tabs">
+
+    <md-tabs md-dynamic-height md-no-ink md-stretch-tabs="always" md-selected="1">
+        <md-tab ng-click="auth('login'); turnOff()" label="Вход"></md-tab>
+        <md-tab label="Регистрация">
+            <md-content class="md-padding">
+                <form class="authForm" ng-submit="doRegister()">
+
+                    <input type="text" class="inp" placeholder="Логин" ng-model="registration.username" required>
+
+
+
+                    <input type="text" class="inp" placeholder="Пароль" ng-model="registration.password" required>
+
+                    <input type="email" class="inp" placeholder="E-mail" ng-model="registration.email" required>
+
+                    <button type="submit" class="btn primary">Регистрация</button>
+
+                </form>
+            </md-content>
+        </md-tab>
+
+    </md-tabs>
+
+</div>
+
