@@ -10,3 +10,4 @@ target
 *.log
 clusterManagement/out
 clusterManagement/clients
+node_modules/*
