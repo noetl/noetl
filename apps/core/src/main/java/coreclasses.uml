@@ -3,22 +3,39 @@
   <ID>JAVA</ID>
   <OriginalElement />
   <nodes>
-    <node x="-128.0" y="32.0">com.cyberionix.noetl.core.Workflow</node>
-    <node x="-345.0" y="-169.0">com.cyberionix.noetl.core.Action</node>
+    <node x="168.38855929592762" y="-134.54830451040272">com.cyberionix.noetl.core.Workflow</node>
+    <node x="-842.4999999999997" y="-182.49999999999994">com.cyberionix.noetl.core.Action</node>
+    <node x="167.00000000000023" y="-248.49999999999977">com.cyberionix.noetl.core.ActionState</node>
+    <node x="167.33432211221782" y="24.23474675475859">com.cyberionix.noetl.core.ActionOutput</node>
+    <node x="113.67309372941565" y="185.29788294842854">com.cyberionix.noetl.core.ActionDateOutput</node>
   </nodes>
   <notes />
   <edges>
+    <edge source="com.cyberionix.noetl.core.Action" target="com.cyberionix.noetl.core.ActionState">
+      <point x="0.0" y="0.0" />
+      <point x="0.0" y="0.0" />
+    </edge>
+    <edge source="com.cyberionix.noetl.core.ActionDateOutput" target="com.cyberionix.noetl.core.ActionOutput">
+      <point x="0.0" y="-37.5" />
+      <point x="0.0" y="60.0" />
+    </edge>
+    <edge source="com.cyberionix.noetl.core.Action" target="com.cyberionix.noetl.core.ActionOutput">
+      <point x="0.0" y="0.0" />
+      <point x="0.0" y="0.0" />
+    </edge>
     <edge source="com.cyberionix.noetl.core.Workflow" target="com.cyberionix.noetl.core.Action">
-      <point x="0.0" y="-70.0" />
-      <point x="0.0" y="48.0" />
+      <point x="0.0" y="0.0" />
+      <point x="0.0" y="0.0" />
     </edge>
   </edges>
-  <settings layout="Hierarchic Group" zoom="1.0" x="0.0" y="-129.5" />
-  <SelectedNodes />
+  <settings layout="Hierarchic Group" zoom="0.6923866866156461" x="-233.64174411498334" y="32.12785709545204" />
+  <SelectedNodes>
+    <node>com.cyberionix.noetl.core.Workflow</node>
+  </SelectedNodes>
   <Categories>
-    <Category>Methods</Category>
-    <Category>Constructors</Category>
     <Category>Fields</Category>
+    <Category>Constructors</Category>
+    <Category>Methods</Category>
   </Categories>
   <SCOPE>All</SCOPE>
   <VISIBILITY>private</VISIBILITY>
