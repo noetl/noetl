@@ -38,7 +38,7 @@ public abstract class Action {
      * wrapper for ActionState
      */
     private class ActionStates { // may be we can merge ActionState and ActionStates at some point
-        ActionState actionState;
+        private ActionState actionState;
 
         ActionStates () {
             this.actionState = ActionState.INITIALIZED;
