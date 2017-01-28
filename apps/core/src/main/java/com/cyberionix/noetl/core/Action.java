@@ -40,7 +40,6 @@ public abstract class Action {
         this.name = name;
     }
 
-
     public String getDescription() {
         return description;
     }
@@ -50,10 +49,8 @@ public abstract class Action {
 
     abstract void Execute(); //inside shoud be calls to onStateChanged()
 
-
-
     abstract void myStateIsChanged(); //here nexts should be informed
-    abstract void onStateChanged(); //is called when previous task is changed
+    abstract void onStateChanged(Action action); //??? is called when previous task is changed
 
 
 
