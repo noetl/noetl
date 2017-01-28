@@ -1,6 +1,8 @@
 package com.cyberionix.noetl.core;
 
 import java.util.HashMap;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Properties;
 
 /**
@@ -17,29 +19,97 @@ public abstract class Action {
 
     private HashMap<String,Action> next;
 
+    private List<Action> nextActionList;
+
 
     /* processing part */
     private Integer exitCode = null;
-    private ActionState state = ActionState.Onhold;
+    private ActionState state = ActionState.ONHOLD;
     private ActionOutput outputResult = null;
+
+    private class ActionStates {
+        ActionState actionState;
+
+        ActionStates () {
+            this.actionState = ActionState.INITIALIZED;
+        }
+
+        ActionStates (ActionState state) {
+            this.actionState = state;
+        }
+        public void setActionState(ActionState state) {
+            this.actionState = state;
+        }
+    }
 
 
     /**/
+    /**
+     * Default constructor initializing ActionList variable.
+     *
+     */
+    Action () {
+        if (this.nextActionList == null) {
+            this.nextActionList = new ArrayList<Action>();
+            ActionStates actionState = new ActionStates(ActionState.INITIALIZED);
+        }
+    }
+    /**
+     * Constructor populate ActionList to create a list of actions to be executed in case of successfully executed current action.
+     * @param actionList
+     */
+    Action (ArrayList<Action> actionList) {
+        if (this.nextActionList == null) {
+            this.nextActionList = new ArrayList<Action>();
+            this.nextActionList.addAll(actionList);
+        } else {
+            for (Action action : actionList) {
+                this.nextActionList.add(action);
+            }
+        }
+        ActionStates actionState = new ActionStates(ActionState.INITIALIZED);
+    }
 
     abstract void addNext(Action action);
+
     abstract void removeNext(String actionId);
 
     abstract void addProperty(String key,String value);
+
     abstract void removeProperty(String key);
+
+    /**
+     * addActionList method populates a list of next actions that have to be performed next.
+     *
+     * @param actionList as ArrayList of list of Action objects
+     * @throws
+     */
+    public void addActionList (ArrayList<Action> actionList) {
+        // this.ActionList.addAll(actionList);
+        // probably we need to evaluate Actions one by one to handle excpetions if any
+        for (Action action : actionList) {
+            this.nextActionList.add(action);
+        }
+    }
+
+    /**
+     * addActionList method keep adding one Action at a time to ActionList.
+     *
+     * @param action as object of Action class
+     * @throws
+     */
+    public void addActionList (Action action) {
+            this.nextActionList.add(action);
+    }
 
 
     public String getName() {
         return name;
     }
+
     public void   setName(String name) {
         this.name = name;
     }
-
 
     public String getDescription() {
         return description;
