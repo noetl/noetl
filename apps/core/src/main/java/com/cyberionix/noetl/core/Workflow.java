@@ -13,6 +13,20 @@ private String start;
 private HashMap<String,Action> actions;
 private Properties properties;
 
+//
+
+    public void initiateActions() {
+        // we need to build Action chain from here
+    }
+
+    public void readConfig() {
+
+    }
+
+    public void writeConfig(){
+
+    }
+
 
 
 }

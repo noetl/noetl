@@ -94,7 +94,7 @@ public abstract class Action {
      * @param actionList as ArrayList of list of Action objects
      * @throws
      */
-    public void addActionList (ArrayList<Action> actionList) {
+    public void addNextActions (ArrayList<Action> actionList) {
         // this.ActionList.addAll(actionList);
         // probably we need to evaluate Actions one by one to handle excpetions if any
         for (Action action : actionList) {
@@ -108,7 +108,7 @@ public abstract class Action {
      * @param action as object of Action class
      * @throws
      */
-    public void addActionList (Action action) {
+    public void addNextAction (Action action) {
             this.nextActions.add(action);
     }
 
