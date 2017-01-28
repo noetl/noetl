@@ -19,7 +19,9 @@ public abstract class Action {
 
     private HashMap<String,Action> next;
 
-    private List<Action> nextActionList;
+    private List<Action> nextActions;
+    private List<Action> failActions; // list of actions to be executed in case of current action failure
+    private List<Dependency> dependencies; //dependency list that defines execution for current action
 
 
     /* processing part */
@@ -27,7 +29,15 @@ public abstract class Action {
     private ActionState state = ActionState.ONHOLD;
     private ActionOutput outputResult = null;
 
-    private class ActionStates {
+    private class Dependency {
+        private String actionName;
+        // type of dependency and so on
+    }
+
+    /**
+     * wrapper for ActionState
+     */
+    private class ActionStates { // may be we can merge ActionState and ActionStates at some point
         ActionState actionState;
 
         ActionStates () {
@@ -49,8 +59,8 @@ public abstract class Action {
      *
      */
     Action () {
-        if (this.nextActionList == null) {
-            this.nextActionList = new ArrayList<Action>();
+        if (this.nextActions == null) {
+            this.nextActions = new ArrayList<Action>();
             ActionStates actionState = new ActionStates(ActionState.INITIALIZED);
         }
     }
@@ -59,12 +69,12 @@ public abstract class Action {
      * @param actionList
      */
     Action (ArrayList<Action> actionList) {
-        if (this.nextActionList == null) {
-            this.nextActionList = new ArrayList<Action>();
-            this.nextActionList.addAll(actionList);
+        if (this.nextActions == null) {
+            this.nextActions = new ArrayList<Action>();
+            this.nextActions.addAll(actionList);
         } else {
             for (Action action : actionList) {
-                this.nextActionList.add(action);
+                this.nextActions.add(action);
             }
         }
         ActionStates actionState = new ActionStates(ActionState.INITIALIZED);
@@ -88,7 +98,7 @@ public abstract class Action {
         // this.ActionList.addAll(actionList);
         // probably we need to evaluate Actions one by one to handle excpetions if any
         for (Action action : actionList) {
-            this.nextActionList.add(action);
+            this.nextActions.add(action);
         }
     }
 
@@ -99,7 +109,7 @@ public abstract class Action {
      * @throws
      */
     public void addActionList (Action action) {
-            this.nextActionList.add(action);
+            this.nextActions.add(action);
     }
 
 
