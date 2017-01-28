@@ -136,7 +136,12 @@ public abstract class Action {
     abstract void onStateChanged(); //is called when previous task is changed
 
 
+    @Override
+    public String toString() {
 
+        // bases on the condition we may use reflection to create a toString output
+        return this.toString();
+    }
 
 
 
