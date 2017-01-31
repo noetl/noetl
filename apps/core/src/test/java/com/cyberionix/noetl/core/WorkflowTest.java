@@ -9,7 +9,7 @@ public class WorkflowTest {
         @Test
         public void testMain() {
             System.out.println("workflow main method test");
-            Workflow.main(new String[] {"/Users/refugee/projects/noetl/noetl/apps/core/src/main/resources/workflow1.json"});
+            WorkflowBuilderJSON.main(new String[] {"/Users/refugee/projects/noetl/noetl/apps/core/src/main/resources/workflow1.json"});
 
 //            assertEquals("onetwo", result);
 
