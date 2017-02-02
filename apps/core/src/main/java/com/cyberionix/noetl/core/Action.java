@@ -109,6 +109,9 @@ public abstract class Action implements IAction{
 
     abstract void addProperty(String key,String value);
     abstract void removeProperty(String key);
+    public String getPropertyVale(String key){
+        return properties.getProperty(key);
+    };
 
 
     public String getName() {
