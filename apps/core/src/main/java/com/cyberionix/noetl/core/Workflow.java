@@ -20,13 +20,26 @@ private Properties properties;
         throw new IllegalArgumentException("The path for config file have to be specified");
     }
 
-    Workflow (String actionID, IAction action) {
-        addAction(actionID, action);
+    Workflow (IAction action) {
+        start = action;
+        addAction(start);
     }
+
+//    Workflow (String actionID, IAction action) {
+//        addAction(actionID, action);
+//    }
 
     private void validateActions(){
         if (this.actions == null) {
             this.actions = new HashMap<String,IAction>();
+        }
+    }
+
+    public void addAction(IAction action) {
+        validateActions();
+        String actionID = action.getActionID();
+        if (actionID != null) {
+            actions.put(actionID, action);
         }
     }
 
@@ -59,6 +72,9 @@ private Properties properties;
         this.start = action;
     }
 
+    public String getStartID() {
+        return getStart().getActionID();
+    }
 
     public String getDescription() {
         return description;

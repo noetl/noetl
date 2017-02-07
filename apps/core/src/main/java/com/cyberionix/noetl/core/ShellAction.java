@@ -15,31 +15,31 @@ public class ShellAction extends Action {
 
     ShellAction(String actionID, String ... args){
         super(actionID);
-        this.addProperty("CMD", args);
+        setCommand(args);
     }
 
     public boolean ifCommand(){
-        return (this.getPropertyValue("CMD") == null) ? false : true;
+        return this.getPropertyValue("CMD") == null ? false : true;
     }
 
 
-    public String getCommand(String ... args){
-        StringBuilder builder = new StringBuilder();
-        for (String arg : args) {
-            if (builder.length() > 0) {
-                builder.append(" ");
-            }
-            builder.append(arg);
-        }
-        return builder.toString();
+    public String getCommand(){
+        return this.getPropertyValue("CMD").toString();
     }
 
     public void setCommand(String ... args) {
+        System.out.printf("ifcommad %b", ifCommand());
         if (ifCommand()) {
-            this.addProperty("CMD", args);
-        }
-        // else...? do we need to overwrite command arguments in case it was already defined?
+            StringBuilder builder = new StringBuilder();
+            for (String arg : args) {
+                if (builder.length() > 0) {
+                    builder.append(" ");
+                }
+                this.addProperty("CMD", builder.append(arg).toString());
+            }
+            // else...? do we need to overwrite command arguments in case it was already defined?
 
+        }
     }
 
     public void onStateChanged(Action action) {
@@ -61,7 +61,7 @@ public class ShellAction extends Action {
     void Execute() {
         if(ifCommand()) {
             try {
-                ProcessBuilder exec = new ProcessBuilder(getCommand((String[]) this.getPropertyValue("CMD")));
+                ProcessBuilder exec = new ProcessBuilder((String) this.getPropertyValue("CMD"));
                 exec.redirectErrorStream(true);
                 Process process = exec.start();
                 BufferedReader stdout = new BufferedReader(new InputStreamReader(process.getInputStream()));

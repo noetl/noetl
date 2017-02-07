@@ -5,10 +5,13 @@ package com.cyberionix.noetl.core;
  */
 public class WorkflowBuilder extends Workflow {
 
-    WorkflowBuilder (String actionID, IAction action) {
-        super(actionID,action);
-    }
+//    WorkflowBuilder (String actionID, IAction action) {
+//        super(action);
+//    }
 
+    WorkflowBuilder (IAction action) {
+        super(action);
+    }
 
     @Override
     void addProperty(String key, String value) {

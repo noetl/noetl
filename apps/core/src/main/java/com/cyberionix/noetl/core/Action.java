@@ -73,7 +73,8 @@ public abstract class Action implements IAction{
      * @param actionID is  MUST
      */
     Action (String actionID) {
-        this(actionID,null);
+       // this(actionID,null);
+        this.actionID = actionID;
     }
     /**
      * Constructor populate ActionList to create a list of actions to be executed in case of successfully executed current action.
@@ -111,14 +112,25 @@ public abstract class Action implements IAction{
     }
     abstract void removeNext(String actionId);
 
-    public void addProperty(String key,Object value){
-        this.addProperty(key,value);
+    public void addProperty(String key,String value){
+        if (properties == null) {
+            properties = new Properties();
+        }
+        properties.setProperty(key,value);
     }
     public void removeProperty(String key) {
-        this.removeProperty(key);
+        if (properties != null) {
+            this.removeProperty(key);
+        }
     }
     public Object getPropertyValue(String key){
-        return properties.getProperty(key);
+        System.out.printf("getPropertyValue %s",key);
+        if (properties == null || !properties.containsKey(key)) {
+            return null;
+        } else {
+            return properties.getProperty(key);
+        }
+
     };
 
 
