@@ -1,9 +1,6 @@
 package com.cyberionix.noetl.core;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Properties;
+import java.util.*;
 
 /**
  * Created by refugee on 1/24/17.
@@ -58,6 +55,18 @@ public abstract class Action implements IAction{
         this.outputResult = outputResult;
     }
 
+    /**
+     * validateNextActions validates this.nextActions and initiates if it's empty.
+     */
+    private void validateNextActions(){
+        if (this.nextActions == null) {
+            this.nextActions = new ArrayList<IAction>();
+        }
+    }
+
+    private Action() {
+        throw new AssertionError();
+    }
 
     /**
      * Default constructor initializing ActionList variable.
@@ -70,19 +79,12 @@ public abstract class Action implements IAction{
      * Constructor populate ActionList to create a list of actions to be executed in case of successfully executed current action.
      * @param actionList
      */
-    Action (String actionID,ArrayList<IAction> actionList) {
-        if (this.nextActions == null) {
-            this.nextActions = new ArrayList<IAction>();
-            this.nextActions.addAll(actionList);
-        } else {
-           this.nextActions.addAll(actionList);
-        }
-
+    Action (String actionID, ArrayList<IAction> actionList) {
+        validateNextActions();
+        this.nextActions.addAll(actionList);
         state = ActionState.INITIALIZED;
         setActionID(actionID);
     }
-
-
 
     /**
      * addActionList method keep adding one Action at a time to ActionList.
@@ -90,7 +92,8 @@ public abstract class Action implements IAction{
      * @param action as object of Action class
      * @throws
      */
-    public   void addNext(Action action) {
+    public void addNext(IAction action) {
+        validateNextActions();
         this.nextActions.add(action);
     };
     /**
@@ -102,14 +105,19 @@ public abstract class Action implements IAction{
     public   void addNext(ArrayList<IAction> actionList) {
         // this.ActionList.addAll(actionList);
         // probably we need to evaluate Actions one by one to handle excpetions if any
+        validateNextActions();
         this.nextActions.addAll(actionList);
 
     }
     abstract void removeNext(String actionId);
 
-    abstract void addProperty(String key,String value);
-    abstract void removeProperty(String key);
-    public String getPropertyVale(String key){
+    public void addProperty(String key,Object value){
+        this.addProperty(key,value);
+    }
+    public void removeProperty(String key) {
+        this.removeProperty(key);
+    }
+    public Object getPropertyValue(String key){
         return properties.getProperty(key);
     };
 

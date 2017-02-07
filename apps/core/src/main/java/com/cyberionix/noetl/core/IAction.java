@@ -10,6 +10,6 @@ public interface IAction {
     public ActionState getState();
     public Integer getExitCode();
     public ActionOutput getOutputResult();
-    public String getPropertyVale(String key);
+    public Object getPropertyValue(String key);
 
 }
