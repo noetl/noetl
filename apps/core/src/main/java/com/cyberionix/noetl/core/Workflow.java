@@ -1,9 +1,7 @@
 package com.cyberionix.noetl.core;
 
-import com.typesafe.config.*;
 import java.util.Properties;
 import java.util.HashMap;
-import java.io.File;
 
 /**
  * Created by refugee on 1/24/17.
@@ -11,23 +9,53 @@ import java.io.File;
 public abstract class Workflow {
 private String name;
 private String description;
-private String start;
-private HashMap<String,Action> actions;
+private IAction start;
+private HashMap<String, IAction> actions;
 private Properties properties;
 
 
 // to define workflow as a service we need to define some kind of API for each initialized workflow (make it as a main listener for all encapsulated actions)
 
     Workflow () {
-
         throw new IllegalArgumentException("The path for config file have to be specified");
     }
 
-    abstract void addAction(String key,Action action);
-    abstract void removeAction(String key);
+    Workflow (IAction action) {
+        start = action;
+        addAction(start);
+    }
+
+//    Workflow (String actionID, IAction action) {
+//        addAction(actionID, action);
+//    }
+
+    private void validateActions(){
+        if (this.actions == null) {
+            this.actions = new HashMap<String,IAction>();
+        }
+    }
+
+    public void addAction(IAction action) {
+        validateActions();
+        String actionID = action.getActionID();
+        if (actionID != null) {
+            actions.put(actionID, action);
+        }
+    }
+
+    public void addAction(String actionID, IAction action) {
+        validateActions();
+        actions.put(actionID, action);
+
+    }
+    public void removeAction(String actionID) {
+        if (actions.containsKey(actionID)) {
+            actions.remove(actionID);
+        }
+    }
     abstract void getActionOutput(String key);
 
-    abstract void addProperty(String key,String value);
+    abstract void addProperty(String key, String value);
     abstract void removeProperty(String key);
 
     public String getName() {
@@ -37,13 +65,16 @@ private Properties properties;
         this.name = name;
     }
 
-    public String getStart() {
+    public IAction getStart() {
         return start;
     }
-    public void   setStart(String name) {
-        this.start = start;
+    public void  setStart(IAction action) {
+        this.start = action;
     }
 
+    public String getStartID() {
+        return getStart().getActionID();
+    }
 
     public String getDescription() {
         return description;
