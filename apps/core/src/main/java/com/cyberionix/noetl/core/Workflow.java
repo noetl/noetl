@@ -1,5 +1,7 @@
 package com.cyberionix.noetl.core;
 
+import com.cyberionix.noetl.core.actions.IAction;
+
 import java.util.Properties;
 import java.util.HashMap;
 

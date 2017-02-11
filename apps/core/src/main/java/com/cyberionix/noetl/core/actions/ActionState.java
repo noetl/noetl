@@ -1,4 +1,4 @@
-package com.cyberionix.noetl.core;
+package com.cyberionix.noetl.core.actions;
 
 /**
  * Created by Davit on 01.26.2017.

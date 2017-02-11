@@ -1,11 +1,9 @@
 package com.cyberionix.noetl.core;
 
+import com.cyberionix.noetl.core.actions.ShellAction;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.ArrayList;
-import java.util.Arrays;
 
 /**
  * Created by refugee on 2/7/17.

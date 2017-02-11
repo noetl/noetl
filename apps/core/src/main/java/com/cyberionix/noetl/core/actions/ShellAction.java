@@ -1,6 +1,4 @@
-package com.cyberionix.noetl.core;
-
-import java.util.ArrayList;
+package com.cyberionix.noetl.core.actions;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -9,11 +7,11 @@ import java.io.InputStreamReader;
  */
 public class ShellAction extends Action {
 
-    ShellAction(String actionID){
+    public ShellAction(String actionID){
         super(actionID);
     }
 
-    ShellAction(String actionID, String ... args){
+    public ShellAction(String actionID, String ... args){
         super(actionID);
         setCommand(args);
     }
