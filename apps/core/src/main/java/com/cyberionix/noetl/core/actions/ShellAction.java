@@ -56,7 +56,7 @@ public class ShellAction extends Action {
 
 
     @Override
-    void Execute() {
+    void execute() {
         if(ifCommand()) {
             try {
                 ProcessBuilder exec = new ProcessBuilder((String) this.getPropertyValue("CMD"));

@@ -6,7 +6,7 @@ import java.util.*;
  * Created by refugee on 1/24/17.
  */
 
-public abstract class Action implements IAction{
+public abstract class Action implements IAction,Cloneable{
 
     /* declarative part */
     private String actionType; //e.g. CLI,DB,REST...
@@ -22,6 +22,12 @@ public abstract class Action implements IAction{
     private Integer exitCode = null;
     private ActionState state = ActionState.ONHOLD;
     private ActionOutput outputResult = null;
+
+
+    private ArrayList<IAction> instances = new ArrayList(1);
+
+
+
 
     public String getActionID() {
         return actionID;
@@ -148,8 +154,19 @@ public abstract class Action implements IAction{
         this.description = description;
     }
 
-    abstract void Execute(); //inside shoud be calls to onStateChanged()
+    abstract void execute(); //inside shoud be calls to onStateChanged()
 
+    public void run(String[] args) {
+        //type of "args" argument is to discuss. String[] is just stub
+
+        try {
+            ISpawnable act = (ISpawnable)this.clone();//How does this will work with inheritance
+
+            instances.add(act.spawn());
+        } catch (CloneNotSupportedException e) {
+            e.printStackTrace();
+        }
+    }
     abstract void myStateIsChanged(); //here nexts should be informed
 
 
@@ -159,6 +176,11 @@ public abstract class Action implements IAction{
 
         // bases on the condition we may use reflection to create a toString output
         return this.toString();
+    }
+
+    @Override
+    public Object clone() throws CloneNotSupportedException {
+        return super.clone();
     }
 
 
