@@ -6,7 +6,7 @@ import java.util.*;
  * Created by refugee on 1/24/17.
  */
 
-public abstract class Action implements IAction,Cloneable{
+public abstract class Action implements IAction,Cloneable,Runnable{
 
     /* declarative part */
     private String actionType; //e.g. CLI,DB,REST...
@@ -16,15 +16,16 @@ public abstract class Action implements IAction,Cloneable{
     private Properties properties;
 
     //private HashMap<String,Action> next;
-    private List<IAction> nextActions;
+    private List<ISpawnable> nextActions;
 
     /* processing part */
     private Integer exitCode = null;
     private ActionState state = ActionState.ONHOLD;
     private ActionOutput outputResult = null;
 
+    private Thread actionThread = null; // thinking of  use some Thread pool
 
-    private ArrayList<IAction> instances = new ArrayList(1);
+    private ArrayList<ISpawnable> instances = new ArrayList(1);
 
 
 
@@ -66,7 +67,7 @@ public abstract class Action implements IAction,Cloneable{
      */
     private void validateNextActions(){
         if (this.nextActions == null) {
-            this.nextActions = new ArrayList<IAction>();
+            this.nextActions = new ArrayList<ISpawnable>();
         }
     }
 
@@ -86,7 +87,7 @@ public abstract class Action implements IAction,Cloneable{
      * Constructor populate ActionList to create a list of actions to be executed in case of successfully executed current action.
      * @param actionList
      */
-    Action (String actionID, ArrayList<IAction> actionList) {
+    Action (String actionID, ArrayList<ISpawnable> actionList) {
         validateNextActions();
         this.nextActions.addAll(actionList);
         state = ActionState.INITIALIZED;
@@ -99,7 +100,7 @@ public abstract class Action implements IAction,Cloneable{
      * @param action as object of Action class
      * @throws
      */
-    public void addNext(IAction action) {
+    public void addNext(ISpawnable action) {
         validateNextActions();
         this.nextActions.add(action);
     };
@@ -109,7 +110,7 @@ public abstract class Action implements IAction,Cloneable{
      * @param actionList as ArrayList of list of Action objects
      * @throws
      */
-    public   void addNext(ArrayList<IAction> actionList) {
+    public   void addNext(ArrayList<ISpawnable> actionList) {
         // this.ActionList.addAll(actionList);
         // probably we need to evaluate Actions one by one to handle excpetions if any
         validateNextActions();
@@ -154,22 +155,6 @@ public abstract class Action implements IAction,Cloneable{
         this.description = description;
     }
 
-    abstract void execute(); //inside shoud be calls to onStateChanged()
-
-    public void run(String[] args) {
-        //type of "args" argument is to discuss. String[] is just stub
-
-        try {
-            ISpawnable act = (ISpawnable)this.clone();//How does this will work with inheritance
-
-            instances.add(act.spawn());
-        } catch (CloneNotSupportedException e) {
-            e.printStackTrace();
-        }
-    }
-    abstract void myStateIsChanged(); //here nexts should be informed
-
-
 
     @Override
     public String toString() {
@@ -182,6 +167,62 @@ public abstract class Action implements IAction,Cloneable{
     public Object clone() throws CloneNotSupportedException {
         return super.clone();
     }
+
+
+
+
+   // ###############   Main Logic part ###############
+
+    protected void informStateIsChanged(){ //here nexts should be informed
+        /*
+        here we must be shure that according spawned object of nextAction's item exists or create it.
+         How to bind? When to use spawn
+         */
+        for (ISpawnable act: nextActions) {
+            act.spawn().onStateChanged(this); //this is not corrects
+        }
+    };
+
+    public void onStateChanged(IAction predecessorAction){
+        /* template */
+        if (predecessorAction.getState() == ActionState.FINISHED && predecessorAction.getExitCode() == 0) {
+            (actionThread = new Thread(this)).start();
+        }
+    };
+
+    public ISpawnable spawn() { // add new instance
+        Action newActionInstance = null;
+        try {
+            newActionInstance = (Action)this.clone();//How does this will work with inheritance
+            newActionInstance.setActionID(this.actionID+UUID.randomUUID());//or use +this.instances.size()
+
+            instances.add((ISpawnable)newActionInstance);
+
+        } catch (CloneNotSupportedException e) {
+            e.printStackTrace();
+        } finally {
+            return (ISpawnable)newActionInstance;
+        }
+        
+    };
+
+
+
+    public void run(){
+        informStateIsChanged();
+        /* threading is to be defined by some attributes or argument*/
+        /* do some job */
+    };
+
+    public void run(String[] args) {
+        // type of "args" argument is to discuss. String[] is just stub
+        // initialize action. args supposed to be used in this section
+        (actionThread = new Thread(this)).start();
+    }
+
+
+
+
 
 
 

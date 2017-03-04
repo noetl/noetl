@@ -6,7 +6,7 @@ package com.cyberionix.noetl.core.actions;
 public interface IAction {
     public String getActionID();
 
-    public void onStateChanged(Action action); //??? is called when previous task is changed
+    public void onStateChanged(IAction action); //??? is called when previous task is changed
     public ActionState getState();
     public Integer getExitCode();
     public ActionOutput getOutputResult();
