@@ -1,3 +1,5 @@
+You can visit gitter chat here: https://gitter.im/noetl/noetl
+ 
 # NoETL
 NoETL's (Not Only ETL) current python version is a prototype of a system to manage the sequence of the process execution by controlling forks and child processes. 
 
