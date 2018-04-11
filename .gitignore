@@ -5,6 +5,7 @@ target
 .classpath
 .settings
 .project
+.project/build.properties
 .pydevproject
 .DS_Store
 *.log
