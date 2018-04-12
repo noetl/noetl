@@ -1,5 +1,5 @@
 # [NoETL](https://github.com/noetl/noetl/wiki)
-NoETL's (Not Only ETL) current python version is a prototype of a system to manage the sequence of the process execution by controlling forks and child processes. 
+This is a Scala branch of NoETL's (Not Only ETL). 
 
 [Functionality of the prototype is described on wiki](https://github.com/noetl/noetl/wiki)
 
