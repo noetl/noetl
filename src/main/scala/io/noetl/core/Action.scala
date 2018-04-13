@@ -1,6 +1,8 @@
 package io.noetl.core
 
 trait Action {
- val name: String
+ val actionName: String
+ val actionType: String
+ val actionRun: ActionRun
 
 }

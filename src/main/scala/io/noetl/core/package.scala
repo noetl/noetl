@@ -15,19 +15,26 @@ package core {
     }
   }
 
-  case class Run(
-                  after: Option[String] = None,
+  case class ActionRun(
+                  when: Option[Vector[String]] = None,
+                  after: Option[Vector[String]] = None,
                   state: Option[String] = None,
                   message: Option[String] = None,
                   next: Option[Vector[String]] = None,
                   fun: Option[Fun] = None
                 )
 
-  object Run {
-    def apply(after: Option[String],state: Option[String],message: Option[String],next: Option[Vector[String]], fun: Option[Fun] ): Run = (after,state,message,next,fun) match
+  object ActionRun {
+    def apply(when: Option[Vector[String]],after: Option[Vector[String]],state: Option[String],message: Option[String],next: Option[Vector[String]], fun: Option[Fun] ): ActionRun = (when, after, state, message, next, fun) match
     {
-      case (None,None,None,None,None) => new Run()
-      case _ => new Run(Try(after).getOrElse(None),Try(state).getOrElse(None),Try(message).getOrElse(None),Try(next).getOrElse(None),Try(fun).getOrElse(None))
+ //     case (None,None,None,None,None) => new Run()
+      case _ => new ActionRun(
+        Try(when).getOrElse(None),
+        Try(after).getOrElse(None),
+        Try(state).getOrElse(None),
+        Try(message).getOrElse(None),
+        Try(next).getOrElse(None),
+        Try(fun).getOrElse(None))
     }
   }
 
