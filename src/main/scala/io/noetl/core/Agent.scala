@@ -37,9 +37,9 @@ object Agent  {
     println(noetldb.toString)
 
 
-    val actionFlow = config.getConfig("actions")
+    val actionFlow = ActionFlow(noetldb,config.getConfig("actions"))
 
-
+    println(actionFlow.toString)
 
   }
 

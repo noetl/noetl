@@ -1,17 +1,16 @@
 package io.noetl.core
 import com.typesafe.config._
 
-case class ActionFlow (noetldb: NoetlDb, actions: Map[String,Action])
+case class ActionFlow (noetldb: NoetlDb, actions: Map[String,ActionConfig])
 
 object ActionFlow {
-  def apply(noetldb: NoetlDb, config: Config ):  ActionFlow = config match {
+  def apply(noetldb: NoetlDb, config: Config ):  ActionFlow = (noetldb, config) match {
     case _ => new ActionFlow(noetldb, setActions(noetldb.main, config) )
   }
 
-  def setActions(actionId: String, config: Config): Map[String, Action] = {
+  def setActions(actionId: String, config: Config): Map[String, ActionConfig] = {
 
-    Map(actionId -> Action(config.getConfig(actionId)))
-
+    Map(actionId -> ActionConfig(actionId,config.getConfig(actionId)))
   }
 
 }
