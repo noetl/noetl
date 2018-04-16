@@ -2,39 +2,58 @@ package io.noetl
 
 package core {
 
+  import com.typesafe.config._
   import scala.util.Try
+  import scala.collection.JavaConverters._
+
+
+
+  case class NoetlDb (name: String, host: String, home: String, path: String, file: String, main: String)
+
+  object NoetlDb {
+    def apply(config: Config): NoetlDb = config match {
+      case _ => new NoetlDb(
+        name = config.getString("name"),
+        host = config.getString("host"),
+        home = config.getString("home"),
+        path = config.getString("path"),
+        file = config.getString("file") ,
+        main = config.getString("main")
+      )
+    }
+  }
 
   case class Url(hosts: Vector[String])
 
-  case class Fun(name: Option[String], args: Vector[String])
+  case class ActionFun(name: String, args: List[String])
 
-  object Fun {
-    def apply(name: Option[String], args: Vector[String]): Fun = (name,args) match
+  object ActionFun {
+    def apply(config: Config): ActionFun = config match
     {
-      case _ => new Fun(Try(name).getOrElse(None),Try(args).getOrElse(Vector()))
+      case _ => new ActionFun(config.getString("name"),config.getStringList("args").asScala.toList)
     }
   }
 
   case class ActionRun(
-                  when: Option[Vector[String]] = None,
-                  after: Option[Vector[String]] = None,
-                  state: Option[String] = None,
-                  message: Option[String] = None,
-                  next: Option[Vector[String]] = None,
-                  fun: Option[Fun] = None
+                  when: List[String] = List.empty[String],
+                  after: List[String] = List.empty[String],
+                  state: String = "pending",
+                  message: String = "waitning for start",
+                  next: List[String] = List.empty[String],
+                  fun: ActionFun
                 )
 
   object ActionRun {
-    def apply(when: Option[Vector[String]],after: Option[Vector[String]],state: Option[String],message: Option[String],next: Option[Vector[String]], fun: Option[Fun] ): ActionRun = (when, after, state, message, next, fun) match
+    def apply(config: Config): ActionRun = config match
     {
- //     case (None,None,None,None,None) => new Run()
       case _ => new ActionRun(
-        Try(when).getOrElse(None),
-        Try(after).getOrElse(None),
-        Try(state).getOrElse(None),
-        Try(message).getOrElse(None),
-        Try(next).getOrElse(None),
-        Try(fun).getOrElse(None))
+        Try(config.getStringList("when").asScala.toList).getOrElse(List.empty[String]),
+        Try(config.getStringList("after").asScala.toList).getOrElse(List.empty[String]),
+        Try(config.getString("state")).getOrElse("pending"),
+        Try(config.getString("message")).getOrElse("waitning for start"),
+        Try(config.getStringList("next").asScala.toList).getOrElse(List.empty[String]),
+        ActionFun(config.getConfig("fun"))
+        )
     }
   }
 

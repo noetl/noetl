@@ -11,11 +11,13 @@ object Agent  {
 
     val fs = File.separator
 
-    val configPath = Try(args(0)).getOrElse("/Users/refugee/projects/noetl/noetl/src/main/resources/conf/job1.conf")
+    val configPath = Try(args(0)).getOrElse( new java.io.File(".").getCanonicalPath + s"${fs}src${fs}main${fs}resources${fs}conf${fs}job1.conf")
 
     val configFactory = ConfigFactory.parseFile(new File(configPath))
 
     val config = ConfigFactory.load(configFactory)
+
+   // println(config)
 
     val hasActions  = Try {
       config.hasPath("actions")
@@ -26,10 +28,16 @@ object Agent  {
     else
       println(s"config validation passed")
 
-    val actions = config.getObject("actions")
+   // val actionFlow = config.getObject("actions")
 
-    println(actions)
+   //  println(actionFlow)
 
+    val noetldb = NoetlDb(config.getConfig("noetldb"))
+
+    println(noetldb.toString)
+
+
+    val actionFlow = config.getConfig("actions")
 
 
 
