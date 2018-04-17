@@ -3,6 +3,7 @@ package io.noetl.core
 import com.typesafe.config._
 
 import scala.util.Try
+// http://www.scala-lang.org/api/2.12.0-M5/scala/collection/JavaConversions$.html - deprecated since 2.12. Use if need to downgrade to 2.8
 import scala.collection.JavaConverters._
 import ActionType._
 import ActionState._
