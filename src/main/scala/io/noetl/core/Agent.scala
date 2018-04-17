@@ -17,10 +17,8 @@ object Agent  {
 
     val config = ConfigFactory.load(configFactory)
 
-   // println(config)
-
     val hasActions  = Try {
-      config.hasPath("actions")
+      config.hasPath(ACTIONS) && config.hasPath(NOETLDB)
     }.getOrElse(false)
 
     if (!hasActions)
@@ -28,16 +26,7 @@ object Agent  {
     else
       println(s"config validation passed")
 
-   // val actionFlow = config.getObject("actions")
-
-   //  println(actionFlow)
-
-    val noetldb = NoetlDb(config.getConfig("noetldb"))
-
-    println(noetldb.toString)
-
-
-    val actionFlow = ActionFlow(noetldb,config.getConfig("actions"))
+    val actionFlow = ActionFlow(config)
 
     println(actionFlow.toString)
 

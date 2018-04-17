@@ -12,7 +12,7 @@ package core {
 
   object NoetlDb {
     def apply(config: Config): NoetlDb = config match {
-      case _ => new NoetlDb(
+      case config: Config => new NoetlDb(
         name = config.getString("name"),
         host = config.getString("host"),
         home = config.getString("home"),
@@ -20,12 +20,13 @@ package core {
         file = config.getString("file") ,
         main = config.getString("main")
       )
+      case _ => throw new IllegalArgumentException
     }
   }
 
 }
 
 package object core {
-
-
+  val NOETLDB = "noetldb"
+  val ACTIONS = "actions"
 }

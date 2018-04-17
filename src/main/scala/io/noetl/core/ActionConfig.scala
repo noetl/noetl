@@ -1,9 +1,13 @@
 package io.noetl.core
 
 import com.typesafe.config._
+
 import scala.util.Try
 import scala.collection.JavaConverters._
 import ActionType._
+import ActionState._
+
+// some examples https://marcinkubala.wordpress.com/2013/10/09/typesafe-config-hocon/
 
 case class ActionConfig (
  actionName: String,
@@ -16,7 +20,7 @@ object ActionConfig {
   def apply(actionName: String, config: Config): ActionConfig = config match {
     case _ => new ActionConfig(
       actionName = actionName,
-      actionType = ActionType(config.getString("type")),
+      actionType = ActionType(Try(config.getString("type")).getOrElse("action")),
       actionRun = ActionRun(config.getConfig("run"))
     )
   }
@@ -36,7 +40,7 @@ case class ActionRunExit(code: String = "0", message: String = "" )
 case class ActionRun(
                       when: List[String] = List.empty[String],
                       after: List[String] = List.empty[String],
-                      state: String = "pending",
+                      state: ActionState,
                       message: String = "waiting for start",
                       next: List[String] = List.empty[String],
                       exit: ActionRunExit = ActionRunExit(),
@@ -49,7 +53,7 @@ object ActionRun {
     case _ => new ActionRun(
       Try(config.getStringList("when").asScala.toList).getOrElse(List.empty[String]),
       Try(config.getStringList("after").asScala.toList).getOrElse(List.empty[String]),
-      Try(config.getString("state")).getOrElse("pending"),
+      ActionState(Try(config.getString("state")).getOrElse("unknown")),
       Try(config.getString("message")).getOrElse("waiting for start"),
       Try(config.getStringList("next").asScala.toList).getOrElse(List.empty[String]),
       ActionRunExit(),

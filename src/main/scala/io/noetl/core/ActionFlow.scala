@@ -1,16 +1,19 @@
 package io.noetl.core
 import com.typesafe.config._
+import scala.collection.JavaConverters._
 
-case class ActionFlow (noetldb: NoetlDb, actions: Map[String,ActionConfig])
+case class ActionFlow (noetlDb: NoetlDb, actions: Map[String,ActionConfig])
 
 object ActionFlow {
-  def apply(noetldb: NoetlDb, config: Config ):  ActionFlow = (noetldb, config) match {
-    case _ => new ActionFlow(noetldb, setActions(noetldb.main, config) )
+  def apply(config: Config ):  ActionFlow = config match {
+    case  config: Config if config.hasPath(NOETLDB) && config.hasPath(ACTIONS) =>
+      val noetlDb = NoetlDb(config.getConfig(NOETLDB))
+      val actionConfig = config.getConfig(ACTIONS)
+      val actionKeys = actionConfig.root().keySet().asScala
+      val actions = actionKeys map {
+        actionId => actionId -> ActionConfig(actionId, actionConfig.getConfig(actionId))
+      }
+      new ActionFlow(noetlDb, actions.toMap )
+    case _ => throw new IllegalArgumentException
   }
-
-  def setActions(actionId: String, config: Config): Map[String, ActionConfig] = {
-
-    Map(actionId -> ActionConfig(actionId,config.getConfig(actionId)))
-  }
-
 }
