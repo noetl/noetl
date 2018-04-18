@@ -34,7 +34,7 @@ package object packageTest extends FlatSpec with Matchers {
 
     info("Testing Exception for getUuid")
     intercept[TestFailedException] {
-      assert(uuidVal === "00000000-3be7-a2b4-0000-00003be7a2b4")
+      assert(uuidVal == "00000000-3be7-a2b4-0000-00003be7a2b4")
     }
   }
 
