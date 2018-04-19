@@ -29,4 +29,9 @@ package core {
 package object core {
   val NOETLDB = "noetldb"
   val ACTIONS = "actions"
+
+  def runShell (args: List[String]): Unit = {
+
+  }
+
 }
