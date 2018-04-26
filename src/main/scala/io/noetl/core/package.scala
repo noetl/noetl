@@ -1,5 +1,7 @@
 package io.noetl
 
+import scala.util.Try
+
 package core {
 
   import com.typesafe.config._
@@ -27,11 +29,25 @@ package core {
 }
 
 package object core {
+  import com.typesafe.config._
   val NOETLDB = "noetldb"
   val ACTIONS = "actions"
 
   def runShell (args: List[String]): Unit = {
 
+  }
+
+  def actionsExists (config: Config): Config = {
+    val hasActions  = Try {
+      config.hasPath(ACTIONS) && config.hasPath(NOETLDB)
+    }.getOrElse(false)
+
+    if (!hasActions)
+      throw new IllegalArgumentException(s"NoETL config validation failed")
+    else {
+      println(s"config validation passed")
+      config
+    }
   }
 
 }
