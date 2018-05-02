@@ -28,8 +28,27 @@
           "EXEC": "Here is defined what should do the action and depends on TYPE",
           "NEXT": ["Who is the next ACTION(S)"]
       },
-
-      "1": {
+	  
+	  "MYJOIN" : {
+          "TYPE": "JOIN",
+          "DESCR": "Demonstrates ACTION object's structure",
+          "EXEC": "[action1, action3]",
+          "NEXT": ["Who is the next ACTION(S)"]
+      },
+	  
+	  "SWITCH" : {
+			"TYPE": "SW",
+			"EXEC": "1+1",
+			"NEXT": ["action1","action2","action3"]
+	  },
+	  
+	  "PARLOOP": {
+		   "TYPE" :"PALLOOP"
+		   "EXEC" : ["http://....","http://..."]
+		   "NEXT": ["act9"]
+	  }
+	  
+      "action1": {
         "TYPE": "CLI",
         "DESCR": [
           "Prints Executing: 1",
