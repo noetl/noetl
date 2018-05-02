@@ -21,8 +21,13 @@
         ]
       }
     },
-    "ACTIONS": {
-      /* specfies from which action to start*/
+    "ACTIONS": [
+      "MIN_ACT" : {
+          "TYPE":"NOOP",
+          "DESCR": "Demonstrates ACTION object's structure",
+          "EXEC": "Here is defined what should do the action and depends on TYPE",
+          "NEXT": ["Who is the next ACTION(S)"]
+      },
 
       "1": {
         "TYPE": "CLI",
@@ -184,5 +189,5 @@
         }
       }
       }
-    }
+    ]
   }
