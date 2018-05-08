@@ -27,7 +27,7 @@ libraryDependencies ++= Seq(
   "ch.qos.logback" % "logback-classic" % "1.2.3",
   "org.apache.httpcomponents" % "httpclient" % "4.5.3",
   "org.apache.httpcomponents" % "httpasyncclient" % "4.1.3",
-  "org.json4s" %% "json4s-jackson" % "3.5.3",
+  "com.typesafe.akka" %% "akka-stream" % "2.5.12",
   "com.typesafe" % "config" % "1.3.3"
 )
 

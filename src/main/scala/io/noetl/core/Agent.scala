@@ -2,7 +2,8 @@ package io.noetl.core
 
 import io.noetl.store._
 import scala.util.Try
-
+import akka.stream.scaladsl.{JsonFraming, Framing, Source, Flow, Tcp}
+import akka.util.ByteString
 
 object Agent  {
 
@@ -16,7 +17,8 @@ object Agent  {
 
     val actionFlow = ActionFlow(config)
 
-    println(actionFlow.toString)
+
+    println(Framing.formatted( actionFlow.toString))
 
   }
 
