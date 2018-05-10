@@ -10,9 +10,22 @@ import ActionState._
 
 // some examples https://marcinkubala.wordpress.com/2013/10/09/typesafe-config-hocon/
 
+
+case class ActionRun(config: Config = ConfigFactory.empty())
+
+object ActionRun {
+  def apply (actionRun: Option[Config] ): ActionRun = actionRun match {
+    case x: Some[Config] => new ActionRun(actionRun.get)
+    case _ =>   new ActionRun()
+  }
+}
+
 case class ActionConfig (
- actionName: String,
+ name: String,
  actionType: ActionType,
+ displayName: String,
+ description: String,
+ next: List[String],
  actionRun: ActionRun
                   )
 
@@ -20,45 +33,22 @@ case class ActionConfig (
 object ActionConfig {
   def apply(actionName: String, config: Config): ActionConfig = config match {
     case _ => new ActionConfig(
-      actionName = actionName,
+      name = actionName,
       actionType = ActionType(Try(config.getString("type")).getOrElse("action")),
-      actionRun = ActionRun(config.getConfig("run"))
+      displayName = config.getString("displayName"),
+      description = config.getString("description"),
+      next =  config.getStringList("next").asScala.toList,
+      actionRun = ActionRun(Try(Some(config.getConfig("run"))).getOrElse(None))
     )
   }
 }
 
-case class ActionFun(name: String, args: List[String])
 
-object ActionFun {
-  def apply(config: Config): ActionFun = config match
-  {
-    case _ => new ActionFun(config.getString("name"),config.getStringList("args").asScala.toList)
-  }
-}
 
 case class ActionRunExit(code: String = "0", message: String = "" )
 
-case class ActionRun(
-                      when: List[String] = List.empty[String],
-                      after: List[String] = List.empty[String],
-                      state: ActionState,
-                      message: String = "waiting for start",
-                      next: List[String] = List.empty[String],
-                      exit: ActionRunExit = ActionRunExit(),
-                      fun: ActionFun
-                    )
 
-object ActionRun {
-  def apply(config: Config): ActionRun = config match
-  {
-    case _ => new ActionRun(
-      Try(config.getStringList("when").asScala.toList).getOrElse(List.empty[String]),
-      Try(config.getStringList("after").asScala.toList).getOrElse(List.empty[String]),
-      ActionState(Try(config.getString("state")).getOrElse("unknown")),
-      Try(config.getString("message")).getOrElse("waiting for start"),
-      Try(config.getStringList("next").asScala.toList).getOrElse(List.empty[String]),
-      ActionRunExit(),
-      ActionFun(config.getConfig("fun"))
-    )
-  }
-}
+
+
+
+

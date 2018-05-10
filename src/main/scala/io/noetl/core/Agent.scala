@@ -9,16 +9,16 @@ object Agent  {
 
   def main (args: Array[String]): Unit = {
 
-    // if (args.isEmpty) throw new IllegalArgumentException(s"Path for config file is not provided")
+    if (args.isEmpty) throw new IllegalArgumentException(s"Path for config file is not provided")
 
     val configPath = Try(args(0)).getOrElse("")
 
-    val config =  actionsExists(getConfig(configPath))
+    val config =  configKeyExists("workflow",getConfig(configPath))
 
     val actionFlow = ActionFlow(config)
 
 
-    println(Framing.formatted( actionFlow.toString))
+    println("Framing action flow: ", Framing.formatted( actionFlow.toString))
 
   }
 
