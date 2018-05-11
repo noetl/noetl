@@ -25,6 +25,7 @@ libraryDependencies ++= Seq(
   "org.slf4j" % "slf4j-api" % "1.7.25",
   "org.slf4j" % "log4j-over-slf4j" % "1.7.25",
   "ch.qos.logback" % "logback-classic" % "1.2.3",
+  "io.monix" %% "monix" % "3.0.0-RC1",
   "org.apache.httpcomponents" % "httpclient" % "4.5.3",
   "org.apache.httpcomponents" % "httpasyncclient" % "4.1.3",
   "com.typesafe.akka" %% "akka-stream" % "2.5.12",

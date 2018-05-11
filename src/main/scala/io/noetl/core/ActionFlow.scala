@@ -3,7 +3,15 @@ import com.typesafe.config._
 import scala.collection.JavaConverters._
 import scala.util.Try
 
+// In order to evaluate tasks, we'll need a Scheduler
+import monix.execution.Scheduler.Implicits.global
 
+// A Future type that is also Cancelable
+import monix.execution.CancelableFuture
+
+// Task is in monix.eval
+import monix.eval.Task
+import scala.util.{Success, Failure}
 
 case class Workflow (
                       name: String,
@@ -26,7 +34,23 @@ object Workflow {
   }
 }
 
-case class ActionFlow (workflow: Workflow, actions: Map[String,ActionConfig])
+case class ActionFlow (workflow: Workflow, actions: Map[String,ActionConfig]) {
+  def runFlow(): Unit = {
+    println("Workflow's starting point => ",workflow.start)
+
+    def findAction(actionName: String) = this.actions.get(actionName)
+
+    def actionStartList = this.workflow.start.map(findAction)
+
+    print("actionStartList " + actionStartList + " end!")
+    //val a = Webservice("abc")
+    //val b = Webservice("cde")
+    //val c = Fork("xzf")
+    //val seq = Seq(a,b,c)
+    //seq.foreach(x => x.print)
+  }
+
+}
 
 object ActionFlow {
   def apply(config: Config ):  ActionFlow = config match {

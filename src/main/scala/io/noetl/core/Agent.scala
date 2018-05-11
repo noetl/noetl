@@ -17,9 +17,9 @@ object Agent  {
 
     val actionFlow = ActionFlow(config)
 
-
     println("Framing action flow: ", Framing.formatted( actionFlow.toString))
 
+    actionFlow.runFlow()
   }
 
 }

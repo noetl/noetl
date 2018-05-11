@@ -2,15 +2,10 @@ package io.noetl
 
 import scala.util.Try
 
-package core {
-
-}
-
-package object core {
+package object core  {
   import com.typesafe.config._
   val WORKFLOW = "workflow"
   val ACTIONS = "actions"
-
 
   def runShell (args: List[String]): Unit = {
 
