@@ -3,6 +3,8 @@ import com.typesafe.config._
 import scala.collection.JavaConverters._
 import scala.util.Try
 
+//https://monix.io/docs/3x/eval/task.html
+
 // In order to evaluate tasks, we'll need a Scheduler
 import monix.execution.Scheduler.Implicits.global
 

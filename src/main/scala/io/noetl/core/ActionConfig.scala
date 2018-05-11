@@ -28,8 +28,11 @@ object ActionConfig {
   def getActionType(config: Config): ActionType = {
     ActionType(Try(config.getString("type")).getOrElse("action"))
   }
+  //https://developer.lightbend.com/docs/alpakka/current/
 
-  private case class Action(name: String, config: Config) extends ActionConfig
+  private case class Action(name: String, config: Config) extends ActionConfig {
+    def exec () = "aa"
+  }
   private case class Start(name: String, config: Config) extends ActionConfig
   private case class End(name: String, config: Config) extends ActionConfig
   private case class Fork(name: String, config: Config) extends ActionConfig
