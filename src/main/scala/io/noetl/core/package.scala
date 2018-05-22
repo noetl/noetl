@@ -2,17 +2,15 @@ package io.noetl
 
 import scala.util.Try
 
-package object core  {
+package object core {
   import com.typesafe.config._
   val WORKFLOW = "workflow"
   val ACTIONS = "actions"
 
-  def runShell (args: List[String]): Unit = {
+  def runShell(args: List[String]): Unit = {}
 
-  }
-
-  def configKeyExists (keyPath: String, config: Config): Config = {
-    val hasActions  = Try {
+  def configKeyExists(keyPath: String, config: Config): Config = {
+    val hasActions = Try {
       config.hasPath(keyPath)
     }.getOrElse(false)
 
