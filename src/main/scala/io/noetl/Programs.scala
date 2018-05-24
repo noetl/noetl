@@ -4,10 +4,11 @@ import akka.actor.ActorSystem
 import akka.event.Logging
 import akka.http.scaladsl.model.StatusCodes
 import akka.stream.ActorMaterializer
-import io.noetl.api.Api
-import io.noetl.services.{CountryServiceInterpreter, WeatherServiceInterpreter}
+import api.Api
+import services.{CountryServiceInterpreter, WeatherServiceInterpreter}
 import monix.eval.Task
 import monix.execution.Scheduler
+import io.circe.syntax._
 
 object Programs {
   implicit val clientSystem: ActorSystem = ActorSystem("client")

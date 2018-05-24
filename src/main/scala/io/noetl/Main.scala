@@ -6,29 +6,27 @@ import akka.actor.ActorSystem
 import akka.event.Logging
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model._
-import akka.http.scaladsl.server.Directives.{complete, get, path, pathEndOrSingleSlash, pathPrefix}
+import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.server.Route
 import akka.stream.ActorMaterializer
-//import io.noetl.config.AppConfig
 
 import scala.util.Try
 object Main extends App {
 
   Try(args(0)).foreach(System.setProperty("config.file", _))
-  //val config = AppConfig.config
-  import io.noetl.config.AppConfig.config
+  val config = io.noetl.config.AppConfig.config
   if (!config.logToFile) {
     System.setProperty("logback.configurationFile", "logback.stdout.xml")
   }
 
   val route = {
     import Programs.programT
-
+    import de.heikoseeberger.akkahttpcirce.FailFastCirceSupport._
     pathPrefix("version") {
-      import de.heikoseeberger.akkahttpcirce.FailFastCirceSupport._
+
       pathEndOrSingleSlash {
         get {
-          complete(io.circe.parser.parse(api.BuildInfo.toJson))
+          complete(io.circe.parser.parse(BuildInfo.toJson))
         }
       }
     } ~

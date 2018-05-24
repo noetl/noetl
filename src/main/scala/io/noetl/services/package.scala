@@ -1,3 +1,5 @@
+package io.noetl
+
 import akka.actor.ActorSystem
 import akka.event.LoggingAdapter
 import akka.http.scaladsl.Http
