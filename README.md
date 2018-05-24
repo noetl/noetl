@@ -1,16 +1,14 @@
-# [NoETL](https://github.com/noetl/noetl/wiki)
-This is a Scala branch of NoETL's (Not Only ETL). 
+```commandline
+$cd frontend/elm/ && elm-make Main.elm --output=main.js && cd ../..
+$sbt docker:publishLocal
+$docker run -d -p 9000:9000 --restart unless-stopped --name cities radusw/city-info:1.0
 
-[Functionality of the prototype is described on wiki](https://github.com/noetl/noetl/wiki)
+$docker logs cities --follow
 
-[Gitter chat](https://gitter.im/noetl/noetl)
+$curl http://localhost:9000/api/London
+```
 
-## Quick Start
-
-To execute the process assuming you've just cloned the repo to ~/projects/github folder, simply run:
-
-    python ~/projects/github/noetl/noetl/noetl.py ~/projects/github/noetl/conf/coursor.inherit.cfg.v1.json
-
-An output of execution should look like this example:
-
-[noetl-20150916163103.log](https://github.com/noetl/noetl/blob/master/log/noetl-20150916163103.log)
+Open the browser and go to:
+ * `http://localhost:9000/elm` for Elm frontend or
+ * `http://localhost:9000/vue` for VueJs frontend or
+ * `http://localhost:9000/<city e.g. /Bucharest>` for Twirl frontend
