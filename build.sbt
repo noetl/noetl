@@ -1,9 +1,8 @@
-import com.typesafe.sbt.packager.docker._
 import Dependencies._
 
 lazy val root = (project in file("."))
-  .enablePlugins(BuildInfoPlugin, AshScriptPlugin, SbtTwirl)
-  .settings(commonSettings ++ buildInfoSettings ++ dockerSettings)
+  .enablePlugins(BuildInfoPlugin, AshScriptPlugin)
+  .settings(commonSettings ++ buildInfoSettings)
 
 lazy val commonSettings = Seq(
   organization := "adionalab",
@@ -20,9 +19,8 @@ lazy val commonSettings = Seq(
   connectInput in run := true,
   javaOptions in run ++= forkedJvmOption,
   javaOptions in Test ++= forkedJvmOption,
-  mappings in Universal ++= (baseDirectory.value / "conf" * "*").get.map(x => x -> ("conf/" + x.getName)),
-  mappings in Universal ++= (baseDirectory.value / "frontend" / "vue" * "*").get.map(x =>
-    x -> ("frontend/" + x.getName)),
+//  mappings in Universal ++= (baseDirectory.value / "conf" * "*").get.map(x => x -> ("conf/" + x.getName)),
+//  mappings in Universal ++= (baseDirectory.value / "frontend" * "*").get.map(x => x -> ("frontend/" + x.getName)),
   javaOptions in Universal ++= Seq(
     "-server",
     "-Dfile.encoding=UTF8",
@@ -96,21 +94,4 @@ lazy val buildInfoSettings = Seq(
   buildInfoPackage := "io.noetl",
   buildInfoOptions += BuildInfoOption.ToJson,
   buildInfoOptions += BuildInfoOption.BuildTime
-)
-
-lazy val dockerSettings = Seq(
-  dockerUpdateLatest := true,
-  defaultLinuxInstallLocation in Docker := "/opt/noetl",
-  dockerCommands := Seq(
-    Cmd("FROM", "alpine:3.5"),
-    Cmd("RUN apk upgrade --update && apk add --update openjdk8-jre"),
-    Cmd("ADD", "opt /opt"),
-    Cmd("WORKDIR", "/opt/noetl"),
-    // Cmd("CMD", "java", "-cp", "'lib/*'", "-Dpidfile.path=/dev/null", "Main", "conf/docker.conf")
-    ExecCmd("ENTRYPOINT", "bin/noetl", "conf/docker.conf")
-  ),
-  dockerExposedPorts := Seq(9000),
-  version in Docker := version.value,
-  maintainer in Docker := "Serhii Yatsyna <yatsyna.sergey@gmail.com>",
-  dockerRepository := Some("radusw")
 )
