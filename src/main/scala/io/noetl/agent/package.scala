@@ -2,7 +2,23 @@ package io.noetl
 
 import scala.util.Try
 
-package object core {
+package agent {
+
+  sealed trait ActionType
+  case object ACTION extends ActionType
+  case object START extends ActionType
+  case object END extends ActionType
+  case object FORK extends ActionType
+  case object JOIN extends ActionType
+  case object WEBSERVICE extends ActionType
+  case object SHELL extends ActionType
+  case object JDBC extends ActionType
+  case object SSH extends ActionType
+  case object SCP extends ActionType
+
+}
+
+package object agent {
   import com.typesafe.config._
   val WORKFLOW = "workflow"
   val ACTIONS = "actions"
