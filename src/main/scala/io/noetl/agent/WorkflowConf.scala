@@ -109,7 +109,7 @@ case class WorkflowConf(
     `type`: String,
     displayName: Option[String],
     description: Option[String],
-    start: Option[List[String]],
+    start: Option[NextAction],
     var variables: Option[Map[String, String]],
     input: Option[Map[String, String]],
     actions: Map[String, ActionConf]

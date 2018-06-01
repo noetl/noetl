@@ -11,7 +11,10 @@ package object util extends LazyLogging {
     str.stripMargin.replaceAll("\r|\n", " ")
   }
 
-  def toCamelCase(s:String)= {val l=s.replaceAll("'|`","")split("[\\W_]+|(?<=[a-z])(?=[A-Z][a-z])")map(_.toLowerCase);l(0)+l.tail.map(_.capitalize).mkString}
+  def toCamelCase(s:String)= {
+    val l=s.replaceAll("'|`","")split("[\\W_]+|(?<=[a-z])(?=[A-Z][a-z])")map(_.toLowerCase)
+    l(0)+l.tail.map(_.capitalize).mkString
+  }
 
   /**
     * @return converts Option[java.util.date] or Option[java.sql.Date] to Option[java.sql.Timestamp].

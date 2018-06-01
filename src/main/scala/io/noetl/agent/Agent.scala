@@ -1,9 +1,5 @@
 package io.noetl.agent
 
-import pureconfig._
-import java.nio.file.{Paths}
-
-
 import scala.util.Try
 
 object Agent {
@@ -17,22 +13,7 @@ object Agent {
     val configPath = Try(args(0)).getOrElse(
       "src/main/resources/conf/tnotb-akuksin-xchg-rate-20180531.conf")
 
-
-    implicit def hint[T] =
-      ProductHint[T](ConfigFieldMapping(CamelCase, CamelCase))
-
-    implicit val actionConfHint = new FieldCoproductHint[ActionConf]("type") {
-      override def fieldValue(name: String) =  name.dropRight("Conf".length).toLowerCase
-    }
-
-    val workflowConfig =
-      pureconfig.loadConfig[WorkflowConf](Paths.get(configPath)) match {
-        case Right(conf) =>
-          conf
-        case Left(err) =>
-          Console.err.println(err.toList)
-          throw new Exception(err.head.description)
-      }
+    val workflowConfig = validateWorkflowConfig(configPath)
 
     println(workflowConfig)
 
