@@ -1,20 +1,12 @@
 package io.noetl.agent
 
-//import akka.stream.scaladsl.Framing
-//import io.noetl.store.getConfig
-//import pureconfig.loadConfig
-//import com.typesafe.config.ConfigFactory
 import pureconfig._
 import java.nio.file.{Paths}
-import io.noetl.util._
+
 
 import scala.util.Try
 
 object Agent {
-  //import com.typesafe.config._
-  // import pureconfig.loadConfig
-  //val WORKFLOW = "workflow"
-  //val ACTIONS = "actions"
 
   def main(args: Array[String]): Unit = {
 

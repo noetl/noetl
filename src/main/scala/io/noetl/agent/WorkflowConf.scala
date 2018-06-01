@@ -8,7 +8,6 @@ case class NextAction(parallelism: Option[String],
 sealed trait ActionConf
 
 case class ForkConf(
-   // name: String,
     displayName: Option[String],
     description: Option[String],
     next: Option[NextAction],
@@ -16,7 +15,6 @@ case class ForkConf(
 ) extends ActionConf
 
 case class JoinConf(
-    //name: String,
     displayName: Option[String],
     description: Option[String],
     next: Option[NextAction],
@@ -24,7 +22,6 @@ case class JoinConf(
 ) extends ActionConf
 
 case class WebserviceConf(
-    //name: String,
     displayName: Option[String],
     description: Option[String],
     next: Option[NextAction],
@@ -50,7 +47,6 @@ case class WebserviceConf(
 // b) commands must be specific only to local host.
 
 case class ShellConf(
-    //name: String,
     displayName: Option[String],
     description: Option[String],
     next: Option[NextAction],
@@ -62,7 +58,6 @@ case class ShellConf(
 ) extends ActionConf
 
 case class JdbcConf(
-    //name: String,
     displayName: Option[String],
     description: Option[String],
     next: Option[NextAction],
@@ -75,7 +70,6 @@ case class JdbcConf(
 ) extends ActionConf
 
 case class SshConf(
-    //name: String,
     displayName: Option[String],
     description: Option[String],
     next: Option[NextAction],
@@ -92,7 +86,6 @@ case class SshConf(
 ) extends ActionConf
 
 case class ScpConf(
-    //name: String,
     displayName: Option[String],
     description: Option[String],
     next: Option[NextAction],
@@ -117,7 +110,7 @@ case class WorkflowConf(
     displayName: Option[String],
     description: Option[String],
     start: Option[List[String]],
-    // var variables: Option[Map[String, String]],
-    // input: Option[Map[String, String]],
+    var variables: Option[Map[String, String]],
+    input: Option[Map[String, String]],
     actions: Map[String, ActionConf]
 )
