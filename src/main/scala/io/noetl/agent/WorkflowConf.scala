@@ -103,7 +103,6 @@ case class ScpConf(
     overwriteTarget: String = "always" // "always", "newer", "never" are sane options
 ) extends ActionConf
 
-
 case class WorkflowConf(
     name: String,
     `type`: String,

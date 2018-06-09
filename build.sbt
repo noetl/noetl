@@ -6,7 +6,7 @@ lazy val root = (project in file("."))
 
 lazy val commonSettings = Seq(
   organization := "io.noetl",
-  scalaVersion := "2.12.6",
+  scalaVersion := "2.12.4",
   version := "0.1",
   name := "noetl",
   resolvers ++= projectResolvers,

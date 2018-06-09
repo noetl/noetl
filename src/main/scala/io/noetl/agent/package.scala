@@ -2,8 +2,12 @@ package io.noetl
 
 import java.nio.file.Paths
 
-import pureconfig.{CamelCase, ConfigFieldMapping, FieldCoproductHint, ProductHint}
-
+import pureconfig.{
+  CamelCase,
+  ConfigFieldMapping,
+  FieldCoproductHint,
+  ProductHint
+}
 
 package agent {
 
@@ -35,14 +39,16 @@ package object agent {
     *
     */
   implicit val actionConfHint = new FieldCoproductHint[ActionConf]("type") {
-    override def fieldValue(name: String) =  name.dropRight("Conf".length).toLowerCase
+    override def fieldValue(name: String) =
+      name.dropRight("Conf".length).toLowerCase
   }
 
-  def validateWorkflowConfig(configPath: String): WorkflowConf = pureconfig.loadConfig[WorkflowConf](Paths.get(configPath)) match {
+  def validateWorkflowConfig(configPath: String): WorkflowConf =
+    pureconfig.loadConfig[WorkflowConf](Paths.get(configPath)) match {
       case Right(conf) => conf
       case Left(err) =>
         Console.err.println(err.toList)
         throw new Exception(err.head.description)
-  }
+    }
 
 }
