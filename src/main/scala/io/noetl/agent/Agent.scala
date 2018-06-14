@@ -17,5 +17,10 @@ object Agent {
 
     println(workflowConfig)
 
-  }
+    val start = workflowConfig.start.get.subscribers.get.map(actionKey =>  workflowConfig.actions(actionKey))
+
+    start.foreach(x => x.runPrint)
+    //println(start)
+
+  } // end of main
 }

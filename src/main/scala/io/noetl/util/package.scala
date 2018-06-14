@@ -4,9 +4,13 @@ import java.sql._
 import java.util.UUID
 import com.typesafe.scalalogging.LazyLogging
 import scala.reflect.ClassTag
+import com.github.nscala_time.time.Imports._
 
 package object util extends LazyLogging {
 
+  def getCurrentTime: String = {
+    DateTime.now().toString + " : "
+  }
   def strip(str: String): String = {
     str.stripMargin.replaceAll("\r|\n", " ")
   }

@@ -33,7 +33,7 @@ object  Dependencies {
    // "io.circe"                   %% "circe-core"            % circeVersion,
    // "io.circe"                   %% "circe-generic"         % circeVersion,
    // "io.circe"                   %% "circe-parser"          % circeVersion,
-   // "com.github.nscala-time"     %% "nscala-time"           % timeVersion,
+    "com.github.nscala-time"     %% "nscala-time"           % timeVersion,
    // "com.typesafe.akka"          %% "akka-slf4j"            % akkaVersion,
     "com.typesafe.scala-logging" %% "scala-logging"         % scalaLoggingVersion,
     "ch.qos.logback"              % "logback-classic"       % logbackVesrion,
