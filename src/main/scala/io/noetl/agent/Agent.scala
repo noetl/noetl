@@ -11,16 +11,18 @@ object Agent {
         s"Path for config file is not provided")
 
     val configPath = Try(args(0)).getOrElse(
-      "src/main/resources/conf/tnotb-akuksin-xchg-rate-20180531.conf")
+      "src/main/resources/conf/tnotb-akuksin-xchg-rate-20180601.conf")
 
     val workflowConfig = validateWorkflowConfig(configPath)
 
-    println(workflowConfig)
+    // println(workflowConfig)
 
     val start = workflowConfig.start.get.subscribers.get.map(actionKey =>  workflowConfig.actions(actionKey))
 
-    start.foreach(x => x.runPrint)
-    //println(start)
+    start.foreach(x => x.runAction)
+
+    println(start.getClass.getName)
+
 
   } // end of main
 }
