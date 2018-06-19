@@ -2,39 +2,46 @@ package io.noetl.agent
 
 import scala.util.{Try,Success,Failure}
 
-case class NextAction(parallelism: Option[String] = None,
-                      multithread: Option[String] = None,
-                      subscribers: Option[List[Action]] = None)
-    extends NextActionBase
+case class NextAction(parallelism: Int = 1,
+                      multithread: Int = 1,
+                      subscribers: List[Action] = List.empty)
+    extends NextActionBase {
+
+  def isDefined: Boolean = this.subscribers.nonEmpty
+
+  def runNext(): Unit = if (this.isDefined) {
+    Try(this.subscribers.foreach(x => x.runAction)) match {
+      case Success(_) =>
+      case Failure(ex) =>
+    }
+  }
+}
 
 object NextAction {
   def apply(nextActionConf: Option[NextActionConf],
             actions: Map[String, ActionConf]): NextAction = (nextActionConf,actions) match {
-    case (nextActionConf: Option[NextActionConf],actions: Map[String, ActionConf]) => Try(new NextAction(
-      parallelism = nextActionConf.get.parallelism,
-      multithread = nextActionConf.get.multithread,
-      subscribers = Some(nextActionConf.get.subscribers.get.map(actionKey => {
-        // println(s"actionKey: $actionKey")
-        val actionConf = actions(actionKey)
-        conf2action(actionConf, actions)
-      }))
-    )).getOrElse(new NextAction())
-    case (_,_) => new NextAction()
+    case (nextActionConf: Option[NextActionConf],actions: Map[String, ActionConf]) => Try(
+      new NextAction(
+      parallelism = Try(nextActionConf.get.parallelism.get.toInt).getOrElse(1),
+      multithread = Try(nextActionConf.get.multithread.get.toInt).getOrElse(1),
+      subscribers = nextActionConf.get.subscribers.get.map(
+        actionKey => ActionFlow.conf2action(actions(actionKey), actions)
+      )
+     )
+    ).getOrElse(new NextAction)
+    case (_,_) => new NextAction
   }
 }
 
 trait Action extends ActionBase {
-  val next: Option[NextAction]
-  override def runNext(): Unit = Try(this.next.get.subscribers.get.foreach(x => x.runAction)) match {
-    case Success(_) =>
-    case Failure(ex) =>
-  }
+  val next: NextAction
+  override def runNext(): Unit = this.next.runNext
 }
 
 case class ActionFork(
     displayName: Option[String],
     description: Option[String],
-    next: Option[NextAction],
+    next: NextAction,
     var variables: Option[Map[String, String]]
 ) extends Action
     with ActionForkBase {
@@ -47,7 +54,7 @@ object ActionFork {
     new ActionFork(
       displayName = forkConf.displayName,
       description = forkConf.description,
-      next = Some(NextAction(forkConf.next, actions)).orElse(None),
+      next = NextAction(forkConf.next, actions),
       variables = forkConf.variables
     )
   }
@@ -56,7 +63,7 @@ object ActionFork {
 case class ActionJoin(
     displayName: Option[String],
     description: Option[String],
-    next: Option[NextAction],
+    next: NextAction,
     var variables: Option[Map[String, String]]
 ) extends Action
     with ActionJoinBase {
@@ -69,7 +76,7 @@ object ActionJoin {
     new ActionJoin(
       displayName = joinConf.displayName,
       description = joinConf.description,
-      next = Some(NextAction(joinConf.next, actions)).orElse(None),
+      next = NextAction(joinConf.next, actions),
       variables = joinConf.variables
     )
   }
@@ -78,7 +85,7 @@ object ActionJoin {
 case class ActionWebservice(
     displayName: Option[String],
     description: Option[String],
-    next: Option[NextAction],
+    next: NextAction,
     var variables: Option[Map[String, String]],
     url: String,
     httpMethod: String = "GET",
@@ -97,7 +104,7 @@ object ActionWebservice {
     new ActionWebservice(
       displayName = actionConf.displayName,
       description = actionConf.description,
-      next = Some(NextAction(actionConf.next, actions)).orElse(None),
+      next = NextAction(actionConf.next, actions),
       variables = actionConf.variables,
       url = actionConf.url,
       httpMethod = actionConf.httpMethod,
@@ -111,7 +118,7 @@ object ActionWebservice {
 case class ActionShell(
     displayName: Option[String],
     description: Option[String],
-    next: Option[NextAction],
+    next: NextAction,
     var variables: Option[Map[String, String]],
     shellScript: Option[String],
     scriptParams: Option[List[String]],
@@ -129,7 +136,7 @@ object ActionShell {
     new ActionShell(
       displayName = actionConf.displayName,
       description = actionConf.description,
-      next = Some(NextAction(actionConf.next, actions)).orElse(None),
+      next = NextAction(actionConf.next, actions),
       variables = actionConf.variables,
       shellScript = actionConf.shellScript,
       scriptParams = actionConf.scriptParams,
@@ -142,7 +149,7 @@ object ActionShell {
 case class ActionJdbc(
     displayName: Option[String],
     description: Option[String],
-    next: Option[NextAction],
+    next: NextAction,
     var variables: Option[Map[String, String]],
     databaseUrl: Option[String],
     queryParams: Option[String],
@@ -160,7 +167,7 @@ object ActionJdbc {
     new ActionJdbc(
       displayName = actionConf.displayName,
       description = actionConf.description,
-      next = Some(NextAction(actionConf.next, actions)).orElse(None),
+      next = NextAction(actionConf.next, actions),
       variables = actionConf.variables,
       databaseUrl = actionConf.databaseUrl,
       queryParams = actionConf.queryParams,
@@ -173,7 +180,7 @@ object ActionJdbc {
 case class ActionSsh(
     displayName: Option[String],
     description: Option[String],
-    next: Option[NextAction],
+    next: NextAction,
     var variables: Option[Map[String, String]],
     sshHost: Option[String],
     sshPort: Option[String],
@@ -194,7 +201,7 @@ object ActionSsh {
     new ActionSsh(
       displayName = actionConf.displayName,
       description = actionConf.description,
-      next = Some(NextAction(actionConf.next, actions)).orElse(None),
+      next = NextAction(actionConf.next, actions),
       variables = actionConf.variables,
       sshHost = actionConf.sshHost,
       sshPort = actionConf.sshPort,
@@ -210,7 +217,7 @@ object ActionSsh {
 case class ActionScp(
     displayName: Option[String],
     description: Option[String],
-    next: Option[NextAction],
+    next: NextAction,
     var variables: Option[Map[String, String]],
     sourceHost: Option[String],
     sourcePort: Option[String],
@@ -232,7 +239,7 @@ object ActionScp {
     new ActionScp(
       displayName = actionConf.displayName,
       description = actionConf.description,
-      next = Some(NextAction(actionConf.next, actions)).orElse(None),
+      next = NextAction(actionConf.next, actions),
       variables = actionConf.variables,
       sourceHost = actionConf.sourceHost,
       sourcePort = actionConf.sourcePort,
@@ -251,7 +258,7 @@ case class ActionFlow(
     `type`: String,
     displayName: Option[String],
     description: Option[String],
-    start: Option[NextAction],
+    start: NextAction,
     var variables: Option[Map[String, String]],
     input: Option[Map[String, String]],
     actions: Map[String, Action]
@@ -264,12 +271,24 @@ object ActionFlow {
       `type` = workflow.`type`,
       displayName = workflow.displayName,
       description = workflow.description,
-      start = Some(NextAction(workflow.start, workflow.actions)),
+      start = NextAction(workflow.start, workflow.actions),
       variables = workflow.variables,
       input = workflow.input,
       actions = workflow.actions map {
         case (key, value) => (key, conf2action(value, workflow.actions))
       }
     )
+  }
+
+  def conf2action(actionConf: ActionBase,
+                  actions: Map[String, ActionConf]): Action = actionConf match {
+    case forkConf: ForkConf => ActionFork(forkConf, actions)
+    case joinConf: JoinConf => ActionJoin(joinConf, actions)
+    case webserviceConf: WebserviceConf =>
+      ActionWebservice(webserviceConf, actions)
+    case shellConf: ShellConf => ActionShell(shellConf, actions)
+    case jdbcConf: JdbcConf   => ActionJdbc(jdbcConf, actions)
+    case sshConf: SshConf     => ActionSsh(sshConf, actions)
+    case scpConf: ScpConf     => ActionScp(scpConf, actions)
   }
 }

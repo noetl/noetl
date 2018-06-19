@@ -14,21 +14,22 @@ package agent {
 
 
 
-  trait NextActionBase {
-    val parallelism: Option[String]
-    val multithread: Option[String]
-  }
+  trait NextActionBase
 
   trait ActionBase {
     val displayName: Option[String]
     val description: Option[String]
     var variables: Option[Map[String, String]]
+
     def runAction(): Unit = {
       runPrint(this.printMessage)
       runNext
     }
+
     def runNext(): Unit = ()
+
     def printMessage = "Empty action"
+
     def runPrint(msg: String): Unit = {
       println(s"$getCurrentTime $msg")
     }
@@ -49,12 +50,16 @@ package agent {
     val httpClientTimeout: Option[String]
     val outputPath: Option[String] // path to the staging folder
     // data received from the previous action
+    private var output: Option[String] = None
     private var requestBody: Option[String] = None
+
     def setRequestBody(data: Option[String]): Unit = this.requestBody = data
+
     def getRequestBody: Option[String] = this.requestBody
     // canonical form is also JSON object
-    private var output: Option[String] = None
+
     def setOutput(data: Option[String]): Unit = this.output = data
+
     def getOutput: Option[String] = this.output
   }
 
@@ -152,17 +157,5 @@ package object agent {
         Console.err.println(err.toList)
         throw new Exception(err.head.description)
     }
-
-  def conf2action(actionConf: ActionBase,
-                  actions: Map[String, ActionConf]): Action = actionConf match {
-    case forkConf: ForkConf => ActionFork(forkConf, actions)
-    case joinConf: JoinConf => ActionJoin(joinConf, actions)
-    case webserviceConf: WebserviceConf =>
-      ActionWebservice(webserviceConf, actions)
-    case shellConf: ShellConf => ActionShell(shellConf, actions)
-    case jdbcConf: JdbcConf   => ActionJdbc(jdbcConf, actions)
-    case sshConf: SshConf     => ActionSsh(sshConf, actions)
-    case scpConf: ScpConf     => ActionScp(scpConf, actions)
-  }
 
 }
