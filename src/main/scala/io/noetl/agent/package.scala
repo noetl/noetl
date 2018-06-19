@@ -1,6 +1,7 @@
 package io.noetl
 
 import java.nio.file.Paths
+import _root_.io.noetl.util._
 
 import pureconfig.{
   CamelCase,
@@ -11,7 +12,7 @@ import pureconfig.{
 
 package agent {
 
-  import io.noetl.util.getCurrentTime
+
 
   trait NextActionBase {
     val parallelism: Option[String]
@@ -22,7 +23,11 @@ package agent {
     val displayName: Option[String]
     val description: Option[String]
     var variables: Option[Map[String, String]]
-    def runAction(): Unit = runPrint(this.printMessage)
+    def runAction(): Unit = {
+      runPrint(this.printMessage)
+      runNext
+    }
+    def runNext(): Unit = ()
     def printMessage = "Empty action"
     def runPrint(msg: String): Unit = {
       println(s"$getCurrentTime $msg")
@@ -39,8 +44,8 @@ package agent {
 
   trait ActionWebserviceBase extends ActionBase {
     val url: String
-    val httpMethod: String  // request method GET, POST, DELETE
-    val contentType: String  // request Content-Type
+    val httpMethod: String // request method GET, POST, DELETE
+    val contentType: String // request Content-Type
     val httpClientTimeout: Option[String]
     val outputPath: Option[String] // path to the staging folder
     // data received from the previous action
@@ -58,44 +63,44 @@ package agent {
   // b) commands must be specific only to local host.
 
   trait ActionShellBase extends ActionBase {
-                        val shellScript: Option[String] // It might be a script call or just a shell command to be executed on the local machine
-                        val scriptParams: Option[List[String]] // // each element of scriptParams array shall be supplied to shellScript as a parameter beginning from $1 = [0]
-                        val outputPath: Option[String] // path to the staging folder
-                        var output: Option[String] // // shell's stdout will be copied to next actions
+    val shellScript: Option[String] // It might be a script call or just a shell command to be executed on the local machine
+    val scriptParams: Option[List[String]] // // each element of scriptParams array shall be supplied to shellScript as a parameter beginning from $1 = [0]
+    val outputPath: Option[String] // path to the staging folder
+    var output: Option[String] // // shell's stdout will be copied to next actions
   }
 
   trait ActionJdbcBase extends ActionBase {
-                       // need to decide how to put passwords into config files
-                       val databaseUrl: Option[String]
-                       val queryParams: Option[String]
-                       val queryString: Option[String] // data received from the previous action
-                       var output: Option[String]
+    // need to decide how to put passwords into config files
+    val databaseUrl: Option[String]
+    val queryParams: Option[String]
+    val queryString: Option[String] // data received from the previous action
+    var output: Option[String]
   }
 
   trait ActionSshBase extends ActionBase {
-                      val sshHost: Option[String]
-                      val sshPort: Option[String] // note string here, not number!
-                      val sshUser: Option[String]
-                      // Specify a key pair file as SSH identity_file parameter (ssh -i) - see "man ssh".
-                      // Using password in sshTask is wrong and must be discouraged.
-                      val sshIdentityFile: Option[String] // key pair file must reside in local file system
-                      val shellScript: Option[String] // on the remote host
-                      val scriptParams: Option[String] // the array of params for remote script
-                      var output: Option[String]
+    val sshHost: Option[String]
+    val sshPort: Option[String] // note string here, not number!
+    val sshUser: Option[String]
+    // Specify a key pair file as SSH identity_file parameter (ssh -i) - see "man ssh".
+    // Using password in sshTask is wrong and must be discouraged.
+    val sshIdentityFile: Option[String] // key pair file must reside in local file system
+    val shellScript: Option[String] // on the remote host
+    val scriptParams: Option[String] // the array of params for remote script
+    var output: Option[String]
   }
 
   trait ActionScpBase extends ActionBase {
-                      val sourceHost: Option[String]
-                      val sourcePort: Option[String] // note string here, not number!
-                      val sourceUser: Option[String]
-                      // Specify a key pair file as SSH identity_file parameter (ssh -i) - see "man ssh".
-                      // Using password in sshTask is wrong and must be discouraged.
-                      val sourceIdentifyFile: Option[String] // key pair file must reside in local file system
-                      val sourcePath: Option[String] // that file, yeah!
-                      val targetHost: Option[String] // the array of params for remote script
-                      // no targetPort, targetUser, targetIdentityFile are necessary for "localhost"
-                      val targetPath: Option[String]
-                      val overwriteTarget: String // "always", "newer", "never" are sane options
+    val sourceHost: Option[String]
+    val sourcePort: Option[String] // note string here, not number!
+    val sourceUser: Option[String]
+    // Specify a key pair file as SSH identity_file parameter (ssh -i) - see "man ssh".
+    // Using password in sshTask is wrong and must be discouraged.
+    val sourceIdentifyFile: Option[String] // key pair file must reside in local file system
+    val sourcePath: Option[String] // that file, yeah!
+    val targetHost: Option[String] // the array of params for remote script
+    // no targetPort, targetUser, targetIdentityFile are necessary for "localhost"
+    val targetPath: Option[String]
+    val overwriteTarget: String // "always", "newer", "never" are sane options
 
   }
 
@@ -147,5 +152,17 @@ package object agent {
         Console.err.println(err.toList)
         throw new Exception(err.head.description)
     }
+
+  def conf2action(actionConf: ActionBase,
+                  actions: Map[String, ActionConf]): Action = actionConf match {
+    case forkConf: ForkConf => ActionFork(forkConf, actions)
+    case joinConf: JoinConf => ActionJoin(joinConf, actions)
+    case webserviceConf: WebserviceConf =>
+      ActionWebservice(webserviceConf, actions)
+    case shellConf: ShellConf => ActionShell(shellConf, actions)
+    case jdbcConf: JdbcConf   => ActionJdbc(jdbcConf, actions)
+    case sshConf: SshConf     => ActionSsh(sshConf, actions)
+    case scpConf: ScpConf     => ActionScp(scpConf, actions)
+  }
 
 }

@@ -15,14 +15,16 @@ object Agent {
 
     val workflowConfig = validateWorkflowConfig(configPath)
 
-    // println(workflowConfig)
+    val actionFlow = ActionFlow(workflowConfig)
 
-    val start = workflowConfig.start.get.subscribers.get.map(actionKey =>  workflowConfig.actions(actionKey))
+    //val start = workflowConfig.start.get.subscribers.get.map(actionKey =>
+    // workflowConfig.actions(actionKey))
 
-    start.foreach(x => x.runAction)
+    //start.foreach(x => x.runAction)
 
-    println(start.getClass.getName)
+    //println(start.getClass.getName)
 
+    actionFlow.start.get.subscribers.get.foreach(x => x.runAction)
 
   } // end of main
 }
