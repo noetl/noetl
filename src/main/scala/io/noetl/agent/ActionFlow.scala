@@ -20,11 +20,11 @@ case class NextAction(parallelism: Int = 1,
 object NextAction {
   def apply(nextActionConf: Option[NextActionConf],
             actions: Map[String, ActionConf]): NextAction = (nextActionConf,actions) match {
-    case (nextActionConf: Option[NextActionConf],actions: Map[String, ActionConf]) => Try(
+    case (Some(nextActionConf),actions: Map[String, ActionConf]) => Try(
       new NextAction(
-      parallelism = Try(nextActionConf.get.parallelism.get.toInt).getOrElse(1),
-      multithread = Try(nextActionConf.get.multithread.get.toInt).getOrElse(1),
-      subscribers = nextActionConf.get.subscribers.get.map(
+      parallelism = Try(nextActionConf.parallelism.get.toInt).getOrElse(1),
+      multithread = Try(nextActionConf.multithread.get.toInt).getOrElse(1),
+      subscribers = nextActionConf.subscribers.get.map(
         actionKey => ActionFlow.conf2action(actions(actionKey), actions)
       )
      )
