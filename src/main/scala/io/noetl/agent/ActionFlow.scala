@@ -33,9 +33,18 @@ object NextAction {
   }
 }
 
+
+case class ActionDependency(name: String, state: String)
+
 trait Action extends ActionBase {
-  val next: NextAction
+    val next: NextAction
+    var state: ActionState = Pending
+    //val dependency = List[ActionDependency]
   override def runNext(): Unit = this.next.runNext
+    def pending = this.state = Pending
+    def processing = this.state = Processing
+    def finished = this.state = Finished
+    def failed = this.state = Failed
 }
 
 case class ActionFork(
@@ -291,4 +300,4 @@ object ActionFlow {
     case sshConf: SshConf     => ActionSsh(sshConf, actions)
     case scpConf: ScpConf     => ActionScp(scpConf, actions)
   }
-}
+} // end ActionFlow

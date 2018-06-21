@@ -118,8 +118,11 @@ package agent {
     val input: Option[Map[String, String]]
   }
 
-  sealed trait ActionState
-
+    sealed trait ActionState
+    case object Pending extends ActionState
+    case object Processing extends ActionState
+    case object Finished extends ActionState
+    case object Failed extends ActionState
 }
 
 package object agent {
