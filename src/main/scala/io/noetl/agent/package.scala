@@ -21,13 +21,6 @@ package agent {
     val description: Option[String]
     var variables: Option[Map[String, String]]
 
-    def runAction(): Unit = {
-      runPrint(this.printMessage)
-      runNext
-    }
-
-    def runNext(): Unit = ()
-
     def printMessage = "Empty action"
 
     def runPrint(msg: String): Unit = {

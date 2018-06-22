@@ -4,17 +4,17 @@ import scala.util.{Try,Success,Failure}
 
 case class NextAction(parallelism: Int = 1,
                       multithread: Int = 1,
-                      subscribers: List[Action] = List.empty)
+                      subscribers: List[String] = List.empty)
     extends NextActionBase {
 
   def isDefined: Boolean = this.subscribers.nonEmpty
 
-  def runNext(): Unit = if (this.isDefined) {
-    Try(this.subscribers.foreach(x => x.runAction)) match {
-      case Success(_) =>
-      case Failure(ex) =>
-    }
-  }
+//  def runNext(): Unit = if (this.isDefined) {
+//    Try(this.subscribers.foreach(x => x)) match {
+//      case Success(_) =>
+//      case Failure(ex) =>
+//    }
+//  }
 }
 
 object NextAction {
@@ -24,9 +24,10 @@ object NextAction {
       new NextAction(
       parallelism = Try(nextActionConf.parallelism.get.toInt).getOrElse(1),
       multithread = Try(nextActionConf.multithread.get.toInt).getOrElse(1),
-      subscribers = nextActionConf.subscribers.get.map(
-        actionKey => ActionFlow.conf2action(actions(actionKey), actions)
-      )
+      subscribers = Try(nextActionConf.subscribers.get).getOrElse(List.empty)
+          //nextActionConf.subscribers.get.map(
+        //actionKey => ActionFlow.conf2action(actions(actionKey), actions)
+      //)
      )
     ).getOrElse(new NextAction)
     case (_,_) => new NextAction
@@ -39,12 +40,22 @@ case class ActionDependency(name: String, state: String)
 trait Action extends ActionBase {
     val next: NextAction
     var state: ActionState = Pending
-    //val dependency = List[ActionDependency]
-  override def runNext(): Unit = this.next.runNext
-    def pending = this.state = Pending
-    def processing = this.state = Processing
-    def finished = this.state = Finished
-    def failed = this.state = Failed
+
+    //def runNext(): Unit = this.next.runNext
+
+    def pending() = this.state = Pending
+
+    def processing() = this.state = Processing
+
+    def finished() = this.state = Finished
+
+    def failed() = this.state = Failed
+
+    def isPending() = if (this.state == Pending) true else false
+
+    def runAction(): Unit = {
+        runPrint(this.printMessage)
+    }
 }
 
 case class ActionFork(
@@ -270,8 +281,19 @@ case class ActionFlow(
     start: NextAction,
     var variables: Option[Map[String, String]],
     input: Option[Map[String, String]],
-    actions: Map[String, Action]
-) extends WorkflowBase
+    // actions: Map[String, Action]
+    val actions: Map[String,Action]
+) extends WorkflowBase {
+    var dependency = Map[String,List[Action]]
+    def getAction(actionName: String) = this.actions(actionName)
+    def getDependencyList(nextAction: NextAction) = {
+        nextAction.subscribers.map(getAction)
+    }
+    def initDependency() = {
+        this.dependency = this.actions map {case (name, action) => (name, getDependencyList(action.next))}
+    }
+
+}
 
 object ActionFlow {
   def apply(workflow: WorkflowConf): ActionFlow = {
@@ -285,9 +307,18 @@ object ActionFlow {
       input = workflow.input,
       actions = workflow.actions map {
         case (key, value) => (key, conf2action(value, workflow.actions))
-      }
+       }
+      //actions =
     )
   }
+
+    def runFlow(actionFlow: ActionFlow) = {
+        val start = actionFlow.start.subscribers.map(actionName => actionFlow.getAction(actionName))
+
+        start.foreach(action => {
+            action.r
+        })
+    }
 
   def conf2action(actionConf: ActionBase,
                   actions: Map[String, ActionConf]): Action = actionConf match {
