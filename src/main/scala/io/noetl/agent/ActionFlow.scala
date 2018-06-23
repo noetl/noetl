@@ -1,6 +1,7 @@
 package io.noetl.agent
 
 import scala.util.{Try,Success,Failure}
+//import scala.collection.mutable.{Seq => mSeq}
 
 case class NextAction(parallelism: Int = 1,
                       multithread: Int = 1,
@@ -9,12 +10,12 @@ case class NextAction(parallelism: Int = 1,
 
   def isDefined: Boolean = this.subscribers.nonEmpty
 
-  def runNext(): Unit = if (this.isDefined) {
-    Try(this.subscribers.foreach(x => x)) match {
-      case Success(_) =>
-      case Failure(ex) =>
-    }
-  }
+//  def runNext(): Unit = if (this.isDefined) {
+//    Try(this.subscribers.foreach(x => x)) match {
+//      case Success(_) =>
+//      case Failure(ex) =>
+//    }
+//  }
 }
 
 object NextAction {
@@ -38,11 +39,12 @@ object NextAction {
 case class ActionDependency(name: String, state: String)
 
 trait Action extends ActionBase {
+
     val next: NextAction
     var state: ActionState = Pending
-    var dependency: Seq[Action] = Seq.empty
+    var dependency: Vector[Action] = Vector.empty
 
-    //def runNext(): Unit = this.next.runNext
+    def addDependency(action: Action): Unit = this.dependency = this.dependency ++ Vector(action)
 
     def pending() = this.state = Pending
 
@@ -59,8 +61,15 @@ trait Action extends ActionBase {
 
         val dependencyCheck = this.dependency.filter(x => x.state != Finished)
         if (dependencyCheck.isEmpty) {
-            runPrint(this.printMessage)
-        } else println(s"we have dependencies ${dependencyCheck}")
+            this.processing()
+            Try(runPrint(this.printMessage)) match {
+                case Success(_) => this.finished()
+                case Failure(ex) => {
+                    this.failed()
+                    println(s"runAction failed ${ex}")
+                }
+            }
+        }
     }
 }
 
@@ -289,8 +298,7 @@ case class ActionFlow(
     start: NextAction,
     var variables: Option[Map[String, String]],
     input: Option[Map[String, String]],
-    // actions: Map[String, Action]
-    val actions: Map[String,Action]
+    actions: Map[String,Action]
 ) extends WorkflowBase {
     def getAction(actionName: String) = this.actions(actionName)
     def actionExists(actionName: String): Boolean = Try(getAction(actionName: String)) match {
@@ -298,21 +306,24 @@ case class ActionFlow(
         case Failure(ex) => false
     }
 
-    def buildActionDependency() = {
-        this.actions foreach  {case (name, action) => {
-            val nextActions = action.next.subscribers
-            nextActions.foreach(actionName => {
-                if (actionExists(actionName)) this.getAction(name) +: this.getAction(actionName).dependency
-            })
-        }
-        }
-    }
+//    def buildActionDependency() = {
+//        println("buildActionDependency")
+//        this.actions foreach  {case (name, action) => {
+//            val nextActions = action.next.subscribers
+//            nextActions.foreach(actionName => {
+//                if (actionExists(actionName))   {
+//                    this.getAction(actionName).addDependency( this.getAction(name))
+//                }
+//            })
+//        }
+//        }
+//    }
 
 }
 
 object ActionFlow {
   def apply(workflow: WorkflowConf): ActionFlow = {
-    val actionFlow = new ActionFlow(
+      implicit val actionFlow = new ActionFlow(
       name = workflow.name,
       `type` = workflow.`type`,
       displayName = workflow.displayName,
@@ -324,14 +335,47 @@ object ActionFlow {
         case (key, value) => (key, conf2action(value, workflow.actions))
        }
     )
-      actionFlow.buildActionDependency()
+      buildActionDependency
       actionFlow
   }
 
-    def runFlow(actionFlow: ActionFlow) = {
+    def buildActionDependency(implicit actionFlow: ActionFlow) = {
+        println("buildActionDependency")
+        actionFlow.actions foreach  {case (name, action) => {
+            val nextActions = action.next.subscribers
+            nextActions.foreach(actionName => {
+                if (actionFlow.actionExists(actionName))   {
+                    actionFlow.getAction(actionName).addDependency( actionFlow.getAction(name))
+                }
+            })
+        }
+        }
+    }
+
+    def getNextActions(nextAction: NextAction)(implicit actionFlow: ActionFlow): Option[List[Action]] = {
+        if (nextAction.subscribers.isEmpty)
+            None
+        else
+            Some(nextAction.subscribers.filter(actionName => actionFlow.actionExists(actionName)).map(actionName => actionFlow.getAction(actionName)))
+    }
+
+    def runNextAction(action: Action)(implicit actionFlow: ActionFlow): Unit = {
+        getNextActions(action.next) match {
+            case Some(nextAction) => nextAction.foreach(action1 => {
+                action.runAction()
+                runNextAction(action1)
+            })
+            case None =>
+        }
+    }
+
+    def runFlow(implicit actionFlow: ActionFlow) = {
         val start = actionFlow.start.subscribers.map(actionName => actionFlow.getAction(actionName))
 
-        start.foreach(action => action.runAction())
+        start.foreach(action => {
+            action.runAction()
+            runNextAction(action)
+        })
 
     }
 
