@@ -9,12 +9,12 @@ case class NextAction(parallelism: Int = 1,
 
   def isDefined: Boolean = this.subscribers.nonEmpty
 
-//  def runNext(): Unit = if (this.isDefined) {
-//    Try(this.subscribers.foreach(x => x)) match {
-//      case Success(_) =>
-//      case Failure(ex) =>
-//    }
-//  }
+  def runNext(): Unit = if (this.isDefined) {
+    Try(this.subscribers.foreach(x => x)) match {
+      case Success(_) =>
+      case Failure(ex) =>
+    }
+  }
 }
 
 object NextAction {
@@ -40,6 +40,7 @@ case class ActionDependency(name: String, state: String)
 trait Action extends ActionBase {
     val next: NextAction
     var state: ActionState = Pending
+    var dependency: Seq[Action] = Seq.empty
 
     //def runNext(): Unit = this.next.runNext
 
@@ -54,7 +55,12 @@ trait Action extends ActionBase {
     def isPending() = if (this.state == Pending) true else false
 
     def runAction(): Unit = {
-        runPrint(this.printMessage)
+        // filter actions from dependency list
+
+        val dependencyCheck = this.dependency.filter(x => x.state != Finished)
+        if (dependencyCheck.isEmpty) {
+            runPrint(this.printMessage)
+        } else println(s"we have dependencies ${dependencyCheck}")
     }
 }
 
@@ -273,6 +279,8 @@ object ActionScp {
   }
 }
 
+case class Dependency (action: String, actions: List[String])
+
 case class ActionFlow(
     name: String,
     `type`: String,
@@ -284,20 +292,27 @@ case class ActionFlow(
     // actions: Map[String, Action]
     val actions: Map[String,Action]
 ) extends WorkflowBase {
-    var dependency = Map[String,List[Action]]
     def getAction(actionName: String) = this.actions(actionName)
-    def getDependencyList(nextAction: NextAction) = {
-        nextAction.subscribers.map(getAction)
+    def actionExists(actionName: String): Boolean = Try(getAction(actionName: String)) match {
+        case Success(_) => true
+        case Failure(ex) => false
     }
-    def initDependency() = {
-        this.dependency = this.actions map {case (name, action) => (name, getDependencyList(action.next))}
+
+    def buildActionDependency() = {
+        this.actions foreach  {case (name, action) => {
+            val nextActions = action.next.subscribers
+            nextActions.foreach(actionName => {
+                if (actionExists(actionName)) this.getAction(name) +: this.getAction(actionName).dependency
+            })
+        }
+        }
     }
 
 }
 
 object ActionFlow {
   def apply(workflow: WorkflowConf): ActionFlow = {
-    new ActionFlow(
+    val actionFlow = new ActionFlow(
       name = workflow.name,
       `type` = workflow.`type`,
       displayName = workflow.displayName,
@@ -308,16 +323,16 @@ object ActionFlow {
       actions = workflow.actions map {
         case (key, value) => (key, conf2action(value, workflow.actions))
        }
-      //actions =
     )
+      actionFlow.buildActionDependency()
+      actionFlow
   }
 
     def runFlow(actionFlow: ActionFlow) = {
         val start = actionFlow.start.subscribers.map(actionName => actionFlow.getAction(actionName))
 
-        start.foreach(action => {
-            action.r
-        })
+        start.foreach(action => action.runAction())
+
     }
 
   def conf2action(actionConf: ActionBase,

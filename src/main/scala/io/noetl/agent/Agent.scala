@@ -24,7 +24,7 @@ object Agent {
 
     //println(start.getClass.getName)
 
-    actionFlow.start.subscribers.foreach(x => x.runAction)
+    ActionFlow.runFlow(actionFlow)
 
   } // end of main
 }
