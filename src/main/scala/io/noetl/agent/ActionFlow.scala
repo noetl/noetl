@@ -10,12 +10,6 @@ case class NextAction(parallelism: Int = 1,
 
   def isDefined: Boolean = this.subscribers.nonEmpty
 
-//  def runNext(): Unit = if (this.isDefined) {
-//    Try(this.subscribers.foreach(x => x)) match {
-//      case Success(_) =>
-//      case Failure(ex) =>
-//    }
-//  }
 }
 
 object NextAction {
@@ -26,9 +20,6 @@ object NextAction {
       parallelism = Try(nextActionConf.parallelism.get.toInt).getOrElse(1),
       multithread = Try(nextActionConf.multithread.get.toInt).getOrElse(1),
       subscribers = Try(nextActionConf.subscribers.get).getOrElse(List.empty)
-          //nextActionConf.subscribers.get.map(
-        //actionKey => ActionFlow.conf2action(actions(actionKey), actions)
-      //)
      )
     ).getOrElse(new NextAction)
     case (_,_) => new NextAction
@@ -36,26 +27,50 @@ object NextAction {
 }
 
 
-case class ActionDependency(name: String, state: String)
-
 trait Action extends ActionBase {
 
+    // this is link to actions that this action may fork.
     val next: NextAction
+
+    // state is changed each time we call runAction. "Pending" is default. We may change the default name later.
     var state: ActionState = Pending
+
+    // populated by addDependency method
     var dependency: Vector[Action] = Vector.empty
 
+    /**
+      * addDependency is called any time we need to link this action with ancestor.
+      */
     def addDependency(action: Action): Unit = this.dependency = this.dependency ++ Vector(action)
 
+    /**
+     * Pending assigns a "PENDING" flag to the action state.
+     */
     def pending() = this.state = Pending
 
+    /**
+      * Processing method is called before actual execution of the given action is called.
+      */
     def processing() = this.state = Processing
 
+    /**
+      * Finished flags that this action is done successfully.
+      */
     def finished() = this.state = Finished
 
+    /**
+      * Failed  method should be assign when action run is failed by any reason.
+      */
     def failed() = this.state = Failed
 
+    /**
+      * isPending checks the state of this action.
+      */
     def isPending() = if (this.state == Pending) true else false
 
+    /**
+      * runAction method executes any command defined by actual action.
+      */
     def runAction(): Unit = {
         // filter actions from dependency list
 
@@ -306,18 +321,17 @@ case class ActionFlow(
         case Failure(ex) => false
     }
 
-//    def buildActionDependency() = {
-//        println("buildActionDependency")
-//        this.actions foreach  {case (name, action) => {
-//            val nextActions = action.next.subscribers
-//            nextActions.foreach(actionName => {
-//                if (actionExists(actionName))   {
-//                    this.getAction(actionName).addDependency( this.getAction(name))
-//                }
-//            })
-//        }
-//        }
-//    }
+    def buildActionDependency() = {
+        this.actions foreach  {case (name, action) => {
+            val nextActions = action.next.subscribers
+            nextActions.foreach(actionName => {
+                if (actionExists(actionName))   {
+                    this.getAction(actionName).addDependency( this.getAction(name))
+                }
+            })
+        }
+        }
+    }
 
 }
 
@@ -335,12 +349,13 @@ object ActionFlow {
         case (key, value) => (key, conf2action(value, workflow.actions))
        }
     )
-      buildActionDependency
+      // both way, either buildActionDependency from case class or from this companion object, would build an action dependencies.
+      //actionFlow.buildActionDependency
+      this.buildActionDependency
       actionFlow
   }
 
     def buildActionDependency(implicit actionFlow: ActionFlow) = {
-        println("buildActionDependency")
         actionFlow.actions foreach  {case (name, action) => {
             val nextActions = action.next.subscribers
             nextActions.foreach(actionName => {
@@ -361,23 +376,28 @@ object ActionFlow {
 
     def runNextAction(action: Action)(implicit actionFlow: ActionFlow): Unit = {
         getNextActions(action.next) match {
-            case Some(nextAction) => nextAction.foreach(action1 => {
-                action.runAction()
-                runNextAction(action1)
+            case Some(nextAction) => nextAction.foreach(actionEntry => {
+                actionEntry.runAction()
+                runNextAction(actionEntry)
             })
             case None =>
         }
     }
 
     def runFlow(implicit actionFlow: ActionFlow) = {
-        val start = actionFlow.start.subscribers.map(actionName => actionFlow.getAction(actionName))
 
-        start.foreach(action => {
-            action.runAction()
-            runNextAction(action)
-        })
-
+        getNextActions(actionFlow.start) match {
+            case Some(actionList) => {
+                actionList.foreach(action => {
+                    action.runAction()
+                    runNextAction(action)
+                })
+            }
+            case None => throw new Exception("Workflow starting point is not defined")
+        }
     }
+
+
 
   def conf2action(actionConf: ActionBase,
                   actions: Map[String, ActionConf]): Action = actionConf match {
