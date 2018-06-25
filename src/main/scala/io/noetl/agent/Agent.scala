@@ -6,25 +6,16 @@ object Agent {
 
   def main(args: Array[String]): Unit = {
 
-    if (args.isEmpty)
-      throw new IllegalArgumentException(
-        s"Path for config file is not provided")
+    // if (args.isEmpty)
+    //  throw new IllegalArgumentException(
+    //    s"Path for config file is not provided")
 
     val configPath = Try(args(0)).getOrElse(
       "src/main/resources/conf/tnotb-akuksin-xchg-rate-20180601.conf")
 
     val workflowConfig = validateWorkflowConfig(configPath)
 
-    val actionFlow = ActionFlow(workflowConfig)
-
-    //val start = workflowConfig.start.get.subscribers.get.map(actionKey =>
-    // workflowConfig.actions(actionKey))
-
-    //start.foreach(x => x.runAction)
-
-    //println(start.getClass.getName)
-
-    ActionFlow.runFlow(actionFlow)
+    ActionFlow(workflowConfig).runFlow
 
   } // end of main
 }

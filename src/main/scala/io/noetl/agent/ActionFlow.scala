@@ -26,6 +26,7 @@ object NextAction {
   }
 }
 
+// case class Dependency (actionName: String, state: ActionState)
 
 trait Action extends ActionBase {
 
@@ -37,6 +38,7 @@ trait Action extends ActionBase {
 
     // populated by addDependency method
     var dependency: Vector[Action] = Vector.empty
+    // var dependency: Vector[Dependency] = Vector.empty
 
     /**
       * addDependency is called any time we need to link this action with ancestor.
@@ -333,10 +335,12 @@ case class ActionFlow(
         }
     }
 
+    def runFlow = ActionFlow.runFlow(this)
+
 }
 
 object ActionFlow {
-  def apply(workflow: WorkflowConf): ActionFlow = {
+  def apply(implicit workflow: WorkflowConf): ActionFlow = {
       implicit val actionFlow = new ActionFlow(
       name = workflow.name,
       `type` = workflow.`type`,
@@ -371,6 +375,7 @@ object ActionFlow {
         if (nextAction.subscribers.isEmpty)
             None
         else
+            // in the filter we validate action name in the actions registry Map
             Some(nextAction.subscribers.filter(actionName => actionFlow.actionExists(actionName)).map(actionName => actionFlow.getAction(actionName)))
     }
 
