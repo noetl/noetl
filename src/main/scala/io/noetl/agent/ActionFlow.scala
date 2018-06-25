@@ -335,7 +335,7 @@ case class ActionFlow(
         }
     }
 
-    def runFlow = ActionFlow.runFlow(this)
+    def runFlow() = ActionFlow.runFlow(this)
 
 }
 
