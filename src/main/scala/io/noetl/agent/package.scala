@@ -24,7 +24,7 @@ package agent {
     def printMessage = "Empty action"
 
     def runPrint(msg: String): Unit = {
-      println(s"$getCurrentTime $msg")
+      println(s"$getCurrentTime runPrint $msg")
     }
   }
 

@@ -1,6 +1,11 @@
 package io.noetl.agent
 
+import monix.execution.Scheduler.Implicits.global
+import monix.reactive._
+import monix.execution.CancelableFuture
+import monix.eval.Task
 import scala.util.{Try,Success,Failure}
+import io.noetl.util._
 //import scala.collection.mutable.{Seq => mSeq}
 
 case class NextAction(parallelism: Int = 1,
@@ -73,19 +78,44 @@ trait Action extends ActionBase {
     /**
       * runAction method executes any command defined by actual action.
       */
-    def runAction(): Unit = {
+    def runAction()(implicit actionFlow: ActionFlow): Unit = {
         // filter actions from dependency list
 
         val dependencyCheck = this.dependency.filter(x => x.state != Finished)
+        //println(s"${getCurrentTime}  before ${this.printMessage}")
+        getCurrentTime
+        //println(s"""${getCurrentTime} ${this.displayName.get}  ${this.dependency.mkString(",")}""")
         if (dependencyCheck.isEmpty) {
-            this.processing()
-            Try(runPrint(this.printMessage)) match {
-                case Success(_) => this.finished()
-                case Failure(ex) => {
-                    this.failed()
-                    println(s"runAction failed ${ex}")
+            val task = Task({this.processing();runPrint(this.printMessage);this.finished();this})
+
+            val cancelable = task.runOnComplete { result =>
+                result match {
+                    case Success(value) => {
+                        println(s"${getCurrentTime} cancelable Success: ${value.displayName.get}")
+                        ActionFlow.runNextAction(value)
+                    }
+                    case Failure(ex) => {
+                        runPrint(s"cancelable ERROR: ${ex.getMessage}")
+                        this.failed()
+                    }
+
                 }
             }
+
+            task.runAsync
+
+            //val future: CancelableFuture[String] = task.runAsync
+
+            // future.foreach(runPrint)
+
+//            this.processing()
+//            Try(runPrint(this.printMessage)) match {
+//                case Success(_) => this.finished()
+//                case Failure(ex) => {
+//                    this.failed()
+//                    println(s"runAction failed ${ex}")
+//                }
+//            }
         }
     }
 }
@@ -383,7 +413,7 @@ object ActionFlow {
         getNextActions(action.next) match {
             case Some(nextAction) => nextAction.foreach(actionEntry => {
                 actionEntry.runAction()
-                runNextAction(actionEntry)
+                //runNextAction(actionEntry)
             })
             case None =>
         }
@@ -395,7 +425,7 @@ object ActionFlow {
             case Some(actionList) => {
                 actionList.foreach(action => {
                     action.runAction()
-                    runNextAction(action)
+                    //runNextAction(action)
                 })
             }
             case None => throw new Exception("Workflow starting point is not defined")
