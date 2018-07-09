@@ -1,5 +1,6 @@
 package io.noetl.agent
 
+import scala.io.StdIn
 import scala.util.Try
 
 object Agent {
@@ -11,11 +12,13 @@ object Agent {
     //    s"Path for config file is not provided")
 
     val configPath = Try(args(0)).getOrElse(
-      "src/main/resources/conf/tnotb-akuksin-xchg-rate-20180601.conf")
+      "src/main/resources/conf/tnotb-akuksin-xchg-rate-20180601_no_coments.conf")
 
     val workflowConfig = validateWorkflowConfig(configPath)
 
     ActionFlow(workflowConfig).runFlow
 
+    println(s"Press RETURN to stop...")
+    StdIn.readLine()
   } // end of main
 }

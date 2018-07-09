@@ -4,14 +4,14 @@ import monix.execution.Scheduler.Implicits.global
 import monix.reactive._
 import monix.execution.CancelableFuture
 import monix.eval.Task
-import scala.util.{Try,Success,Failure}
+import scala.util.{Try, Success, Failure}
 import io.noetl.util._
 //import scala.collection.mutable.{Seq => mSeq}
 
 case class NextAction(parallelism: Int = 1,
                       multithread: Int = 1,
                       subscribers: List[String] = List.empty)
-    extends NextActionBase {
+  extends NextActionBase {
 
   def isDefined: Boolean = this.subscribers.nonEmpty
 
@@ -19,15 +19,15 @@ case class NextAction(parallelism: Int = 1,
 
 object NextAction {
   def apply(nextActionConf: Option[NextActionConf],
-            actions: Map[String, ActionConf]): NextAction = (nextActionConf,actions) match {
-    case (Some(nextActionConf),actions: Map[String, ActionConf]) => Try(
+            actions: Map[String, ActionConf]): NextAction = (nextActionConf, actions) match {
+    case (Some(nextActionConf), actions: Map[String, ActionConf]) => Try(
       new NextAction(
-      parallelism = Try(nextActionConf.parallelism.get.toInt).getOrElse(1),
-      multithread = Try(nextActionConf.multithread.get.toInt).getOrElse(1),
-      subscribers = Try(nextActionConf.subscribers.get).getOrElse(List.empty)
-     )
+        parallelism = Try(nextActionConf.parallelism.get.toInt).getOrElse(1),
+        multithread = Try(nextActionConf.multithread.get.toInt).getOrElse(1),
+        subscribers = Try(nextActionConf.subscribers.get).getOrElse(List.empty)
+      )
     ).getOrElse(new NextAction)
-    case (_,_) => new NextAction
+    case (_, _) => new NextAction
   }
 }
 
@@ -35,98 +35,105 @@ object NextAction {
 
 trait Action extends ActionBase {
 
-    // this is link to actions that this action may fork.
-    val next: NextAction
+  // this is link to actions that this action may fork.
+  val next: NextAction
 
-    // state is changed each time we call runAction. "Pending" is default. We may change the default name later.
-    var state: ActionState = Pending
+  // state is changed each time we call runAction. "Pending" is default. We may change the default name later.
+  var state: ActionState = Pending
 
-    // populated by addDependency method
-    var dependency: Vector[Action] = Vector.empty
-    // var dependency: Vector[Dependency] = Vector.empty
+  // populated by addDependency method
+  var dependency: Vector[Action] = Vector.empty
+  // var dependency: Vector[Dependency] = Vector.empty
 
-    /**
-      * addDependency is called any time we need to link this action with ancestor.
-      */
-    def addDependency(action: Action): Unit = this.dependency = this.dependency ++ Vector(action)
+  /**
+    * addDependency is called any time we need to link this action with ancestor.
+    */
+  def addDependency(action: Action): Unit = this.dependency = this.dependency ++ Vector(action)
 
-    /**
-     * Pending assigns a "PENDING" flag to the action state.
-     */
-    def pending() = this.state = Pending
+  /**
+    * Pending assigns a "PENDING" flag to the action state.
+    */
+  def pending() = this.state = Pending
 
-    /**
-      * Processing method is called before actual execution of the given action is called.
-      */
-    def processing() = this.state = Processing
+  /**
+    * Processing method is called before actual execution of the given action is called.
+    */
+  def processing() = this.state = Processing
 
-    /**
-      * Finished flags that this action is done successfully.
-      */
-    def finished() = this.state = Finished
+  /**
+    * Finished flags that this action is done successfully.
+    */
+  def finished() = this.state = Finished
 
-    /**
-      * Failed  method should be assign when action run is failed by any reason.
-      */
-    def failed() = this.state = Failed
+  /**
+    * Failed  method should be assign when action run is failed by any reason.
+    */
+  def failed() = this.state = Failed
 
-    /**
-      * isPending checks the state of this action.
-      */
-    def isPending() = if (this.state == Pending) true else false
+  /**
+    * isPending checks the state of this action.
+    */
+  def isPending() = if (this.state == Pending) true else false
 
-    /**
-      * runAction method executes any command defined by actual action.
-      */
-    def runAction()(implicit actionFlow: ActionFlow): Unit = {
-        // filter actions from dependency list
+  /**
+    * runAction method executes any command defined by actual action.
+    */
+  def runAction()(implicit actionFlow: ActionFlow): Unit = {
+    // filter actions from dependency list
 
-        val dependencyCheck = this.dependency.filter(x => x.state != Finished)
-        //println(s"${getCurrentTime}  before ${this.printMessage}")
-        getCurrentTime
-        //println(s"""${getCurrentTime} ${this.displayName.get}  ${this.dependency.mkString(",")}""")
-        if (dependencyCheck.isEmpty) {
-            val task = Task({this.processing();runPrint(this.printMessage);this.finished();this})
+    val dependencyCheck = this.dependency.filter(x => x.state != Finished)
+    //println(s"${getCurrentTime}  before ${this.printMessage}")
+    getCurrentTime
+    //println(s"""${getCurrentTime} ${this.displayName.get}  ${this.dependency.mkString(",")}""")
+    if (dependencyCheck.isEmpty) {
+      val task = Task({
+        this.processing()
+        println(s"$getCurrentTime start Thread name ${Thread.currentThread().getName}")
+        Thread sleep 2000 // эмулируем длительное выполнение
+        runPrint(this.printMessage + s"    end Thread name ${Thread.currentThread().getName}")
+        this.finished()
+        this
+      })
 
-            val cancelable = task.runOnComplete { result =>
-                result match {
-                    case Success(value) => {
-                        println(s"${getCurrentTime} cancelable Success: ${value.displayName.get}")
-                        ActionFlow.runNextAction(value)
-                    }
-                    case Failure(ex) => {
-                        runPrint(s"cancelable ERROR: ${ex.getMessage}")
-                        this.failed()
-                    }
+      val cancelable = task.runOnComplete { result =>
+        result match {
+          case Success(value) => {
+            println(s"${getCurrentTime} cancelable Success: ${value.displayName.get} Thread name ${Thread.currentThread().getName}")
+            ActionFlow.runNextAction(value)
+          }
+          case Failure(ex) => {
+            runPrint(s"cancelable ERROR: ${ex.getMessage}")
+            this.failed()
+          }
 
-                }
-            }
-
-            task.runAsync
-
-            //val future: CancelableFuture[String] = task.runAsync
-
-            // future.foreach(runPrint)
-
-//            this.processing()
-//            Try(runPrint(this.printMessage)) match {
-//                case Success(_) => this.finished()
-//                case Failure(ex) => {
-//                    this.failed()
-//                    println(s"runAction failed ${ex}")
-//                }
-//            }
         }
+      }
+
+      //task.runAsync
+
+      //val future: CancelableFuture[String] = task.runAsync
+
+      // future.foreach(runPrint)
+
+      //            this.processing()
+      //            Try(runPrint(this.printMessage)) match {
+      //                case Success(_) => this.finished()
+      //                case Failure(ex) => {
+      //                    this.failed()
+      //                    println(s"runAction failed ${ex}")
+      //                }
+      //            }
     }
+  }
 }
 
 case class ActionFork(
-    displayName: Option[String],
-    description: Option[String],
-    next: NextAction,
-    var variables: Option[Map[String, String]]
-) extends Action
-    with ActionForkBase {
+                       displayName: Option[String],
+                       description: Option[String],
+                       next: NextAction,
+                       var variables: Option[Map[String, String]]
+                     ) extends Action
+  with ActionForkBase {
   override def printMessage = s"Fork call ${this.displayName} "
 }
 
@@ -143,12 +150,12 @@ object ActionFork {
 }
 
 case class ActionJoin(
-    displayName: Option[String],
-    description: Option[String],
-    next: NextAction,
-    var variables: Option[Map[String, String]]
-) extends Action
-    with ActionJoinBase {
+                       displayName: Option[String],
+                       description: Option[String],
+                       next: NextAction,
+                       var variables: Option[Map[String, String]]
+                     ) extends Action
+  with ActionJoinBase {
   override def printMessage = s"Join call ${this.displayName} "
 }
 
@@ -165,17 +172,17 @@ object ActionJoin {
 }
 
 case class ActionWebservice(
-    displayName: Option[String],
-    description: Option[String],
-    next: NextAction,
-    var variables: Option[Map[String, String]],
-    url: String,
-    httpMethod: String = "GET",
-    contentType: String = "application/json",
-    httpClientTimeout: Option[String],
-    outputPath: Option[String]
-) extends Action
-    with ActionWebserviceBase {
+                             displayName: Option[String],
+                             description: Option[String],
+                             next: NextAction,
+                             var variables: Option[Map[String, String]],
+                             url: String,
+                             httpMethod: String = "GET",
+                             contentType: String = "application/json",
+                             httpClientTimeout: Option[String],
+                             outputPath: Option[String]
+                           ) extends Action
+  with ActionWebserviceBase {
   override def printMessage =
     s"Webservice call ${this.displayName} - curl ${this.httpMethod} ${this.url}"
 }
@@ -198,16 +205,16 @@ object ActionWebservice {
 }
 
 case class ActionShell(
-    displayName: Option[String],
-    description: Option[String],
-    next: NextAction,
-    var variables: Option[Map[String, String]],
-    shellScript: Option[String],
-    scriptParams: Option[List[String]],
-    outputPath: Option[String],
-    var output: Option[String] = None
-) extends Action
-    with ActionShellBase {
+                        displayName: Option[String],
+                        description: Option[String],
+                        next: NextAction,
+                        var variables: Option[Map[String, String]],
+                        shellScript: Option[String],
+                        scriptParams: Option[List[String]],
+                        outputPath: Option[String],
+                        var output: Option[String] = None
+                      ) extends Action
+  with ActionShellBase {
   override def printMessage =
     s"Shell call  for ${this.displayName} - sh ${this.shellScript} ${this.scriptParams}"
 }
@@ -229,16 +236,16 @@ object ActionShell {
 }
 
 case class ActionJdbc(
-    displayName: Option[String],
-    description: Option[String],
-    next: NextAction,
-    var variables: Option[Map[String, String]],
-    databaseUrl: Option[String],
-    queryParams: Option[String],
-    queryString: Option[String],
-    var output: Option[String] = None
-) extends Action
-    with ActionJdbcBase {
+                       displayName: Option[String],
+                       description: Option[String],
+                       next: NextAction,
+                       var variables: Option[Map[String, String]],
+                       databaseUrl: Option[String],
+                       queryParams: Option[String],
+                       queryString: Option[String],
+                       var output: Option[String] = None
+                     ) extends Action
+  with ActionJdbcBase {
   override def printMessage =
     s"Jdbc call for ${this.displayName} - jdbc ${this.databaseUrl} ${this.queryParams} ${this.queryString}"
 }
@@ -260,19 +267,19 @@ object ActionJdbc {
 }
 
 case class ActionSsh(
-    displayName: Option[String],
-    description: Option[String],
-    next: NextAction,
-    var variables: Option[Map[String, String]],
-    sshHost: Option[String],
-    sshPort: Option[String],
-    sshUser: Option[String],
-    sshIdentityFile: Option[String],
-    shellScript: Option[String],
-    scriptParams: Option[String],
-    var output: Option[String] = None
-) extends Action
-    with ActionSshBase {
+                      displayName: Option[String],
+                      description: Option[String],
+                      next: NextAction,
+                      var variables: Option[Map[String, String]],
+                      sshHost: Option[String],
+                      sshPort: Option[String],
+                      sshUser: Option[String],
+                      sshIdentityFile: Option[String],
+                      shellScript: Option[String],
+                      scriptParams: Option[String],
+                      var output: Option[String] = None
+                    ) extends Action
+  with ActionSshBase {
   override def printMessage =
     s"Ssh call for ${this.displayName} ssh ${this.sshHost} ${this.sshPort} ${this.sshUser}"
 }
@@ -297,20 +304,20 @@ object ActionSsh {
 }
 
 case class ActionScp(
-    displayName: Option[String],
-    description: Option[String],
-    next: NextAction,
-    var variables: Option[Map[String, String]],
-    sourceHost: Option[String],
-    sourcePort: Option[String],
-    sourceUser: Option[String],
-    sourceIdentifyFile: Option[String],
-    sourcePath: Option[String],
-    targetHost: Option[String],
-    targetPath: Option[String],
-    overwriteTarget: String = "always"
-) extends Action
-    with ActionScpBase {
+                      displayName: Option[String],
+                      description: Option[String],
+                      next: NextAction,
+                      var variables: Option[Map[String, String]],
+                      sourceHost: Option[String],
+                      sourcePort: Option[String],
+                      sourceUser: Option[String],
+                      sourceIdentifyFile: Option[String],
+                      sourcePath: Option[String],
+                      targetHost: Option[String],
+                      targetPath: Option[String],
+                      overwriteTarget: String = "always"
+                    ) extends Action
+  with ActionScpBase {
   override def printMessage =
     s"Scp call for ${this.displayName} ssh ${this.sourceHost} ${this.sourcePort} ${this.sourceUser}"
 }
@@ -335,43 +342,44 @@ object ActionScp {
   }
 }
 
-case class Dependency (action: String, actions: List[String])
+case class Dependency(action: String, actions: List[String])
 
 case class ActionFlow(
-    name: String,
-    `type`: String,
-    displayName: Option[String],
-    description: Option[String],
-    start: NextAction,
-    var variables: Option[Map[String, String]],
-    input: Option[Map[String, String]],
-    actions: Map[String,Action]
-) extends WorkflowBase {
-    def getAction(actionName: String) = this.actions(actionName)
-    def actionExists(actionName: String): Boolean = Try(getAction(actionName: String)) match {
-        case Success(_) => true
-        case Failure(ex) => false
-    }
+                       name: String,
+                       `type`: String,
+                       displayName: Option[String],
+                       description: Option[String],
+                       start: NextAction,
+                       var variables: Option[Map[String, String]],
+                       input: Option[Map[String, String]],
+                       actions: Map[String, Action]
+                     ) extends WorkflowBase {
+  def getAction(actionName: String) = this.actions(actionName)
 
-    def buildActionDependency() = {
-        this.actions foreach  {case (name, action) => {
-            val nextActions = action.next.subscribers
-            nextActions.foreach(actionName => {
-                if (actionExists(actionName))   {
-                    this.getAction(actionName).addDependency( this.getAction(name))
-                }
-            })
-        }
-        }
-    }
+  def actionExists(actionName: String): Boolean = Try(getAction(actionName: String)) match {
+    case Success(_) => true
+    case Failure(ex) => false
+  }
 
-    def runFlow() = ActionFlow.runFlow(this)
+  def buildActionDependency() = {
+    this.actions foreach { case (name, action) => {
+      val nextActions = action.next.subscribers
+      nextActions.foreach(actionName => {
+        if (actionExists(actionName)) {
+          this.getAction(actionName).addDependency(this.getAction(name))
+        }
+      })
+    }
+    }
+  }
+
+  def runFlow() = ActionFlow.runFlow(this)
 
 }
 
 object ActionFlow {
   def apply(implicit workflow: WorkflowConf): ActionFlow = {
-      implicit val actionFlow = new ActionFlow(
+    implicit val actionFlow = new ActionFlow(
       name = workflow.name,
       `type` = workflow.`type`,
       displayName = workflow.displayName,
@@ -381,57 +389,56 @@ object ActionFlow {
       input = workflow.input,
       actions = workflow.actions map {
         case (key, value) => (key, conf2action(value, workflow.actions))
-       }
+      }
     )
-      // both way, either buildActionDependency from case class or from this companion object, would build an action dependencies.
-      //actionFlow.buildActionDependency
-      this.buildActionDependency
-      actionFlow
+    // both way, either buildActionDependency from case class or from this companion object, would build an action dependencies.
+    //actionFlow.buildActionDependency
+    this.buildActionDependency
+    actionFlow
   }
 
-    def buildActionDependency(implicit actionFlow: ActionFlow) = {
-        actionFlow.actions foreach  {case (name, action) => {
-            val nextActions = action.next.subscribers
-            nextActions.foreach(actionName => {
-                if (actionFlow.actionExists(actionName))   {
-                    actionFlow.getAction(actionName).addDependency( actionFlow.getAction(name))
-                }
-            })
+  def buildActionDependency(implicit actionFlow: ActionFlow) = {
+    actionFlow.actions foreach { case (name, action) => {
+      val nextActions = action.next.subscribers
+      nextActions.foreach(actionName => {
+        if (actionFlow.actionExists(actionName)) {
+          actionFlow.getAction(actionName).addDependency(actionFlow.getAction(name))
         }
-        }
+      })
     }
-
-    def getNextActions(nextAction: NextAction)(implicit actionFlow: ActionFlow): Option[List[Action]] = {
-        if (nextAction.subscribers.isEmpty)
-            None
-        else
-            // in the filter we validate action name in the actions registry Map
-            Some(nextAction.subscribers.filter(actionName => actionFlow.actionExists(actionName)).map(actionName => actionFlow.getAction(actionName)))
     }
+  }
 
-    def runNextAction(action: Action)(implicit actionFlow: ActionFlow): Unit = {
-        getNextActions(action.next) match {
-            case Some(nextAction) => nextAction.foreach(actionEntry => {
-                actionEntry.runAction()
-                //runNextAction(actionEntry)
-            })
-            case None =>
-        }
+  def getNextActions(nextAction: NextAction)(implicit actionFlow: ActionFlow): Option[List[Action]] = {
+    if (nextAction.subscribers.isEmpty)
+      None
+    else
+    // in the filter we validate action name in the actions registry Map
+      Some(nextAction.subscribers.filter(actionName => actionFlow.actionExists(actionName)).map(actionName => actionFlow.getAction(actionName)))
+  }
+
+  def runNextAction(action: Action)(implicit actionFlow: ActionFlow): Unit = {
+    getNextActions(action.next) match {
+      case Some(nextAction) => nextAction.foreach(actionEntry => {
+        actionEntry.runAction()
+        //runNextAction(actionEntry)
+      })
+      case None =>
     }
+  }
 
-    def runFlow(implicit actionFlow: ActionFlow) = {
+  def runFlow(implicit actionFlow: ActionFlow) = {
 
-        getNextActions(actionFlow.start) match {
-            case Some(actionList) => {
-                actionList.foreach(action => {
-                    action.runAction()
-                    //runNextAction(action)
-                })
-            }
-            case None => throw new Exception("Workflow starting point is not defined")
-        }
+    getNextActions(actionFlow.start) match {
+      case Some(actionList) => {
+        actionList.foreach(action => {
+          action.runAction()
+          //runNextAction(action)
+        })
+      }
+      case None => throw new Exception("Workflow starting point is not defined")
     }
-
+  }
 
 
   def conf2action(actionConf: ActionBase,
@@ -441,8 +448,8 @@ object ActionFlow {
     case webserviceConf: WebserviceConf =>
       ActionWebservice(webserviceConf, actions)
     case shellConf: ShellConf => ActionShell(shellConf, actions)
-    case jdbcConf: JdbcConf   => ActionJdbc(jdbcConf, actions)
-    case sshConf: SshConf     => ActionSsh(sshConf, actions)
-    case scpConf: ScpConf     => ActionScp(scpConf, actions)
+    case jdbcConf: JdbcConf => ActionJdbc(jdbcConf, actions)
+    case sshConf: SshConf => ActionSsh(sshConf, actions)
+    case scpConf: ScpConf => ActionScp(scpConf, actions)
   }
 } // end ActionFlow
