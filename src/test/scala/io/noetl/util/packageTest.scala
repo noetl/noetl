@@ -4,7 +4,7 @@ import org.scalatest.{FlatSpec, Matchers}
 import org.scalatest.exceptions.TestFailedException
 import java.util.UUID
 
-package object packageTest extends FlatSpec with Matchers {
+class packageTest extends FlatSpec with Matchers {
 
   info("Testing strip")
 

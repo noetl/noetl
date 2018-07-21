@@ -1,7 +1,7 @@
 import sbt._
 
 object  Dependencies {
-  val akkaVersion                = "2.4.20"
+  val akkaVersion                = "2.5.13"
   val akkaHttpVersion            = "10.0.11"
   val circeVersion               = "0.9.0"
   val akkaCirceVersion           = "1.19.0"
@@ -28,8 +28,9 @@ object  Dependencies {
 
   lazy val rootDependencies = Seq(
     "org.scalactic"              %% "scalactic"             % scalacticVersion,
+    "com.typesafe.akka"          %% "akka-actor"            % akkaVersion,
    // "com.typesafe.akka"          %% "akka-http"             % akkaHttpVersion,
-    "io.monix"                   %% "monix"                 % monixVersion,
+   // "io.monix"                   %% "monix"                 % monixVersion,
    // "io.circe"                   %% "circe-core"            % circeVersion,
    // "io.circe"                   %% "circe-generic"         % circeVersion,
    // "io.circe"                   %% "circe-parser"          % circeVersion,

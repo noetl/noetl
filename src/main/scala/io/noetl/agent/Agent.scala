@@ -1,21 +1,24 @@
 package io.noetl.agent
 
-import scala.util.Try
+import scala.io.StdIn
+import akka.actor.{ActorSystem, Props}
+
+import io.noetl.agent.FlowActor.Start
 
 object Agent {
 
   def main(args: Array[String]): Unit = {
+    println(s"MEIN Thread name ${Thread.currentThread().getName}")
+    val system = ActorSystem("noetl")
 
-    // if (args.isEmpty)
-    //  throw new IllegalArgumentException(
-    //    s"Path for config file is not provided")
+    val configPath = "src/main/resources/conf/sergey-agent-conf-prototype-20180720.conf"
+    val workflowConfig = parseWorkflowConfigWithFile(configPath)
+    val flowInstance = system.actorOf(Props(new FlowActor(workflowConfig)), "templateconfigname-instance-1")
 
-    val configPath = Try(args(0)).getOrElse(
-      "src/main/resources/conf/tnotb-akuksin-xchg-rate-20180601.conf")
+    flowInstance ! Start
 
-    val workflowConfig = validateWorkflowConfig(configPath)
-
-    ActionFlow(workflowConfig).runFlow
-
-  } // end of main
+    println(s"Press RETURN to stop...")
+    StdIn.readBoolean()
+    println(s"exit")
+  }
 }
