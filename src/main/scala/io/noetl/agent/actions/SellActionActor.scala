@@ -29,7 +29,7 @@ class SellActionActor(conf: ShellConf) extends Actor {
   }
 
   private def initState(conf: ShellConf): SellActionState = {
-    SellActionState(Pending, canSendMessage = List.empty ++ conf.tryStart, Map(conf.requirementsForStart.map { s => (s.actionKey, Pending) }: _*)) // todo implement requirementsForStart handler
+    SellActionState(Pending, canSendMessage = List.empty ++ conf.subscribers, Map(conf.runDependencies.map { s => (s.actionKey, Pending) }: _*)) // todo implement requirementsForStart handler
   }
 
   override def receive: Receive = {

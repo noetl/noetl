@@ -1,7 +1,7 @@
 package io.noetl.agent
 
 case class
-RequirementForStart(
+Dependency(
                      actionKey: String,
                      status: String,
                      description: Option[String]
@@ -10,16 +10,16 @@ RequirementForStart(
 sealed trait
 ActionConf {
   val displayName: String
-  val requirementsForStart: List[RequirementForStart]
-  val tryStart: List[String]
+  val runDependencies: List[Dependency]
+  val subscribers: List[String]
   val description: Option[String]
 }
 
 case class
 ShellConf(
            displayName: String,
-           requirementsForStart: List[RequirementForStart],
-           tryStart: List[String],
+           runDependencies: List[Dependency],
+           subscribers: List[String],
            variables: Option[Map[String, String]],
            shellScript: List[String],
            description: Option[String],
