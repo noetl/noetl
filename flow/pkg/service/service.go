@@ -1,6 +1,9 @@
 package service
 
-import "context"
+import (
+	"context"
+	"log"
+)
 
 // FlowService describes the service.
 type FlowService interface {
@@ -11,6 +14,8 @@ type basicFlowService struct{}
 
 func (b *basicFlowService) Config(ctx context.Context, s string) (rs string, err error) {
 	// TODO implement the business logic of Config
+	log.Printf("%+v", s)
+	rs = s
 	return rs, err
 }
 
