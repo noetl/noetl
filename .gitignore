@@ -2,6 +2,7 @@
 *.iml
 *.pyc
 target
+vendor
 .classpath
 .settings
 .project
