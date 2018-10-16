@@ -8,6 +8,10 @@ NoETL's (Not Only ETL) current python version is a prototype of a system to mana
 ## Quick Start
 
  `brew install dep`
+ 
  `dep ensure`
+ 
  `go run flow/cmd/main.go`
+ 
  `curl -XPOST -d '{"s": "test"}' localhost:8081/config`
+ 
