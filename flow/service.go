@@ -6,7 +6,6 @@ import (
 
 // IFlow это интерфейс нашего сервиса Flow
 type IFlow interface {
-
 	FlowPut(flowPutRequest) (bool, error)
 }
 
