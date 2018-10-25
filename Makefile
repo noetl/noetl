@@ -60,3 +60,6 @@ run:
 
 deploy:
 	kubectl apply -f deployment/
+
+destroy:
+	kubectl delete -f deployment/
