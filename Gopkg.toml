@@ -26,37 +26,17 @@
 
 
 [[constraint]]
+  name = "github.com/coreos/etcd"
+  version = "3.3.10"
+
+[[constraint]]
   name = "github.com/go-kit/kit"
   version = "0.7.0"
 
 [[constraint]]
-  name = "github.com/lightstep/lightstep-tracer-go"
-  version = "0.15.6"
-
-[[constraint]]
-  name = "github.com/oklog/oklog"
-  version = "0.3.2"
-
-[[constraint]]
-  name = "github.com/opentracing/opentracing-go"
-  version = "1.0.2"
-
-[[constraint]]
-  name = "github.com/openzipkin/zipkin-go-opentracing"
-  version = "0.3.4"
-
-[[constraint]]
   name = "github.com/prometheus/client_golang"
-  version = "0.8.0"
-
-[[constraint]]
-  branch = "master"
-  name = "sourcegraph.com/sourcegraph/appdash"
+  version = "0.9.0"
 
 [prune]
   go-tests = true
   unused-packages = true
-
-[[override]]
-  branch = "master"
-  name = "github.com/apache/thrift"

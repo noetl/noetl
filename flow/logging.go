@@ -1,4 +1,4 @@
-package main
+package flow
 
 import (
 	"time"
@@ -6,14 +6,14 @@ import (
 	"github.com/go-kit/kit/log"
 )
 
-type loggingMiddleware struct {
-	logger log.Logger
-	next   IFlow
+type LoggingMiddleware struct {
+	Logger log.Logger
+	Next   IFlow
 }
 
-func (mw loggingMiddleware) FlowPut(putRequest flowPutRequest) (output bool, err error) {
+func (mw LoggingMiddleware) FlowPut(putRequest FlowPutRequest) (output bool, err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		_ = mw.Logger.Log(
 			"method", "FlowPut",
 			"input", putRequest,
 			"output", output,
@@ -22,6 +22,6 @@ func (mw loggingMiddleware) FlowPut(putRequest flowPutRequest) (output bool, err
 		)
 	}(time.Now())
 
-	output, err = mw.next.FlowPut(putRequest) // тут мы вызовим следующюю миделвару или уже бизнеслогику сервиса
+	output, err = mw.Next.FlowPut(putRequest) // тут мы вызовим следующюю миделвару или уже бизнеслогику сервиса
 	return
 }

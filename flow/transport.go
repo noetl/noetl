@@ -1,4 +1,4 @@
-package main
+package flow
 
 import (
 	"context"
@@ -8,35 +8,35 @@ import (
 	"github.com/go-kit/kit/endpoint"
 )
 
-type flowPutRequest struct {
-	Id string `json:"id"`
+type FlowPutRequest struct {
+	Id     string `json:"id"`
 	Config string `json:"config"`
 }
 
-type flowPutResponse struct {
-	Success bool `json:"success"`
-	Err string `json:"err,omitempty"`
+type FlowPutResponse struct {
+	Success bool   `json:"success"`
+	Err     string `json:"err,omitempty"`
 }
 
-func makeFlowPutEndpoint(svc IFlow) endpoint.Endpoint {
+func MakeFlowPutEndpoint(svc IFlow) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
 		// todo 3) тут мы возвращаем конечную точку достуа а именно принимаем раскодированый json и вызываем метод нашей бизнес логики
-		req := request.(flowPutRequest)
+		req := request.(FlowPutRequest)
 		Success, err := svc.FlowPut(req)
 		if err != nil {
-			return flowPutResponse{Success, err.Error()}, nil
+			return FlowPutResponse{Success, err.Error()}, nil
 		}
-		return flowPutResponse{Success, ""}, nil
+		return FlowPutResponse{Success, ""}, nil
 		// и возвращаем ответ для фронтенда (тут мы возвращаем структуру она преобразуется в json в методе encodeResponse() 34 строчка)
 	}
 }
 
-func encodeResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
+func EncodeResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
 	// todo 5) тут мы собираем наш ответ для UI в json формат ответ который вернет функция makeFlowPutEndpoint 21 я строка
 	return json.NewEncoder(w).Encode(response)
 }
 
-func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, error) {
+func DecodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, error) {
 	// todo 2) тут мы раскодируем тело запроса
 	// и в этом же файле описаны методы и структуры для раскодирования и заворачивание в json (вообщем все для транспорта)
 	//switch r.Method {
@@ -51,17 +51,12 @@ func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, erro
 	//default:
 	//	// Give an error message.
 	//}
-	var request flowPutRequest
+	var request FlowPutRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return nil, err
 	}
 	return request, nil
 }
-
-
-
-
-
 
 // эта структура для другого запроса которого еще нет не обращайте внимание
 //type flowGetResponse struct {
@@ -69,7 +64,3 @@ func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, erro
 //	Config string `json:"config,omitempty"`
 //	Err string `json:"err,omitempty"`
 //}
-
-
-
-

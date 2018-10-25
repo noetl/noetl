@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"noetl/flow"
 	"os"
 
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
@@ -41,22 +42,21 @@ func main() {
 		Help:      "The result of each count method.",
 	}, []string{}) // no fields here
 
-	var flowServiceObject IFlow
+	var flowServiceObject flow.IFlow
 	// тут мы инициализируем наш сервис как структуру
-	flowServiceObject = flowService{}
-	flowServiceObject = loggingMiddleware{logger, flowServiceObject} // прошу обратить внимание что next тут есть ссылка на наш обьект сервиса
-	flowServiceObject = instrumentingMiddleware{requestCount, requestLatency, countResult, flowServiceObject} // прошу обратить внимание что next тут есть ссылка на обьект loggingMiddleware
+	flowServiceObject = flow.FlowService{}
+	flowServiceObject = flow.LoggingMiddleware{logger, flowServiceObject}                                          // прошу обратить внимание что next тут есть ссылка на наш обьект сервиса
+	flowServiceObject = flow.InstrumentingMiddleware{requestCount, requestLatency, countResult, flowServiceObject} // прошу обратить внимание что next тут есть ссылка на обьект loggingMiddleware
 	// функции миделвар должны называтся также чтобы можно было их так подключать в любом порядке
 	// в итоге эти миделвары свернутся в defer для метода FlowPut который находится в файле service.go
 	// Я пока писал это описание только понял в корне как оно работает.
 	// мне показалось такая реализация мидевар сложновата и мы в каждой миделваре явно вызываем следующюю миделвару если функцию миделвары переименовать то цепочка оборвется
 	// todo Существуют ли способы попроще для реализации этих вещей?
 	flowHandler := httptransport.NewServer(
-		makeFlowPutEndpoint(flowServiceObject),
-		decodeFlowPutRequest,
-		encodeResponse,
+		flow.MakeFlowPutEndpoint(flowServiceObject),
+		flow.DecodeFlowPutRequest,
+		flow.EncodeResponse,
 	)
-
 
 	// todo сейчас этот запрос работает вот таким образом
 	//MacBook-Pro-Yatsina:noetl yatsinaserhii$ curl -XPOST -d'{"id":"templates/directory1/demo1", "config": "содержимое конфига"}' localhost:8080/flow
@@ -72,14 +72,9 @@ func main() {
 	// вызывается
 	http.Handle("/flow", flowHandler)
 
-
-
-
-
-
 	// todo нам нужно обработать options запросы с браузера еще для всех запросов с админки UI
 	// https://stackoverflow.com/questions/22972066/how-to-handle-preflight-cors-requests-on-a-go-server#answer-49213333
 	http.Handle("/metrics", promhttp.Handler())
-	logger.Log("msg", "HTTP", "addr", ":8080")
-	logger.Log("err", http.ListenAndServe(":8080", nil))
+	logger.Log("msg", "HTTP", "addr", ":8888")
+	logger.Log("err", http.ListenAndServe(":8888", nil))
 }

@@ -1,4 +1,4 @@
-package main
+package flow
 
 import (
 	"errors"
@@ -6,12 +6,13 @@ import (
 
 // IFlow это интерфейс нашего сервиса Flow
 type IFlow interface {
-	FlowPut(flowPutRequest) (bool, error)
+	FlowPut(FlowPutRequest) (bool, error)
 }
 
-type flowService struct{}
+type FlowService struct{}
+
 // эта функция есть бизнес логика для записи наших конфигов в базу данных
-func (flowService) FlowPut(conf flowPutRequest) (bool, error) {
+func (f FlowService) FlowPut(conf FlowPutRequest) (bool, error) {
 	if conf.Id == "" { // если пришел пустой id
 		return false, errors.New("flow Id should not be empty")
 	}
