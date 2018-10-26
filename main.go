@@ -31,7 +31,7 @@ func main() {
 	etcdDataBaseClientApi := clientv3.NewKV(etcdDataBaseClient)
 
 	var (
-		addr     = envString("PORT", "3000")
+		addr     = envString("PORT", "8888")
 		httpAddr = flag.String("http.addr", ":"+addr, "HTTP listen address")
 	)
 
@@ -84,14 +84,3 @@ func envString(env, fallback string) string {
 	return e
 }
 
-// todo сейчас этот запрос работает вот таким образом
-//MacBook-Pro-Yatsina:noetl yatsinaserhii$ curl -XPOST -d'{"id":"templates/directory1/demo1", "config": "содержимое конфига"}' localhost:8080/flow
-//{"success":true}
-//MacBook-Pro-Yatsina:noetl yatsinaserhii$ curl -XPUT -d'{"id":"templates/directory1/demo1", "config": "содержимое конфига"}' localhost:8080/flow
-//{"success":true}
-//MacBook-Pro-Yatsina:noetl yatsinaserhii$ curl -XGET -d'{"id":"templates/directory1/demo1", "config": "содержимое конфига"}' localhost:8080/flow
-//{"success":true}
-// как видем нам на патерне /flow нужно только PUT остальные пусть 500тят
-// todo Все это работает сейчас так:
-// todo 1) когда мы вызываем
-// curl -X{не важно какой метод} -d'{"id":"templates/directory1/demo1", "config": "содержимое конфига"}' localhost:8080/flow

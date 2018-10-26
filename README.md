@@ -6,12 +6,17 @@ NoETL's (Not Only ETL) current python version is a prototype of a system to mana
 [Gitter chat](https://gitter.im/noetl/noetl)
 
 ## Quick Start
+ `brew install etcd`
+
+ `brew services start etcd`
 
  `brew install dep`
  
  `dep ensure`
  
- `go run flow/cmd/main.go`
+ `go run main.go`
  
- `curl -XPOST -d '{"s": "test"}' localhost:8081/config`
+ `curl -XPUT -d'{"id":"demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/v1/template`
+ 
+ `curl -XGET localhost:8888/flow/v1/template/demo2`
  
