@@ -53,9 +53,7 @@ func (mw *instrumentingService) FlowPut(putRequest flowPutRequest) (output bool,
 		}
 
 	}(time.Now())
-
-	output, err = mw.Service.FlowPut(putRequest)
-	return
+	return mw.Service.FlowPut(putRequest)
 }
 
 func (mw *instrumentingService) FlowGet(id string) (config string, err error) {
@@ -70,7 +68,5 @@ func (mw *instrumentingService) FlowGet(id string) (config string, err error) {
 		}
 
 	}(time.Now())
-
-	config, err = mw.Service.FlowGet(id)
-	return
+	return mw.Service.FlowGet(id)
 }

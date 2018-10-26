@@ -27,9 +27,7 @@ func (mw *loggingService) FlowPut(putRequest flowPutRequest) (output bool, err e
 			"took", time.Since(begin),
 		)
 	}(time.Now())
-
-	output, err = mw.Service.FlowPut(putRequest)
-	return
+	return mw.Service.FlowPut(putRequest)
 }
 
 func (mw *loggingService) FlowGet(id string) (config string, err error) {
@@ -42,7 +40,5 @@ func (mw *loggingService) FlowGet(id string) (config string, err error) {
 			"took", time.Since(begin),
 		)
 	}(time.Now())
-
-	config, err = mw.Service.FlowGet(id)
-	return
+	return  mw.Service.FlowGet(id)
 }
