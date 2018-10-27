@@ -1,29 +1,47 @@
 package flow
 
 import (
+	"context"
 	"errors"
+	"github.com/coreos/etcd/clientv3"
+	"time"
 )
 
-// IFlow это интерфейс нашего сервиса Flow
-type IFlow interface {
-	FlowPut(FlowPutRequest) (bool, error)
+// Service это интерфейс нашего сервиса Flow
+type Service interface {
+	FlowPut(flowPutRequest) (bool, error)
+	FlowGet(id string) (string, error)
 }
 
-type FlowService struct{}
+// ErrInvalidArgument is returned when one or more arguments are invalid.
+var ErrInvalidArgument = errors.New("invalid argument")
 
-// эта функция есть бизнес логика для записи наших конфигов в базу данных
-func (f FlowService) FlowPut(conf FlowPutRequest) (bool, error) {
-	if conf.Id == "" { // если пришел пустой id
+type service struct {
+	etcdDataBaseClientApi clientv3.KV
+}
+
+func NewService(etcdDataBaseClientApi clientv3.KV) Service {
+	return &service{etcdDataBaseClientApi}
+}
+
+func (f *service) FlowPut(conf flowPutRequest) (bool, error) {
+	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	if conf.Id == "" {
 		return false, errors.New("flow Id should not be empty")
 	}
-
-	// todo 4) тут наша бизнес логика (а именно сохраняем в базу данных наш конфиг)
-	// etcdDataBaseClientApi это ссылка на методы работы с базой смотреть фаил noetl/flow/etcd.go
-	// etcd.go (внем просто примеры как ее использовать наш конечный код не обязательно там должен быть)
-	// etcdDataBaseClientApi.Put(ctx, conf.Id, conf.config)
-	// пример etcdDataBaseClientApi.Put(ctx, "/templates/directory1/demo1", "содержимое конфига который в demo1")
-	// эта команда сохранит конфиг по id /templates/directory1/demo1 причем если этого конфига нету метод put сам его стоздаст в базе
-	// а если id есть то пишет в него не перезаписывая а ведя историю изменений конфига
-	// подробнее можно почитать о клиенте для базы тут https://github.com/etcd-io/etcd/tree/master/clientv3
+	f.etcdDataBaseClientApi.Put(ctxForEtcd, conf.Id, conf.Config)
 	return true, nil
+}
+
+func (f *service) FlowGet(id string) (string, error) {
+	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	gr, err := f.etcdDataBaseClientApi.Get(ctxForEtcd, id)
+	if err != nil {
+		return "", err
+	}
+	if len(gr.Kvs)==0 {
+		return "", errors.New("config id not found")
+	}
+
+	return string(gr.Kvs[0].Value), nil
 }

@@ -6,22 +6,39 @@ import (
 	"github.com/go-kit/kit/log"
 )
 
-type LoggingMiddleware struct {
-	Logger log.Logger
-	Next   IFlow
+type loggingService struct {
+	logger log.Logger
+	Service Service
 }
 
-func (mw LoggingMiddleware) FlowPut(putRequest FlowPutRequest) (output bool, err error) {
+// NewLoggingService returns a new instance of a logging Service.
+func NewLoggingService(logger log.Logger, s Service) Service {
+	return &loggingService{logger, s}
+}
+
+func (mw *loggingService) FlowPut(putRequest flowPutRequest) (output bool, err error) {
 	defer func(begin time.Time) {
-		_ = mw.Logger.Log(
+		_ = mw.logger.Log(
 			"method", "FlowPut",
-			"input", putRequest,
+			"input.id", putRequest.Id,
+			"input.config", putRequest.Config,
 			"output", output,
 			"err", err,
 			"took", time.Since(begin),
 		)
 	}(time.Now())
+	return mw.Service.FlowPut(putRequest)
+}
 
-	output, err = mw.Next.FlowPut(putRequest) // тут мы вызовим следующюю миделвару или уже бизнеслогику сервиса
-	return
+func (mw *loggingService) FlowGet(id string) (config string, err error) {
+	defer func(begin time.Time) {
+		_ = mw.logger.Log(
+			"method", "FlowGet",
+			"configId", id,
+			"config", config,
+			"err", err,
+			"took", time.Since(begin),
+		)
+	}(time.Now())
+	return  mw.Service.FlowGet(id)
 }
