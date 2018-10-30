@@ -16,6 +16,18 @@ func NewLoggingService(logger log.Logger, s Service) Service {
 	return &loggingService{logger, s}
 }
 
+func (mw *loggingService) FlowsDirectoryDelete(request flowsDirectoryDeleteRequest) (output bool, err error) {
+	defer func(begin time.Time) {
+		_ = mw.logger.Log(
+			"method", "FlowsDirectoryDelete",
+			"input.Path", request.Path,
+			"output", output,
+			"err", err,
+			"took", time.Since(begin),
+		)
+	}(time.Now())
+	return mw.Service.FlowsDirectoryDelete(request)
+}
 
 func (mw *loggingService) FlowDelete(request flowDeleteRequest) (output bool, err error) {
 	defer func(begin time.Time) {

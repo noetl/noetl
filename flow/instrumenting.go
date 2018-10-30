@@ -3,7 +3,6 @@ package flow
 import (
 	"fmt"
 	"time"
-
 	"github.com/go-kit/kit/metrics"
 	kitprometheus "github.com/go-kit/kit/metrics/prometheus"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
@@ -39,6 +38,21 @@ func NewInstrumentingService(s Service) Service {
 		}, []string{}),
 		Service: s,
 	}
+}
+
+func (mw *instrumentingService) FlowsDirectoryDelete(request flowsDirectoryDeleteRequest) (output bool, err error) {
+	defer func(begin time.Time) {
+		lvs := []string{"method", "FlowsDirectoryDelete", "error", fmt.Sprint(err != nil)}
+		mw.requestCount.With(lvs...).Add(1)
+		mw.requestLatency.With(lvs...).Observe(time.Since(begin).Seconds())
+		if output {
+			mw.countResult.Observe(1)
+		} else {
+			mw.countResult.Observe(0)
+		}
+
+	}(time.Now())
+	return mw.Service.FlowsDirectoryDelete(request)
 }
 
 func (mw *instrumentingService) FlowDelete(request flowDeleteRequest) (output bool, err error) {

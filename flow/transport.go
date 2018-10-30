@@ -4,13 +4,41 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
 	"net/http"
-
 	"github.com/go-kit/kit/endpoint"
 	kitlog "github.com/go-kit/kit/log"
 	kithttp "github.com/go-kit/kit/transport/http"
 )
 
+type flowsDirectoryDeleteRequest struct {
+	// config id
+	Path     string `json:"path"`
+}
+
+type flowsDirectoryDeleteResponse struct {
+	// is successfully request
+	Success bool `json:"success"`
+}
+
+func makeFlowsDirectoryDeleteEndpoint(svc Service) endpoint.Endpoint {
+	return func(_ context.Context, request interface{}) (interface{}, error) {
+		req := request.(flowsDirectoryDeleteRequest)
+		success, err := svc.FlowsDirectoryDelete(req)
+		if err != nil {
+			return nil, err
+		}
+		return flowsDirectoryDeleteResponse{success}, nil
+	}
+}
+
+func decodeFlowsDirectoryDeleteRequest(_ context.Context, r *http.Request) (interface{}, error) {
+	var request flowsDirectoryDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return nil, errors.Wrap(err, "wrong json format")
+	}
+	return request, nil
+}
 
 type flowDeleteRequest struct {
 	// config id
@@ -18,62 +46,69 @@ type flowDeleteRequest struct {
 }
 
 type flowDeleteResponse struct {
+	// is successfully request
 	Success bool `json:"success"`
 }
 
 func makeFlowDeleteEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
 		req := request.(flowDeleteRequest)
-		Success, err := svc.FlowDelete(req)
+		success, err := svc.FlowDelete(req)
 		if err != nil {
 			return nil, err
 		}
-		return flowDeleteResponse{Success}, nil
+		return flowDeleteResponse{success}, nil
 	}
 }
 
 func decodeFlowDeleteRequest(_ context.Context, r *http.Request) (interface{}, error) {
 	var request flowDeleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "wrong json format")
 	}
 	return request, nil
 }
 
 type flowPostRequest struct {
+	// config id
 	Id     string `json:"id"`
+	// configuration contents
 	Config string `json:"config"`
 }
 
 type flowPostResponse struct {
+	// is successfully request
 	Success bool `json:"success"`
 }
 
 func makeFlowPostEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
 		req := request.(flowPostRequest)
-		Success, err := svc.FlowPost(req)
+		success, err := svc.FlowPost(req)
 		if err != nil {
 			return nil, err
 		}
-		return flowPostResponse{Success}, nil
+		return flowPostResponse{success}, nil
 	}
 }
 
 func decodeFlowPostRequest(_ context.Context, r *http.Request) (interface{}, error) {
 	var request flowPostRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "wrong json format")
 	}
 	return request, nil
 }
 
 type flowPutRequest struct {
+	// config id
 	Id     string `json:"id"`
+	// configuration contents
 	Config string `json:"config"`
 }
 
 type flowPutResponse struct {
+	// is successfully request
 	Success bool `json:"success"`
 }
 
@@ -91,17 +126,20 @@ func makeFlowPutEndpoint(svc Service) endpoint.Endpoint {
 func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, error) {
 	var request flowPutRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "wrong json format")
 	}
 	return request, nil
 }
 
 type flowGetRequest struct {
+	// config id
 	Id string `json:"id"`
 }
 
 type flowGetResponse struct {
+	// is successfully request
 	Success bool   `json:"success"`
+	// configuration contents
 	Config  string `json:"config"`
 }
 
@@ -119,22 +157,10 @@ func makeFlowGetEndpoint(svc Service) endpoint.Endpoint {
 func decodeFlowGetRequest(_ context.Context, r *http.Request) (interface{}, error) {
 	var request flowGetRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "wrong json format")
 	}
 	return request, nil
 }
-
-/* example for routing treatment
-var errBadRoute = errors.New("bad route")
-func decodeFlowGetRequest(_ context.Context, r *http.Request) (interface{}, error) {
-	vars := mux.Vars(r)
-	id, ok := vars["id"]
-	if !ok {
-		return nil, errBadRoute
-	}
-	return flowGetRequest{Id: id}, nil
-}
-*/
 
 // MakeHandler returns a handler for the booking service.
 func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
@@ -171,8 +197,15 @@ func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
 		opts...,
 	)
 
-	r := mux.NewRouter()
+	flowsDirectoryDeleteHandler := kithttp.NewServer(
+		makeFlowsDirectoryDeleteEndpoint(s),
+		decodeFlowsDirectoryDeleteRequest,
+		encodeResponse,
+		opts...,
+	)
 
+	r := mux.NewRouter()
+	r.Handle("/flow/v1/templates", flowsDirectoryDeleteHandler).Methods("DELETE")
 	r.Handle("/flow/v1/template", flowDeleteHandler).Methods("DELETE")
 	r.Handle("/flow/v1/template", flowPostHandler).Methods("POST")
 	r.Handle("/flow/v1/template", flowPutHandler).Methods("PUT")
@@ -181,13 +214,13 @@ func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
 	return r
 }
 
-// for all requests
 func encodeResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
 	return json.NewEncoder(w).Encode(response)
 }
 
-// encode errors from business-logic
+// error response for all request
 type failureResponse struct {
+	// is successfully request
 	Success bool   `json:"success"`
 	Err     string `json:"error,omitempty"`
 }
