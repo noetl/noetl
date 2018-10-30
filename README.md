@@ -16,7 +16,11 @@ NoETL's (Not Only ETL) current python version is a prototype of a system to mana
  
  `go run main.go`
  
- `curl -XPUT -d'{"id":"demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/v1/template`
+ `curl -XPOST -d'{"id":"/templates/demo2", "config": "the contents of the config /templates/demo2"}' localhost:8888/flow/v1/template`
  
- `curl -XGET localhost:8888/flow/v1/template/demo2`
+ `curl -XGET -d'{"id":"/templates/demo2"}' localhost:8888/flow/v1/template`
+ 
+ `curl -XPUT -d'{"id":"/templates/demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/v1/template`
+ 
+ `curl -XDELETE -d'{"id":"/templates/"}' localhost:8888/flow/v1/template`
  

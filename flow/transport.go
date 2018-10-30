@@ -3,8 +3,6 @@ package flow
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"github.com/gorilla/mux"
 	"net/http"
 
@@ -13,36 +11,85 @@ import (
 	kithttp "github.com/go-kit/kit/transport/http"
 )
 
+// flowDelete
+type flowDeleteRequest struct {
+	Id     string `json:"id"`
+}
+
+type flowDeleteResponse struct {
+	Success bool `json:"success"`
+}
+
+func makeFlowDeleteEndpoint(svc Service) endpoint.Endpoint {
+	return func(_ context.Context, request interface{}) (interface{}, error) {
+		req := request.(flowDeleteRequest)
+		Success, err := svc.FlowDelete(req)
+		if err != nil {
+			return nil, err
+		}
+		return flowDeleteResponse{Success}, nil
+	}
+}
+
+func decodeFlowDeleteRequest(_ context.Context, r *http.Request) (interface{}, error) {
+	var request flowDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return nil, err
+	}
+	return request, nil
+}
+
+// flowPost
+type flowPostRequest struct {
+	Id     string `json:"id"`
+	Config string `json:"config"`
+}
+
+type flowPostResponse struct {
+	Success bool `json:"success"`
+}
+
+func makeFlowPostEndpoint(svc Service) endpoint.Endpoint {
+	return func(_ context.Context, request interface{}) (interface{}, error) {
+		req := request.(flowPostRequest)
+		Success, err := svc.FlowPost(req)
+		if err != nil {
+			return nil, err
+		}
+		return flowPostResponse{Success}, nil
+	}
+}
+
+func decodeFlowPostRequest(_ context.Context, r *http.Request) (interface{}, error) {
+	var request flowPostRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return nil, err
+	}
+	return request, nil
+}
+
+// flowPut
 type flowPutRequest struct {
 	Id     string `json:"id"`
 	Config string `json:"config"`
 }
 
 type flowPutResponse struct {
-	Success bool   `json:"success"`
-	Err     string `json:"err,omitempty"`
+	Success bool `json:"success"`
 }
 
 func makeFlowPutEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
-		// todo 3) тут мы возвращаем конечную точку достуа а именно принимаем раскодированый json и вызываем метод нашей бизнес логики
 		req := request.(flowPutRequest)
 		Success, err := svc.FlowPut(req)
 		if err != nil {
-			return flowPutResponse{Success, err.Error()}, nil
+			return nil, err
 		}
-		return flowPutResponse{Success, ""}, nil
-		// и возвращаем ответ для фронтенда (тут мы возвращаем структуру она преобразуется в json в методе encodeResponse() 34 строчка)
+		return flowPutResponse{Success}, nil
 	}
 }
 
-func encodeResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
-	// todo 5) тут мы собираем наш ответ для UI в json формат ответ который вернет функция makeFlowPutEndpoint 21 я строка
-	return json.NewEncoder(w).Encode(response)
-}
-
 func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, error) {
-	// todo 2) тут мы раскодируем тело запроса
 	var request flowPutRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return nil, err
@@ -50,8 +97,9 @@ func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, erro
 	return request, nil
 }
 
+// flowGet
 type flowGetRequest struct {
-	Id string
+	Id string `json:"id"`
 }
 
 type flowGetResponse struct {
@@ -61,17 +109,24 @@ type flowGetResponse struct {
 
 func makeFlowGetEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
-		fmt.Println(request)
 		req := request.(flowGetRequest)
 		Config, err := svc.FlowGet(req.Id)
 		if err != nil {
-			return flowPutResponse{false, err.Error()}, nil
+			return nil, err
 		}
 		return flowGetResponse{true, Config}, nil
-		// и возвращаем ответ для фронтенда (тут мы возвращаем структуру она преобразуется в json в методе encodeResponse() 34 строчка)
 	}
 }
 
+func decodeFlowGetRequest(_ context.Context, r *http.Request) (interface{}, error) {
+	var request flowGetRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return nil, err
+	}
+	return request, nil
+}
+
+/* example for routing treatment
 var errBadRoute = errors.New("bad route")
 func decodeFlowGetRequest(_ context.Context, r *http.Request) (interface{}, error) {
 	vars := mux.Vars(r)
@@ -81,7 +136,7 @@ func decodeFlowGetRequest(_ context.Context, r *http.Request) (interface{}, erro
 	}
 	return flowGetRequest{Id: id}, nil
 }
-
+*/
 
 // MakeHandler returns a handler for the booking service.
 func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
@@ -104,24 +159,42 @@ func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
 		opts...,
 	)
 
+	flowPostHandler := kithttp.NewServer(
+		makeFlowPostEndpoint(s),
+		decodeFlowPostRequest,
+		encodeResponse,
+		opts...,
+	)
+
+	flowDeleteHandler := kithttp.NewServer(
+		makeFlowDeleteEndpoint(s),
+		decodeFlowDeleteRequest,
+		encodeResponse,
+		opts...,
+	)
+
 	r := mux.NewRouter()
 
-	//r.Handle("/flow/v1/template", bookCargoHandler).Methods("POST")
+	r.Handle("/flow/v1/template", flowDeleteHandler).Methods("DELETE")
+	r.Handle("/flow/v1/template", flowPostHandler).Methods("POST")
 	r.Handle("/flow/v1/template", flowPutHandler).Methods("PUT")
-	r.Handle("/flow/v1/template/{id}", flowGetHandler).Methods("GET")
+	r.Handle("/flow/v1/template", flowGetHandler).Methods("GET")
 
 	return r
 }
+
+// for all requests
+func encodeResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
+	return json.NewEncoder(w).Encode(response)
+}
+
 // encode errors from business-logic
+type failureResponse struct {
+	Success bool   `json:"success"`
+	Err     string `json:"error,omitempty"`
+}
+
 func encodeError(_ context.Context, err error, w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	switch err {
-	case ErrInvalidArgument:
-		w.WriteHeader(http.StatusBadRequest)
-	default:
-		w.WriteHeader(http.StatusInternalServerError)
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"error": err.Error(),
-	})
+	json.NewEncoder(w).Encode(failureResponse{false, err.Error()})
 }

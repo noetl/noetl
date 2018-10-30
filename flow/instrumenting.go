@@ -37,11 +37,41 @@ func NewInstrumentingService(s Service) Service {
 			Name:      "count_result",
 			Help:      "The result of each count method.",
 		}, []string{}),
-		Service:        s,
+		Service: s,
 	}
 }
 
-func (mw *instrumentingService) FlowPut(putRequest flowPutRequest) (output bool, err error) {
+func (mw *instrumentingService) FlowDelete(request flowDeleteRequest) (output bool, err error) {
+	defer func(begin time.Time) {
+		lvs := []string{"method", "FlowDelete", "error", fmt.Sprint(err != nil)}
+		mw.requestCount.With(lvs...).Add(1)
+		mw.requestLatency.With(lvs...).Observe(time.Since(begin).Seconds())
+		if output {
+			mw.countResult.Observe(1)
+		} else {
+			mw.countResult.Observe(0)
+		}
+
+	}(time.Now())
+	return mw.Service.FlowDelete(request)
+}
+
+func (mw *instrumentingService) FlowPost(request flowPostRequest) (output bool, err error) {
+	defer func(begin time.Time) {
+		lvs := []string{"method", "FlowPost", "error", fmt.Sprint(err != nil)}
+		mw.requestCount.With(lvs...).Add(1)
+		mw.requestLatency.With(lvs...).Observe(time.Since(begin).Seconds())
+		if output {
+			mw.countResult.Observe(1)
+		} else {
+			mw.countResult.Observe(0)
+		}
+
+	}(time.Now())
+	return mw.Service.FlowPost(request)
+}
+
+func (mw *instrumentingService) FlowPut(request flowPutRequest) (output bool, err error) {
 	defer func(begin time.Time) {
 		lvs := []string{"method", "FlowPut", "error", fmt.Sprint(err != nil)}
 		mw.requestCount.With(lvs...).Add(1)
@@ -53,7 +83,7 @@ func (mw *instrumentingService) FlowPut(putRequest flowPutRequest) (output bool,
 		}
 
 	}(time.Now())
-	return mw.Service.FlowPut(putRequest)
+	return mw.Service.FlowPut(request)
 }
 
 func (mw *instrumentingService) FlowGet(id string) (config string, err error) {
@@ -61,7 +91,7 @@ func (mw *instrumentingService) FlowGet(id string) (config string, err error) {
 		lvs := []string{"method", "FlowPut", "error", fmt.Sprint(err != nil)}
 		mw.requestCount.With(lvs...).Add(1)
 		mw.requestLatency.With(lvs...).Observe(time.Since(begin).Seconds())
-		if err!=nil {
+		if err != nil {
 			mw.countResult.Observe(1)
 		} else {
 			mw.countResult.Observe(0)
