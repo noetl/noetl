@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"errors"
+
 	"github.com/coreos/etcd/clientv3"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ func (f *service) FlowDelete(conf flowDeleteRequest) (bool, error) {
 	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	gr, err := f.etcdClientApi.Delete(ctxForEtcd, conf.Id, clientv3.WithPrefix())
 	if err != nil {
-		return false, err
+		return false, err // todo implement wrap https://github.com/pkg/errors
 	}
 	if gr.Deleted==0 {
 		return false, errors.New("no configs with prefix id [" + conf.Id + "]")

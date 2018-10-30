@@ -11,8 +11,9 @@ import (
 	kithttp "github.com/go-kit/kit/transport/http"
 )
 
-// flowDelete
+
 type flowDeleteRequest struct {
+	// config id
 	Id     string `json:"id"`
 }
 
@@ -39,7 +40,6 @@ func decodeFlowDeleteRequest(_ context.Context, r *http.Request) (interface{}, e
 	return request, nil
 }
 
-// flowPost
 type flowPostRequest struct {
 	Id     string `json:"id"`
 	Config string `json:"config"`
@@ -68,7 +68,6 @@ func decodeFlowPostRequest(_ context.Context, r *http.Request) (interface{}, err
 	return request, nil
 }
 
-// flowPut
 type flowPutRequest struct {
 	Id     string `json:"id"`
 	Config string `json:"config"`
@@ -81,11 +80,11 @@ type flowPutResponse struct {
 func makeFlowPutEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
 		req := request.(flowPutRequest)
-		Success, err := svc.FlowPut(req)
+		success, err := svc.FlowPut(req)
 		if err != nil {
 			return nil, err
 		}
-		return flowPutResponse{Success}, nil
+		return flowPutResponse{success}, nil
 	}
 }
 
@@ -97,7 +96,6 @@ func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, erro
 	return request, nil
 }
 
-// flowGet
 type flowGetRequest struct {
 	Id string `json:"id"`
 }
@@ -110,11 +108,11 @@ type flowGetResponse struct {
 func makeFlowGetEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
 		req := request.(flowGetRequest)
-		Config, err := svc.FlowGet(req.Id)
+		config, err := svc.FlowGet(req.Id)
 		if err != nil {
 			return nil, err
 		}
-		return flowGetResponse{true, Config}, nil
+		return flowGetResponse{true, config}, nil
 	}
 }
 
