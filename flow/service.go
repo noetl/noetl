@@ -35,7 +35,11 @@ func NewService(etcdClientApi clientv3.KV) Service {
 
 func (f *service) FlowDirectoryTreeSave(treeState string) (error) {
 	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	_, err := f.etcdClientApi.Put(ctxForEtcd, "treeDirectoryState", treeState)
+	_, err := f.etcdClientApi.Delete(ctxForEtcd, "treeDirectoryState")
+	if err != nil {
+		return errors.Wrap(err, "can not save directory tree state")
+	}
+	_, err = f.etcdClientApi.Put(ctxForEtcd, "treeDirectoryState", treeState)
 	if err != nil {
 		return errors.Wrap(err, "can not save directory tree state")
 	}
