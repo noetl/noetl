@@ -7,7 +7,7 @@ import (
 )
 
 type loggingService struct {
-	logger log.Logger
+	logger  log.Logger
 	Service Service
 }
 
@@ -18,7 +18,7 @@ func NewLoggingService(logger log.Logger, s Service) Service {
 
 func (mw *loggingService) FlowDirectoryTreeGet() (treeState string, err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		mw.logger.Log(
 			"method", "FlowDirectoryTreeGet",
 			"output", treeState,
 			"err", err,
@@ -30,7 +30,7 @@ func (mw *loggingService) FlowDirectoryTreeGet() (treeState string, err error) {
 
 func (mw *loggingService) FlowDirectoryTreeSave(treeState string) (err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		mw.logger.Log(
 			"method", "FlowDirectoryTreeSave",
 			"input", treeState,
 			"err", err,
@@ -40,10 +40,9 @@ func (mw *loggingService) FlowDirectoryTreeSave(treeState string) (err error) {
 	return mw.Service.FlowDirectoryTreeSave(treeState)
 }
 
-
 func (mw *loggingService) FlowsDirectoryDelete(request flowsDirectoryDeleteRequest) (output bool, err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		mw.logger.Log(
 			"method", "FlowsDirectoryDelete",
 			"input.Path", request.Path,
 			"output", output,
@@ -56,7 +55,7 @@ func (mw *loggingService) FlowsDirectoryDelete(request flowsDirectoryDeleteReque
 
 func (mw *loggingService) FlowDelete(request flowDeleteRequest) (output bool, err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		mw.logger.Log(
 			"method", "FlowDelete",
 			"input.id", request.Id,
 			"output", output,
@@ -69,7 +68,7 @@ func (mw *loggingService) FlowDelete(request flowDeleteRequest) (output bool, er
 
 func (mw *loggingService) FlowPost(request flowPostRequest) (output bool, err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		mw.logger.Log(
 			"method", "FlowPost",
 			"input.id", request.Id,
 			"input.config", request.Config,
@@ -83,7 +82,7 @@ func (mw *loggingService) FlowPost(request flowPostRequest) (output bool, err er
 
 func (mw *loggingService) FlowPut(request flowPutRequest) (output bool, err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		mw.logger.Log(
 			"method", "FlowPut",
 			"input.id", request.Id,
 			"input.config", request.Config,
@@ -97,7 +96,7 @@ func (mw *loggingService) FlowPut(request flowPutRequest) (output bool, err erro
 
 func (mw *loggingService) FlowGet(id string) (config string, err error) {
 	defer func(begin time.Time) {
-		_ = mw.logger.Log(
+		mw.logger.Log(
 			"method", "FlowGet",
 			"configId", id,
 			"config", config,
@@ -105,5 +104,5 @@ func (mw *loggingService) FlowGet(id string) (config string, err error) {
 			"took", time.Since(begin),
 		)
 	}(time.Now())
-	return  mw.Service.FlowGet(id)
+	return mw.Service.FlowGet(id)
 }
