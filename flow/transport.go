@@ -1,19 +1,65 @@
 package flow
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/gorilla/mux"
-	"github.com/pkg/errors"
-	"net/http"
 	"github.com/go-kit/kit/endpoint"
 	kitlog "github.com/go-kit/kit/log"
 	kithttp "github.com/go-kit/kit/transport/http"
+	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
+	"net/http"
 )
+
+func makeFlowDirectoryTreeGetEndpoint(svc Service) endpoint.Endpoint {
+	return func(_ context.Context, request interface{}) (interface{}, error) {
+		treeState, err := svc.FlowDirectoryTreeGet()
+		if err != nil {
+			return nil, err
+		}
+		return treeState, nil
+	}
+}
+
+func decodeFlowDirectoryTreeGetRequest(_ context.Context, r *http.Request) (interface{}, error) {
+	return nil, nil
+}
+
+func encodeFlowDirectoryTreeGetResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
+	w.Write([]byte(response.(string)))
+	return nil
+}
+
+type flowDirectoryTreeSaveResponse struct {
+	// is successfully request
+	Success bool `json:"success"`
+}
+
+func makeFlowDirectoryTreeSaveEndpoint(svc Service) endpoint.Endpoint {
+	return func(_ context.Context, request interface{}) (interface{}, error) {
+		req := request.(string)
+		err := svc.FlowDirectoryTreeSave(req)
+		if err != nil {
+			return nil, err
+		}
+		return flowDirectoryTreeSaveResponse{true}, nil
+	}
+}
+
+func decodeFlowDirectoryTreeSaveRequest(_ context.Context, r *http.Request) (interface{}, error) {
+	buf := new(bytes.Buffer)
+	_, err := buf.ReadFrom(r.Body)
+	if err != nil {
+		return "", errors.Wrap(err, "problems reading from the buffer")
+	}
+	stringRequest := buf.String()
+	return stringRequest, nil
+}
 
 type flowsDirectoryDeleteRequest struct {
 	// config id
-	Path     string `json:"path"`
+	Path string `json:"path"`
 }
 
 type flowsDirectoryDeleteResponse struct {
@@ -42,7 +88,7 @@ func decodeFlowsDirectoryDeleteRequest(_ context.Context, r *http.Request) (inte
 
 type flowDeleteRequest struct {
 	// config id
-	Id     string `json:"id"`
+	Id string `json:"id"`
 }
 
 type flowDeleteResponse struct {
@@ -71,7 +117,7 @@ func decodeFlowDeleteRequest(_ context.Context, r *http.Request) (interface{}, e
 
 type flowPostRequest struct {
 	// config id
-	Id     string `json:"id"`
+	Id string `json:"id"`
 	// configuration contents
 	Config string `json:"config"`
 }
@@ -102,7 +148,7 @@ func decodeFlowPostRequest(_ context.Context, r *http.Request) (interface{}, err
 
 type flowPutRequest struct {
 	// config id
-	Id     string `json:"id"`
+	Id string `json:"id"`
 	// configuration contents
 	Config string `json:"config"`
 }
@@ -138,9 +184,9 @@ type flowGetRequest struct {
 
 type flowGetResponse struct {
 	// is successfully request
-	Success bool   `json:"success"`
+	Success bool `json:"success"`
 	// configuration contents
-	Config  string `json:"config"`
+	Config string `json:"config"`
 }
 
 func makeFlowGetEndpoint(svc Service) endpoint.Endpoint {
@@ -204,12 +250,28 @@ func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
 		opts...,
 	)
 
+	flowDirectoryTreeSaveHandler := kithttp.NewServer(
+		makeFlowDirectoryTreeSaveEndpoint(s),
+		decodeFlowDirectoryTreeSaveRequest,
+		encodeResponse,
+		opts...,
+	)
+
+	flowDirectoryTreeGetHandler := kithttp.NewServer(
+		makeFlowDirectoryTreeGetEndpoint(s),
+		decodeFlowDirectoryTreeGetRequest,
+		encodeFlowDirectoryTreeGetResponse,
+		opts...,
+	)
+
 	r := mux.NewRouter()
 	r.Handle("/flow/v1/templates", flowsDirectoryDeleteHandler).Methods("DELETE")
 	r.Handle("/flow/v1/template", flowDeleteHandler).Methods("DELETE")
 	r.Handle("/flow/v1/template", flowPostHandler).Methods("POST")
 	r.Handle("/flow/v1/template", flowPutHandler).Methods("PUT")
 	r.Handle("/flow/v1/template", flowGetHandler).Methods("GET")
+	r.Handle("/flow/v1/dirtree", flowDirectoryTreeGetHandler).Methods("GET")
+	r.Handle("/flow/v1/dirtree", flowDirectoryTreeSaveHandler).Methods("POST")
 
 	return r
 }

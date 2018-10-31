@@ -40,6 +40,36 @@ func NewInstrumentingService(s Service) Service {
 	}
 }
 
+func (mw *instrumentingService) FlowDirectoryTreeGet() (treeState string, err error) {
+	defer func(begin time.Time) {
+		lvs := []string{"method", "FlowDirectoryTreeGet", "error", fmt.Sprint(err != nil)}
+		mw.requestCount.With(lvs...).Add(1)
+		mw.requestLatency.With(lvs...).Observe(time.Since(begin).Seconds())
+		if err != nil {
+			mw.countResult.Observe(1)
+		} else {
+			mw.countResult.Observe(0)
+		}
+
+	}(time.Now())
+	return mw.Service.FlowDirectoryTreeGet()
+}
+
+func (mw *instrumentingService) FlowDirectoryTreeSave(treeState string) (err error) {
+	defer func(begin time.Time) {
+		lvs := []string{"method", "FlowDirectoryTreeSave", "error", fmt.Sprint(err != nil)}
+		mw.requestCount.With(lvs...).Add(1)
+		mw.requestLatency.With(lvs...).Observe(time.Since(begin).Seconds())
+		if err != nil {
+			mw.countResult.Observe(1)
+		} else {
+			mw.countResult.Observe(0)
+		}
+
+	}(time.Now())
+	return mw.Service.FlowDirectoryTreeSave(treeState)
+}
+
 func (mw *instrumentingService) FlowsDirectoryDelete(request flowsDirectoryDeleteRequest) (output bool, err error) {
 	defer func(begin time.Time) {
 		lvs := []string{"method", "FlowsDirectoryDelete", "error", fmt.Sprint(err != nil)}

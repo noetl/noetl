@@ -16,6 +16,31 @@ func NewLoggingService(logger log.Logger, s Service) Service {
 	return &loggingService{logger, s}
 }
 
+func (mw *loggingService) FlowDirectoryTreeGet() (treeState string, err error) {
+	defer func(begin time.Time) {
+		_ = mw.logger.Log(
+			"method", "FlowDirectoryTreeGet",
+			"output", treeState,
+			"err", err,
+			"took", time.Since(begin),
+		)
+	}(time.Now())
+	return mw.Service.FlowDirectoryTreeGet()
+}
+
+func (mw *loggingService) FlowDirectoryTreeSave(treeState string) (err error) {
+	defer func(begin time.Time) {
+		_ = mw.logger.Log(
+			"method", "FlowDirectoryTreeSave",
+			"input", treeState,
+			"err", err,
+			"took", time.Since(begin),
+		)
+	}(time.Now())
+	return mw.Service.FlowDirectoryTreeSave(treeState)
+}
+
+
 func (mw *loggingService) FlowsDirectoryDelete(request flowsDirectoryDeleteRequest) (output bool, err error) {
 	defer func(begin time.Time) {
 		_ = mw.logger.Log(

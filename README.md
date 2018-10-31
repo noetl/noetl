@@ -25,3 +25,7 @@ NoETL's (Not Only ETL) current python version is a prototype of a system to mana
  `curl -XDELETE -d'{"id":"/templates/"}' localhost:8888/flow/v1/template`
  
  `curl -XDELETE -d'{"path":"/templates/dirname/"}' localhost:8888/flow/v1/templates`
+ 
+ `curl -XGET localhost:8888/flow/v1/dirtree`
+ 
+ `curl -XPOST -d'{"name": "templates","root": true,"isOpen": true,"children": []}' localhost:8888/flow/v1/dirtree`
