@@ -16,7 +16,7 @@
 					{
 						"s3": {
 							"action": "directory",
-							"path": "s3a://datalake/{{ loop.value | strip(\"https://\") | \"/\" }}",
+							"path": "s3a://datalake/{{ loop.value | strip('https://') | '/' }}",
 							"validate": "empty"
 						},
 						"context": "aws"
@@ -24,7 +24,7 @@
 					{
 						"s3": {
 							"action": "directory",
-							"path": "s3a://datalake/{{ loop.value | strip(\"https://\") | \"/\" }}",
+							"path": "s3a://datalake/{{ loop.value | strip('https://') | '/' }}",
 							"validate": "empty"
 						},
 						"context": "aws"
@@ -33,17 +33,17 @@
 						"rest": {
 							"action": "download",
 							"url": "{{ .value }}",
-							"path": "s3a://datalake/{{ loop.value | strip(\"https://\") | \"/\" }}"
+							"path": "s3a://datalake/{{ loop.value | strip('https://') | '/' }}"
 						},
 						"context": "aws"
 					}
+				],
+				"loop": [
+					"https://cex.io/api/last_price/BTC/USD",
+					"https://api.bitfinex.com/v1/pubticker/btcusd",
+					"https://api.hitbtc.com/api/2/public/ticker/BTCUSD"
 				]
 			},
-			"loop": [
-				"https://cex.io/api/last_price/BTC/USD",
-				"https://api.bitfinex.com/v1/pubticker/btcusd",
-				"https://api.hitbtc.com/api/2/public/ticker/BTCUSD"
-			],
 			"aggragate-btc-usd": {
 				"description": "Calculate BTC/USD average and display result",
 				"steps": [
