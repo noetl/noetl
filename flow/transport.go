@@ -265,13 +265,13 @@ func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
 	)
 
 	r := mux.NewRouter()
-	r.Handle("/flow/v1/templates", flowsDirectoryDeleteHandler).Methods("DELETE")
-	r.Handle("/flow/v1/template", flowDeleteHandler).Methods("DELETE")
-	r.Handle("/flow/v1/template", flowPostHandler).Methods("POST")
-	r.Handle("/flow/v1/template", flowPutHandler).Methods("PUT")
-	r.Handle("/flow/v1/template", flowGetHandler).Methods("GET")
-	r.Handle("/flow/v1/dirtree", flowDirectoryTreeGetHandler).Methods("GET")
-	r.Handle("/flow/v1/dirtree", flowDirectoryTreeSaveHandler).Methods("POST")
+	r.Handle("/flow/templates", flowsDirectoryDeleteHandler).Methods("DELETE")
+	r.Handle("/flow/template", flowDeleteHandler).Methods("DELETE")
+	r.Handle("/flow/template", flowPostHandler).Methods("POST")
+	r.Handle("/flow/template", flowPutHandler).Methods("PUT")
+	r.Handle("/flow/template", flowGetHandler).Methods("GET")
+	r.Handle("/flow/dirtree", flowDirectoryTreeGetHandler).Methods("GET")
+	r.Handle("/flow/dirtree", flowDirectoryTreeSaveHandler).Methods("POST")
 
 	return r
 }
