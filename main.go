@@ -17,19 +17,18 @@ import (
 )
 
 func main() {
-	logger := log.NewLogfmtLogger(os.Stderr)
+	logger := log.NewLogfmtLogger(os.Stdout)
 
-	//init etcd db
-	etcdDataBaseClient, err := clientv3.New(clientv3.Config{
-		DialTimeout: 2 * time.Second,
+	etcd, err := clientv3.New(clientv3.Config{
+		DialTimeout: 5 * time.Second,
 		Endpoints:   []string{"etcd:2379"},
 	})
 	if err != nil {
-		logger.Log("etcd", err)
+		logger.Log("failed to create etcd client", err)
+		os.Exit(1)
 	}
-	defer etcdDataBaseClient.Close()
-
-	etcdDataBaseClientApi := clientv3.NewKV(etcdDataBaseClient)
+	defer etcd.Close()
+	etcdAPI := clientv3.NewKV(etcd)
 
 	var (
 		addr     = envString("PORT", "8888")
@@ -39,7 +38,7 @@ func main() {
 	httpLogger := log.With(logger, "component", "http")
 
 	var flowService flow.Service
-	flowService = flow.NewService(etcdDataBaseClientApi)
+	flowService = flow.NewService(etcdAPI)
 	flowService = flow.NewLoggingService(log.With(logger, "component", "flow"), flowService)
 	flowService = flow.NewInstrumentingService(flowService)
 

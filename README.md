@@ -12,16 +12,19 @@ To bring up etcd and noetl instance for development run:
  ```
  It will build and run docker containers for each instance. Every time you make any changes and save any file in noetl project, noetl server will be restarted automatically.
  
- `curl -XPOST -d'{"id":"/templates/demo2", "config": "the contents of the config /templates/demo2"}' localhost:8888/flow/template`
- 
- `curl -XGET -d'{"id":"/templates/demo2"}' localhost:8888/flow/template`
- 
- `curl -XPUT -d'{"id":"/templates/demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/template`
- 
- `curl -XDELETE -d'{"id":"/templates/"}' localhost:8888/flow/template`
- 
- `curl -XDELETE -d'{"path":"/templates/dirname/"}' localhost:8888/flow/templates`
- 
- `curl -XGET localhost:8888/flow/dirtree`
- 
- `curl -XPOST -d'{"name": "templates","root": true,"isOpen": true,"children": []}' localhost:8888/flow/dirtree`
+ ## Examples
+ ```
+curl -XPOST -d'{"id":"/templates/demo2", "config": "the contents of the config /templates/demo2"}' localhost:8888/flow/template 
+
+curl -XGET -d'{"id":"/templates/demo2"}' localhost:8888/flow/template
+
+curl -XPUT -d'{"id":"/templates/demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/template 
+
+curl -XDELETE -d'{"id":"/templates/"}' localhost:8888/flow/template
+
+curl -XDELETE -d'{"path":"/templates/dirname/"}' localhost:8888/flow/templates 
+
+curl -XGET localhost:8888/flow/dirtree
+
+curl -XPOST -d'{"name": "templates","root": true,"isOpen": true,"children": []}' localhost:8888/flow/dirtree
+```
