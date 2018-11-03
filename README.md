@@ -16,12 +16,16 @@ NoETL's (Not Only ETL) current python version is a prototype of a system to mana
  
  `go run main.go`
  
- `curl -XPOST -d'{"id":"/templates/demo2", "config": "the contents of the config /templates/demo2"}' localhost:8888/flow/v1/template`
+ `curl -XPOST -d'{"id":"/templates/demo2", "config": "the contents of the config /templates/demo2"}' localhost:8888/flow/template`
  
- `curl -XGET -d'{"id":"/templates/demo2"}' localhost:8888/flow/v1/template`
+ `curl -XGET -d'{"id":"/templates/demo2"}' localhost:8888/flow/template`
  
- `curl -XPUT -d'{"id":"/templates/demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/v1/template`
+ `curl -XPUT -d'{"id":"/templates/demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/template`
  
- `curl -XDELETE -d'{"id":"/templates/"}' localhost:8888/flow/v1/template`
+ `curl -XDELETE -d'{"id":"/templates/"}' localhost:8888/flow/template`
  
- `curl -XDELETE -d'{"path":"/templates/dirname/"}' localhost:8888/flow/v1/templates`
+ `curl -XDELETE -d'{"path":"/templates/dirname/"}' localhost:8888/flow/templates`
+ 
+ `curl -XGET localhost:8888/flow/dirtree`
+ 
+ `curl -XPOST -d'{"name": "templates","root": true,"isOpen": true,"children": []}' localhost:8888/flow/dirtree`

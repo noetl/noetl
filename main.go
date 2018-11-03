@@ -43,7 +43,7 @@ func main() {
 	flowService = flow.NewInstrumentingService(flowService)
 
 	mux := http.NewServeMux()
-	mux.Handle("/flow/v1/", flow.MakeHandler(flowService, httpLogger))
+	mux.Handle("/flow/", flow.MakeHandler(flowService, httpLogger)) //todo add version support from header request
 
 	http.Handle("/", accessControl(mux))
 	http.Handle("/metrics", promhttp.Handler())
