@@ -2,15 +2,16 @@ package flow
 
 import (
 	"context"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/pkg/errors"
 	"strings"
 	"time"
+
+	"github.com/coreos/etcd/clientv3"
+	"github.com/pkg/errors"
 )
 
 type Service interface {
 	//save state directory tree for navigation about templates
-	FlowDirectoryTreeSave(string) (error)
+	FlowDirectoryTreeSave(string) error
 	//get state directory tree for navigation about templates
 	FlowDirectoryTreeGet() (string, error)
 	// Remove all flow configs when is directory path "/templates/.../.../"
@@ -33,7 +34,7 @@ func NewService(etcdClientApi clientv3.KV) Service {
 	return &service{etcdClientApi}
 }
 
-func (f *service) FlowDirectoryTreeSave(treeState string) (error) {
+func (f *service) FlowDirectoryTreeSave(treeState string) error {
 	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	_, err := f.etcdClientApi.Delete(ctxForEtcd, "treeDirectoryState")
 	if err != nil {

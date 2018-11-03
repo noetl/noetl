@@ -3,14 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"net/http"
 	"noetl/flow"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/coreos/etcd/clientv3"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/go-kit/kit/log"
 )
@@ -21,7 +22,7 @@ func main() {
 	//init etcd db
 	etcdDataBaseClient, err := clientv3.New(clientv3.Config{
 		DialTimeout: 2 * time.Second,
-		Endpoints:   []string{"127.0.0.1:2379"},
+		Endpoints:   []string{"etcd:2379"},
 	})
 	if err != nil {
 		logger.Log("etcd", err)
@@ -83,4 +84,3 @@ func envString(env, fallback string) string {
 	}
 	return e
 }
-

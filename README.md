@@ -6,15 +6,11 @@ NoETL's (Not Only ETL) current python version is a prototype of a system to mana
 [Gitter chat](https://gitter.im/noetl/noetl)
 
 ## Quick Start
- `brew install etcd`
-
- `brew services start etcd`
-
- `brew install dep`
- 
- `dep ensure`
- 
- `go run main.go`
+To bring up etcd and noetl instance for development run:
+ ```
+ docker-compose up
+ ```
+ It will build and run docker containers for each instance. Every time you make any changes and save any file in noetl project, noetl server will be restarted automatically.
  
  `curl -XPOST -d'{"id":"/templates/demo2", "config": "the contents of the config /templates/demo2"}' localhost:8888/flow/template`
  

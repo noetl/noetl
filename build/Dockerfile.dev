@@ -1,0 +1,17 @@
+FROM golang:1.11.1-alpine3.8
+
+RUN mkdir -p /go/src/noetl
+
+ADD . /go/src/noetl
+
+WORKDIR /go/src/noetl
+
+RUN apk --no-cache add ca-certificates shared-mime-info mailcap git build-base curl && \
+    curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+
+RUN make deps
+
+RUN go get github.com/canthefason/go-watcher
+RUN go install github.com/canthefason/go-watcher/cmd/watcher
+
+ENTRYPOINT  watcher -run /go/src/noetl  -watch noetl
