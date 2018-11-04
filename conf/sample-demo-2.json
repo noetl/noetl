@@ -1,0 +1,62 @@
+{
+  "id": "/templates/demo-2",
+  "workflow": {
+    "version": "1",
+    "id": "sample-demo",
+    "description": "Retrieves BTC/USD exchange rate from 3 different exchanges, calculates an average and puts the latter into db.",
+    "context": {
+      "aws": {
+        "access-key": "sdFASDFA",
+        "secret-key": "ASDASDFASDF"
+      }
+    },
+    "tasks": {
+      "retrieve-btc-usd": {
+        "description": "Retrieves BTC/USD exchange rate from 3 different exchanges",
+        "steps": [
+          {
+            "s3": {
+              "action": "directory",
+              "path": "s3a://qlake/cex.io/api/last_price/BTC/USD",
+              "validate": "empty"
+            },
+            "context": "aws"
+          },
+          {
+            "s3": {
+              "action": "directory",
+              "path": "s3a://qlake/cex.io/api/last_price/BTC/USD",
+              "validate": "exists"
+            },
+            "context": "aws"
+          },
+          {
+            "rest": {
+              "action": "download",
+              "url": "https://cex.io/api/last_price/BTC/USD",
+              "path": "s3a://qlake/cex.io/api/last_price/BTC/USD"
+            },
+            "context": "aws"
+          }
+        ]
+      },
+      "aggregate-btc-usd": {
+        "description": "Calculate BTC/USD average and display result",
+        "steps": [
+          {
+            "aggregate": {
+              "action": "average",
+              "sources": [
+                "s3a://qlake/cex.io/api/last_price/BTC/USD/"
+              ]
+            },
+            "context": "aws"
+          }
+        ],
+        "require": [
+          "retrieve-btc-usd"
+        ]
+      }
+    }
+  }
+}

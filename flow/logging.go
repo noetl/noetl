@@ -57,7 +57,7 @@ func (mw *loggingService) FlowDelete(request flowDeleteRequest) (output bool, er
 	defer func(begin time.Time) {
 		mw.logger.Log(
 			"method", "FlowDelete",
-			"input.id", request.Id,
+			"input.id", request.ID,
 			"output", output,
 			"err", err,
 			"took", time.Since(begin),
@@ -70,7 +70,7 @@ func (mw *loggingService) FlowPost(request flowPostRequest) (output bool, err er
 	defer func(begin time.Time) {
 		mw.logger.Log(
 			"method", "FlowPost",
-			"input.id", request.Id,
+			"input.id", request.ID,
 			"input.config", request.Config,
 			"output", output,
 			"err", err,
@@ -84,8 +84,8 @@ func (mw *loggingService) FlowPut(request flowPutRequest) (output bool, err erro
 	defer func(begin time.Time) {
 		mw.logger.Log(
 			"method", "FlowPut",
-			"input.id", request.Id,
-			"input.config", request.Config,
+			"input.id", request.ID,
+			"input.workflow", request.Workflow,
 			"output", output,
 			"err", err,
 			"took", time.Since(begin),

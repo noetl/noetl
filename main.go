@@ -3,8 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"net/http"
 	"noetl/flow"
 	"os"
@@ -12,23 +10,30 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
+	"github.com/golang/glog"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/go-kit/kit/log"
 )
 
 func main() {
-	logger := log.NewLogfmtLogger(os.Stderr)
+	flag.Parse()
+	flag.Lookup("v").Value.Set("4")
+	flag.Lookup("logtostderr").Value.Set("true")
 
-	//init etcd db
-	etcdDataBaseClient, err := clientv3.New(clientv3.Config{
-		DialTimeout: 2 * time.Second,
-		Endpoints:   []string{"127.0.0.1:2379"},
+	logger := log.NewLogfmtLogger(os.Stdout)
+
+	etcd, err := clientv3.New(clientv3.Config{
+		DialTimeout: 5 * time.Second,
+		Endpoints:   []string{"etcd:2379"},
 	})
 	if err != nil {
-		logger.Log("etcd", err)
+		logger.Log("failed to create etcd client", err)
+		os.Exit(1)
 	}
-	defer etcdDataBaseClient.Close()
-
-	etcdDataBaseClientApi := clientv3.NewKV(etcdDataBaseClient)
+	defer etcd.Close()
+	etcdAPI := clientv3.NewKV(etcd)
 
 	var (
 		addr     = envString("PORT", "8888")
@@ -38,7 +43,7 @@ func main() {
 	httpLogger := log.With(logger, "component", "http")
 
 	var flowService flow.Service
-	flowService = flow.NewService(etcdDataBaseClientApi)
+	flowService = flow.NewService(etcdAPI)
 	flowService = flow.NewLoggingService(log.With(logger, "component", "flow"), flowService)
 	flowService = flow.NewInstrumentingService(flowService)
 
@@ -60,6 +65,7 @@ func main() {
 	}()
 
 	logger.Log("terminated", <-errs)
+	glog.Flush()
 }
 
 func accessControl(h http.Handler) http.Handler {
@@ -83,4 +89,3 @@ func envString(env, fallback string) string {
 	}
 	return e
 }
-

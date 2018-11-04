@@ -2,44 +2,59 @@ package flow
 
 import (
 	"context"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/pkg/errors"
+	"encoding/json"
+	"noetl/workflows"
 	"strings"
 	"time"
+
+	"github.com/golang/glog"
+
+	"github.com/coreos/etcd/clientv3"
+	"github.com/pkg/errors"
 )
 
+// Service describes flow interface.
 type Service interface {
 	//save state directory tree for navigation about templates
-	FlowDirectoryTreeSave(string) (error)
+	FlowDirectoryTreeSave(string) error
+
 	//get state directory tree for navigation about templates
 	FlowDirectoryTreeGet() (string, error)
+
 	// Remove all flow configs when is directory path "/templates/.../.../"
 	FlowsDirectoryDelete(flowsDirectoryDeleteRequest) (bool, error)
+
 	// Remove flow config
 	FlowDelete(flowDeleteRequest) (bool, error)
+
 	// add new flow config
 	FlowPost(flowPostRequest) (bool, error)
+
 	// update flow config
 	FlowPut(flowPutRequest) (bool, error)
+
 	//get flow config
 	FlowGet(id string) (string, error)
 }
 
 type service struct {
-	etcdClientApi clientv3.KV
+	etcdClientAPI clientv3.KV
 }
 
-func NewService(etcdClientApi clientv3.KV) Service {
-	return &service{etcdClientApi}
+// NewService returns flow service with all dependencies.
+func NewService(etcdClientAPI clientv3.KV) Service {
+	return &service{etcdClientAPI}
 }
 
-func (f *service) FlowDirectoryTreeSave(treeState string) (error) {
-	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	_, err := f.etcdClientApi.Delete(ctxForEtcd, "treeDirectoryState")
+func (f *service) FlowDirectoryTreeSave(treeState string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := f.etcdClientAPI.Delete(ctx, "treeDirectoryState")
 	if err != nil {
 		return errors.Wrap(err, "can not save directory tree state")
 	}
-	_, err = f.etcdClientApi.Put(ctxForEtcd, "treeDirectoryState", treeState)
+
+	_, err = f.etcdClientAPI.Put(ctx, "treeDirectoryState", treeState)
 	if err != nil {
 		return errors.Wrap(err, "can not save directory tree state")
 	}
@@ -47,8 +62,9 @@ func (f *service) FlowDirectoryTreeSave(treeState string) (error) {
 }
 
 func (f *service) FlowDirectoryTreeGet() (string, error) {
-	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	gr, err := f.etcdClientApi.Get(ctxForEtcd, "treeDirectoryState")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	gr, err := f.etcdClientAPI.Get(ctx, "treeDirectoryState")
 	if err != nil {
 		return "", errors.Wrap(err, "can not get directory tree state")
 	}
@@ -59,15 +75,15 @@ func (f *service) FlowDirectoryTreeGet() (string, error) {
 }
 
 func (f *service) FlowsDirectoryDelete(conf flowsDirectoryDeleteRequest) (bool, error) {
-
 	if conf.Path == "" {
 		return false, errors.New("path is required")
 	}
 	if !strings.HasPrefix(conf.Path, "/templates/") || !strings.HasSuffix(conf.Path, "/") {
 		return false, errors.New("path should start with '/template/' and end with '/'")
 	}
-	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	gr, err := f.etcdClientApi.Delete(ctxForEtcd, conf.Path, clientv3.WithPrefix())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	gr, err := f.etcdClientAPI.Delete(ctx, conf.Path, clientv3.WithPrefix())
 	if err != nil {
 		return false, errors.Wrap(err, "can not delete directory ["+conf.Path+"]")
 	}
@@ -78,67 +94,73 @@ func (f *service) FlowsDirectoryDelete(conf flowsDirectoryDeleteRequest) (bool, 
 }
 
 func (f *service) FlowDelete(conf flowDeleteRequest) (bool, error) {
-
-	if conf.Id == "" {
+	if conf.ID == "" {
 		return false, errors.New("id is required")
 	}
-	if !strings.HasPrefix(conf.Id, "/templates/") {
+	if !strings.HasPrefix(conf.ID, "/templates/") {
 		return false, errors.New("id should start with '/template/'")
 	}
-	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	gr, err := f.etcdClientApi.Delete(ctxForEtcd, conf.Id)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	gr, err := f.etcdClientAPI.Delete(ctx, conf.ID)
 	if err != nil {
-		return false, errors.Wrap(err, "can not delete id ["+conf.Id+"]")
+		return false, errors.Wrap(err, "can not delete id ["+conf.ID+"]")
 	}
 	if gr.Deleted == 0 {
-		return false, errors.New("no config with id [" + conf.Id + "]")
+		return false, errors.New("no config with id [" + conf.ID + "]")
 	}
 	return true, nil
 }
 
 func (f *service) FlowPost(conf flowPostRequest) (bool, error) {
-	if conf.Id == "" {
+	if conf.ID == "" {
 		return false, errors.New("id is required")
 	}
-	if !strings.HasPrefix(conf.Id, "/") {
+	if !strings.HasPrefix(conf.ID, "/") {
 		return false, errors.New("id should start with '/'")
 	}
-	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	gr, err := f.etcdClientApi.Get(ctxForEtcd, conf.Id)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	gr, err := f.etcdClientAPI.Get(ctx, conf.ID)
 	if err != nil {
-		return false, errors.Wrap(err, "can not create id ["+conf.Id+"]")
+		return false, errors.Wrap(err, "can not create id ["+conf.ID+"]")
 	}
 	if len(gr.Kvs) == 0 {
-		_, err := f.etcdClientApi.Put(ctxForEtcd, conf.Id, conf.Config)
+		_, err := f.etcdClientAPI.Put(ctx, conf.ID, conf.Config)
 		if err != nil {
-			return false, errors.Wrap(err, "can not create id ["+conf.Id+"]")
+			return false, errors.Wrap(err, "can not create id ["+conf.ID+"]")
 		}
 		return true, nil
-	} else {
-		return false, errors.New("config with id [" + conf.Id + "] already exist")
 	}
+	return false, errors.New("config with id [" + conf.ID + "] already exist")
 }
 
 func (f *service) FlowPut(conf flowPutRequest) (bool, error) {
-
-	if conf.Id == "" {
+	if conf.ID == "" {
 		return false, errors.New("id is required")
 	}
-	if !strings.HasPrefix(conf.Id, "/") {
+	if !strings.HasPrefix(conf.ID, "/") {
 		return false, errors.New("id should start with '/'")
 	}
-	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	gr, err := f.etcdClientApi.Get(ctxForEtcd, conf.Id)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	gr, err := f.etcdClientAPI.Get(ctx, conf.ID)
 	if err != nil {
-		return false, errors.Wrap(err, "can not update id ["+conf.Id+"]")
+		return false, errors.Wrap(err, "can not update id ["+conf.ID+"]")
 	}
 	if len(gr.Kvs) == 0 {
-		return false, errors.New("id [" + conf.Id + "] not found")
+		glog.V(4).Infoln("id [" + conf.ID + "] not found")
+		// return false, errors.New("id [" + conf.ID + "] not found")
 	}
-	_, err = f.etcdClientApi.Put(ctxForEtcd, conf.Id, conf.Config)
+	b, err := json.Marshal(conf.Workflow)
 	if err != nil {
-		return false, errors.Wrap(err, "can not update id ["+conf.Id+"]")
+		glog.Fatalln(err)
 	}
+	_, err = f.etcdClientAPI.Put(ctx, conf.ID, string(b))
+	if err != nil {
+		return false, errors.Wrap(err, "can not update id ["+conf.ID+"]")
+	}
+	reconcile(conf.Workflow)
 	return true, nil
 }
 
@@ -149,15 +171,64 @@ func (f *service) FlowGet(id string) (string, error) {
 	if !strings.HasPrefix(id, "/") {
 		return "", errors.New("id should start with '/'")
 	}
-
-	ctxForEtcd, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	gr, err := f.etcdClientApi.Get(ctxForEtcd, id)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	gr, err := f.etcdClientAPI.Get(ctx, id)
 	if err != nil {
 		return "", errors.Wrap(err, "can not get id ["+id+"]")
 	}
 	if len(gr.Kvs) == 0 {
 		return "", errors.New("config with id [" + id + "] not found")
 	}
-
 	return string(gr.Kvs[0].Value), nil
+}
+
+func reconcile(wf workflows.Workflow) {
+	completed := 0
+	for {
+		for task, value := range wf.Tasks {
+			if !value.Status && depsResolved(value, wf) {
+				wf.Tasks[task] = processTask(task, value)
+				completed++
+			}
+		}
+		if len(wf.Tasks) == completed {
+			break
+		}
+		glog.V(3).Infof("reconciling, workflow's id: %s", wf.ID)
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func processTask(name string, t workflows.Task) workflows.Task {
+	glog.V(3).Infof("processing task: %s", name)
+	for _, steps := range t.Steps {
+		for module, step := range steps {
+			processStep(module, step)
+		}
+	}
+	t.Status = true
+	return t
+}
+
+func depsResolved(t workflows.Task, wf workflows.Workflow) bool {
+	glog.V(4).Infoln("cheking task dependencies")
+	resolved := true
+	for _, reqTask := range t.Require {
+		if !wf.Tasks[reqTask].Status {
+			resolved = false
+		}
+	}
+	return resolved
+}
+
+func processStep(module string, step interface{}) {
+	switch module {
+	case "s3":
+		s3(step)
+	case "rest":
+		rest(step)
+	case "aggregate":
+		aggregate(step)
+	}
 }
