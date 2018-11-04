@@ -2,13 +2,18 @@ package flow
 
 import (
 	"context"
+	"encoding/json"
+	"noetl/workflows"
 	"strings"
 	"time"
+
+	"github.com/golang/glog"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pkg/errors"
 )
 
+// Service describes flow interface.
 type Service interface {
 	//save state directory tree for navigation about templates
 	FlowDirectoryTreeSave(string) error
@@ -89,67 +94,73 @@ func (f *service) FlowsDirectoryDelete(conf flowsDirectoryDeleteRequest) (bool, 
 }
 
 func (f *service) FlowDelete(conf flowDeleteRequest) (bool, error) {
-	if conf.Id == "" {
+	if conf.ID == "" {
 		return false, errors.New("id is required")
 	}
-	if !strings.HasPrefix(conf.Id, "/templates/") {
+	if !strings.HasPrefix(conf.ID, "/templates/") {
 		return false, errors.New("id should start with '/template/'")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	gr, err := f.etcdClientAPI.Delete(ctx, conf.Id)
+	gr, err := f.etcdClientAPI.Delete(ctx, conf.ID)
 	if err != nil {
-		return false, errors.Wrap(err, "can not delete id ["+conf.Id+"]")
+		return false, errors.Wrap(err, "can not delete id ["+conf.ID+"]")
 	}
 	if gr.Deleted == 0 {
-		return false, errors.New("no config with id [" + conf.Id + "]")
+		return false, errors.New("no config with id [" + conf.ID + "]")
 	}
 	return true, nil
 }
 
 func (f *service) FlowPost(conf flowPostRequest) (bool, error) {
-	if conf.Id == "" {
+	if conf.ID == "" {
 		return false, errors.New("id is required")
 	}
-	if !strings.HasPrefix(conf.Id, "/") {
+	if !strings.HasPrefix(conf.ID, "/") {
 		return false, errors.New("id should start with '/'")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	gr, err := f.etcdClientAPI.Get(ctx, conf.Id)
+	gr, err := f.etcdClientAPI.Get(ctx, conf.ID)
 	if err != nil {
-		return false, errors.Wrap(err, "can not create id ["+conf.Id+"]")
+		return false, errors.Wrap(err, "can not create id ["+conf.ID+"]")
 	}
 	if len(gr.Kvs) == 0 {
-		_, err := f.etcdClientAPI.Put(ctx, conf.Id, conf.Config)
+		_, err := f.etcdClientAPI.Put(ctx, conf.ID, conf.Config)
 		if err != nil {
-			return false, errors.Wrap(err, "can not create id ["+conf.Id+"]")
+			return false, errors.Wrap(err, "can not create id ["+conf.ID+"]")
 		}
 		return true, nil
 	}
-	return false, errors.New("config with id [" + conf.Id + "] already exist")
+	return false, errors.New("config with id [" + conf.ID + "] already exist")
 }
 
 func (f *service) FlowPut(conf flowPutRequest) (bool, error) {
-	if conf.Id == "" {
+	if conf.ID == "" {
 		return false, errors.New("id is required")
 	}
-	if !strings.HasPrefix(conf.Id, "/") {
+	if !strings.HasPrefix(conf.ID, "/") {
 		return false, errors.New("id should start with '/'")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	gr, err := f.etcdClientAPI.Get(ctx, conf.Id)
+	gr, err := f.etcdClientAPI.Get(ctx, conf.ID)
 	if err != nil {
-		return false, errors.Wrap(err, "can not update id ["+conf.Id+"]")
+		return false, errors.Wrap(err, "can not update id ["+conf.ID+"]")
 	}
 	if len(gr.Kvs) == 0 {
-		return false, errors.New("id [" + conf.Id + "] not found")
+		glog.V(4).Infoln("id [" + conf.ID + "] not found")
+		// return false, errors.New("id [" + conf.ID + "] not found")
 	}
-	_, err = f.etcdClientAPI.Put(ctx, conf.Id, conf.Config)
+	b, err := json.Marshal(conf.Workflow)
 	if err != nil {
-		return false, errors.Wrap(err, "can not update id ["+conf.Id+"]")
+		glog.Fatalln(err)
 	}
+	_, err = f.etcdClientAPI.Put(ctx, conf.ID, string(b))
+	if err != nil {
+		return false, errors.Wrap(err, "can not update id ["+conf.ID+"]")
+	}
+	reconcile(conf.Workflow)
 	return true, nil
 }
 
@@ -170,4 +181,54 @@ func (f *service) FlowGet(id string) (string, error) {
 		return "", errors.New("config with id [" + id + "] not found")
 	}
 	return string(gr.Kvs[0].Value), nil
+}
+
+func reconcile(wf workflows.Workflow) {
+	completed := 0
+	for {
+		for task, value := range wf.Tasks {
+			if !value.Status && depsResolved(value, wf) {
+				wf.Tasks[task] = processTask(task, value)
+				completed++
+			}
+		}
+		if len(wf.Tasks) == completed {
+			break
+		}
+		glog.V(3).Infof("reconciling, workflow's id: %s", wf.ID)
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func processTask(name string, t workflows.Task) workflows.Task {
+	glog.V(3).Infof("processing task: %s", name)
+	for _, steps := range t.Steps {
+		for module, step := range steps {
+			processStep(module, step)
+		}
+	}
+	t.Status = true
+	return t
+}
+
+func depsResolved(t workflows.Task, wf workflows.Workflow) bool {
+	glog.V(4).Infoln("cheking task dependencies")
+	resolved := true
+	for _, reqTask := range t.Require {
+		if !wf.Tasks[reqTask].Status {
+			resolved = false
+		}
+	}
+	return resolved
+}
+
+func processStep(module string, step interface{}) {
+	switch module {
+	case "s3":
+		s3(step)
+	case "rest":
+		rest(step)
+	case "aggregate":
+		aggregate(step)
+	}
 }

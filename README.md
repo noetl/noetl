@@ -18,7 +18,7 @@ curl -XPOST -d'{"id":"/templates/demo2", "config": "the contents of the config /
 
 curl -XGET -d'{"id":"/templates/demo2"}' localhost:8888/flow/template
 
-curl -XPUT -d'{"id":"/templates/demo2", "config": "the contents of the config demo1"}' localhost:8888/flow/template 
+curl -XPUT --data @conf/sample-demo-2.json localhost:8888/flow/template
 
 curl -XDELETE -d'{"id":"/templates/"}' localhost:8888/flow/template
 

@@ -1,4 +1,5 @@
 {
+	"id": "/templates/demo",
 	"workflow": {
 		"version": "1",
 		"id": "sample-demo",
@@ -10,13 +11,13 @@
 			}
 		},
 		"tasks": {
-			"retrive-btc-usd": {
+			"retrieve-btc-usd": {
 				"description": "Retrieves BTC/USD exchange rate from 3 different exchanges",
 				"steps": [
 					{
 						"s3": {
 							"action": "directory",
-							"path": "s3a://datalake/{{ loop.value | strip('https://') | '/' }}",
+							"path": "s3a://qlake/{{ loop.value | strip('https://') | '/' }}",
 							"validate": "empty"
 						},
 						"context": "aws"
@@ -24,7 +25,7 @@
 					{
 						"s3": {
 							"action": "directory",
-							"path": "s3a://datalake/{{ loop.value | strip('https://') | '/' }}",
+							"path": "s3a://qlake/{{ loop.value | strip('https://') | '/' }}",
 							"validate": "empty"
 						},
 						"context": "aws"
@@ -33,7 +34,7 @@
 						"rest": {
 							"action": "download",
 							"url": "{{ .value }}",
-							"path": "s3a://datalake/{{ loop.value | strip('https://') | '/' }}"
+							"path": "s3a://qlake/{{ loop.value | strip('https://') | '/' }}"
 						},
 						"context": "aws"
 					}
@@ -44,23 +45,23 @@
 					"https://api.hitbtc.com/api/2/public/ticker/BTCUSD"
 				]
 			},
-			"aggragate-btc-usd": {
+			"aggregate-btc-usd": {
 				"description": "Calculate BTC/USD average and display result",
 				"steps": [
 					{
 						"aggregate": {
 							"action": "average",
 							"sources": [
-								"s3a://datalake/cex.io/api/last_price/BTC/USD/",
-								"s3a://datalake/api.bitfinex.com/v1/pubticker/btcusd/",
-								"s3a://datalake/api.hitbtc.com/api/2/public/ticker/BTCUSD/"
+								"s3a://qlake/cex.io/api/last_price/BTC/USD/",
+								"s3a://qlake/api.bitfinex.com/v1/pubticker/btcusd/",
+								"s3a://qlake/api.hitbtc.com/api/2/public/ticker/BTCUSD/"
 							]
 						},
 						"context": "aws"
 					}
 				],
 				"require": [
-					"retrive-btc-usd"
+					"retrieve-btc-usd"
 				]
 			}
 		}

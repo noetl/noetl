@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"noetl/workflows"
 
 	"github.com/go-kit/kit/endpoint"
 	kitlog "github.com/go-kit/kit/log"
@@ -88,8 +89,8 @@ func decodeFlowsDirectoryDeleteRequest(_ context.Context, r *http.Request) (inte
 }
 
 type flowDeleteRequest struct {
-	// config id
-	Id string `json:"id"`
+	// ID of the configuration file.
+	ID string `json:"id"`
 }
 
 type flowDeleteResponse struct {
@@ -118,7 +119,7 @@ func decodeFlowDeleteRequest(_ context.Context, r *http.Request) (interface{}, e
 
 type flowPostRequest struct {
 	// config id
-	Id string `json:"id"`
+	ID string `json:"id"`
 	// configuration contents
 	Config string `json:"config"`
 }
@@ -148,10 +149,11 @@ func decodeFlowPostRequest(_ context.Context, r *http.Request) (interface{}, err
 }
 
 type flowPutRequest struct {
-	// config id
-	Id string `json:"id"`
-	// configuration contents
-	Config string `json:"config"`
+	// ID of the workflow object.
+	ID string `json:"id"`
+
+	// A workflow that describes a plan of execution.
+	Workflow workflows.Workflow `json:"workflow"`
 }
 
 type flowPutResponse struct {
@@ -180,7 +182,7 @@ func decodeFlowPutRequest(_ context.Context, r *http.Request) (interface{}, erro
 
 type flowGetRequest struct {
 	// config id
-	Id string `json:"id"`
+	ID string `json:"id"`
 }
 
 type flowGetResponse struct {
@@ -193,7 +195,7 @@ type flowGetResponse struct {
 func makeFlowGetEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
 		req := request.(flowGetRequest)
-		config, err := svc.FlowGet(req.Id)
+		config, err := svc.FlowGet(req.ID)
 		if err != nil {
 			return nil, err
 		}

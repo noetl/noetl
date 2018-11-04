@@ -1,3 +1,4 @@
+id: "/templates/demo-2"
 workflow:
   version: "1"
   id: "sample-demo"
@@ -12,23 +13,19 @@ workflow:
       steps:
       - s3:
           action: "directory"
-          path: "s3a://qlake/{{ loop.value | strip('https://') | '/' }}"
+          path: "s3a://qlake/cex.io/api/last_price/BTC/USD"
           validate: "empty"
         context: "aws"
       - s3:
           action: "directory"
-          path: "s3a://qlake/{{ loop.value | strip('https://') | '/' }}"
-          validate: "empty"
+          path: "s3a://qlake/cex.io/api/last_price/BTC/USD"
+          validate: "exists"
         context: "aws"
       - rest:
           action: "download"
-          url: "{{ .value }}"
-          path: "s3a://qlake/{{ loop.value | strip('https://') | '/' }}"
+          url: "https://cex.io/api/last_price/BTC/USD"
+          path: "s3a://qlake/cex.io/api/last_price/BTC/USD"
         context: "aws"
-      loop:
-      - "https://cex.io/api/last_price/BTC/USD"
-      - "https://api.bitfinex.com/v1/pubticker/btcusd"
-      - "https://api.hitbtc.com/api/2/public/ticker/BTCUSD"
 
     aggregate-btc-usd:
       description: "Calculate BTC/USD average and display result"
@@ -37,8 +34,6 @@ workflow:
           action: "average"
           sources:
           - "s3a://qlake/cex.io/api/last_price/BTC/USD/"
-          - "s3a://qlake/api.bitfinex.com/v1/pubticker/btcusd/"
-          - "s3a://qlake/api.hitbtc.com/api/2/public/ticker/BTCUSD/"
         context: "aws"
       require:
       - "retrieve-btc-usd"

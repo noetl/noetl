@@ -11,12 +11,17 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/go-kit/kit/log"
 )
 
 func main() {
+	flag.Parse()
+	flag.Lookup("v").Value.Set("4")
+	flag.Lookup("logtostderr").Value.Set("true")
+
 	logger := log.NewLogfmtLogger(os.Stdout)
 
 	etcd, err := clientv3.New(clientv3.Config{
@@ -60,6 +65,7 @@ func main() {
 	}()
 
 	logger.Log("terminated", <-errs)
+	glog.Flush()
 }
 
 func accessControl(h http.Handler) http.Handler {
