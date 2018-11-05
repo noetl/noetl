@@ -188,7 +188,7 @@ func reconcile(wf workflows.Workflow) {
 	for {
 		for task, value := range wf.Tasks {
 			if !value.Status && depsResolved(value, wf) {
-				wf.Tasks[task] = processTask(task, value)
+				wf.Tasks[task] = processTask(task, value, wf.Context)
 				completed++
 			}
 		}
@@ -200,12 +200,10 @@ func reconcile(wf workflows.Workflow) {
 	}
 }
 
-func processTask(name string, t workflows.Task) workflows.Task {
+func processTask(name string, t workflows.Task, ctx map[string]interface{}) workflows.Task {
 	glog.V(3).Infof("processing task: %s", name)
 	for _, steps := range t.Steps {
-		for module, step := range steps {
-			processStep(module, step)
-		}
+		processStep(steps, ctx)
 	}
 	t.Status = true
 	return t
@@ -222,13 +220,23 @@ func depsResolved(t workflows.Task, wf workflows.Workflow) bool {
 	return resolved
 }
 
-func processStep(module string, step interface{}) {
-	switch module {
-	case "s3":
-		s3(step)
-	case "rest":
-		rest(step)
-	case "aggregate":
-		aggregate(step)
+func processStep(m map[string]interface{}, ctx map[string]interface{}) {
+	var moduleCtx string
+	var ctxObj map[string]interface{}
+	if ctx, ok := m["context"].(string); ok {
+		moduleCtx = ctx
+	}
+	if ctx, ok := ctx[moduleCtx].(map[string]interface{}); ok {
+		ctxObj = ctx
+	}
+	for module, step := range m {
+		switch module {
+		case "s3":
+			s3(step, ctxObj)
+		case "rest":
+			rest(step, ctxObj)
+		case "aggregate":
+			aggregate(step, ctxObj)
+		}
 	}
 }
