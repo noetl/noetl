@@ -1,7 +1,7 @@
 kind: Service
 apiVersion: v1
 metadata:
-  name: noetl
+  name: noetl-backend
 spec:
   type: ClusterIP
   selector:
