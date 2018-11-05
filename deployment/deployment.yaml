@@ -1,11 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: noetl-deployment
+  name: noetl
   labels:
     app: noetl
 spec:
-  replicas: 5
+  replicas: 1
   selector:
     matchLabels:
       app: noetl
@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: noetl
-        image: antonputra/noetl/noetl:0.1.0
+        image: docker.io/noetl/noetl:latest
         ports:
         - containerPort: 8888

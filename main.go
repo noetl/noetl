@@ -29,8 +29,7 @@ func main() {
 		Endpoints:   []string{"etcd:2379"},
 	})
 	if err != nil {
-		logger.Log("failed to create etcd client", err)
-		os.Exit(1)
+		glog.Fatalf("failed to create etcd client: %+v", err)
 	}
 	defer etcd.Close()
 	etcdAPI := clientv3.NewKV(etcd)

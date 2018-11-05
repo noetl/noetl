@@ -1,3 +1,4 @@
+.PHONY: all test clean build
 
 GOCMD=go
 GOBUILD=$(GOCMD) build
@@ -7,12 +8,12 @@ BINARY_NAME=noetl
 BINARY_UNIX=$(BINARY_NAME)_unix
 
 # Docker
-TAG = 0.1.0
+TAG = 0.1.2
 IMAGE_NAME = noetl
-REGISTRY = antonputra
+REGISTRY = docker.io
 REPO = noetl
 
-all: deps build
+all: build-image push-image clean-image
 
 docker: build-image push-image clean-image
 
@@ -20,7 +21,7 @@ exec:
 	$(GOCMD) run main.go
 
 build: 
-	$(GOBUILD) -o $(BINARY_NAME) main.go
+	go build -o $(BINARY_NAME) main.go
 
 test: 
 	$(GOTEST) -v ./...
@@ -34,7 +35,8 @@ deps:
 	dep ensure
 
 build-image:
-	docker build -t $(REGISTRY)/$(REPO)/$(IMAGE_NAME) -f Dockerfile .
+	docker build -t $(REGISTRY)/$(REPO)/$(IMAGE_NAME) -f build/Dockerfile.prod .
+	docker tag $(REGISTRY)/$(REPO)/$(IMAGE_NAME) $(REGISTRY)/$(REPO)/$(IMAGE_NAME)
 	docker tag $(REGISTRY)/$(REPO)/$(IMAGE_NAME) $(REGISTRY)/$(REPO)/$(IMAGE_NAME):$(TAG)
 
 push-image:
