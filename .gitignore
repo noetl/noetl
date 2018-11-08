@@ -3,6 +3,7 @@
 *.pyc
 target
 vendor
+etcd-data
 .classpath
 .settings
 .project

@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"noetl/workflows"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -14,6 +15,18 @@ type loggingService struct {
 // NewLoggingService returns a new instance of a logging Service.
 func NewLoggingService(logger log.Logger, s Service) Service {
 	return &loggingService{logger, s}
+}
+
+func (mw *loggingService) FlowRun(workflow workflows.Workflow) (err error) {
+	defer func(begin time.Time) {
+		mw.logger.Log(
+			"method", "FlowRun",
+			//"output", treeState,
+			"err", err,
+			"took", time.Since(begin),
+		)
+	}(time.Now())
+	return mw.Service.FlowRun(workflow)
 }
 
 func (mw *loggingService) FlowDirectoryTreeGet() (treeState string, err error) {

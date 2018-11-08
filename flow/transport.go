@@ -14,6 +14,38 @@ import (
 	"github.com/pkg/errors"
 )
 
+type flowRunRequest struct {
+	// ID of the configuration file.
+	ID string `json:"id"`
+	// flow config for run
+	Workflow workflows.Workflow `json:"workflow"`
+}
+
+type flowRunResponse struct {
+	// is successfully request
+	Success bool `json:"success"`
+	// eny params ...
+}
+
+func makeFlowRunEndpoint(svc Service) endpoint.Endpoint {
+	return func(_ context.Context, request interface{}) (interface{}, error) {
+		req := request.(flowRunRequest)
+		err := svc.FlowRun(req.Workflow)
+		if err != nil {
+			return nil, err
+		}
+		return flowRunResponse{true}, nil
+	}
+}
+
+func decodeFlowRunRequest(_ context.Context, r *http.Request) (interface{}, error) {
+	var request flowRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return nil, errors.Wrap(err, "wrong json format")
+	}
+	return request, nil
+}
+
 func makeFlowDirectoryTreeGetEndpoint(svc Service) endpoint.Endpoint {
 	return func(_ context.Context, request interface{}) (interface{}, error) {
 		treeState, err := svc.FlowDirectoryTreeGet()
@@ -267,6 +299,13 @@ func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
 		opts...,
 	)
 
+	flowRunHandler := kithttp.NewServer(
+		makeFlowRunEndpoint(s),
+		decodeFlowRunRequest,
+		encodeResponse,
+		opts...,
+	)
+
 	r := mux.NewRouter()
 	r.Handle("/flow/templates", flowsDirectoryDeleteHandler).Methods("DELETE")
 	r.Handle("/flow/template", flowDeleteHandler).Methods("DELETE")
@@ -275,6 +314,7 @@ func MakeHandler(s Service, logger kitlog.Logger) http.Handler {
 	r.Handle("/flow/template", flowGetHandler).Methods("GET")
 	r.Handle("/flow/dirtree", flowDirectoryTreeGetHandler).Methods("GET")
 	r.Handle("/flow/dirtree", flowDirectoryTreeSaveHandler).Methods("POST")
+	r.Handle("/flow/run", flowRunHandler).Methods("POST")
 
 	return r
 }

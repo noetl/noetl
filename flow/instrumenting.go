@@ -2,6 +2,7 @@ package flow
 
 import (
 	"fmt"
+	"noetl/workflows"
 	"time"
 
 	"github.com/go-kit/kit/metrics"
@@ -39,6 +40,21 @@ func NewInstrumentingService(s Service) Service {
 		}, []string{}),
 		Service: s,
 	}
+}
+
+func (mw *instrumentingService) FlowRun(workflow workflows.Workflow) (err error) {
+	defer func(begin time.Time) {
+		lvs := []string{"method", "FlowRun", "error", fmt.Sprint(err != nil)}
+		mw.requestCount.With(lvs...).Add(1)
+		mw.requestLatency.With(lvs...).Observe(time.Since(begin).Seconds())
+		if err != nil {
+			mw.countResult.Observe(1)
+		} else {
+			mw.countResult.Observe(0)
+		}
+
+	}(time.Now())
+	return mw.Service.FlowRun(workflow)
 }
 
 func (mw *instrumentingService) FlowDirectoryTreeGet() (treeState string, err error) {
