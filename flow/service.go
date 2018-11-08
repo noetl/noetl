@@ -35,6 +35,9 @@ type Service interface {
 
 	//get flow config
 	FlowGet(id string) (string, error)
+
+	//run flow config
+	FlowRun(workflow workflows.Workflow) error
 }
 
 type service struct {
@@ -181,6 +184,11 @@ func (f *service) FlowGet(id string) (string, error) {
 		return "", errors.New("config with id [" + id + "] not found")
 	}
 	return string(gr.Kvs[0].Value), nil
+}
+
+func (f *service) FlowRun(workflow workflows.Workflow) error {
+	reconcile(workflow)
+	return nil
 }
 
 func reconcile(wf workflows.Workflow) {

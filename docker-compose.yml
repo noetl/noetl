@@ -5,30 +5,32 @@ services:
     image: gcr.io/etcd-development/etcd:v3.3.10
     restart: always
     ports:
-    - 2379:2379
+    - 6666:2379
     - 2380:2380
     container_name: etcd
     networks:
       - backend
+    volumes:
+    - ./etcd-data:/etcd-data
     command:
       - /usr/local/bin/etcd
-      - --name 
+      - --name
       - s1
-      - --data-dir 
+      - --data-dir
       - /etcd-data
-      - --listen-client-urls 
-      - http://0.0.0.0:2379 
-      - --advertise-client-urls 
+      - --listen-client-urls
       - http://0.0.0.0:2379
-      - --listen-peer-urls 
+      - --advertise-client-urls
+      - http://0.0.0.0:2379
+      - --listen-peer-urls
       - http://0.0.0.0:2380
-      - --initial-advertise-peer-urls 
-      - http://0.0.0.0:2380 
-      - --initial-cluster 
-      - s1=http://0.0.0.0:2380 
-      - --initial-cluster-token 
-      - tkn 
-      - --initial-cluster-state 
+      - --initial-advertise-peer-urls
+      - http://0.0.0.0:2380
+      - --initial-cluster
+      - s1=http://0.0.0.0:2380
+      - --initial-cluster-token
+      - tkn
+      - --initial-cluster-state
       - new
 
   noetl:

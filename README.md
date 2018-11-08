@@ -27,4 +27,6 @@ curl -XDELETE -d'{"path":"/templates/dirname/"}' localhost:8888/flow/templates
 curl -XGET localhost:8888/flow/dirtree
 
 curl -XPOST -d'{"name": "templates","root": true,"isOpen": true,"children": []}' localhost:8888/flow/dirtree
+
+curl -XPOST -d'{"id": "/templates/demo-2","workflow": {}}' localhost:8888/flow/run
 ```
