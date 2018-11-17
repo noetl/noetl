@@ -9,7 +9,7 @@ COPY . .
 RUN apk --no-cache add ca-certificates shared-mime-info mailcap git build-base curl && \
     curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
 
-RUN make
+RUN make deps build
 
 # Second stage
 FROM alpine:3.8

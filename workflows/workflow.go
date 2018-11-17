@@ -2,11 +2,11 @@ package workflows
 
 // Workflow describes plan of execution.
 type Workflow struct {
-	Version     string          `json:"version"`
-	ID          string          `json:"id"`
-	Description string          `json:"description"`
-	Context     Context         `json:"context"`
-	Tasks       map[string]Task `json:"tasks"`
+	Version     string                 `json:"version"`
+	ID          string                 `json:"id"`
+	Description string                 `json:"description"`
+	Context     map[string]interface{} `json:"context"`
+	Tasks       map[string]Task        `json:"tasks"`
 }
 
 // Context of the execution
