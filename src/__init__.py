@@ -25,6 +25,9 @@ async def task_exception(task):
     except Exception as e:
         logger.error(e)
 
+def diff_min_sec(dt_from, dt_to) -> (int, int):
+    minutes, seconds = divmod((dt_from.now() - dt_to).total_seconds(), 60)
+    return minutes, seconds
 
 def async_time():
     def wrapper(func: Callable) -> Callable:
