@@ -1,0 +1,5 @@
+asyncio==3.4.3
+PyYAML==6.0
+loguru==0.6.0
+httpx==0.23.0
+nest-asyncio==1.5.5
