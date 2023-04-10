@@ -6,8 +6,13 @@ demo_create_files:
       DIR: ${WORKING_DIR}
    inputs:
       rules_arguments:
+         name: start arguments
+         type: string
+         value: vars.ENVIRONMENT
    outputs:
-      job_state:
+      message_exit_code:
+         name: job exit code
+         value: another_task.message_exit_code
    tasks:
       start:
          name: Hello
@@ -28,8 +33,6 @@ demo_create_files:
          exec (call):
            - echo ${.msg}
            - echo "Bye ${loop.value}"
-         inputs:
-            demo_create_files.vars
          outputs:
             message_exit_code: exit_code
             failures: number_of_failures
@@ -52,8 +55,6 @@ demo_create_files:
          exec (call):
            - echo ${.msg}
            - echo "Bye ${loop.value}"
-         inputs:
-            demo_create_files.vars
          outputs:
             message_exit_code: exit_code
             failures: number_of_failures
