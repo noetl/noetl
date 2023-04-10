@@ -1,5 +1,5 @@
 demo_create_files:
-   desc: Demonstration of terminal execution
+   name: Demonstration of terminal execution
    vars:
       HOST: ${HOST}
       ENVIRONMENT: ${ENV}
@@ -10,7 +10,7 @@ demo_create_files:
       job_state:
    tasks:
       start:
-         desc: Hello
+         name: Hello
          type: shell,ssh,rest
          vars:
             msg: Hello ${HOST}
