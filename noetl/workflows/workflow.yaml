@@ -33,3 +33,27 @@ demo_create_files:
          outputs:
             message_exit_code: exit_code
             failures: number_of_failures
+      another_task:
+         name: Task #2
+         type: shell,ssh,rest
+         vars:
+            msg: Hello ${HOST}
+         deps:
+            rule1: x==4
+            rule2: y==5
+         loop:
+            from: 1
+            to: 10
+            increment: 1
+            exclude: [5,6]
+            file: filename
+            wait: 1s
+            parallel: true, false
+         exec (call):
+           - echo ${.msg}
+           - echo "Bye ${loop.value}"
+         inputs:
+            demo_create_files.vars
+         outputs:
+            message_exit_code: exit_code
+            failures: number_of_failures
