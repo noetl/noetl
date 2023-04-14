@@ -1,9 +1,12 @@
 version: 0.1
 name: demo_workflow
 working_directory: .
-  shell: /bin/bash
   environment:
     ENV: staging
+  outputs:
+    workflow_exit_code:
+      name: workflow exit code
+      value: success
 jobs:
    demo_create_files:
       name: Demonstration of terminal execution
