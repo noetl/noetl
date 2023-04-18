@@ -15,10 +15,7 @@ jobs:
          HOST: ${HOST}
          ENVIRONMENT: ${ENV}
          DIR: ${WORKING_DIR}
-      outputs:
-         job_exit_code:
-            name: job exit code
-            value: exit_code
+      message: The job demo_create_files finished with exit code: ${outputs.exit_code}
       tasks:
          start:
             name: Hello
