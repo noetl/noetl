@@ -1,7 +1,8 @@
 version: 0.1
-name: demo_workflow
+name: demo workflow
+id: demo-workflow
 working_directory: .
-  environment:
+  vars:
     ENV: staging
   outputs:
     workflow_exit_code:
@@ -14,33 +15,28 @@ jobs:
          HOST: ${HOST}
          ENVIRONMENT: ${ENV}
          DIR: ${WORKING_DIR}
-      inputs:
-         rules_arguments:
-            name: start arguments
-            type: string
-            value: vars.ENVIRONMENT
       outputs:
-         message_exit_code:
+         job_exit_code:
             name: job exit code
-            value: another_task.message_exit_code
+            value: exit_code
       tasks:
          start:
             name: Hello
-            type: shell,ssh,rest
             vars:
                msg: Hello ${HOST}
-            deps:
-               rule1: x==4
-               rule2: y==5
+            rule: ${jobs.demo_create_files.outputs = None}
             loop:
+               type: number
                from: 1
                to: 10
                increment: 1
                exclude: [5,6]
-               file: filename
                wait: 1s
-               parallel: true, false
-            exec (call):
+               parallel: true
+            steps:
+              name: call remote site
+              id: call-remote-site
+              type: shell # (shell, http, docker)
               - echo ${.msg}
               - echo "Bye ${loop.value}"
             outputs:
@@ -48,21 +44,20 @@ jobs:
                failures: number_of_failures
          another_task:
             name: Task #2
-            type: shell,ssh,rest
             vars:
                msg: Hello ${HOST}
-            deps:
-               rule1: x==4
-               rule2: y==5
+            rule: ${jobs.demo_create_files.tasks.start.outputs.exit_code = Done}
             loop:
                from: 1
                to: 10
                increment: 1
                exclude: [5,6]
-               file: filename
                wait: 1s
-               parallel: true, false
-            exec (call):
+               parallel: false
+            steps:
+              name: call remote site
+              id: call-remote-site
+              type: shell # (shell, http, docker)
               - echo ${.msg}
               - echo "Bye ${loop.value}"
             outputs:
