@@ -14,7 +14,7 @@ Workflow configuration files are written in YAML format. They are versioned and 
 
 - Task: A task is a specific action or operation that needs to be performed as part of a job. Tasks are typically defined in terms of inputs, outputs, and actions, and may have dependencies on other tasks or data. For example, in a software development workflow, a task might involve compiling code, running unit tests, or packaging an application. 
 
-  In general, jobs are the highest-level unit of work in a workflow, while tasks and steps provide more fine-grained control over the individual actions that need to be performed. The choice of terminology may vary, but the general concepts of jobs, tasks, and steps provide a useful way to organize and structure complex workflows.
+In general, jobs are the highest-level unit of work in a workflow, while tasks and steps provide more fine-grained control over the individual actions that need to be performed. The choice of terminology may vary, but the general concepts of jobs, tasks, and steps provide a useful way to organize and structure complex workflows.
 
 == Call, Execute, and Run
 
