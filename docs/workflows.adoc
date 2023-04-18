@@ -1,0 +1,30 @@
+# Workflows
+
+== Workflow configurations
+A workflow configuration file is a file that defines the steps and tasks needed to execute a particular workflow or process. It typically specifies the order in which tasks should be executed, any dependencies between tasks, and any inputs or parameters needed by each task.
+
+Workflow configuration files are used to automate tasks and processes, such as building and deploying software applications, running data pipelines, or executing machine learning workflows. They provide a way to define the steps needed to complete a complex task and automate the execution of those steps.
+
+Workflow configuration files are written in YAML format. They are versioned and stored in a version control system, allowing engineers to collaborate on workflows and track changes over time.
+
+== Tasks and Steps
+In a workflow configuration file, a task is a specific action that needs to be performed, while a step is a logical grouping of one or more tasks.
+
+Steps, are a way to group related tasks together into a logical unit. For example, in a software development workflow, a step might involve building and testing the application, or packaging and deploying the application to a server. Steps can also define dependencies between tasks, specifying the order in which they should be executed.
+
+Tasks are the individual units of work that need to be completed in order to execute a workflow. For example, in a software development workflow, a task might involve compiling code, running unit tests, or packaging an application. Each task typically has a specific input, output, and set of actions that need to be performed.
+
+== Call, Execute, and Run
+
+In computer science, the terms "call", "execute", and "run" are often used to describe the process of invoking a function or program. While these terms are often used interchangeably, there are subtle differences between them:
+
+- Call: Refers to the act of invoking a function or method by its name, along with any necessary arguments. The function call may or may not actually execute immediately, depending on the program flow and context.
+
+- Execute: Refers to the act of actually running a program or script. Execution may involve loading the program into memory, allocating resources, setting up the program environment, and then executing the code.
+
+- Run: Refers to the act of executing a program or script from start to finish, including any necessary initialization, processing, and cleanup steps. When a program is run, it is typically loaded into memory, executed, and then terminated.
+
+In summary, while "call", "execute", and "run" are related concepts in computer science, they refer to different stages of the process of invoking a function or program, and may involve different levels of control and granularity depending on the context.
+
+
+
