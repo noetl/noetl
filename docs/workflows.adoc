@@ -7,12 +7,14 @@ Workflow configuration files are used to automate tasks and processes, such as b
 
 Workflow configuration files are written in YAML format. They are versioned and stored in a version control system, allowing engineers to collaborate on workflows and track changes over time.
 
-== Tasks and Steps
-In a workflow configuration file, a task is a specific action that needs to be performed, while a step is a logical grouping of one or more tasks.
+== Jobs, Tasks, and Steps
+- Job: A job is the highest level of abstraction in a workflow. It typically refers to a complete unit of work that needs to be executed, such as building and deploying a software application, or running a machine learning workflow.
 
-Steps, are a way to group related tasks together into a logical unit. For example, in a software development workflow, a step might involve building and testing the application, or packaging and deploying the application to a server. Steps can also define dependencies between tasks, specifying the order in which they should be executed.
+- Step: A step is a logical grouping of one or more tasks that need to be performed in sequence. For example, in a software development workflow, a step might involve building and testing the application, or packaging and deploying the application to a server. Steps can also define dependencies between tasks, specifying the order in which they should be executed.
 
-Tasks are the individual units of work that need to be completed in order to execute a workflow. For example, in a software development workflow, a task might involve compiling code, running unit tests, or packaging an application. Each task typically has a specific input, output, and set of actions that need to be performed.
+- Task: A task is a specific action or operation that needs to be performed as part of a job. Tasks are typically defined in terms of inputs, outputs, and actions, and may have dependencies on other tasks or data. For example, in a software development workflow, a task might involve compiling code, running unit tests, or packaging an application. 
+
+  In general, jobs are the highest-level unit of work in a workflow, while tasks and steps provide more fine-grained control over the individual actions that need to be performed. The choice of terminology may vary, but the general concepts of jobs, tasks, and steps provide a useful way to organize and structure complex workflows.
 
 == Call, Execute, and Run
 
