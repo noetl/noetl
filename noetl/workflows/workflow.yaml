@@ -52,12 +52,19 @@ jobs:
                wait: 1s
                parallel: false
             steps:
-              print-out-greeting:
-                name: Greeting step
-                type: shell
+              generate_greeting_template:
+                name: Tamplate step
+                type: template
                 template: |
                           #!/usr/bin/env python
                           print("Hello World")
+                file: hello_world.py
+              execute_greeting_template:
+                name: Print out greeting
+                type: shell
+                call: |
+                       chmod +x ${steps.generate_greeting_template.file}
+                       ./${steps.generate_greeting_template.file}
             outputs:
                message_exit_code: exit_code
                failures: number_of_failures
