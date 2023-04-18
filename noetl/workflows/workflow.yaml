@@ -52,11 +52,12 @@ jobs:
                wait: 1s
                parallel: false
             steps:
-              name: call remote site
-              id: call-remote-site
-              type: shell # (shell, http, docker)
-              - echo ${.msg}
-              - echo "Bye ${loop.value}"
+              print-out-greeting:
+                name: Greeting step
+                type: shell
+                template: |
+                          #!/usr/bin/env python
+                          print("Hello World")
             outputs:
                message_exit_code: exit_code
                failures: number_of_failures
