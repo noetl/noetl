@@ -1,0 +1,41 @@
+workflow:
+  name: example_workflow
+  schedule: "0 0 * * *"
+  variables:
+    default_timeout: 60
+  jobs:
+    - name: job1
+      runtime_environment: docker
+      dependencies:
+        - job2
+      tasks:
+        - name: task1
+          type: shell
+          script: "echo 'Hello, World'"
+          timeout: "{{ default_timeout }}"
+          loop:
+            type: range
+            start: 0
+            end: 5
+            step: 1
+          conditions:
+            - "{{ previous_task.status }} == 'success'"
+        - name: task2
+          type: rest_api
+          method: GET
+          url: "https://api.github.com/octocat"
+          loop:
+            type: cursor
+            pageSize: 100
+            query: "{{ previous_task.output }}"
+          conditions:
+            - "{{ previous_task.status }} == 'success'"
+
+    - name: job2
+      runtime_environment: kubernetes
+      schedule: "0 12 * * *"
+      tasks:
+        - name: task1
+          type: shell
+          script: "echo 'Job2 Task1'"
+          timeout: "{{ default_timeout }}"

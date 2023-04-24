@@ -1,4 +1,4 @@
-# Workflows
+# Glossary
 
 == Workflow configurations
 A workflow configuration file is a file that defines the steps and tasks needed to execute a particular workflow or process. It typically specifies the order in which tasks should be executed, any dependencies between tasks, and any inputs or parameters needed by each task.
@@ -28,6 +28,3 @@ In computer science, the terms "call", "execute", and "run" are often used to de
 - Run: Refers to the act of executing a program or script from start to finish, including any necessary initialization, processing, and cleanup steps. When a program is run, it is typically loaded into memory, executed, and then terminated.
 
 In summary, while "call", "execute", and "run" are related concepts in computer science, they refer to different stages of the process of invoking a function or program, and may involve different levels of control and granularity depending on the context.
-
-
-

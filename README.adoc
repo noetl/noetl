@@ -1,7 +1,7 @@
 = https://github.com/noetl/noetl/wiki[NoETL]
 NoETL's (Not Only ETL) current python version is a prototype of a system to manage the sequence of the process execution by controlling forks and child processes. 
 
-- xref:docs/workflows.adoc[Workflows]
+- xref:docs/glossary.adoc[Workflows]
 
 - https://github.com/noetl/noetl/wiki
 
