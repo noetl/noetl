@@ -1,41 +1,39 @@
 workflow:
   name: example_workflow
-  schedule: "0 0 * * *"
+  schedule: "*/5 * * * *" # The cron expression format: '*/5 * * * *' represents every 5 minutes
   variables:
     default_timeout: 60
   jobs:
     - name: job1
-      runtime_environment: docker
-      dependencies:
-        - job2
+      runtime: docker
+      conditions:
+        - "'{{example_workflow.jobs.job2.status}}' == 'success'"
       tasks:
         - name: task1
-          type: shell
-          script: "echo 'Hello, World'"
-          timeout: "{{ default_timeout }}"
+          kind: shell
+          command: "echo 'Hello, World'"
+          timeout: "{{example_workflow.variables.default_timeout}}"
           loop:
             type: range
             start: 0
             end: 5
             step: 1
-          conditions:
-            - "{{ previous_task.status }} == 'success'"
         - name: task2
-          type: rest_api
+          kind: rest_api
           method: GET
           url: "https://api.github.com/octocat"
           loop:
             type: cursor
             pageSize: 100
-            query: "{{ previous_task.output }}"
+            query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
           conditions:
-            - "{{ previous_task.status }} == 'success'"
+            - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'success'"
 
     - name: job2
-      runtime_environment: kubernetes
+      runtime: kubernetes
       schedule: "0 12 * * *"
       tasks:
         - name: task1
-          type: shell
-          script: "echo 'Job2 Task1'"
-          timeout: "{{ default_timeout }}"
+          kind: shell
+          command: "echo 'Job2 Task1'"
+          timeout: "{{example_workflow.variables.default_timeout}}"
