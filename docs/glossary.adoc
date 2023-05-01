@@ -34,17 +34,17 @@ In summary, while "call", "execute", and "run" are related concepts in computer 
 === The difference between processes and threads
 
 Processes and threads are both related to the execution of code in a computer system, but they have some differences.
-.Processes:
-- A process is an instance of a running program that has its own memory space, resources, and file handles.
-- Each process runs independently of other processes and has its own state, meaning that it does not share memory or resources with other processes.
-- Processes are managed by the operating system, which assigns each process a unique process identifier (PID).
-- Processes can communicate with each other through inter-process communication (IPC) mechanisms like pipes, sockets, or shared memory.
-- Creating a new process is resource-intensive because it requires allocating separate memory space and resources for each process.
-.Threads:
-- A thread is the smallest unit of execution within a process.
-- Multiple threads can exist within a single process, and they share the same memory space and resources, such as file handles.
-- Threads are more lightweight compared to processes, as they share resources with other threads in the same process.
-- Since threads share memory, they can communicate with each other more efficiently than processes, but this also introduces potential issues, such as race conditions and deadlocks if not handled properly.
-- Threads are managed by the operating system or a runtime environment, and each thread has its own state and execution context, such as program counter, register values, and stack.
+. Processes:
+* A process is an instance of a running program that has its own memory space, resources, and file handles.
+* Each process runs independently of other processes and has its own state, meaning that it does not share memory or resources with other processes.
+* Processes are managed by the operating system, which assigns each process a unique process identifier (PID).
+* Processes can communicate with each other through inter-process communication (IPC) mechanisms like pipes, sockets, or shared memory.
+* Creating a new process is resource-intensive because it requires allocating separate memory space and resources for each process.
+. Threads:
+* A thread is the smallest unit of execution within a process.
+* Multiple threads can exist within a single process, and they share the same memory space and resources, such as file handles.
+* Threads are more lightweight compared to processes, as they share resources with other threads in the same process.
+* Since threads share memory, they can communicate with each other more efficiently than processes, but this also introduces potential issues, such as race conditions and deadlocks if not handled properly.
+* Threads are managed by the operating system or a runtime environment, and each thread has its own state and execution context, such as program counter, register values, and stack.
 
 The operating system manages processes by allocating resources, scheduling their execution, and handling communication between them. Processes are isolated from each other, and the operating system ensures that they do not interfere with one another, which provides stability and security in a multi-process environment.
