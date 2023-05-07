@@ -1,0 +1,19 @@
+workflow:
+  name: main_workflow
+  schedule: "*/5 * * * *"
+  variables:
+    default_timeout: 60
+  conditions:
+    - "'{{main_workflow.status}}' == 'ready'"
+  jobs:
+    - name: job1
+      runtime: docker
+      tasks:
+        - name: task1
+          kind: shell
+          command: "python run_workflow.py workflow_1.yaml"
+          timeout: "{{main_workflow.variables.default_timeout}}"
+        - name: task2
+          kind: shell
+          command: "python run_workflow.py workflow_2.yaml"
+          timeout: "{{main_workflow.variables.default_timeout}}"

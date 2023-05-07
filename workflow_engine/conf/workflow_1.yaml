@@ -3,6 +3,10 @@ workflow:
   schedule: "*/5 * * * *" # The cron expression format: '*/5 * * * *' represents every 5 minutes
   variables:
     default_timeout: 60
+    example_workflow:
+      status: ready
+  conditions:
+    - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
   jobs:
     - name: job1
       runtime: docker
@@ -14,18 +18,14 @@ workflow:
           command: "echo 'Hello, World'"
           timeout: "{{example_workflow.variables.default_timeout}}"
           loop:
-            type: range
-            start: 0
-            end: 5
-            step: 1
+            - expr: "for k in range(0,10)"
         - name: task2
           kind: rest_api
           method: GET
           url: "https://api.github.com/octocat"
           loop:
-            type: cursor
-            pageSize: 100
-            query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
+            - expr: "for k in range(0,10)"
+              query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
           conditions:
             - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'success'"
 
