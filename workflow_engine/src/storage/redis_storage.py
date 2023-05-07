@@ -19,7 +19,7 @@ class RedisStorage(BaseStorage):
         self.client: Optional[Any] = None
 
     async def save(self, key: str, value: Union[str, Any]):
-        if type(key) == 'str' and type(value) == 'str':
+        if isinstance(key, str) and isinstance(value, str):
             await self.set(key, value)
         else:
             await self.hset(key, value)
