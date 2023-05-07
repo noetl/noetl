@@ -28,3 +28,32 @@ In computer science, the terms "call", "execute", and "run" are often used to de
 - Run: Refers to the act of executing a program or script from start to finish, including any necessary initialization, processing, and cleanup steps. When a program is run, it is typically loaded into memory, executed, and then terminated.
 
 In summary, while "call", "execute", and "run" are related concepts in computer science, they refer to different stages of the process of invoking a function or program, and may involve different levels of control and granularity depending on the context.
+
+== F.A.Q.
+
+=== The difference between processes and threads
+
+==== Processes and threads are both related to the execution of code in a computer system, but they have some differences.
+. Processes:
+- A process is an instance of a running program that has its own memory space, resources, and file handles.  
+- Each process runs independently of other processes and has its own state, meaning that it does not share memory or resources with other processes.  
+- Processes are managed by the operating system, which assigns each process a unique process identifier (PID).  
+- Processes can communicate with each other through inter-process communication (IPC) mechanisms like pipes, sockets, or shared memory.  
+- Creating a new process is resource-intensive because it requires allocating separate memory space and resources for each process.  
+
+. Threads:
+- Threads share the same memory space and resources as other threads within the same process. This includes variables, data structures, and file handles.
+- When a program starts, it typically has a single thread known as the "main" thread. This thread can create additional threads to perform specific tasks.
+- Each thread has its own state, which includes a program counter, register values, and a stack for local variables and function calls.
+- The operating system or a runtime environment schedules threads to run on available CPU cores. Threads can be in different states, such as running, waiting, or blocked, depending on their current activity.
+- When multiple threads access shared resources, proper synchronization is required to avoid issues like race conditions or deadlocks. Synchronization can be achieved using techniques like locks, semaphores, or other concurrency primitives.
+
+The operating system manages processes by allocating resources, scheduling their execution, and handling communication between them. Processes are isolated from each other, and the operating system ensures that they do not interfere with one another, which provides stability and security in a multi-process environment.
+
+. File handle:
+A file handle, also known as a file descriptor, is a reference to an open file or another I/O resource, such as a network socket or a pipe. File handles are used by programs to interact with the operating system's file and I/O systems. Here's how you can explain file handles:
+
+- When a program opens a file or another I/O resource, the operating system assigns it a unique file handle, which is typically an integer value.
+- The program can then use the file handle to read from or write to the file or I/O resource, as well as perform other operations like seeking to a specific position in the file.
+- File handles are managed by the operating system, which keeps track of which files and I/O resources are open and ensures that resources are properly allocated and released when no longer needed.
+- Since threads within a process share resources, they also share file handles. This means that multiple threads can potentially access the same file or I/O resource simultaneously. Proper synchronization and coordination are required to avoid issues like data corruption or unexpected behavior when multiple threads access the same file handle.
