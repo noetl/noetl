@@ -1,16 +1,16 @@
 = https://github.com/noetl/noetl/wiki[NoETL]
-NoETL's (Not Only ETL) current python version is a prototype of a system to manage the sequence of the process execution by controlling forks and child processes. 
+NoETL's (Not Only ETL) current python version is a prototype of a system to manage the process execution by controlling forks and child processes.
 
 - xref:docs/glossary.adoc[Workflows]
 
-- https://github.com/noetl/noetl/wiki
+The noetl workflow engine can be used to enable AI/Machine learning functionality by incorporating AI/ML algorithms and models as tasks within the workflow. Here are the steps you can follow:
 
-## Quick Start
+. Define the AI/ML task: Define the task to be executed, including the algorithm and/or model to be used, input data, and output data format.
 
-To execute the process assuming you've just cloned the repo to ~/projects/github folder, simply run:
+. Prepare data: Prepare the data needed for the task. This could involve preprocessing, cleaning, and formatting the data to be compatible with the AI/ML algorithm or model.
 
-    python ~/projects/github/noetl/noetl/noetl.py ~/projects/github/noetl/conf/coursor.inherit.cfg.v1.json
+. Configure the workflow: Configure the workflow to include the AI/ML task. This can be done by creating a new job and task, and specifying the input and output data for the task.
 
-An output of execution should look like this example:
+. Execute the workflow: Once the workflow is configured, execute it and monitor the progress.
 
-https://github.com/noetl/noetl/blob/master/log/noetl-20150916163103.log
+. Analyze the results: Once the workflow completes, analyze the results of the AI/ML task to determine if the task was successful, and whether any further action is required.
