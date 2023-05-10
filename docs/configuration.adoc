@@ -1,0 +1,45 @@
+= Workflow configuration
+
+== Specification
+configuration file follows a Kubernetes-style manifest structure with clear separation of metadata and specification (or "spec"). It describes a workflow called "example_workflow" that includes the following specifications:
+
+- `**apiVersion**`: the version of the API
+- `**kind**`: identifies the type of object (in this case, a workflow)
+- `**metadata**`: contains information about the workflow, including its name and schedule
+- `**spec**`: contains the details of the workflow, including its variables, conditions, and jobs.
+
+The `**variables**` field specifies default timeout and status for the workflow, which can be used throughout the workflow configuration.
+
+The `**conditions**` field specifies the conditions that need to be met for the workflow to run.
+
+The `**jobs**` field is a list of jobs that the workflow will run, each with their own name, runtime environment and tasks. The `**runtime**` specifies the environment to run the job. Currently, the supported runtimes are "docker" and "kubernetes". Each job consists of one or more tasks, which can be of different kinds, such as shell or rest API. The `**loop**` parameter can be used to loop over a task for a specified number of iterations. The `**conditions**` field can be used to specify conditions that must be met before running the job or the task.
+User
+
+== Description
+
+A configuration file consists of several components that define the structure and behavior of a workflow.
+
+The basic components of a configuration file are:
+
+- `**workflow**` - the top-level component that defines the name, schedule, variables, conditions, and jobs of a workflow.
+- `**job**` - a component that defines a single unit of work within a workflow.
+- `**task**` - a component that defines a specific action that must be performed within a job.
+- `**variables**` - a component that defines the variables used within a workflow and their default values.
+- `**conditions**` - a component that defines the conditions that must be met for a job or task to execute.
+
+Each component is defined using a YAML syntax with specific fields and properties.
+
+For example, a job component may include the following fields:
+
+- `**name**` - the name of the job
+- `**runtime**` - the runtime environment in which the job should run (e.g., Docker, Kubernetes)
+- `**tasks**` - a list of tasks that the job should execute
+
+Similarly, a task component may include the following fields:
+
+- `**name**` - the name of the task
+- `**kind**` - the type of task (e.g., shell, rest_api)
+- `**command**` - the command to execute for the task
+- `**timeout**` - the maximum time allowed for the task to execute
+
+By defining these components in a configuration file, users can create complex workflows that can automate data processing, model training, and deployment.

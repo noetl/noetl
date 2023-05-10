@@ -2,7 +2,8 @@
 
 NoETL is an open-source workflow engine designed to enable AI and machine learning functionality. It is a lightweight and flexible workflow engine that allows users to define and run workflows that automate data processing, model training, and deployment.
 
-- xref:docs/glossary.adoc[Workflows]
+- xref:docs/glossary.adoc[Glossary]
+- xref:docs/configuration.adoc[Configuration]
 
 == Features
 
@@ -39,4 +40,4 @@ We welcome contributions to NoETL! To get started, check out the contributing gu
 
 == License
 
-NoETL is licensed under the MIT License. See the xref:LICENSE[LICENSE] file for more details.
+NoETL is licensed under the MIT License. See the xref:./LICENSE[LICENSE] file for more details.
