@@ -13,7 +13,6 @@ The `**variables**` field specifies default timeout and status for the workflow,
 The `**conditions**` field specifies the conditions that need to be met for the workflow to run.
 
 The `**jobs**` field is a list of jobs that the workflow will run, each with their own name, runtime environment and tasks. The `**runtime**` specifies the environment to run the job. Currently, the supported runtimes are "docker" and "kubernetes". Each job consists of one or more tasks, which can be of different kinds, such as shell or rest API. The `**loop**` parameter can be used to loop over a task for a specified number of iterations. The `**conditions**` field can be used to specify conditions that must be met before running the job or the task.
-User
 
 == Description
 
