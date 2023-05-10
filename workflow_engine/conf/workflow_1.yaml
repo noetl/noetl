@@ -1,5 +1,8 @@
-workflow:
+apiVersion: workflow.example.com/v1
+kind: Workflow
+metadata:
   name: example_workflow
+spec:
   schedule: "*/5 * * * *" # The cron expression format: '*/5 * * * *' represents every 5 minutes
   variables:
     default_timeout: 60
