@@ -1,19 +1,37 @@
-workflow:
+apiVersion: workflow.example.com/v1
+kind: Workflow
+metadata:
   name: main_workflow
+
+spec:
+  # Define the schedule for the workflow
   schedule: "*/5 * * * *"
+
+  # Define variables for the workflow
   variables:
     default_timeout: 60
+
+  initial_state: ready
+  states: [ready, running, idle, completed, failed]
+  transitions:
+    - source: ready
+      target: [running]
+    - source: running
+      target: [idle, completed, failed]
+    - source: idle
+      target: [ready, running]
   conditions:
-    - "'{{main_workflow.status}}' == 'ready'"
+    - "'{{spec.variables.example_workflow.status}}' == 'ready'"
+
   jobs:
-    - name: job1
-      runtime: docker
+    - name: job1           # Name of the job
+      runtime: docker      # Runtime for the job (e.g., 'docker')
       tasks:
-        - name: task1
-          kind: shell
-          command: "python run_workflow.py workflow_1.yaml"
-          timeout: "{{main_workflow.variables.default_timeout}}"
-        - name: task2
-          kind: shell
-          command: "python run_workflow.py workflow_2.yaml"
-          timeout: "{{main_workflow.variables.default_timeout}}"
+        - name: task1      # Name of the task
+          kind: shell      # Type of task (e.g., 'shell')
+          command: "python run_workflow.py workflow_1.yaml"   # Command to execute for the task
+          timeout: "{{main_workflow.variables.default_timeout}}"  # Timeout for the task
+        - name: task2      # Name of another task
+          kind: shell      # Type of task (e.g., 'shell')
+          command: "python run_workflow.py workflow_2.yaml"   # Command to execute for the task
+          timeout: "{{main_workflow.variables.default_timeout}}"  # Timeout for the task

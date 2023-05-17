@@ -3,11 +3,18 @@ kind: Workflow
 metadata:
   name: example_workflow
 spec:
-  schedule: "*/5 * * * *" # The cron expression format: '*/5 * * * *' represents every 5 minutes
+  schedule: "*/5 * * * *"  # The cron expression format: '*/5 * * * *' represents every 5 minutes
   variables:
     default_timeout: 60
-    example_workflow:
-      status: ready
+  initial_state: ready
+  states: [ready, running, idle, completed, failed]
+  transitions:
+    - source: ready
+      target: [running]
+    - source: running
+      target: [idle, completed, failed]
+    - source: idle
+      target: [ready, running]
   conditions:
     - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
   jobs:

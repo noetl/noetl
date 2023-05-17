@@ -5,6 +5,7 @@ from workflow_engine.src.components.finite_automata import FiniteAutomata, State
 from workflow_engine.src.components.job import Job
 from workflow_engine.src.components.config import Config
 from workflow_engine.src.storage import read_yaml
+from workflow_engine.src.components.template import get_object_value
 
 
 class Workflow(FiniteAutomata):
@@ -25,14 +26,14 @@ class Workflow(FiniteAutomata):
         :type workflow_config: dict
         """
         super().__init__(config=config,
-                         name=workflow_config.get("name"),
-                         conditions=workflow_config.get("conditions")
+                         name=get_object_value(workflow_config, "metadata.name"),
+                         conditions=get_object_value(workflow_config, "spec.conditions")
                          )
         self.jobs: list = []
-        self.schedule: Optional[str] = workflow_config.get("schedule")
-        self.variables: Optional[dict] = workflow_config.get("variables")
-        self.generate_workflow_instance_id(workflow_config.get("name"))
-        self.define_jobs(workflow_jobs_config=workflow_config.get("jobs"))
+        self.schedule: Optional[str] = get_object_value(workflow_config, "spec.schedule")
+        self.variables: Optional[dict] = get_object_value(workflow_config, "spec.variables")
+        self.generate_workflow_instance_id(get_object_value(workflow_config,"metadata.name"))
+        self.define_jobs(workflow_jobs_config=get_object_value(workflow_config, "spec.jobs"))
 
     @staticmethod
     async def initialize_workflow(config: Config):
@@ -46,9 +47,8 @@ class Workflow(FiniteAutomata):
         """
         try:
             workflow_template = await read_yaml(config.workflow_config_path)
-            workflow_config = workflow_template.get("workflow")
             workflow = Workflow(
-                config=config, workflow_config=workflow_config
+                config=config, workflow_config=workflow_template
             )
             await workflow.set_storage()
             await workflow.db.pool_connect()
