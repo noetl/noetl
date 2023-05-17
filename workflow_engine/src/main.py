@@ -35,8 +35,11 @@ async def main(args):
     logger.debug(f"args: {args}")
     workflow = await Workflow.initialize_workflow(config=Config(config_path=args.config))
 
-    workflow.print()
-    await workflow.execute()
+    if workflow:
+        workflow.print()
+        await workflow.execute()
+    else:
+        logger.error("Workflow initialization failed.")
 
 
 if __name__ == "__main__":

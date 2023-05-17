@@ -51,9 +51,11 @@ class Workflow(FiniteAutomata):
             workflow = Workflow(
                 config=config, workflow_config=workflow_template
             )
-            await workflow.set_storage()
-            await workflow.db.pool_connect()
-            return workflow
+            if workflow:
+                await workflow.set_storage()
+                await workflow.db.pool_connect()
+                return workflow
+            return
 
         except Exception as e:
             logger.error(f"Setting up a workflow template failed {e}")
@@ -76,6 +78,7 @@ class Workflow(FiniteAutomata):
         Args:
             workflow_jobs_config: The configuration for the jobs.
         """
+        logger.info(workflow_jobs_config)
         for job_config in workflow_jobs_config:
             job = Job(
                 workflow_name=self.name,

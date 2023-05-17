@@ -20,26 +20,24 @@ spec:
         - "'{{example_workflow.jobs.job2.status}}' == 'success'"
       tasks:
         - name: task1
-          kind: shell
-          command: "echo 'Hello, World'"
-          timeout: "{{example_workflow.variables.default_timeout}}"
-          loop:
-            - expr: "for k in range(0,10)"
+          actions:
+            - shell: "echo 'Hello, World 1'"
+            - shell: "echo 'Hello, World 2'"
+            - rest_api:
+                method: GET
+                url: "https://api.github.com/octocat"
+                query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
         - name: task2
-          kind: rest_api
-          method: GET
-          url: "https://api.github.com/octocat"
-          loop:
-            - expr: "for k in range(0,10)"
-              query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
-          conditions:
-            - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'success'"
+          actions:
+            - rest_api:
+                method: GET
+                url: "https://api.github.com/octocat"
+                query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
 
     - name: job2
       runtime: kubernetes
       schedule: "0 12 * * *"
       tasks:
         - name: task1
-          kind: shell
-          command: "echo 'Job2 Task1'"
-          timeout: "{{example_workflow.variables.default_timeout}}"
+          actions:
+           - shell: "echo 'Job2 Task1'"

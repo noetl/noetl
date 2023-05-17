@@ -1,9 +1,7 @@
-import asyncio
-import subprocess
-import aiohttp
 from typing import Optional
 from loguru import logger
 from workflow_engine.src.components.finite_automata import FiniteAutomata
+from workflow_engine.src.components.action import Action
 
 
 class Task(FiniteAutomata):
@@ -15,11 +13,13 @@ class Task(FiniteAutomata):
         instance_id (str): The unique instance ID of the parent Workflow.
         task_config (dict): A dictionary containing the parsed task configuration.
     """
+
     def __init__(self,
                  workflow_name: str,
                  job_name: str,
                  instance_id: str,
-                 task_config: dict
+                 task_config: dict,
+                 actions: Optional[list[Action]] = None
                  ):
         """
         Initializes a new Task instance based on the provided configuration.
@@ -33,14 +33,12 @@ class Task(FiniteAutomata):
                          conditions=task_config.get("conditions"))
         self.workflow_name: str = workflow_name
         self.job_name: str = job_name
-        self.variables: Optional[dict] = task_config.get("variables")
-        self.kind: str = task_config.get("kind")
-        self.command: Optional[str] = task_config.get("command")
-        self.method: Optional[str] = task_config.get("method")
-        self.url: Optional[str] = task_config.get("url")
-        self.timeout: Optional[str] = task_config.get("timeout")
-        self.loop: Optional[dict] = task_config.get("loop")
-        self.status = None
+        if actions is None:
+            actions = []
+            for id, action in enumerate(task_config.get("actions"), start=1):
+                actions.append(Action(action, id))
+
+        self.actions: list[Action] = actions
         self.output = None
 
     async def execute(self):
@@ -50,15 +48,17 @@ class Task(FiniteAutomata):
          """
         self.set_state("running")
         logger.info(f"Executing task {self.name}")
+        for action in self.actions:
+            logger.info(action)
         # if self.conditions and not self.check_conditions():
         #     logger.info(f"Skipping task {self.name} due to unmet conditions")
         #     return
-        if self.kind == 'shell':
-            await self.execute_shell()
-        elif self.kind == 'rest_api':
-            await self.execute_rest_api()
-        else:
-            logger.info(f"Unknown kind for task {self.name}")
+        # if self.kind == 'shell':
+        #     await self.execute_shell()
+        # elif self.kind == 'rest_api':
+        #     await self.execute_rest_api()
+        # else:
+        #     logger.info(f"Unknown kind for task {self.name}")
 
     # def check_conditions(self):
     #
@@ -68,29 +68,3 @@ class Task(FiniteAutomata):
     #         if not eval(template):
     #             return False
     #     return True
-
-    async def execute_shell(self):
-        """
-        Executes the Task instance as a shell command.
-        Logs the task completion status and output.
-        """
-        process = await asyncio.create_subprocess_shell(self.command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = await process.communicate()
-        self.output = stdout.decode().strip()
-        #automata.set_value(f"{self.workflow_name}.jobs.{self.job_name}.tasks.{self.name}.output", self.output)
-        self.status = 'success' if process.returncode == 0 else 'failure'
-        #automata.set_value(f"{self.workflow_name}.jobs.{self.job_name}.tasks.{self.name}.status", self.status)
-        logger.info(f"Task {self.name} completed with status: {self.status} output: {self.output}")
-
-    async def execute_rest_api(self):
-        """
-        Executes the Task instance as a REST API request.
-        Logs the task completion status.
-        """
-        async with aiohttp.ClientSession() as session:
-            async with session.request(self.method, self.url) as response:
-                self.output = await response.text()
-                #automata.set_value(f"{self.workflow_name}.jobs.{self.job_name}.tasks.{self.name}.output", self.output)
-                self.status = 'success' if response.status == 200 else 'failure'
-                #automata.set_value(f"{self.workflow_name}.jobs.{self.job_name}.tasks.{self.name}.status", self.status)
-                logger.info(f"Task {self.name} completed with status {self.status}")
