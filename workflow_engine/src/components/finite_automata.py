@@ -6,25 +6,6 @@ from workflow_engine.src.storage.redis_storage import RedisStorage
 import re
 
 
-class State(Enum):
-    """
-    The State Enum class represents the various states that an entity
-    in the workflow engine, such as a workflow, job, or task, can have
-    during its execution.
-    Attributes:
-        READY (str): The entity is ready to be executed.
-        RUNNING (str): The entity is currently running.
-        IDLE (str): The entity is waiting for a condition or dependency to be fulfilled.
-        COMPLETED (str): The entity has successfully completed its execution.
-        FAILED (str): The entity has failed to complete its execution.
-    """
-    READY = "ready"
-    RUNNING = "running"
-    IDLE = "idle"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
 class FiniteAutomata:
     """
     The FiniteAutomata class is the base class for all entities in the workflow engine,
@@ -33,31 +14,34 @@ class FiniteAutomata:
     Attributes:
         state (State): The current state of the entity.
         name (str): The name of the entity.
-        config (Config): The configuration object.
-        db (Union[RedisStorage, None]): The storage object for the entity.
+        config (Config): The configuration.
+        db (Union[RedisStorage, None]): The storage connection.
         instance_id (str): The unique instance ID of the entity.
         conditions (list): The list of conditions that must be fulfilled for the entity to be executed.
         workflow_template (dict): The workflow template as a dictionary.
     """
 
     def __init__(self,
-                 initial_state: State = State.READY,
+                 initial_state: str = "ready", transitions: Optional[dict[str, list[str]]] = None,
                  instance_id: Optional[str] = None,
                  name: Optional[str] = None,
                  config: Optional[Config] = None,
                  conditions: Optional[list] = None
-
                  ):
         """
         Initializes a FiniteAutomata object with the given parameters.
         Args:
-            instance_id (str): The unique instance ID of the workflow object.
-            initial_state (State, optional): The initial state of the entity. Defaults to State.READY.
-            name (Optional[str], optional): The name of the entity. Defaults to None.
-            config (Optional[Config], optional): The configuration object. Defaults to None.
-            conditions (Optional[list], optional): The list of conditions that must be fulfilled for the entity to be executed. Defaults to None.
+            initial_state (str): The initial state of the entity. Defaults to "ready".
+            transitions (Optional[dict[str, list[str]]]): The transitions between states.
+            instance_id (Optional[str]): The unique instance ID of the entity.
+            name (Optional[str]): The name of the entity.
+            config (Optional[Config]): The configuration object.
+            conditions (Optional[list]): The list of conditions that must be fulfilled for the entity to be executed.
         """
-        self.state: State = initial_state
+        if transitions is None:
+            transitions = {"ready": ["running"], "running": ["completed", "failed"]}
+        self.state: str = initial_state
+        self.transitions: dict[str: list[str]] = transitions
         self.name: str = name
         self.config: Optional[Config] = config
         self.db: Optional[Union[RedisStorage]] = None
@@ -77,7 +61,7 @@ class FiniteAutomata:
     def __str__(self):
         return f"{self.__class__.__name__}(name={self.name})"
 
-    def set_state(self, new_state: State):
+    def set_state(self, new_state: str):
         """
         Sets the state of the entity to the given new_state if the transition is allowed.
         Args:
@@ -90,7 +74,7 @@ class FiniteAutomata:
         else:
             raise ValueError(f"Invalid state transition from {self.state} to {new_state}")
 
-    def can_transition(self, new_state: State):
+    def can_transition(self, new_state: str):
         """
         Checks if the entity can transition from its current state to the given new_state.
         Args:
@@ -98,9 +82,7 @@ class FiniteAutomata:
         Returns:
             bool: True if the transition is allowed, False otherwise.
         """
-        if self.state == State.READY and new_state == State.RUNNING:
-            return True
-        elif self.state == State.RUNNING and new_state in [State.COMPLETED, State.FAILED]:
+        if new_state in self.transitions.get(self.state):
             return True
         else:
             return False

@@ -1,7 +1,7 @@
 from typing import Optional
 from loguru import logger
 from datetime import datetime
-from workflow_engine.src.components.finite_automata import FiniteAutomata, State
+from workflow_engine.src.components.finite_automata import FiniteAutomata
 from workflow_engine.src.components.job import Job
 from workflow_engine.src.components.config import Config
 from workflow_engine.src.storage import read_yaml
@@ -47,6 +47,7 @@ class Workflow(FiniteAutomata):
         """
         try:
             workflow_template = await read_yaml(config.workflow_config_path)
+            logger.info(workflow_template)
             workflow = Workflow(
                 config=config, workflow_config=workflow_template
             )
@@ -88,7 +89,7 @@ class Workflow(FiniteAutomata):
         Executes the Workflow instance by running its jobs in the order they were defined.
         Sets the Workflow state to RUNNING and logs the execution process.
         """
-        self.set_state(State.RUNNING)
+        self.set_state("running")
         logger.info(f"Executing workflow {self.name}")
         for job in self.jobs:
             await job.execute()

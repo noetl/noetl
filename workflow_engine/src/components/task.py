@@ -3,7 +3,7 @@ import subprocess
 import aiohttp
 from typing import Optional
 from loguru import logger
-from workflow_engine.src.components.finite_automata import FiniteAutomata, State
+from workflow_engine.src.components.finite_automata import FiniteAutomata
 
 
 class Task(FiniteAutomata):
@@ -48,7 +48,7 @@ class Task(FiniteAutomata):
          Executes the Task instance based on its kind. The supported kinds are 'shell' and 'rest_api'.
          Sets the Task state to RUNNING and logs the execution process.
          """
-        self.set_state(State.RUNNING)
+        self.set_state("running")
         logger.info(f"Executing task {self.name}")
         # if self.conditions and not self.check_conditions():
         #     logger.info(f"Skipping task {self.name} due to unmet conditions")

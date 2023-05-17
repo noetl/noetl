@@ -1,7 +1,7 @@
 from loguru import logger
 from datetime import datetime
 from croniter import croniter
-from workflow_engine.src.components.finite_automata import FiniteAutomata, State
+from workflow_engine.src.components.finite_automata import FiniteAutomata
 from workflow_engine.src.components.task import Task
 
 
@@ -54,7 +54,7 @@ class Job(FiniteAutomata):
         Executes the Job instance by running its tasks in the order they were defined.
         Sets the Job state to RUNNING and logs the execution process.
         """
-        self.set_state(State.RUNNING)
+        self.set_state("running")
         logger.info(f"Executing job {self.name}")
         for task in self.tasks:
             await task.execute()
@@ -65,7 +65,7 @@ class Job(FiniteAutomata):
         Returns:
             bool: True if the Job is ready to be executed, False otherwise.
         """
-        if self.state == State.READY:
+        if self.state == "ready":
             return False
 
         if self.schedule:

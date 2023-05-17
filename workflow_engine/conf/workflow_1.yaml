@@ -7,14 +7,10 @@ spec:
   variables:
     default_timeout: 60
   initial_state: ready
-  states: [ready, running, idle, completed, failed]
   transitions:
-    - source: ready
-      target: [running]
-    - source: running
-      target: [idle, completed, failed]
-    - source: idle
-      target: [ready, running]
+    ready: [running]
+    running: [idle, completed, failed]
+    idle: [ready, running]
   conditions:
     - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
   jobs:
