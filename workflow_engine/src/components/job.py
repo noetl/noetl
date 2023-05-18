@@ -1,76 +1,89 @@
 from loguru import logger
 from datetime import datetime
 from croniter import croniter
-from workflow_engine.src.components.finite_automata import FiniteAutomata
+from workflow_engine.src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
 from workflow_engine.src.components.task import Task
+from workflow_engine.src.components.template import get_object_value
 
 
 class Job(FiniteAutomata):
     """
     A Job class that represents a single job instance within a Workflow and inherits from the FiniteAutomata class.
+
     Args:
         workflow_name (str): The name of the parent Workflow.
-        instance_id (str): The unique instance ID of the parent Workflow.
+        workflow_spec (Spec): The specification of the parent Workflow.
         job_config (dict): A dictionary containing the parsed job configuration.
     """
-    def __init__(self, workflow_name: str, instance_id: str, job_config: dict):
+
+    def __init__(self, workflow_name: str, workflow_spec: Spec, job_config: dict):
         """
         Initializes a new Job instance based on the provided configuration.
+
         Args:
             workflow_name (str): The name of the parent Workflow.
-            instance_id (str): The unique instance ID of the parent Workflow.
+            workflow_spec (Spec): The specification of the parent Workflow.
             job_config (dict): A dictionary containing the parsed job configuration.
         """
-        super().__init__(name=job_config.get("name"), instance_id=instance_id, conditions=job_config.get("conditions"))
+
+        metadata = Metadata(
+            name=get_object_value(job_config, "name"),
+            kind=Kind.JOB)
+        spec = Spec()
+        spec.runtime = get_object_value(job_config, "runtime")
+        spec.state = workflow_spec.state
+        spec.transitions = workflow_spec.transitions
+        spec.conditions = get_object_value(job_config, "conditions")
+        spec.instance_id = workflow_spec.instance_id
+        spec.db = workflow_spec.db
+        super().__init__(
+            metadata=metadata,
+            spec=spec
+        )
+
         self.workflow_name: str = workflow_name
         self.tasks = []
-        self.runtime = job_config.get("runtime")
-        self.schedule = job_config.get("runtime", "shell")
-        self.define_tasks(job_config.get("tasks"))
+        self.define_tasks(tasks_config=job_config.get("tasks"))
 
-    def define_tasks(self, job_config):
+    def define_tasks(self, tasks_config):
         """
         Defines tasks for the Job instance based on the provided job_config.
+
         Args:
-            job_config: The configuration for the tasks.
+            tasks_config: The configuration for the tasks.
         """
-        for task_config in job_config:
+        for task_config in tasks_config:
             task = Task(
                 workflow_name=self.workflow_name,
-                job_name=self.name,
-                instance_id=self.instance_id,
+                job_name=self.metadata.name,
+                job_spec=self.spec,
                 task_config=task_config
             )
             self.tasks.append(task)
 
-    # def get_status(self):
-    #     return automata.get_value(f"{self.workflow_name}.jobs.{self.name}.status")
-    #
-    # def set_status(self, status):
-    #     automata.set_value(f"{self.workflow_name}.jobs.{self.name}.status", status)
-
     async def execute(self):
         """
         Executes the Job instance by running its tasks in the order they were defined.
-        Sets the Job state to RUNNING and logs the execution process.
+        Sets the Job state to "running" and logs the execution process.
         """
         self.set_state("running")
-        logger.info(f"Executing job {self.name}")
+        logger.info(f"Executing job {self.metadata.name}")
         for task in self.tasks:
             await task.execute()
 
     def job_ready(self) -> bool:
         """
         Determines if the Job is ready to be executed based on its state and schedule.
+
         Returns:
             bool: True if the Job is ready to be executed, False otherwise.
         """
         if self.state == "ready":
             return False
 
-        if self.schedule:
+        if self.spec.schedule:
             now = datetime.now()
-            iter = croniter(self.schedule, now)
+            iter = croniter(self.spec.schedule, now)
             next_scheduled_time = iter.get_next(datetime)
             logger.info(f"Next scheduled time {next_scheduled_time}")
             if next_scheduled_time > now:

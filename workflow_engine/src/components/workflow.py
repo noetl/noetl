@@ -1,7 +1,7 @@
 from typing import Optional
 from loguru import logger
 from datetime import datetime
-from workflow_engine.src.components.finite_automata import FiniteAutomata
+from workflow_engine.src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
 from workflow_engine.src.components.job import Job
 from workflow_engine.src.components.config import Config
 from workflow_engine.src.storage import read_yaml
@@ -25,15 +25,27 @@ class Workflow(FiniteAutomata):
         :param workflow_config: A dictionary containing the parsed workflow configuration.
         :type workflow_config: dict
         """
-        super().__init__(config=config,
-                         name=get_object_value(workflow_config, "metadata.name"),
-                         conditions=get_object_value(workflow_config, "spec.conditions")
-                         )
+        metadata = Metadata(
+            name=get_object_value(workflow_config, "metadata.name"),
+            kind=Kind.WORKFLOW
+        )
+        spec = Spec()
+        spec.schedule = get_object_value(workflow_config, "spec.schedule")
+        spec.variables = get_object_value(workflow_config, "spec.variables")
+        spec.state = get_object_value(workflow_config, "spec.initial_state")
+        spec.transitions = get_object_value(workflow_config, "spec.transitions")
+        spec.conditions = get_object_value(workflow_config, "spec.conditions")
+        spec.instance_id = self.generate_workflow_instance_id(metadata.name)
+
+        super().__init__(
+            metadata=metadata,
+            spec=spec,
+            config=config
+        )
+
+        self.workflow_template: dict = workflow_config
         self.jobs: list = []
-        self.schedule: Optional[str] = get_object_value(workflow_config, "spec.schedule")
-        self.variables: Optional[dict] = get_object_value(workflow_config, "spec.variables")
-        self.generate_workflow_instance_id(get_object_value(workflow_config,"metadata.name"))
-        self.define_jobs(workflow_jobs_config=get_object_value(workflow_config, "spec.jobs"))
+        self.define_jobs(jobs_config=get_object_value(workflow_config, "spec.jobs"))
 
     @staticmethod
     async def initialize_workflow(config: Config):
@@ -53,14 +65,15 @@ class Workflow(FiniteAutomata):
             )
             if workflow:
                 await workflow.set_storage()
-                await workflow.db.pool_connect()
+                await workflow.spec.db.pool_connect()
                 return workflow
             return
 
         except Exception as e:
             logger.error(f"Setting up a workflow template failed {e}")
 
-    def generate_workflow_instance_id(self, name: str):
+    @staticmethod
+    def generate_workflow_instance_id(name: str):
         """
         Generate a unique workflow instance ID based on the workflow name and the current timestamp.
         The generated ID will have the format "name-YYYYmmddTHHMMSSZ". That the IDs are
@@ -70,19 +83,19 @@ class Workflow(FiniteAutomata):
         """
         now = datetime.utcnow()
         timestamp = now.strftime("%Y%m%dT%H%M%SZ")
-        self.instance_id = f"{name}-{timestamp}"
+        return f"{name}-{timestamp}"
 
-    def define_jobs(self, workflow_jobs_config):
+    def define_jobs(self, jobs_config):
         """
         Defines jobs for the Workflow instance based on the provided workflow_jobs_config.
         Args:
             workflow_jobs_config: The configuration for the jobs.
         """
-        logger.info(workflow_jobs_config)
-        for job_config in workflow_jobs_config:
+        logger.info(jobs_config)
+        for job_config in jobs_config:
             job = Job(
-                workflow_name=self.name,
-                instance_id=self.instance_id,
+                workflow_name=self.metadata.name,
+                workflow_spec=self.spec,
                 job_config=job_config
             )
             self.jobs.append(job)
@@ -93,6 +106,6 @@ class Workflow(FiniteAutomata):
         Sets the Workflow state to RUNNING and logs the execution process.
         """
         self.set_state("running")
-        logger.info(f"Executing workflow {self.name}")
+        logger.info(f"Executing workflow {self.metadata.name}")
         for job in self.jobs:
             await job.execute()

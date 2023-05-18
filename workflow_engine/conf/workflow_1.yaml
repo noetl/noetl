@@ -1,4 +1,4 @@
-apiVersion: workflow.example.com/v1
+apiVersion: workflow.noetl.io/v1
 kind: Workflow
 metadata:
   name: example_workflow
