@@ -42,7 +42,7 @@ class Spec:
         """
         Initializes an empty Spec instance.
         """
-        self.instance_id: Optional[str] = None,
+        self.instance_id: Optional[str] = None
         self.schedule: Optional[str] = None
         self.runtime: Optional[Any] = None
         self.variables: Optional[dict] = None

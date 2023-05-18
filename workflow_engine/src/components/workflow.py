@@ -73,7 +73,7 @@ class Workflow(FiniteAutomata):
             logger.error(f"Setting up a workflow template failed {e}")
 
     @staticmethod
-    def generate_workflow_instance_id(name: str):
+    def generate_workflow_instance_id(name: str) -> str:
         """
         Generate a unique workflow instance ID based on the workflow name and the current timestamp.
         The generated ID will have the format "name-YYYYmmddTHHMMSSZ". That the IDs are

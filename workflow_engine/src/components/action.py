@@ -8,19 +8,19 @@ class Action:
     An Action class that represents a specific action to be executed within a Task.
     Args:
         action (dict): A dictionary containing the parsed action configuration.
-        id (int): The ID of the action.
+        action_id (int): The ID of the action.
     """
-    def __init__(self, action , id = 1):
+    def __init__(self, action, action_id = 1):
         """
         Initializes a new Action instance based on the provided configuration.
         Args:
             action (dict): A dictionary containing the parsed action configuration.
-            id (int): The ID of the action.
+            action_id (int): The ID of the action.
         """
         self.spec = {}
         self.kind = None
         self.name = None
-        self.evaluate(action, id)
+        self.evaluate(action, action_id)
 
     def evaluate(self, action, id):
         """

@@ -40,4 +40,4 @@ spec:
       tasks:
         - name: task1
           actions:
-           - shell: "echo 'Job2 Task1'"
+            - shell: "echo 'Job2 Task1'"

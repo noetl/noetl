@@ -56,7 +56,7 @@ class Task(FiniteAutomata):
         for id, action_config in enumerate(actions_config, start=1):
             action = Action(
                 action=action_config,
-                id=id
+                action_id=id
             )
             self.actions.append(action)
 
