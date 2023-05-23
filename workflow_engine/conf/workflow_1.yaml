@@ -3,7 +3,7 @@ kind: Workflow
 metadata:
   name: example_workflow
 spec:
-  schedule: "*/5 * * * *"  # The cron expression format: '*/5 * * * *' represents every 5 minutes
+  schedule: "*/5 * * * *"
   variables:
     default_timeout: 60
   initial_state: ready
@@ -20,15 +20,11 @@ spec:
         - "'{{example_workflow.jobs.job2.status}}' == 'success'"
       tasks:
         - name: task1
+          conditions:
+            - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'success'"
           actions:
             - shell: "echo 'Hello, World 1'"
             - shell: "echo 'Hello, World 2'"
-            - rest_api:
-                method: GET
-                url: "https://api.github.com/octocat"
-                query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
-        - name: task2
-          actions:
             - rest_api:
                 method: GET
                 url: "https://api.github.com/octocat"

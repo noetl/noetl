@@ -1,7 +1,7 @@
-apiVersion: workflow.noetl.io/v1
+apiVersion: noetl.io/v1alpha1
 kind: Workflow
 metadata:
-  name: main_workflow
+  name: main-workflow
 
 spec:
   # Define the schedule for the workflow
@@ -14,7 +14,7 @@ spec:
   initial_state: ready
   transitions:
     ready: [running]
-    running: [idle, completed, failed]
+    running: [completed, failed]
     idle: [ready, running]
   conditions:
     - "'{{spec.variables.example_workflow.status}}' == 'ready'"

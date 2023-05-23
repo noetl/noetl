@@ -32,7 +32,7 @@ class Workflow(FiniteAutomata):
         spec = Spec()
         spec.schedule = get_object_value(workflow_config, "spec.schedule")
         spec.variables = get_object_value(workflow_config, "spec.variables")
-        spec.state = get_object_value(workflow_config, "spec.initial_state")
+        spec.state = get_object_value(workflow_config, "spec.initialState")
         spec.transitions = get_object_value(workflow_config, "spec.transitions")
         spec.conditions = get_object_value(workflow_config, "spec.conditions")
         spec.instance_id = self.generate_workflow_instance_id(metadata.name)
@@ -83,7 +83,9 @@ class Workflow(FiniteAutomata):
         """
         now = datetime.utcnow()
         timestamp = now.strftime("%Y%m%dT%H%M%SZ")
-        return f"{name}-{timestamp}"
+        instance_id =f"{name}-{timestamp}"
+        logger.info(instance_id)
+        return instance_id
 
     def define_jobs(self, jobs_config):
         """
