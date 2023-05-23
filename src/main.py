@@ -2,16 +2,17 @@
 import argparse
 import asyncio
 from loguru import logger
-from workflow_engine.src.components.workflow import Workflow
-from workflow_engine.src.components.config import Config
+from src.components.workflow import Workflow
+from src.components.config import Config
 from __init__ import timer
 
 """
-Not Only ETL is a versatile Workflow Engine designed to manage the execution of complex workflows, jobs, and tasks. 
+Not Only ETL is a Workflow Engine designed to manage the execution of complex workflows. 
 It provides a flexible and efficient way to define, schedule, and coordinate various operations such as data processing, 
 automation, and API interactions, among others. The engine employs a control loop-based approach to coordinate 
-the execution of workflows, jobs, and tasks, offering an adaptable solution for diverse use cases.
+the execution of workflows, jobs, tasks, and actions offering an adaptable solution for diverse use cases.
 """
+
 
 def parse_arguments():
     """
@@ -20,8 +21,8 @@ def parse_arguments():
     :rtype: argparse.Namespace
     """
     parser = argparse.ArgumentParser(prog="noetl", description="Not Only ETL is a Workflow Engine that utilizes \
-                            a control loop-based approach to coordinate the execution of workflows, jobs, and tasks")
-    parser.add_argument("-c", "--config", default="coordinator.yaml")
+                            a loop-based approach to coordinate the execution of workflows, jobs, and tasks")
+    parser.add_argument("-c", "--config", default="dispatcher.yaml")
     return parser.parse_args()
 
 

@@ -1,8 +1,7 @@
-from typing import Optional
 from loguru import logger
-from workflow_engine.src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
-from workflow_engine.src.components.action import Action
-from workflow_engine.src.components.template import get_object_value
+from src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
+from src.components.action import Action
+from src.components.template import get_object_value
 
 
 class Task(FiniteAutomata):

@@ -5,8 +5,8 @@ metadata:
 spec:
   schedule: "*/5 * * * *"
   variables:
-    default_timeout: 60
-  initial_state: ready
+    timeout: 60
+  initialState: ready
   transitions:
     ready: [running]
     running: [idle, completed, failed]
@@ -25,7 +25,7 @@ spec:
           actions:
             - shell: "echo 'Hello, World 1'"
             - shell: "echo 'Hello, World 2'"
-            - rest_api:
+            - httpRequest:
                 method: GET
                 url: "https://api.github.com/octocat"
                 query: "{{example_workflow.jobs.job1.tasks.task1.output}}"

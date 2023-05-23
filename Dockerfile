@@ -14,8 +14,8 @@ RUN  apt-get update \
      && apt-get -y install wget
 
 
-COPY ./requirements.txt /usr/workflow_engine/requirements.txt
-COPY ./src/* /usr/workflow_engine/
+COPY requirements.txt /usr/workflow_engine/requirements.txt
+COPY ../src/* /usr/workflow_engine/
 
 
 RUN pip install --upgrade pip setuptools wheel \

@@ -1,9 +1,9 @@
 from loguru import logger
 from datetime import datetime
 from croniter import croniter
-from workflow_engine.src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
-from workflow_engine.src.components.task import Task
-from workflow_engine.src.components.template import get_object_value
+from src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
+from src.components.task import Task
+from src.components.template import get_object_value
 
 
 class Job(FiniteAutomata):

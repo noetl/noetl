@@ -1,9 +1,9 @@
 from enum import Enum
 from typing import Optional, Union, Any
 from loguru import logger
-from workflow_engine.src.components.config import Config
-from workflow_engine.src.components.template import evaluate_template_input
-from workflow_engine.src.storage.redis_storage import RedisStorage
+from src.components.config import Config
+from src.components.template import evaluate_template_input
+from src.storage.redis_storage import RedisStorage
 
 
 

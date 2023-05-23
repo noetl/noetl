@@ -1,11 +1,10 @@
-from typing import Optional
 from loguru import logger
 from datetime import datetime
-from workflow_engine.src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
-from workflow_engine.src.components.job import Job
-from workflow_engine.src.components.config import Config
-from workflow_engine.src.storage import read_yaml
-from workflow_engine.src.components.template import get_object_value
+from src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
+from src.components.job import Job
+from src.components.config import Config
+from src.storage import read_yaml
+from src.components.template import get_object_value
 
 
 class Workflow(FiniteAutomata):

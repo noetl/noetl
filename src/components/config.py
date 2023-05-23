@@ -27,23 +27,23 @@ class Config:
         :param config_path: Optional path to the workflow configuration file.
         :type config_path: Optional[str]
         """
-        self.config_folder = str(os.getenv('CONFIG_DIR', '../../conf'))
+        self.config_folder = str(os.getenv('CONFIG_DIR', '../../workflow_engine/conf'))
         self.log_level: str = os.getenv('LOG_LEVEL', 'info')
         self.cloud_provider: str = str(os.getenv('CLOUD_PROVIDER', 'aws'))
         self.redis_config: RedisConfig = RedisConfig()
         self.workers: int = int(os.getenv('WORKERS', 5))
         self.retry: int = int(os.getenv('RETRY', 3))
-        self.workflow_config_path: str = config_path
+        self._config_path: str = config_path
         self.print()
 
-    def set_workflow_config_path(self, config_path: Optional[str] = None):
+    def set_config_path(self, config_path: Optional[str] = None):
         """
         Sets the workflow configuration path.
         :param config_path: Optional path to the workflow configuration file.
         :type config_path: Optional[str]
         """
         if config_path:
-            self.workflow_config_path: str = config_path
+            self.config_path: str = config_path
         else:
             logger.error("Config path is empty")
 

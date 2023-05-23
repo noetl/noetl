@@ -1,8 +1,8 @@
 from redis import asyncio as aioredis
 from typing import Any, Optional, Union
 from loguru import logger
-from workflow_engine.src.components.config import RedisConfig
-from workflow_engine.src.storage.base_storage import BaseStorage
+from src.components.config import RedisConfig
+from src.storage.base_storage import BaseStorage
 
 
 class RedisStorage(BaseStorage):

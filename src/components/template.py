@@ -1,7 +1,7 @@
 import asyncio
 import re
 import json
-from workflow_engine.src.storage import read_yaml
+from src.storage import read_yaml
 from typing import Any
 
 
