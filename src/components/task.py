@@ -1,5 +1,6 @@
 from loguru import logger
-from src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
+from src.components.fsm import FiniteAutomata
+from src.components.config import Metadata, Spec, Kind
 from src.components.action import Action
 from src.components.template import get_object_value
 

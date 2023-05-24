@@ -1,55 +1,9 @@
-from enum import Enum
-from typing import Optional, Union, Any
+from typing import Optional
 from loguru import logger
-from src.components.config import Config
+from src.components.config import Config, Metadata, Spec
 from src.components.template import evaluate_template_input
 from src.storage.redis_storage import RedisStorage
 
-
-
-class Kind(Enum):
-    """
-    Enum class to represent the different kinds of entities.
-    """
-    WORKFLOW = "workflow"
-    JOB = "job"
-    TASK = "task"
-    ACTION = "action"
-
-
-class Metadata:
-    """
-    Metadata class to store information.
-    """
-    def __init__(self, name: str, kind: Kind):
-        """
-        Initializes a Metadata instance with the given name and kind.
-
-        Args:
-            name (str): The name of the entity.
-            kind (Kind): The kind of the entity.
-        """
-        self.name: str = name
-        self.kind: Kind = kind
-        self.desc: Optional[str] = None
-
-
-class Spec:
-    """
-    Spec class to store specifications.
-    """
-    def __init__(self):
-        """
-        Initializes an empty Spec instance.
-        """
-        self.instance_id: Optional[str] = None
-        self.schedule: Optional[str] = None
-        self.runtime: Optional[Any] = None
-        self.variables: Optional[dict] = None
-        self.state: Optional[str] = None
-        self.transitions: Optional[dict[str, list[str]]] = None
-        self.conditions: Optional[list] = None
-        self.db: Optional[Union[RedisStorage]] = None
 
 
 class FiniteAutomata:

@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 import asyncio
 from loguru import logger
@@ -9,6 +10,33 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 """
 __init__.py: A collection of utility functions for the components package.
 """
+
+
+class BaseRepr:
+    def __repr__(self):
+        return '{%s}' % str(', '.join('%s : %s' % (k, repr(v)) for (k, v) in self.__dict__.items()))
+
+    def dict(self):
+        return self.__dict__
+
+    def print(self):
+        logger.debug(self.__repr__())
+
+
+def generate_instance_id(prefix: str) -> str:
+    """
+    Generate a unique instance ID based on the workflow name and the current timestamp.
+    The generated ID will have the format "name-YYYYmmddTHHMMSSZ". That the IDs are
+    naturally ordered when sorted lexicographically.
+    :param prefix:
+    :param name: The name of the workflow.
+    :type name: str
+    """
+    now = datetime.utcnow()
+    timestamp = now.strftime("%Y%m%dT%H%M%SZ")
+    instance_id = f"{prefix}-{timestamp}"
+    logger.debug(instance_id)
+    return instance_id
 
 
 async def http_get_request(url):

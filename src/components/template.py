@@ -29,6 +29,7 @@ def get_matches(input_string: str):
     matches = re.findall(pattern, input_string)
     return matches
 
+
 def get_object_value(input_object: dict, path: str):
     """
     Retrieves the value from the input_object dictionary based on the provided path.
@@ -88,4 +89,6 @@ if __name__ == "__main__":
         # Replace template's placeholders in the raw_config
         processed_config = json.loads(evaluate_template_input(raw_config, json.dumps(raw_config)))
         print(processed_config)
+
+
     asyncio.run(fast_test())

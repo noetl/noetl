@@ -1,10 +1,15 @@
 from loguru import logger
 from datetime import datetime
-from src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
+
+from src.components import generate_instance_id
+from src.components.fsm import FiniteAutomata
+from src.components.config import Metadata, Spec, Kind, Config, KindTemplate
 from src.components.job import Job
 from src.components.config import Config
 from src.storage import read_yaml
 from src.components.template import get_object_value
+from src.storage.redis_storage import RedisStorage
+from typing import Optional, Union, Any
 
 
 class Workflow(FiniteAutomata):
@@ -16,7 +21,7 @@ class Workflow(FiniteAutomata):
     :type workflow_config: dict
     """
 
-    def __init__(self, config: Config, workflow_config: dict):
+    def __init__(self, workflow_config: KindTemplate, config: Config):
         """
         Initializes a new Workflow instance based on the provided configuration.
         :param config: The configuration object containing the workflow configuration path.
@@ -24,27 +29,42 @@ class Workflow(FiniteAutomata):
         :param workflow_config: A dictionary containing the parsed workflow configuration.
         :type workflow_config: dict
         """
-        metadata = Metadata(
-            name=get_object_value(workflow_config, "metadata.name"),
-            kind=Kind.WORKFLOW
-        )
-        spec = Spec()
-        spec.schedule = get_object_value(workflow_config, "spec.schedule")
-        spec.variables = get_object_value(workflow_config, "spec.variables")
-        spec.state = get_object_value(workflow_config, "spec.initialState")
-        spec.transitions = get_object_value(workflow_config, "spec.transitions")
-        spec.conditions = get_object_value(workflow_config, "spec.conditions")
-        spec.instance_id = self.generate_workflow_instance_id(metadata.name)
 
-        super().__init__(
-            metadata=metadata,
-            spec=spec,
-            config=config
-        )
+        try:
+            if workflow_config.get_value("kind").lower() == Kind.WORKFLOW.value:
+                metadata = Metadata(
+                            name=workflow_config.get_value("metadata.name"),
+                            kind=Kind.WORKFLOW
+                        )
+                spec = Spec()
+                spec.schedule = workflow_config.get_value("spec.schedule")
+                spec.variables = workflow_config.get_value("spec.variables")
+                spec.state = workflow_config.get_value("spec.initialState")
+                spec.transitions = workflow_config.get_value("spec.transitions")
+                spec.conditions = workflow_config.get_value("spec.conditions")
+                spec.instance_id = generate_instance_id(metadata.name)
+                super().__init__(
+                    metadata=metadata,
+                    spec=spec,
+                    config=config
+                )
+            # self.spec = workflow_config.get_value("spec")
+            #self.db: Optional[Union[RedisStorage]] = RedisStorage(config.redis_config)
 
-        self.workflow_template: dict = workflow_config
-        self.jobs: list = []
-        self.define_jobs(jobs_config=get_object_value(workflow_config, "spec.jobs"))
+            #self.print()
+        except Exception as e:
+            logger.error(f"Setting up a dispatcher template failed {e}")
+
+
+        #
+        # self.workflow_template: dict = workflow_config
+        # self.jobs: list = []
+        # self.define_jobs(jobs_config=get_object_value(workflow_config, "spec.jobs"))
+
+    @classmethod
+    async def create(cls, config: Config ):
+        workflow_config = await KindTemplate.create(config.config_path)
+        return cls(workflow_config, config)
 
     @staticmethod
     async def initialize_workflow(config: Config):
@@ -57,7 +77,7 @@ class Workflow(FiniteAutomata):
         :raises Exception: If there is an error during the initialization process.
         """
         try:
-            workflow_template = await read_yaml(config.workflow_config_path)
+            workflow_template = await read_yaml(config.config_path)
             logger.info(workflow_template)
             workflow = Workflow(
                 config=config, workflow_config=workflow_template

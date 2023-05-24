@@ -17,11 +17,9 @@ spec:
     - name: job1
       runtime: docker
       conditions:
-        - "'{{example_workflow.jobs.job2.status}}' == 'success'"
+        - "'{{example_workflow.jobs.job2.status}}' == 'ready'"
       tasks:
         - name: task1
-          conditions:
-            - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'success'"
           actions:
             - shell: "echo 'Hello, World 1'"
             - shell: "echo 'Hello, World 2'"
@@ -35,5 +33,7 @@ spec:
       schedule: "0 12 * * *"
       tasks:
         - name: task1
+          conditions:
+            - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'completed'"
           actions:
             - shell: "echo 'Job2 Task1'"

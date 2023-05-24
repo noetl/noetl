@@ -19,13 +19,15 @@ class RedisStorage(BaseStorage):
         self.client: Optional[Any] = None
 
     async def save(self, key: str, value: Union[str, Any]):
+        await self.pool_connect()
         if isinstance(key, str) and isinstance(value, str):
             await self.set(key, value)
         else:
             await self.hset(key, value)
 
     async def load(self, key):
-        return self.get(key)
+        await self.pool_connect()
+        return await self.get(key)
 
     def get_redis_url(self):
         """
@@ -145,6 +147,7 @@ class RedisStorage(BaseStorage):
         :type ttl: int, optional
         """
         try:
+            logger.info(payload)
             await self.client.hset(key, mapping=payload)
             if ttl:
                 await self.client.expire(key, ttl)

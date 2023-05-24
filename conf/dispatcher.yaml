@@ -4,5 +4,4 @@ metadata:
   name: dispatcher-main
 spec:
   workflows:
-    - name: example_workflow
-      path: example_workflow.yaml
+      - config: ../conf/example_workflow.yaml

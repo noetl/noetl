@@ -1,7 +1,8 @@
 from loguru import logger
 from datetime import datetime
 from croniter import croniter
-from src.components.fsm import FiniteAutomata, Metadata, Spec, Kind
+from src.components.fsm import FiniteAutomata
+from src.components.config import  Metadata, Spec, Kind
 from src.components.task import Task
 from src.components.template import get_object_value
 
