@@ -1,15 +1,14 @@
 from loguru import logger
 from datetime import datetime
 
-from src.components import generate_instance_id
-from src.components.fsm import FiniteAutomata
-from src.components.config import Metadata, Spec, Kind, Config, KindTemplate
+from src.components import generate_instance_id, Kind
+from src.components.models.fsm import FiniteAutomata
 from src.components.job import Job
-from src.components.config import Config
+from src.components.models.config import Config
+from src.components.models.meta import Metadata
+from src.components.models.spec import Spec
+from src.components.models.template import DictTemplate
 from src.storage import read_yaml
-from src.components.template import get_object_value
-from src.storage.redis_storage import RedisStorage
-from typing import Optional, Union, Any
 
 
 class Workflow(FiniteAutomata):
@@ -21,7 +20,7 @@ class Workflow(FiniteAutomata):
     :type workflow_config: dict
     """
 
-    def __init__(self, workflow_config: KindTemplate, config: Config):
+    def __init__(self, workflow_config: DictTemplate, config: Config):
         """
         Initializes a new Workflow instance based on the provided configuration.
         :param config: The configuration object containing the workflow configuration path.
@@ -39,7 +38,7 @@ class Workflow(FiniteAutomata):
                 spec = Spec()
                 spec.schedule = workflow_config.get_value("spec.schedule")
                 spec.variables = workflow_config.get_value("spec.variables")
-                spec.state = workflow_config.get_value("spec.initialState")
+                spec.initial_state = workflow_config.get_value("spec.initialState")
                 spec.transitions = workflow_config.get_value("spec.transitions")
                 spec.conditions = workflow_config.get_value("spec.conditions")
                 spec.instance_id = generate_instance_id(metadata.name)
@@ -63,7 +62,7 @@ class Workflow(FiniteAutomata):
 
     @classmethod
     async def create(cls, config: Config ):
-        workflow_config = await KindTemplate.create(config.config_path)
+        workflow_config = await DictTemplate.create(config.config_path)
         return cls(workflow_config, config)
 
     @staticmethod

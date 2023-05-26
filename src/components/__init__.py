@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 import asyncio
 from loguru import logger
@@ -10,6 +11,17 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 """
 __init__.py: A collection of utility functions for the components package.
 """
+
+
+class Kind(Enum):
+    """
+    Enum class to represent the different kinds of entities.
+    """
+    DISPATCHER = "dispatcher"
+    WORKFLOW = "workflow"
+    JOB = "job"
+    TASK = "task"
+    ACTION = "action"
 
 
 class BaseRepr:
@@ -26,10 +38,9 @@ class BaseRepr:
 def generate_instance_id(prefix: str) -> str:
     """
     Generate a unique instance ID based on the workflow name and the current timestamp.
-    The generated ID will have the format "name-YYYYmmddTHHMMSSZ". That the IDs are
-    naturally ordered when sorted lexicographically.
+    The generated ID will have the format "name-YYYYmmddTHHMMSSZ" naturally ordered.
     :param prefix:
-    :param name: The name of the workflow.
+    :param name: The name of the dispatcher or workflow.
     :type name: str
     """
     now = datetime.utcnow()
@@ -44,7 +55,7 @@ async def http_get_request(url):
     Performs an asynchronous HTTP GET request to the specified URL with retries and error handling.
     :param url: The URL to send the request to.
     :type url: str
-    :return: The response object containing the result of the request.
+    :return: Result of the request.
     :rtype: httpx.Response
     """
     timeout, response, url, retry = Timeout(30.0, connect=60.0), None, f'http://{url}' if 'http' not in url else url, 3

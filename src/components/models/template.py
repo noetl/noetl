@@ -3,6 +3,34 @@ import re
 import json
 from src.storage import read_yaml
 from typing import Any
+from loguru import logger
+
+
+class DictTemplate(dict):
+    def __init__(self, *args, **kwargs):
+        super(DictTemplate, self).__init__(*args, **kwargs)
+
+    def get_keys(self) -> list:
+        return list(self.keys())
+
+    def get_value(self, path: str = None):
+        try:
+            value = self
+            if path is None:
+                return value
+            keys = path.split(".")
+            for key in keys:
+                value = value.get(key)
+                if value is None:
+                    return None
+            return value
+        except Exception as e:
+            logger.error(e)
+
+    @classmethod
+    async def create(cls, config_path):
+        data = await read_yaml(config_path)
+        return cls(data)
 
 
 class TemplateEvaluator:
@@ -86,9 +114,6 @@ if __name__ == "__main__":
     async def fast_test():
         config_path = "../conf/workflow_1.yaml"
         raw_config = await read_yaml(config_path)
-        # Replace template's placeholders in the raw_config
         processed_config = json.loads(evaluate_template_input(raw_config, json.dumps(raw_config)))
         print(processed_config)
-
-
     asyncio.run(fast_test())

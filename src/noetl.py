@@ -1,17 +1,15 @@
 import argparse
 import asyncio
 from loguru import logger
-
 from src.components.dispatcher import Dispatcher
-from src.components.workflow import Workflow
-from src.components.config import Config
+from src.components.models.config import Config
 from __init__ import timer
+from src.storage import db
 
 """
 Not Only ETL is a Workflow Engine designed to manage the execution of complex workflows. 
 It provides a flexible and efficient way to define, schedule, and coordinate various operations such as data processing, 
-automation, and API interactions, among others. The engine employs a control loop-based approach to coordinate 
-the execution of workflows, jobs, tasks, and actions offering an adaptable solution for diverse use cases.
+automation, command-line, and API interactions. 
 """
 
 
@@ -21,8 +19,8 @@ def parse_arguments():
     :return: An argparse.Namespace object containing the parsed command-line arguments.
     :rtype: argparse.Namespace
     """
-    parser = argparse.ArgumentParser(prog="noetl", description="Not Only ETL is a Workflow Engine that utilizes \
-                            a loop-based approach to coordinate the execution of workflows, jobs, and tasks")
+    parser = argparse.ArgumentParser(prog="NoETL", description="Not Only ETL is a Workflow Engine that utilizes \
+                            a loop-based approach to dispatch the execution of workflows.")
     parser.add_argument("-c", "--config")
     return parser.parse_args()
 
@@ -30,22 +28,19 @@ def parse_arguments():
 @timer()
 async def main(args):
     """
-    Main asynchronous function that initializes the workflow engine and executes it.
-    :param args: The command-line arguments parsed by parse_arguments function.
+    Main asynchronous function that initializes the workflow dispatcher engine.
+    :param args: The command-line arguments.
     :type args: argparse.Namespace
     """
     logger.debug(f"args: {args}")
-    dispatcher = await Dispatcher.create(config=Config(config_path=args.config))
-    await dispatcher.save_instance_id()
+    config = Config()
+    await db.pool_connect()
+    config.set_config_path(config_path=args.config)
+    dispatcher = await Dispatcher.create(config=config)
     await dispatcher.save_dispatcher_template()
-    await dispatcher.create_workflows()
+    await dispatcher.process_workflow_configs()
     logger.info(dispatcher)
 
-    # if workflow:
-    #     workflow.print()
-    #     await workflow.execute()
-    # else:
-    #     logger.error("Workflow initialization failed.")
 
 
 if __name__ == "__main__":

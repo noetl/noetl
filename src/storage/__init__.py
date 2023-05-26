@@ -3,7 +3,12 @@ from pathlib import Path
 import yaml
 from loguru import logger
 import aiofiles
+
+from src.storage.redis_storage import RedisStorage
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+db = RedisStorage()
 
 
 async def read_yaml(path):

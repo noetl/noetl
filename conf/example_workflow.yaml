@@ -1,7 +1,7 @@
 apiVersion: workflow.noetl.io/v1
 kind: Workflow
 metadata:
-  name: example_workflow
+  name: example-workflow
 spec:
   schedule: "*/5 * * * *"
   variables:

@@ -1,7 +1,8 @@
+import os
+
 from redis import asyncio as aioredis
 from typing import Any, Optional, Union
 from loguru import logger
-from src.components.config import RedisConfig
 from src.storage.base_storage import BaseStorage
 
 
@@ -10,12 +11,12 @@ class RedisStorage(BaseStorage):
     RedisStorage class for handling Redis database operations.
     """
 
-    def __init__(self, config: RedisConfig):
-        self.host: str = config.redis_host
-        self.port: str = config.redis_port
-        self.db: int = config.db
-        self.key_ttl: int = config.key_ttl
-        self.socket_timeout = config.redis_socket_timeout
+    def __init__(self):
+        self.host: str = os.getenv('REDIS_HOST', 'localhost')
+        self.port: str = str(os.getenv('REDIS_PORT', 6379))
+        self.db: int = int(os.getenv('REDIS_DB', 0))
+        self.key_ttl: int = int(os.getenv('REDIS_KEY_TTL', 10800))
+        self.socket_timeout = int(os.getenv('REDIS_SOCKET_TIMEOUT', 5))
         self.client: Optional[Any] = None
 
     async def save(self, key: str, value: Union[str, Any]):
