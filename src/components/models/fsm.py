@@ -1,23 +1,20 @@
 from typing import Optional
 from loguru import logger
-
 from src.components import BaseRepr
-from src.components.models.meta import Metadata
-from src.components.models.spec import Spec
 from src.components.models.template import evaluate_template_input
 
 
 class FiniteAutomata(BaseRepr):
     def __init__(self,
-                 metadata: Metadata,
-                 spec: Spec = Spec(),
-
+                 initial_state: str,
+                 transitions: Optional[dict[str, list[str]]],
+                 conditions: Optional[list[str]] = None
                  ):
         super().__init__()
 
-        self.metadata: Metadata = metadata
-        self.spec: Spec = spec
-
+        self.state = initial_state
+        self.transitions = transitions
+        self.conditions: Optional[list[str]] = conditions
 
     def set_state(self, new_state: str):
 
@@ -28,15 +25,15 @@ class FiniteAutomata(BaseRepr):
 
     def can_transition(self, new_state: str):
 
-        if new_state in self.spec.transitions.get(self.spec.initial_state):
+        if new_state in self.transitions.get(self.state):
             return True
         else:
             return False
 
     def check_conditions(self):
-        for condition in self.spec.conditions:
-            template = evaluate_template_input(self, condition)
-            logger.info(f"{self.metadata.name} condition {template}")
-            if not eval(template):
-                return False
+        if self.conditions:
+            for condition in self.conditions:
+                template = evaluate_template_input(self.to_dict(), condition)
+                if not eval(template):
+                    return False
         return True

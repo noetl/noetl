@@ -30,7 +30,7 @@ class BaseRepr:
     def __repr__(self):
         return '{%s}' % str(', '.join('%s : %s' % (k, repr(v)) for (k, v) in self.__dict__.items()))
 
-    def dict(self):
+    def to_dict(self):
         return self.__dict__
 
     def print(self):

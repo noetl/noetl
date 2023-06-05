@@ -12,12 +12,14 @@ class Metadata(BaseRepr):
                  kind: Kind,
                  version: str,
                  instance_id: Optional[str] = None,
+                 parent_id: Optional[str] = None,
                  desc: Optional[str] = None,
                  ):
         self.name: str = name
         self.kind: Kind = kind
         self.version: str = version
         self.instance_id = instance_id
+        self.parent_id = parent_id
         self.desc: Optional[str] = desc
 
     def get_instance_id(self):
