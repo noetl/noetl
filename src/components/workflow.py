@@ -90,21 +90,6 @@ class Workflow(FiniteAutomata):
         except Exception as e:
             logger.error(f"Setting up a workflow template failed {e}")
 
-    @staticmethod
-    def generate_workflow_instance_id(name: str) -> str:
-        """
-        Generate a unique workflow instance ID based on the workflow name and the current timestamp.
-        The generated ID will have the format "name-YYYYmmddTHHMMSSZ". That the IDs are
-        naturally ordered when sorted lexicographically.
-        :param name: The name of the workflow.
-        :type name: str
-        """
-        now = datetime.utcnow()
-        timestamp = now.strftime("%Y%m%dT%H%M%SZ")
-        instance_id =f"{name}-{timestamp}"
-        logger.info(instance_id)
-        return instance_id
-
     def define_jobs(self, jobs_config):
         """
         Defines jobs for the Workflow instance based on the provided workflow_jobs_config.

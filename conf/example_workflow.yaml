@@ -4,13 +4,13 @@ metadata:
   name: example-workflow
 spec:
   schedule: "*/5 * * * *"
-  variables:
+  vars:
     timeout: 60
   initialState: ready
   transitions:
     ready: [running]
     running: [idle, completed, failed]
-    idle: [ready, running]
+    idle: [running]
   conditions:
     - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
   jobs:
@@ -18,10 +18,15 @@ spec:
       runtime: docker
       conditions:
         - "'{{example_workflow.jobs.job2.status}}' == 'ready'"
+      envs:
+        PATH: "/noetl/bin"
+      args: "{{example_workflow.jobs.job1.tasks.task1.output}}"
       tasks:
         - name: task1
           actions:
-            - shell: "echo 'Hello, World 1'"
+            - shell:
+                command: "echo 'Hello, World 1'"
+                args: "{{example_workflow.jobs.job1.tasks.task1.output}}"
             - shell: "echo 'Hello, World 2'"
             - httpRequest:
                 method: GET

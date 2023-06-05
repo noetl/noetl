@@ -1,0 +1,8 @@
+
+
+```
+mkdir -p output/dispatcher/\<id\>/workflow/\<name\>/job/\<name\>/task/\<name\>/action/\<id\>
+mkdir -p event/dispatcher/\<id\>/workflow/\<name\>/job/\<name\>/task/\<name\>/action/\<id\>
+mkdir -p template/workflow/\<name\>/\<version\>
+mkdir -p template/dispatcher/\<name\>/\<version\>
+```

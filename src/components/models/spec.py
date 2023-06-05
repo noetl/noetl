@@ -1,6 +1,12 @@
-from typing import Optional, Any
+from typing import Optional
 from loguru import logger
 from src.components import BaseRepr
+from src.components.models.template import DictTemplate
+
+
+class WorkflowConfigPath(BaseRepr):
+    def __init__(self, config_path: str):
+        self.path = config_path
 
 
 class Spec(BaseRepr):
@@ -8,83 +14,40 @@ class Spec(BaseRepr):
     Spec class to store specifications.
     """
 
-    def __init__(self, initial_state: Optional[str] = None, transitions: Optional[dict[str, list[str]]] = None):
-        self.variables: Optional[dict] = None
-        self.arguments: Optional[dict] = None
-        self.environments: Optional[dict] = None
-        self.initial_state: Optional[str] = initial_state
-        self.transitions: Optional[dict[str, list[str]]] = transitions
-        self.conditions: Optional[list[str]] = None
+    def __init__(self, spec: DictTemplate):
+        self.workflow_config_paths: Optional[list[WorkflowConfigPath]] = None  # Dispatcher
+        # all other specs
+        self.vars: Optional[dict] = None
+        self.args: Optional[dict] = None
+        self.envs: Optional[dict] = None
+        self.initial_state: Optional[str] = spec.get_value("initialState")
+        self.schedule: Optional[str] = spec.get_value("schedule")
+        self.transitions: Optional[dict[str, list[str]]] = spec.get_value("transitions")
+        self.conditions: Optional[list[str]] = spec.get_value("conditions")
 
-    def set_vars(self, variables: dict = None):
-        if variables is None:
-            logger.error("Expected dict of variables, but got nothing")
-        else:
-            self.variables = self.variables | variables
+        self.set_vars(spec.get_value("vars"))
+        self.set_args(spec.get_value("args"))
+        self.set_envs(spec.get_value("envs"))
+        self.set_workflow_config_paths(spec.get_value("workflowConfigPaths"))
+        logger.info(f"Specification initialized {spec}")
 
-    def set_args(self, arguments: dict = None):
-        if arguments is None:
-            logger.error("Expected dict of arguments, but got nothing")
-        else:
-            self.arguments = self.arguments | arguments
+    def set_vars(self, vars: dict = None):
+        if vars is not None:
+            self.vars = self.vars | vars
 
-    def set_envs(self, environments: dict = None):
-        if environments is None:
-            logger.error("Expected dict of environment variables, but got nothing")
-        else:
-            self.environments = self.environments | environments
+    def set_args(self, args: dict = None):
+        if args is not None:
+            self.args = self.args | args
 
+    def set_envs(self, envs: dict = None):
+        if envs is not None:
+            self.envs = self.envs | envs
 
-class DispatcherSpecWorkflow:
-    def __init__(self, config_path: str):
-        self.config_path: str = config_path
-
-
-class DispatcherSpec(Spec):
-    def __init__(self,
-                 instance_id: Optional[str] = None
-                 ):
-        super().__init__()
-        self.instance_id: Optional[str] = instance_id
-        self.workflows: list[DispatcherSpecWorkflow] = list()
-
-
-class WorkflowSpec(Spec):
-
-    def __init__(self,
-                 instance_id: Optional[str] = None,
-                 schedule: Optional[str] = None,
-                 workflows: Optional[Any] = None):
-        super().__init__()
-        self.instance_id: Optional[str] = instance_id
-        self.schedule: Optional[str] = schedule
-        self.jobs: Optional[Any] = workflows
-
-
-class JobSpec(Spec):
-
-    def __init__(self,
-                 schedule: Optional[str] = None,
-                 tasks: Optional[Any] = None):
-        super().__init__()
-        self.schedule: Optional[str] = schedule
-        self.tasks: Optional[Any] = tasks
-
-
-class TaskSpec(Spec):
-
-    def __init__(self,
-                 actions: Optional[Any] = None):
-        super().__init__()
-        self.actions: Optional[Any] = actions
-
-
-class ActionSpec(Spec):
-
-    def __init__(self,
-                 shell: Optional[str] = None,
-                 http_request: Optional[dict] = None
-                 ):
-        super().__init__()
-        self.shell: Optional[str] = shell
-        self.http_request: Optional[dict] = http_request
+    def set_workflow_config_paths(self, workflow_config_paths: dict = None):
+        if workflow_config_paths is not None:
+            for item in workflow_config_paths:
+                path = item.get("configPath")
+                if path:
+                    if self.workflow_config_paths is None:
+                        self.workflow_config_paths = list()
+                    self.workflow_config_paths.append(WorkflowConfigPath(path))

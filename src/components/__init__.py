@@ -2,6 +2,8 @@ import sys
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Optional
+
 import asyncio
 from loguru import logger
 from httpx import AsyncClient, Timeout, HTTPError
@@ -35,7 +37,7 @@ class BaseRepr:
         logger.debug(self.__repr__())
 
 
-def generate_instance_id(prefix: str) -> str:
+def generate_instance_id(prefix: Optional[str] = None) -> str:
     """
     Generate a unique instance ID based on the workflow name and the current timestamp.
     The generated ID will have the format "name-YYYYmmddTHHMMSSZ" naturally ordered.
@@ -45,6 +47,8 @@ def generate_instance_id(prefix: str) -> str:
     """
     now = datetime.utcnow()
     timestamp = now.strftime("%Y%m%dT%H%M%SZ")
+    if prefix is None:
+        return timestamp
     instance_id = f"{prefix}-{timestamp}"
     logger.debug(instance_id)
     return instance_id
