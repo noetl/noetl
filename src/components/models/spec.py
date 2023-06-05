@@ -33,15 +33,23 @@ class Spec(BaseRepr):
 
     def set_vars(self, vars: dict = None):
         if vars is not None:
-            self.vars = self.vars | vars
+            if self.vars is None:
+                self.vars = vars
+            else:
+                self.vars |= vars
 
     def set_args(self, args: dict = None):
         if args is not None:
-            self.args = self.args | args
-
+            if self.args is None:
+                self.args = args
+            else:
+                self.args |= args
     def set_envs(self, envs: dict = None):
         if envs is not None:
-            self.envs = self.envs | envs
+            if self.envs is None:
+                self.envs = envs
+            else:
+                self.envs |= envs
 
     def set_workflow_config_paths(self, workflow_config_paths: dict = None):
         if workflow_config_paths is not None:

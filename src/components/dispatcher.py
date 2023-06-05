@@ -60,23 +60,28 @@ class Dispatcher(BaseRepr):
         await db.save(f"template:dispatcher:{self.metadata.name}:{self.metadata.version}", json.dumps(self.template))
         logger.debug(await self.get_dispatcher_template())
 
-    async def get_dispatcher_template(self):
-        return await db.load(f"template:dispatcher:{self.metadata.name}:{self.metadata.version}")
+    @staticmethod
+    async def get_dispatcher_template(template_key: str):
+        return await db.load(template_key)
 
-    # async def process_workflow_configs(self):
-    #     template = DictTemplate(json.loads(await self.get_dispatcher_template()))
-    #     logger.info(template)
-    #     for workflow_path in template.get_value("spec.workflows"):
-    #         logger.info(workflow_path)
-    #         await self.save_workflow_template(config_path=workflow_path.get("configPath"))
-    #
-    # async def save_workflow_template(self, config_path):
-    #     try:
-    #         workflow_config = await DictTemplate.create(config_path)
-    #         name = workflow_config.get_value("metadata.name")
-    #         if name is None:
-    #             raise WorkflowConfigException(f"Metadata name is missing in workflow config.")
-    #         await db.save(f"{self.key_instance_id}/workflows/{name}/template", json.dumps(workflow_config))
-    #     except Exception as e:
-    #         logger.error(f"Saving workflow templates failed {e}")
-    #         sys.exit(1)
+    async def process_workflow_configs(self):
+        template = DictTemplate(
+            json.loads(
+                await self.get_dispatcher_template(f"template:dispatcher:{self.metadata.name}:{self.metadata.version}")
+            )
+        )
+        logger.info(template)
+        for workflow_path in template.get_value("spec.workflowConfigPaths"):
+            logger.info(workflow_path)
+            await self.save_workflow_template(config_path=workflow_path.get("configPath"))
+
+    async def save_workflow_template(self, config_path):
+        try:
+            workflow_config = await DictTemplate.create(config_path)
+            name = workflow_config.get_value("metadata.name")
+            if name is None:
+                raise WorkflowConfigException(f"Metadata name is missing in workflow config.")
+            await db.save(f"{self.key_instance_id}/workflows/{name}/template", json.dumps(workflow_config))
+        except Exception as e:
+            logger.error(f"Saving workflow templates failed {e}")
+            sys.exit(1)
