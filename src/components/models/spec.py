@@ -44,6 +44,7 @@ class Spec(BaseRepr):
                 self.args = args
             else:
                 self.args |= args
+
     def set_envs(self, envs: dict = None):
         if envs is not None:
             if self.envs is None:
