@@ -31,6 +31,13 @@ spec:
           method: GET
           url: "https://api.github.com/octocat"
           query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+    - name: message-template
+      inputs:
+        - message_content
+      execute:
+        - type: message
+          content: "{{inputs.message_content}}"
+          destination: "my-messaging-topic"
   actions:
     - name: action1
       runtime: docker
@@ -57,9 +64,7 @@ spec:
         version: 1.0
         actionGroup: group1
       schedule: "0 12 * * *"
-      conditions:
-        - "'{{example_workflow.actions.action1.status}}' == 'completed'"
       inputs:
-        - name: example_input
-          value: "Hello, Action 2"
-      template: hello-world-template
+        - name: message_content
+          value: "This is a message!"
+      template: message-template
