@@ -31,10 +31,10 @@ init:
 	$(VENV)/bin/pip install -r requirements.txt
 
 noetl-build:
-	docker-compose build workflow_engine
+	docker-compose build noetl
 
 noetl-start:
-	docker-compose up --detach lag-crawler
+	docker-compose up --detach noetl
 
 
 redis-build:
@@ -52,12 +52,9 @@ redis-restart:
 
 noetl:
 	source $(VENV)/bin/activate &&
-    CLOUD_PROVIDER=aws \
     DEBUG=0 \
-    ERROR_LIMIT=-1 \
     HOST=localhost \
     LOG_LEVEL=info \
-    MAX_WORKERS=5 \
     ENV=development \
     REDIS_HOST=localhost \
     REDIS_KEY_TTL=10800 \
@@ -65,4 +62,4 @@ noetl:
     REFRESH_FREQUENCY=10 \
     RELOAD=0 \
     WORKERS=0 \
-	time $(PBIN) workflow_engine/src/main.py > noetl.log 2>&1
+	time $(PBIN) src/noetl.py > noetl.log 2>&1
