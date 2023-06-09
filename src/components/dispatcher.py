@@ -61,16 +61,16 @@ class Dispatcher(BaseRepr):
 
     async def save_dispatcher(self):
         await self.save_instance_id()
-
+        dispatcher_config_key = f"dispatcher:{self.metadata.name}:{self.metadata.version}:config"
         try:
-            await db.save(f"dispatcher:{self.metadata.name}:{self.metadata.version}:config", json.dumps(self.config))
+            await db.save(dispatcher_config_key, json.dumps(self.config))
         except Exception as e:
             logger.error(e)
-        logger.debug(await self.get_dispatcher(f"dispatcher:{self.metadata.name}:{self.metadata.version}:config"))
+        logger.debug(await self.get_dispatcher(dispatcher_config_key))
 
     @staticmethod
-    async def get_dispatcher(template_key: str):
-        return await db.load(template_key)
+    async def get_dispatcher(config_key: str):
+        return await db.load(config_key)
 
     async def process_workflow_configs(self):
         dispatcher_config = ConfigDict(
