@@ -14,7 +14,7 @@ start:
 	docker-compose -f docker-compose.yaml up -d --remove-orphans
 
 log:
-	docker-compose logs --tail 1000 --follow workflow_engine
+	docker-compose logs --tail 1000 --follow noetl
 
 stop:
 	docker-compose stop
