@@ -31,6 +31,9 @@ spec:
           method: GET
           url: "https://api.github.com/octocat"
           query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+        - type: postgres
+          sql: "select * from emp where id = '{{inputs.id}}'"
+          output: "{{outputs.example_output.sql}}"
     - name: message-template
       inputs:
         - message_content
@@ -46,7 +49,10 @@ spec:
         version: 1.0
         actionGroup: group1
       conditions:
-        - "'{{example_workflow.actions.action2.status}}' == 'ready'"
+        start:
+          - "'{{example_workflow.actions.action2.status}}' == 'ready'"
+        exit:
+          - "'{{example_workflow.actions.action2.status}}' == 'idle'"
       envs:
         PATH: "/noetl/bin"
       inputs:
