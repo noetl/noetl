@@ -23,15 +23,16 @@ spec:
       args: "{{example_workflow.jobs.job1.tasks.task1.output}}"
       tasks:
         - name: task1
-          actions:
-            - shell:
-                command: "echo 'Hello, World 1'"
-                args: "{{example_workflow.jobs.job1.tasks.task1.output}}"
-            - shell: "echo 'Hello, World 2'"
-            - httpRequest:
-                method: GET
-                url: "https://api.github.com/octocat"
-                query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
+          execute:
+            - type: shell
+              command: "echo 'Hello, World 1'"
+              args: "{{example_workflow.jobs.job1.tasks.task1.output}}"
+            - type: shell
+              command: "echo 'Hello, World 2'"
+            - type: httpRequest
+              method: GET
+              url: "https://api.github.com/octocat"
+              query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
 
     - name: job2
       runtime: kubernetes
@@ -40,5 +41,6 @@ spec:
         - name: task1
           conditions:
             - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'completed'"
-          actions:
-            - shell: "echo 'Job2 Task1'"
+          execute:
+            - type: shell
+              command: "echo 'Job2 Task1'"
