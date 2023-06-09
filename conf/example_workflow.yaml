@@ -14,34 +14,52 @@ spec:
     paused: [running]
   conditions:
     - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
-  jobs:
-    - name: job1
+  templates:
+    - name: hello-world-template
+      inputs:
+        - example_input
+      outputs:
+        - example_output
+      execute:
+        - type: shell
+          command: "echo '{{inputs.example_input}}'"
+          args: "{{example_workflow.actions.action1.execute.shell.output}}"
+        - type: shell
+          command: "echo 'Hello, World 2'"
+          output: "{{outputs.example_output}}"
+        - type: httpRequest
+          method: GET
+          url: "https://api.github.com/octocat"
+          query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+  actions:
+    - name: action1
       runtime: docker
+      labels:
+        environment: production
+        version: 1.0
+        actionGroup: group1
       conditions:
-        - "'{{example_workflow.jobs.job2.status}}' == 'ready'"
+        - "'{{example_workflow.actions.action2.status}}' == 'ready'"
       envs:
         PATH: "/noetl/bin"
-      args: "{{example_workflow.jobs.job1.tasks.task1.output}}"
-      tasks:
-        - name: task1
-          execute:
-            - type: shell
-              command: "echo 'Hello, World 1'"
-              args: "{{example_workflow.jobs.job1.tasks.task1.output}}"
-            - type: shell
-              command: "echo 'Hello, World 2'"
-            - type: httpRequest
-              method: GET
-              url: "https://api.github.com/octocat"
-              query: "{{example_workflow.jobs.job1.tasks.task1.output}}"
-
-    - name: job2
-      runtime: kubernetes
+      inputs:
+        - name: example_input
+          value: "Hello, World 1"
+      outputs:
+        - name: example_output
+          valueFrom:
+            path: "{{example_workflow.actions.action1.execute.shell.output}}"
+      template: hello-world-template
+    - name: action2
+      runtime: docker
+      labels:
+        environment: production
+        version: 1.0
+        actionGroup: group1
       schedule: "0 12 * * *"
-      tasks:
-        - name: task1
-          conditions:
-            - "'{{example_workflow.jobs.job1.tasks.task1.status}}' == 'completed'"
-          execute:
-            - type: shell
-              command: "echo 'Job2 Task1'"
+      conditions:
+        - "'{{example_workflow.actions.action1.status}}' == 'completed'"
+      inputs:
+        - name: example_input
+          value: "Hello, Action 2"
+      template: hello-world-template
