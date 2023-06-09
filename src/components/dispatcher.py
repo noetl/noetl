@@ -51,14 +51,20 @@ class Dispatcher(BaseRepr):
         return cls(dispatcher_config)
 
     async def save_instance_id(self):
-        await db.save(f"{self.key_instance}:instance-id", self.metadata.instance_id)
-        logger.info(
-            f"Dispatcher instance ID {self.metadata.instance_id} saved under {self.key_instance}:instance-id key")
+        try:
+            await db.save(f"{self.key_instance}:instance-id", self.metadata.instance_id)
+            logger.info(
+                f"Dispatcher instance ID {self.metadata.instance_id} saved under {self.key_instance}:instance-id key")
+        except Exception as e:
+            logger.error(e)
 
     async def save_dispatcher_template(self):
         await self.save_instance_id()
-        await db.save(f"template:dispatcher:{self.metadata.name}:{self.metadata.version}", json.dumps(self.template))
-        logger.debug(await self.get_dispatcher_template())
+        try:
+            await db.save(f"template:dispatcher:{self.metadata.name}:{self.metadata.version}", json.dumps(self.template))
+        except Exception as e:
+            logger.error(e)
+        logger.debug(await self.get_dispatcher_template(f"template:dispatcher:{self.metadata.name}:{self.metadata.version}"))
 
     @staticmethod
     async def get_dispatcher_template(template_key: str):

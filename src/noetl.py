@@ -38,9 +38,8 @@ async def main(args):
     config.set_config_path(config_path=args.config)
     dispatcher = await Dispatcher.create(config=config)
     await dispatcher.save_dispatcher_template()
-    await dispatcher.process_workflow_configs()
+    # await dispatcher.process_workflow_configs()
     logger.info(dispatcher)
-
 
 
 if __name__ == "__main__":

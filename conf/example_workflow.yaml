@@ -9,8 +9,9 @@ spec:
   initialState: ready
   transitions:
     ready: [running]
-    running: [idle, completed, failed]
+    running: [idle, paused, completed, failed, terminated]
     idle: [running]
+    paused: [running]
   conditions:
     - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
   jobs:
