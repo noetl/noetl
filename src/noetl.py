@@ -37,8 +37,8 @@ async def main(args):
     await db.pool_connect()
     config.set_config_path(config_path=args.config)
     dispatcher = await Dispatcher.create(config=config)
-    await dispatcher.save_dispatcher_template()
-    await dispatcher.process_workflow_configs()
+    await dispatcher.save_dispatcher()
+    #await dispatcher.process_workflow_configs()
     logger.info(dispatcher)
 
 

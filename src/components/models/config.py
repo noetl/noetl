@@ -1,10 +1,37 @@
 import os
 from typing import Optional
 from loguru import logger
-from src.components.models.template import DictTemplate
+from src.storage import read_yaml
 
 
-class Config(DictTemplate):
+class ConfigDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(ConfigDict, self).__init__(*args, **kwargs)
+
+    def get_keys(self) -> list:
+        return list(self.keys())
+
+    def get_value(self, path: str = None):
+        try:
+            value = self
+            if path is None:
+                return value
+            keys = path.split(".")
+            for key in keys:
+                value = value.get(key)
+                if value is None:
+                    return None
+            return value
+        except Exception as e:
+            logger.error(e)
+
+    @classmethod
+    async def create(cls, config_path):
+        data = await read_yaml(config_path)
+        return cls(data)
+
+
+class Config(ConfigDict):
 
     def __init__(self, *args, **kwargs):
         """

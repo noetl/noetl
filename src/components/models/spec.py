@@ -1,7 +1,7 @@
 from typing import Optional
 from loguru import logger
 from src.components import BaseRepr
-from src.components.models.template import DictTemplate
+from src.components.models.config import ConfigDict
 
 
 class WorkflowConfigPath(BaseRepr):
@@ -14,7 +14,7 @@ class Spec(BaseRepr):
     Spec class to store specifications.
     """
 
-    def __init__(self, spec: DictTemplate):
+    def __init__(self, spec: ConfigDict):
         self.workflow_config_paths: Optional[list[WorkflowConfigPath]] = None  # Dispatcher
         # all other specs
         self.vars: Optional[dict] = None
@@ -24,6 +24,8 @@ class Spec(BaseRepr):
         self.schedule: Optional[str] = spec.get_value("schedule")
         self.transitions: Optional[dict[str, list[str]]] = spec.get_value("transitions")
         self.conditions: Optional[list[str]] = spec.get_value("conditions")
+        self.templates: Optional[list] = spec.get_value("templates")
+        self.actions: Optional[list] = spec.get_value("actions")
 
         self.set_vars(spec.get_value("vars"))
         self.set_args(spec.get_value("args"))
