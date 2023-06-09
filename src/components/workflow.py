@@ -8,13 +8,13 @@ from src.components.job import Job
 from src.components.models.config import Config
 from src.components.models.meta import Metadata
 from src.components.models.spec import Spec
-from src.components.models.template import DictTemplate
+from src.components.models.config import ConfigDict
 from src.storage import read_yaml
 
 
 class Workflow(FiniteAutomata):
 
-    def __init__(self, workflow_config: DictTemplate):
+    def __init__(self, workflow_config: ConfigDict):
 
         try:
             kind = workflow_config.get_value("kind").lower()
@@ -25,7 +25,7 @@ class Workflow(FiniteAutomata):
             if name is None:
                 raise MetadataException("Name is empty")
 
-            spec = Spec(spec=DictTemplate(workflow_config.get_value("spec")))
+            spec = Spec(spec=ConfigDict(workflow_config.get_value("spec")))
 
             super().__init__(
                 initial_state=spec.initial_state,
@@ -45,7 +45,7 @@ class Workflow(FiniteAutomata):
 
     @classmethod
     async def create(cls, config: Config):
-        workflow_config = await DictTemplate.create(config.config_path)
+        workflow_config = await ConfigDict.create(config.config_path)
         return cls(workflow_config)
 
     # @staticmethod
