@@ -31,6 +31,12 @@ spec:
           method: GET
           url: "https://api.github.com/octocat"
           query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+        - type: script
+          interpreter: python
+          source: |
+            import json
+            result = "hello world"
+            print(f"{result}")
         - type: postgres
           sql: "select * from emp where id = '{{inputs.id}}'"
           output: "{{outputs.example_output.sql}}"
