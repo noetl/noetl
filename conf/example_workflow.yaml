@@ -6,6 +6,7 @@ spec:
   schedule: "*/5 * * * *"
   vars:
     timeout: 60
+  initialTemplate: execute-steps
   initialState: ready
   transitions:
     ready: [running]
@@ -15,68 +16,69 @@ spec:
   conditions:
     - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
   templates:
-    - name: hello-world-template
+    hello-world-template-1:
       inputs:
         - example_input
       outputs:
         - example_output
-      execute:
-        - type: shell
-          command: "echo '{{inputs.example_input}}'"
-          args: "{{example_workflow.actions.action1.execute.shell.output}}"
-        - type: shell
-          command: "echo 'Hello, World 2'"
-          output: "{{outputs.example_output}}"
-        - type: httpRequest
-          method: GET
-          url: "https://api.github.com/octocat"
-          query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
-        - type: script
-          interpreter: python
-          source: |
-            import json
-            result = "hello world"
-            print(f"{result}")
-        - type: postgres
-          sql: "select * from emp where id = '{{inputs.id}}'"
-          output: "{{outputs.example_output.sql}}"
-    - name: message-template
+      type: shell
+      command: "echo '{{inputs.example_input}}'"
+      args: "{{example_workflow.actions.action1.execute.shell.output}}"
+    hello-world-template-2:
+      type: shell
+      command: "echo 'Hello, World 2'"
+      output: "{{outputs.example_output}}"
+    http-request-template-2:
+      type: httpRequest
+      method: GET
+      url: "https://api.github.com/octocat"
+      query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+    python-script-template:
+      type: script
+      interpreter: python
+      source: |
+        import json
+        result = "hello world"
+        print(f"{result}")
+    postgres-database-query:
+      type: postgres
+      sql: "select * from emp where id = '{{inputs.id}}'"
+      output: "{{outputs.example_output.sql}}"
+    message-template:
       inputs:
         - message_content
-      execute:
-        - type: message
-          content: "{{inputs.message_content}}"
-          destination: "my-messaging-topic"
-  actions:
-    - name: action1
-      runtime: docker
-      labels:
-        environment: production
-        version: 1.0
-        actionGroup: group1
-      conditions:
-        start:
-          - "'{{example_workflow.actions.action2.status}}' == 'ready'"
-        exit:
-          - "'{{example_workflow.actions.action2.status}}' == 'idle'"
-      envs:
-        PATH: "/noetl/bin"
-      inputs:
-        - name: example_input
-          value: "Hello, World 1"
-      outputs:
-        - name: example_output
-          valueFrom:
-            path: "{{example_workflow.actions.action1.execute.shell.output}}"
-      template: hello-world-template
-    - name: action2
-      runtime: docker
-      labels:
-        environment: production
-        version: 1.0
-        actionGroup: group1
-      schedule: "0 12 * * *"
-      inputs:
-        - name: message_content
-          value: "This is a message!"
-      template: message-template
+      type: message
+      content: "{{inputs.message_content}}"
+      destination: "my-messaging-topic"
+    execute-steps:
+      steps:
+        - step-1:
+          template: hello-world-template-1
+          runtime: docker
+          conditions:
+            start:
+              - "'{{example_workflow.actions.action2.status}}' == 'ready'"
+            exit:
+              - "'{{example_workflow.actions.action2.status}}' == 'idle'"
+          envs:
+            PATH: "/noetl/bin"
+          inputs:
+              greeting: "Hello, World 1"
+          outputs:
+            - name: example_output
+              valueFrom:
+                path: "{{example_workflow.actions.action1.execute.shell.output}}"
+
+        - step-2:
+            template: message-template-1
+        - step-3:
+            template: hello-world-template-2
+        - step-4:
+            template: execute-tasks
+
+      execute-tasks:
+        tasks:
+          task-1:
+            template: hello-world-template-2
+          task-2:
+            template: hello-world-template-1

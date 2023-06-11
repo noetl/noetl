@@ -1,44 +1,68 @@
-= Workflow configuration
+= NoETL Workflow Configuration
 
-== Specification
-configuration file follows a Kubernetes-style manifest structure with clear separation of metadata and specification (or "spec"). It describes a workflow called "example_workflow" that includes the following specifications:
+The NoETL workflow configuration provides a powerful and flexible structure for managing complex processes. By specifying your workflows in structured config files, you can define various types of operations, conditions, and execution orders. This document outlines the structure and usage of the NoETL workflow configuration files.
 
-- `**apiVersion**`: the version of the API
-- `**kind**`: identifies the type of object (in this case, a workflow)
-- `**metadata**`: contains information about the workflow, including its name and schedule
-- `**spec**`: contains the details of the workflow, including its variables, conditions, and jobs.
+== Configuration File Structure
+A typical NoETL workflow configuration file has a YAML-based structure that contains several key sections: `apiVersion`, `kind`, `metadata`, `spec`, and under the `spec`, several other key elements such as `schedule`, `vars`, `initialTemplate`, `initialState`, `transitions`, `conditions`, and `templates`.
 
-The `**variables**` field specifies default timeout and status for the workflow, which can be used throughout the workflow configuration.
+Below is a general structure of a NoETL workflow config file:
+```
+apiVersion: workflow.noetl.io/v1
+kind: Workflow
+metadata:
+  name: example-workflow
+spec:
+  schedule: "*/5 * * * *"
+  vars:
+    timeout: 60
+  initialTemplate: execute-steps
+  initialState: ready
+  transitions:
+    ready: [running]
+    running: [idle, paused, completed, failed, terminated]
+    idle: [running]
+    paused: [running]
+  conditions:
+    - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
+  templates:
+    # list of templates
+```
 
-The `**conditions**` field specifies the conditions that need to be met for the workflow to run.
+== Key Elements
 
-The `**jobs**` field is a list of jobs that the workflow will run, each with their own name, runtime environment and tasks. The `**runtime**` specifies the environment to run the job. Currently, the supported runtimes are "docker" and "kubernetes". Each job consists of one or more tasks, which can be of different kinds, such as shell or rest API. The `**loop**` parameter can be used to loop over a task for a specified number of iterations. The `**conditions**` field can be used to specify conditions that must be met before running the job or the task.
+=== apiVersion
+This defines the version of the workflow API that the configuration file is intended to use.
 
-== Description
+=== kind
+This describes the type of object that the configuration file represents. In this case, it would be `Workflow`.
 
-A configuration file consists of several components that define the structure and behavior of a workflow.
+=== metadata
+This section includes data that helps uniquely identify the workflow. Currently, it includes the `name` of the workflow.
 
-The basic components of a configuration file are:
+=== spec
+The `spec` (short for specification) is where the majority of the workflow configuration is defined. It contains:
 
-- `**workflow**` - the top-level component that defines the name, schedule, variables, conditions, and jobs of a workflow.
-- `**job**` - a component that defines a single unit of work within a workflow.
-- `**task**` - a component that defines a specific action that must be performed within a job.
-- `**variables**` - a component that defines the variables used within a workflow and their default values.
-- `**conditions**` - a component that defines the conditions that must be met for a job or task to execute.
+- `schedule`: A cron expression for the scheduling of the workflow.
+- `vars`: Variables that can be used across the workflow.
+- `initialTemplate`: The template to be executed first when the workflow starts.
+- `initialState`: The initial state of the workflow.
+- `transitions`: The valid state transitions of the workflow.
+- `conditions`: Conditions that must be met for the workflow to execute.
+- `templates`: Templates that define operations such as shell commands, HTTP requests, scripts, PostgreSQL queries, or other workflows.
 
-Each component is defined using a YAML syntax with specific fields and properties.
+=== templates
+Templates are reusable, parameterized entities that encapsulate a certain type of operation or workflow. The `type` field determines the type of operation encapsulated by the template. The types can be:
 
-For example, a job component may include the following fields:
+- `shell`: Executes a command line statement. The command field specifies the statement to be executed.
+- `httpRequest`: Executes a REST API call. The method, url, and query fields define the HTTP request.
+- `script`: Runs a script, specified in the source field. The interpreter field defines the scripting language.
+- `postgres`: Executes a PostgreSQL database query. The sql field defines the SQL query.
 
-- `**name**` - the name of the job
-- `**runtime**` - the runtime environment in which the job should run (e.g., Docker, Kubernetes)
-- `**tasks**` - a list of tasks that the job should execute
+If the `type` field is not explicitly defined and the template contains a `steps` or `tasks` field, it means the template describes a workflow:
 
-Similarly, a task component may include the following fields:
+- `steps`: Templates under this field will be executed sequentially.
+- `tasks`: Templates under this field will be executed in parallel.
 
-- `**name**` - the name of the task
-- `**kind**` - the type of task (e.g., shell, rest_api)
-- `**command**` - the command to execute for the task
-- `**timeout**` - the maximum time allowed for the task to execute
+The `initialTemplate` field in the `spec` section defines which template to execute first when the workflow starts. This can be overridden from the command line.
 
-By defining these components in a configuration file, users can create complex workflows that can automate data processing, model training, and deployment.
+The NoETL Workflow configuration provides a robust framework for defining complex workflows. It is flexible enough to encapsulate different types of operations and workflows, and is easy to understand and use. By carefully structuring your configuration file and validating it, you can ensure your workflows are executed smoothly and effectively.
