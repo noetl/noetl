@@ -3,7 +3,7 @@
 NoETL is an open-source workflow engine designed to enable AI and machine learning functionality. It is a lightweight and flexible workflow engine that allows users to define and run workflows that automate data processing, model training, and deployment.
 
 - xref:docs/glossary.adoc[Glossary]
-- xref:docs/configuration.adoc[Configuration]
+- xref:docs/configuration.adoc[NoETL workflow configuration] provides a powerful and flexible structure for managing complex processes. By specifying your workflows in structured config files, you can define various types of operations, conditions, and execution orders. This document outlines the structure and usage of the NoETL workflow configuration files.
 
 == Features
 

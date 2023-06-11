@@ -1,6 +1,6 @@
-= NoETL Workflow Configuration
+= NoETL Workflow Configuration Documentation
 
-The NoETL workflow configuration provides a powerful and flexible structure for managing complex processes. By specifying your workflows in structured config files, you can define various types of operations, conditions, and execution orders. This document outlines the structure and usage of the NoETL workflow configuration files.
+This document provides an overview of the workflow configuration structure and its components. It describes the concepts, templates, and their types used in the configuration.
 
 == Configuration File Structure
 A typical NoETL workflow configuration file has a YAML-based structure that contains several key sections: `apiVersion`, `kind`, `metadata`, `spec`, and under the `spec`, several other key elements such as `schedule`, `vars`, `initialTemplate`, `initialState`, `transitions`, `conditions`, and `templates`.
@@ -51,18 +51,189 @@ The `spec` (short for specification) is where the majority of the workflow confi
 - `templates`: Templates that define operations such as shell commands, HTTP requests, scripts, PostgreSQL queries, or other workflows.
 
 === templates
-Templates are reusable, parameterized entities that encapsulate a certain type of operation or workflow. The `type` field determines the type of operation encapsulated by the template. The types can be:
+Templates represent actionable items within the workflow and define their behavior. Each template can have a specific type, inputs, outputs, and configuration parameters. The `type` field determines the type of operation encapsulated by the template. The types can be:
 
-- `shell`: Executes a command line statement. The command field specifies the statement to be executed.
-- `httpRequest`: Executes a REST API call. The method, url, and query fields define the HTTP request.
-- `script`: Runs a script, specified in the source field. The interpreter field defines the scripting language.
-- `postgres`: Executes a PostgreSQL database query. The sql field defines the SQL query.
+* `shell`: Executes a command line statement. The command field specifies the statement to be executed.
++
+Shell Template
++
+[source,yaml]
+----
+  type: shell
+  command: "echo '{{inputs.example_input}}'"
+  args: "{{example_workflow.actions.action1.execute.shell.output}}"
+----
+** `type`: shell indicates that this template represents a shell command execution.
+** `command`: specifies the shell command to execute.
+** `args`: provides arguments to the shell command.
+* `httpRequest`: Executes a REST API call. The method, url, and query fields define the HTTP request.
++
+HTTP Request Template
++
+[source,yaml]
+----
+    type: httpRequest
+    method: GET
+    url: "https://api.github.com/octocat"
+    query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+----
+** `type`: httpRequest indicates that this template represents an HTTP request.
+** `method`: specifies the HTTP method to use.
+** `url`: specifies the target URL for the HTTP request.
+** `query`: provides a query string for the HTTP request.
 
+* `script`: Runs a script, specified in the source field. The interpreter field defines the scripting language.
++
+Script Template
++
+[source,yaml]
+----
+    type: script
+    interpreter: python
+    source: |
+      import json
+      result = "hello world"
+      print(f"{result}")
+----
+** `type`: script indicates that this template represents a script execution.
+** `interpreter`: specifies the script interpreter or language.
+** `source contains`: the script source code.
+
+* `postgres`: Executes a PostgreSQL database query. The sql field defines the SQL query.
++
+Postgres Template
++
+[source,yaml]
+----
+    type: postgres
+    sql: "select * from emp where id = '{{inputs.id}}'"
+    output: "{{outputs.example_output.sql}}"
+----
+** `type`: postgres indicates that this template represents a Postgres database query.
+** `sql`: specifies the SQL query to execute.
+** `output`: defines the output variable to store the query result.
+
+* `message`: Defines a message structure.
++
+Message Template
++
+[source,yaml]
+----
+    type: message
+    content: "{{inputs.message_content}}"
+    destination: "my-messaging-topic"
+----
+** `type`: message indicates that this template represents a message or messaging system action.
+** `content`: specifies the message content.
+** `destination`: defines the destination or topic for the message.
+
+== Execution Flow
+The workflow execution flow is defined using steps and tasks within the execute-steps template.
 If the `type` field is not explicitly defined and the template contains a `steps` or `tasks` field, it means the template describes a workflow:
 
-- `steps`: Templates under this field will be executed sequentially.
-- `tasks`: Templates under this field will be executed in parallel.
+=== Steps
+Steps represent templates to be executed sequentially.
+[source,yaml]
+----
+steps:
+  - step-1:
+      template: hello-world-template-1
+      runtime: docker
+      conditions:
+        start:
+          - "'{{example_workflow.actions.action2.status}}' == 'ready'"
+        exit:
+          - "'{{example_workflow.actions.action2.status}}' == 'idle'"
+      envs:
+        PATH: "/noetl/bin"
+      inputs:
+        greeting: "Hello, World 1"
+      outputs:
+        - name: example_output
+          valueFrom:
+            path: "{{example_workflow.actions.action1.execute.shell.output}}"
+  - step-2:
+      template: message-template-1
+  - step-3:
+      template: hello-world-template-2
+  - step-4:
+      template: execute-tasks
 
+----
+* `steps` contains a list of templates to be executed sequentially.
+* Each step is defined by a unique key (`step-1`, `step-2`, etc.).
+* Within each step, specify the `template` to be executed, along with any additional configuration options.
+
+=== Tasks
+Tasks represent templates to be executed in parallel.
+[source,yaml]
+----
+execute-tasks:
+  tasks:
+    task-1:
+      template: hello-world-template-2
+    task-2:
+      template: hello-world-template-1
+----
+* `execute-tasks` represents the template for executing tasks in parallel.
+* `tasks` contains a list of tasks to be executed concurrently.
+* Each task is defined by a unique key (`task-1`, `task-2`, etc.).
+* Specify the `template` for each task.
+
+== Initial Template
 The `initialTemplate` field in the `spec` section defines which template to execute first when the workflow starts. This can be overridden from the command line.
+[source,yaml]
+----
+initialTemplate: execute-steps
+----
+* `initialTemplate` indicates the template to start the workflow execution.
+* By default, the `execute-steps` template is set as the initial template.
 
-The NoETL Workflow configuration provides a robust framework for defining complex workflows. It is flexible enough to encapsulate different types of operations and workflows, and is easy to understand and use. By carefully structuring your configuration file and validating it, you can ensure your workflows are executed smoothly and effectively.
+== Workflow Execution Visualization
+Here's a graphical representation of the workflow execution:
+[source,shell]
+----
+                             +-----------------+
+                             |  example-workflow  |
+                             +-----------------+
+                                      |
+                                      |
+                                  +--------+
+                                  | ready  |
+                                  +--------+
+                                      |
+                                      |
+                                  +--------+
+                                  | running |
+                                  +--------+
+                                      |
+                                      |
+     +---------------------+------+------+-------+
+     |                     |      |      |       |
++-----------+       +-----------+   +--------+   |
+| idle      |       | paused    |   | completed|   |
++-----------+       +-----------+   +--------+   |
+     |                     |            |        |
+     |                     |            |        |
++-----------+       +-----------+   +--------+   |
+| step-1    |       | step-2    |   | step-3 |   |
++-----------+       +-----------+   +--------+   |
+     |                     |            |        |
+     |                     |            |        |
++-----------+       +-----------+   +--------+   |
+| template-1|       | template-2|   | template-3|  |
++-----------+       +-----------+   +--------+   |
+     |                     |            |        |
+     |                     |            |        |
++-----------+       +-----------+   +--------+   |
+| task-1    |       | task-2    |   | task-3 |   |
++-----------+       +-----------+   +--------+   |
+
+----
+This represents the workflow execution flow, starting from the `example-workflow` and progressing through different states (`ready`, `running`, `idle`, `paused`, `completed`). The steps and tasks within each state represent the execution of corresponding templates.
+
+
+NOTE:
+The NoETL Workflow configuration provides a robust framework for defining complex workflows. +
+It is flexible enough to encapsulate different types of operations and workflows, and is easy to understand and use. +
+By carefully structuring your configuration file and validating it, you can ensure your workflows are executed smoothly and effectively.
