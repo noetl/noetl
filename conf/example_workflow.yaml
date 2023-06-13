@@ -6,8 +6,9 @@ spec:
   schedule: "*/5 * * * *"
   vars:
     timeout: 60
-  initialTemplate: execute-steps
-  initialState: ready
+  initialSettings:
+    template: execute-steps
+    state: ready
   transitions:
     ready: [running]
     running: [idle, paused, completed, failed, terminated]
@@ -16,7 +17,7 @@ spec:
   conditions:
     - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
   templates:
-    hello-world-template-1:
+    - name: hello-world-template-1
       inputs:
         - example_input
       outputs:
@@ -24,61 +25,60 @@ spec:
       type: shell
       command: "echo '{{inputs.example_input}}'"
       args: "{{example_workflow.actions.action1.execute.shell.output}}"
-    hello-world-template-2:
+    - name: hello-world-template-2
       type: shell
       command: "echo 'Hello, World 2'"
       output: "{{outputs.example_output}}"
-    http-request-template-2:
+    - name: http-request-template-1
       type: httpRequest
       method: GET
       url: "https://api.github.com/octocat"
       query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
-    python-script-template:
+    - name: python-script-template-1
       type: script
       interpreter: python
       source: |
         import json
         result = "hello world"
         print(f"{result}")
-    postgres-database-query:
+    - name: postgres-database-query-1
       type: postgres
       sql: "select * from emp where id = '{{inputs.id}}'"
       output: "{{outputs.example_output.sql}}"
-    message-template:
+    - name: message-template
       inputs:
         - message_content
       type: message
       content: "{{inputs.message_content}}"
       destination: "my-messaging-topic"
-    execute-steps:
+    - name: execute-steps
+      type: steps
       steps:
-        - step-1:
-          template: hello-world-template-1
-          runtime: docker
-          conditions:
-            start:
-              - "'{{example_workflow.actions.action2.status}}' == 'ready'"
-            exit:
-              - "'{{example_workflow.actions.action2.status}}' == 'idle'"
-          envs:
-            PATH: "/noetl/bin"
-          inputs:
-              greeting: "Hello, World 1"
-          outputs:
-            - name: example_output
-              valueFrom:
-                path: "{{example_workflow.actions.action1.execute.shell.output}}"
-
-        - step-2:
-            template: message-template-1
-        - step-3:
-            template: hello-world-template-2
-        - step-4:
-            template: execute-tasks
-
-      execute-tasks:
-        tasks:
-          task-1:
-            template: hello-world-template-2
-          task-2:
-            template: hello-world-template-1
+      - name: step-1
+        template: hello-world-template-1
+        runtime: docker
+        conditions:
+          start:
+            - "'{{example_workflow.actions.action2.status}}' == 'ready'"
+          exit:
+            - "'{{example_workflow.actions.action2.status}}' == 'idle'"
+        envs:
+          PATH: "/noetl/bin"
+        inputs:
+          greeting: "Hello, World 1"
+        outputs:
+          name: example_output
+          value: "{{example_workflow.actions.action1.execute.shell.output}}"
+      - name: step-2
+        template: message-template-1
+      - name: step-3
+        template: hello-world-template-2
+      - name: step-4
+        template: execute-tasks
+    - name: execute-tasks
+      type: tasks
+      tasks:
+      - name: task-1
+        template: hello-world-template-2
+      - name: task-2
+        template: hello-world-template-1
