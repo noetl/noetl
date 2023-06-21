@@ -21,10 +21,10 @@ spec:
       type: shell
       command: "echo '{{inputs.example_input}}'"
       args: "{{example_workflow.actions.action1.execute.shell.output}}"
-      inputs:
-        - example_input
-      outputs:
-        - example_output
+      next:
+        - template: hello-world-template-2
+        - template: http-request-template-1
+          condition: "'{{workflow.templates.hello-world-template-2.status}}' == 'completed'"
     - name: hello-world-template-2
       type: shell
       command: "echo 'Hello, World 2'"
@@ -34,6 +34,10 @@ spec:
       method: GET
       url: "https://api.github.com/octocat"
       query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+      next:
+        - template: python-script-template-1
+          next:
+            - template: postgres-database-query-1
     - name: python-script-template-1
       type: script
       interpreter: python
@@ -52,34 +56,3 @@ spec:
       destination: "my-messaging-topic"
       inputs:
         - message_content
-    - name: execute-steps
-      type: steps
-      steps:
-      - name: step-1
-        template: hello-world-template-1
-        runtime: docker
-        conditions:
-          start:
-            - "'{{example_workflow.actions.action2.status}}' == 'ready'"
-          exit:
-            - "'{{example_workflow.actions.action2.status}}' == 'idle'"
-        envs:
-          PATH: "/noetl/bin"
-        inputs:
-          greeting: "Hello, World 1"
-        outputs:
-          name: example_output
-          value: "{{example_workflow.actions.action1.execute.shell.output}}"
-      - name: step-2
-        template: message-template-1
-      - name: step-3
-        template: hello-world-template-2
-      - name: step-4
-        template: execute-tasks
-    - name: execute-tasks
-      type: tasks
-      tasks:
-      - name: task-1
-        template: hello-world-template-2
-      - name: task-2
-        template: hello-world-template-1
