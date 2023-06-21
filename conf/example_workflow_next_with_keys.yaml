@@ -1,0 +1,65 @@
+apiVersion: workflow.noetl.io/v1
+kind: Workflow
+metadata:
+  name: example-workflow
+spec:
+  schedule: "*/5 * * * *"
+  vars:
+    timeout: 60
+  initialSettings:
+    template: execute-steps
+    state: ready
+  transitions:
+    ready: [running]
+    running: [idle, paused, completed, failed, terminated]
+    idle: [running]
+    paused: [running]
+  conditions:
+    - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
+  templates:
+    - hello-world-template-1:
+        type: shell
+        command: "echo '{{inputs.example_input}}'"
+        args: "{{example_workflow.actions.action1.execute.shell.output}}"
+        next:
+          - template: hello-world-template-2
+          - template: http-request-template-1
+            condition: "'{{workflow.templates.hello-world-template-2.status}}' == 'completed'"
+    - hello-world-template-2:
+        type: shell
+        command: "echo 'Hello, World 2'"
+        output: "{{outputs.example_output}}"
+    - http-request-template-1:
+        type: httpRequest
+        method: GET
+        url: "https://api.github.com/octocat"
+        query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
+        next:
+          - template: python-script-template-1
+            next:
+              - postgres-query-database-3:
+                type: database
+                source: postgres
+                command: "select * from emp where id = '{{inputs.id}}'"
+                output: "{{outputs}}"
+              - postgres-query-database-4:
+                template: postgres-database-query-1
+                command: "select * from emp"
+    - python-script-template-1:
+        type: script
+        interpreter: python
+        source: |
+          import json
+          result = "hello world"
+          print(f"{result}")
+    - postgres-database-query-1:
+        type: database
+        source: postgres
+        command: "select * from emp where id = '{{inputs.id}}'"
+        output: "{{outputs.example_output.sql}}"
+    - message-template:
+        type: message
+        content: "{{inputs.message_content}}"
+        destination: "my-messaging-topic"
+        inputs:
+          - message_content
