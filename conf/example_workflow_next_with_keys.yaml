@@ -35,7 +35,8 @@ spec:
         url: "https://api.github.com/octocat"
         query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
         next:
-          - template: python-script-template-1
+          - python-script-template-1-level-2:
+            template: python-script-template-1
             next:
               - postgres-query-database-3:
                 type: database
