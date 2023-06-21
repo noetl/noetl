@@ -22,8 +22,10 @@ spec:
         command: "echo '{{inputs.example_input}}'"
         args: "{{example_workflow.actions.action1.execute.shell.output}}"
         next:
-          - template: hello-world-template-2
-          - template: http-request-template-1
+          - hello-world-template-2-level-2:
+            template: hello-world-template-2
+          - http-request-template-1-level-2:
+            template: http-request-template-1
             condition: "'{{workflow.templates.hello-world-template-2.status}}' == 'completed'"
     - hello-world-template-2:
         type: shell
