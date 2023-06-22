@@ -1,7 +1,6 @@
 from typing import Optional
-from loguru import logger
 from src.components import BaseRepr
-from src.components.models.template import evaluate_template_input
+from src.components.template import evaluate_template_input
 
 
 class FiniteAutomata(BaseRepr):

@@ -1,11 +1,11 @@
 from loguru import logger
 
 from src.components import Kind
-from src.components.models.fsm import FiniteAutomata
+from src.components.fsm import FiniteAutomata
 from src.components.action import Action
-from src.components.models.meta import Metadata
-from src.components.models.spec import Spec
-from src.components.models.template import get_object_value
+from src.components.meta import Metadata
+from src.components.spec import Spec
+from src.components.template import get_object_value
 
 
 class Task(FiniteAutomata):

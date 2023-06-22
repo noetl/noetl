@@ -1,12 +1,53 @@
+import os
+from typing import Optional,Any
+from loguru import logger
+from src.storage import read_yaml
 import asyncio
 import re
 import json
 from src.storage import read_yaml
-from typing import Any
-from loguru import logger
 
 
-class TemplateEvaluator:
+class Config(dict):
+    def __init__(self, *args, **kwargs):
+        super(Config, self).__init__(*args, **kwargs)
+        self.log_level: str = os.getenv('LOG_LEVEL', 'info')
+        self.config_path: Optional[str] = None
+
+    def get_keys(self) -> list:
+        return list(self.keys())
+
+    def get_value(self, path: str = None):
+        try:
+            value = self
+            if path is None:
+                return value
+            keys = path.split(".")
+            for key in keys:
+                value = value.get(key)
+                if value is None:
+                    return None
+            return value
+        except Exception as e:
+            logger.error(e)
+
+    def set_config_path(self, config_path: Optional[str] = None):
+        """
+        Sets the configuration path.
+        :param config_path: path to the configuration file.
+        :type config_path: Optional[str]
+        """
+        if config_path:
+            self.config_path = config_path
+        else:
+            logger.error("Config path is empty")
+    @classmethod
+    async def create(cls, config_path):
+        data = await read_yaml(config_path)
+        return cls(data)
+
+
+class ConfigTemplateEvaluator:
     def __init__(self, template_object: dict):
         self.template_object = template_object
 
@@ -60,7 +101,7 @@ def evaluate_template_input(template_object, input_string):
     :return: The input string with placeholders replaced with corresponding values from the template_object.
     :rtype: str
     """
-    evaluator = TemplateEvaluator(template_object)
+    evaluator = ConfigTemplateEvaluator(template_object)
     return evaluator.evaluate(input_string)
 
 
@@ -81,14 +122,3 @@ def set_object_value(template_object: dict, path: str, value: Any):
             current_path[key] = {}
         current_path = current_path[key]
     current_path[keys[-1]] = value
-
-
-if __name__ == "__main__":
-    async def fast_test():
-        config_path = "../conf/workflow_1.yaml"
-        raw_config = await read_yaml(config_path)
-        processed_config = json.loads(evaluate_template_input(raw_config, json.dumps(raw_config)))
-        print(processed_config)
-
-
-    asyncio.run(fast_test())

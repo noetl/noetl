@@ -2,7 +2,7 @@ import argparse
 import asyncio
 from loguru import logger
 from src.components.dispatcher import Dispatcher
-from src.components.models.config import Config
+from src.components.config import Config
 from __init__ import timer
 from src.storage import db
 
@@ -38,7 +38,7 @@ async def main(args):
     config.set_config_path(config_path=args.config)
     dispatcher = await Dispatcher.create(config=config)
     await dispatcher.save_dispatcher()
-    #await dispatcher.process_workflow_configs()
+    await dispatcher.process_workflow_configs()
     logger.info(dispatcher)
 
 

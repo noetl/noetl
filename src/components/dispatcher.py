@@ -1,16 +1,16 @@
 import json
 import sys
 from src.components import generate_instance_id, Kind, BaseRepr
-from src.components.models import KindException, MetadataException, WorkflowConfigException
-from src.components.models.meta import Metadata
+from src.components.exceptions import KindException, MetadataException, WorkflowConfigException
+from src.components.meta import Metadata
 from loguru import logger
-from src.components.models.config import Config, ConfigDict
-from src.components.models.spec import Spec
+from src.components.config import Config
+from src.components.spec import Spec
 from src.storage import db
 
 
 class Dispatcher(BaseRepr):
-    def __init__(self, dispatcher_config: ConfigDict):
+    def __init__(self, dispatcher_config: Config):
         try:
             self.config = dispatcher_config
             logger.debug(dispatcher_config)
@@ -35,7 +35,7 @@ class Dispatcher(BaseRepr):
                 instance_id=generate_instance_id()
             )
 
-            self.spec = Spec(spec=ConfigDict(dispatcher_config.get_value("spec")))
+            self.spec = Spec(spec=Config(dispatcher_config.get_value("spec")))
 
             self.dispatcher_key = f"dispatcher:{self.metadata.name}"
             self.dispatcher_instance_id_key = f"{self.dispatcher_key}:{self.metadata.instance_id}"
@@ -47,7 +47,7 @@ class Dispatcher(BaseRepr):
 
     @classmethod
     async def create(cls, config: Config):
-        dispatcher_config = await ConfigDict.create(config.config_path)
+        dispatcher_config = await Config.create(config.config_path)
         return cls(dispatcher_config)
 
     async def save_instance_id(self):
@@ -70,26 +70,32 @@ class Dispatcher(BaseRepr):
 
     @staticmethod
     async def get_dispatcher(config_key: str):
-        return await db.load(config_key)
+        try:
+            logger.debug(f"retrieve key {config_key}")
+            value = await db.load(config_key)
+            logger.debug(f"retrieve key {config_key} value {value}")
+            return value
+        except Exception as e:
+            logger.error(e)
 
     async def process_workflow_configs(self):
-        dispatcher_config = ConfigDict(
+        dispatcher_config = Config(
             json.loads(
-                await self.get_dispatcher(f"dispatcher:{self.metadata.name}:{self.metadata.version}")
+                await self.get_dispatcher(f"dispatcher:{self.metadata.name}:{self.metadata.version}:config")
             )
         )
         logger.info(dispatcher_config)
         for workflow_path in dispatcher_config.get_value("spec.workflowConfigPaths"):
             logger.info(workflow_path)
-            await self.save_workflow_template(config_path=workflow_path.get("configPath"))
+            await self.save_workflow_config(config_path=workflow_path.get("configPath"))
 
-    async def save_workflow_template(self, config_path):
+    async def save_workflow_config(self, config_path):
         try:
-            workflow_config = await ConfigDict.create(config_path)
+            workflow_config = await Config.create(config_path)
             name = workflow_config.get_value("metadata.name")
             if name is None:
                 raise WorkflowConfigException(f"Metadata name is missing in workflow config.")
-            await db.save(f"{self.dispatcher_instance_id_key}/workflows/{name}/template", json.dumps(workflow_config))
+            await db.save(f"{self.dispatcher_instance_id_key}:workflow:{name}:config", json.dumps(workflow_config))
         except Exception as e:
             logger.error(f"Saving workflow templates failed {e}")
             sys.exit(1)

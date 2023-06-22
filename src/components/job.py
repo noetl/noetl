@@ -3,11 +3,11 @@ from datetime import datetime
 from croniter import croniter
 
 from src.components import Kind
-from src.components.models.fsm import FiniteAutomata
-from src.components.models.meta import Metadata
-from src.components.models.spec import Spec
+from src.components.fsm import FiniteAutomata
+from src.components.meta import Metadata
+from src.components.spec import Spec
 from src.components.task import Task
-from src.components.models.template import get_object_value
+from src.components.template import get_object_value
 
 
 class Job(FiniteAutomata):

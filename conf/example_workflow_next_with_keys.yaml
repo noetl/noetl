@@ -7,7 +7,7 @@ spec:
   vars:
     timeout: 60
   initialSettings:
-    template: execute-steps
+    template: hello-world-template-1
     state: ready
   transitions:
     ready: [running]
@@ -26,7 +26,7 @@ spec:
             template: hello-world-template-2
           - http-request-template-1-level-2:
             template: http-request-template-1
-            condition: "'{{workflow.templates.hello-world-template-2.status}}' == 'completed'"
+            conditions: "'{{workflow.templates.hello-world-template-2.status}}' == 'completed'"
     - hello-world-template-2:
         type: shell
         command: "echo 'Hello, World 2'"

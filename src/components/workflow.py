@@ -1,20 +1,17 @@
 from loguru import logger
-from datetime import datetime
 
-from src.components import generate_instance_id, Kind
-from src.components.models import KindException, MetadataException
-from src.components.models.fsm import FiniteAutomata
-from src.components.job import Job
-from src.components.models.config import Config
-from src.components.models.meta import Metadata
-from src.components.models.spec import Spec
-from src.components.models.config import ConfigDict
-from src.storage import read_yaml
+from src.components import Kind
+from src.components.exceptions import KindException, MetadataException
+from src.components.fsm import FiniteAutomata
+from src.components.config import Config
+from src.components.meta import Metadata
+from src.components.spec import Spec
+from src.components.config import Config
 
 
 class Workflow(FiniteAutomata):
 
-    def __init__(self, workflow_config: ConfigDict):
+    def __init__(self, workflow_config: Config):
 
         try:
             kind = workflow_config.get_value("kind").lower()
@@ -25,7 +22,7 @@ class Workflow(FiniteAutomata):
             if name is None:
                 raise MetadataException("Name is empty")
 
-            spec = Spec(spec=ConfigDict(workflow_config.get_value("spec")))
+            spec = Spec(spec=Config(workflow_config.get_value("spec")))
 
             super().__init__(
                 initial_state=spec.initial_state,
@@ -45,7 +42,7 @@ class Workflow(FiniteAutomata):
 
     @classmethod
     async def create(cls, config: Config):
-        workflow_config = await ConfigDict.create(config.config_path)
+        workflow_config = await Config.create(config.config_path)
         return cls(workflow_config)
 
     # @staticmethod
