@@ -99,3 +99,13 @@ class Dispatcher(BaseRepr):
         except Exception as e:
             logger.error(f"Saving workflow templates failed {e}")
             sys.exit(1)
+
+    async def run_workflows(self):
+
+        workflow_config_keys = await db.get_keys(f"{self.dispatcher_instance_id_key}:workflow:*")
+        logger.debug(workflow_config_keys)
+        for key in workflow_config_keys:
+            split_key = key.split(':')
+            workflow_name_index = split_key.index('workflow')
+            name = split_key[workflow_name_index + 1]
+            logger.debug(name)

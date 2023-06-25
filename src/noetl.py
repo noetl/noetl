@@ -40,6 +40,7 @@ async def main(args):
     await dispatcher.save_dispatcher()
     await dispatcher.process_workflow_configs()
     logger.info(dispatcher)
+    await dispatcher.run_workflows()
 
 
 if __name__ == "__main__":

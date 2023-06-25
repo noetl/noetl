@@ -1,9 +1,7 @@
 from loguru import logger
-
 from src.components import Kind
 from src.components.exceptions import KindException, MetadataException
 from src.components.fsm import FiniteAutomata
-from src.components.config import Config
 from src.components.meta import Metadata
 from src.components.spec import Spec
 from src.components.config import Config

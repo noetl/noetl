@@ -93,6 +93,21 @@ class RedisStorage(BaseStorage):
             return False
         return True
 
+    async def get_keys(self, pattern):
+        """
+        Retrieve keys from Redis that match the specified pattern.
+
+        Args:
+            pattern (str): The pattern to match for key filtering.
+
+        Returns:
+            List[str]: A list of keys that match the specified pattern.
+
+        Raises:
+            redis.RedisError: If an error occurs while communicating with Redis.
+        """
+        return await self.client.keys(pattern)
+
     async def set(self, key: str, value: Any):
         """
         Sets a key-value pair in Redis.
@@ -136,7 +151,6 @@ class RedisStorage(BaseStorage):
         except Exception as e:
             logger.error(f'Redis hget error {e}')
 
-
     async def hset(self, key, payload, ttl=None):
         """
         Sets the specified payload (key-value pairs) in a hash stored at the given key in Redis.
@@ -154,7 +168,6 @@ class RedisStorage(BaseStorage):
                 await self.client.expire(key, ttl)
         except Exception as e:
             logger.error(f'Redis hash set key: {key} payload: {payload} error {e}')
-
 
     async def hgetall(self, key):
         """

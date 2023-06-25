@@ -3,83 +3,54 @@ kind: Workflow
 metadata:
   name: example-workflow
 spec:
-  schedule: "*/5 * * * *"
   vars:
-    timeout: 60
-  initialSettings:
-    template: execute-steps
-    state: ready
-  transitions:
-    ready: [running]
-    running: [idle, paused, completed, failed, terminated]
-    idle: [running]
-    paused: [running]
-  conditions:
-    - "'{{workflow.variables.example_workflow.status}}' == 'ready'"
-  templates:
-    - name: hello-world-template-1
-      type: shell
-      command: "echo '{{inputs.example_input}}'"
-      args: "{{example_workflow.actions.action1.execute.shell.output}}"
-      inputs:
-        - example_input
-      outputs:
-        - example_output
-    - name: hello-world-template-2
-      type: shell
-      command: "echo 'Hello, World 2'"
-      output: "{{outputs.example_output}}"
-    - name: http-request-template-1
-      type: httpRequest
-      method: GET
-      url: "https://api.github.com/octocat"
-      query: "{{example_workflow.actions.action1.execute.httpRequest.output}}"
-    - name: python-script-template-1
-      type: script
-      interpreter: python
-      source: |
-        import json
-        result = "hello world"
-        print(f"{result}")
-    - name: postgres-database-query-1
-      type: database
-      source: postgres
-      command: "select * from emp where id = '{{inputs.id}}'"
-      output: "{{outputs.example_output.sql}}"
-    - name: message-template
-      type: message
-      content: "{{inputs.message_content}}"
-      destination: "my-messaging-topic"
-      inputs:
-        - message_content
-    - name: execute-steps
-      type: steps
+    message1: hello
+    message2: world
+  timeout: 60
+  start: [task1, task3]
+  tasks:
+    task1:
       steps:
-      - name: step-1
-        template: hello-world-template-1
-        runtime: docker
-        conditions:
-          start:
-            - "'{{example_workflow.actions.action2.status}}' == 'ready'"
-          exit:
-            - "'{{example_workflow.actions.action2.status}}' == 'idle'"
-        envs:
-          PATH: "/noetl/bin"
-        inputs:
-          greeting: "Hello, World 1"
-        outputs:
-          name: example_output
-          value: "{{example_workflow.actions.action1.execute.shell.output}}"
-      - name: step-2
-        template: message-template-1
-      - name: step-3
-        template: hello-world-template-2
-      - name: step-4
-        template: execute-tasks
-    - name: execute-tasks
-      type: tasks
-      tasks:
-      - name: task-1
-        template: hello-world-template-2
-      - name: task-2
-        template: hello-world-template-1
+        command1:
+          description: tratata
+          type: shell
+          command: "echo "
+          args:
+            - {{ vars.message1 }}
+            - {{ vars.message2 }}
+          # outputs:
+          #   stdout: "hello world"
+          #   stderr: ""
+          #   exitCode: 0
+        httpreq1:
+          description: tratata
+          type: http
+          method: post
+          url: "https://example.com/req1/{{ tasks.task1.steps.command1.stdout }}"
+          headers:
+            "x-my-header": tasks.task1.steps.command1.stdout
+          requestBody:
+            application/json: |
+              {
+                "{{ vars.message1 }}": "{{ vars.message2 }}"
+              }
+          # outputs:
+              # statusCode: 401
+              # responseType: application/json
+              # responseBody: {}
+      switch:
+        - next: [task3, task5]
+          condition: |
+            tasks.task1.steps.command1.exitCode == 0 
+            && tasks.task1.steps.httpreq1.statusCode == 200
+        - next: [task11, task12]
+          condition: |
+            tasks.task1.steps.command1.stdout == "hello world"
+            || tasks.task1.steps.httpreq1.statusCode == 201
+        - next: [task25, task27]
+
+    task2:
+      steps:
+        ...
+      switch:
+        - next: [task25, task27]
