@@ -5,4 +5,4 @@ metadata:
   version: v1.0.0
 spec:
   workflowConfigPaths:
-      - configPath: ../conf/example_workflow_next_with_keys.yaml
+      - configPath: ../conf/example_workflow.yaml

@@ -16,8 +16,8 @@ spec:
           type: shell
           command: "echo "
           args:
-            - {{ vars.message1 }}
-            - {{ vars.message2 }}
+            - "{{ vars.message1 }}"
+            - "{{ vars.message2 }}"
           # outputs:
           #   stdout: "hello world"
           #   stderr: ""
@@ -47,10 +47,4 @@ spec:
           condition: |
             tasks.task1.steps.command1.stdout == "hello world"
             || tasks.task1.steps.httpreq1.statusCode == 201
-        - next: [task25, task27]
-
-    task2:
-      steps:
-        ...
-      switch:
         - next: [task25, task27]
