@@ -3,7 +3,7 @@ import os
 from redis import asyncio as aioredis
 from typing import Any, Optional, Union
 from loguru import logger
-from src.storage.base_storage import BaseStorage
+from .base_storage import BaseStorage
 
 
 class RedisStorage(BaseStorage):

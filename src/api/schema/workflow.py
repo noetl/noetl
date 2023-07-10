@@ -1,7 +1,16 @@
-import strawberry
 import json
-from typing import List, Optional, Dict
-from src.storage import db
+
+import strawberry
+from typing import List, Optional
+from storage import db
+
+
+def strawberry_model(cls):
+    cls_input = strawberry.input(cls)
+    cls_type = strawberry.type(cls)
+    cls.__annotations__ = cls_type.__annotations__
+    cls = cls_input(cls)
+    return cls
 
 
 @strawberry.type
@@ -18,12 +27,18 @@ class Command:
 
 
 @strawberry.type
+class Header:
+    key: str
+    value: str
+
+
+@strawberry.type
 class HttpRequest:
     description: Optional[str]
     type: str
     method: str
     url: str
-    headers: Optional[Dict[str, str]]
+    headers: Optional[List[Header]]
     requestBody: Optional[str]
 
 
@@ -36,6 +51,12 @@ class Step:
 @strawberry.type
 class Task:
     steps: Step
+
+
+@strawberry.type
+class TaskEntry:
+    key: str
+    task: Task
 
 
 @strawberry.type
@@ -53,13 +74,19 @@ class Transition:
 
 
 @strawberry.type
+class Variable:
+    key: str
+    value: str
+
+
+@strawberry.type
 class Spec:
-    vars: Dict[str, str]
+    vars: Optional[List[Variable]]
     timeout: int
     schedule: Optional[str]
     initialSettings: InitialSettings
     transitions: Transition
-    tasks: Dict[str, Task]
+    tasks: Optional[List[TaskEntry]]
 
 
 @strawberry.type
@@ -68,26 +95,33 @@ class Workflow:
     kind: str
     metadata: Metadata
     spec: Spec
+    def __init__(self, apiVersion: str, kind: str, metadata: Metadata, spec: Spec):
+        self.apiVersion = apiVersion
+        self.kind = kind
+        self.metadata = metadata
+        self.spec = spec
+
 
 
 @strawberry.type
 class Query:
     @strawberry.field
-    def get_workflow(self, name: str) -> Optional[Workflow]:
+    async def get_workflow(self, name: str) -> Optional[Workflow]:
         workflow_json = await db.load(f'workflow:{name}')
         if workflow_json is None:
             return None
         else:
-            return json.loads(workflow_json)
+            workflow_data = json.loads(workflow_json)
+            return Workflow(**workflow_data)
 
 
-@strawberry.type
+@strawberry.input
 class Mutation:
     @strawberry.mutation
-    def submit_workflow(self, workflow: Workflow) -> bool:
+    async def submit_workflow(self, workflow: Workflow) -> bool:
         workflow_json = json.dumps(workflow)
         await db.save(f'workflow:{workflow.metadata.name}', workflow_json)
         return True
 
 
-schema = strawberry.Schema(query=Query, mutation=Mutation)
+schema = strawberry.Schema(query=Query)

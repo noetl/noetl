@@ -6,7 +6,7 @@ from src.components.meta import Metadata
 from loguru import logger
 from src.components.config import Config
 from src.components.spec import Spec
-from src.storage import db
+from src.api.storage import db
 
 
 class Dispatcher(BaseRepr):
