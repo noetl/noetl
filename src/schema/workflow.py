@@ -56,6 +56,7 @@ class Transition:
 class Spec:
     vars: Dict[str, str]
     timeout: int
+    schedule: Optional[str]
     initialSettings: InitialSettings
     transitions: Transition
     tasks: Dict[str, Task]
