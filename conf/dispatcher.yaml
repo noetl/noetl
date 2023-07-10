@@ -1,8 +1,0 @@
-apiVersion: workflow.noetl.io/v1
-kind: Dispatcher
-metadata:
-  name: dispatcher-main
-  version: v1.0.0
-spec:
-  workflowConfigPaths:
-      - configPath: ../conf/example_workflow.yaml
