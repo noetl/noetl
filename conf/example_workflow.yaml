@@ -54,11 +54,11 @@ spec:
           condition: |
             tasks.task1.steps.command1.exitCode == 0 
             && tasks.task1.steps.httpreq1.statusCode == 200
-        - next: [task11, task12]
+        - next: [task4, task5]
           condition: |
             tasks.task1.steps.command1.stdout == "hello world"
             || tasks.task1.steps.httpreq1.statusCode == 201
-        - next: [task25, task27]
+        - next: []
     task2:
       steps:
         command1:
