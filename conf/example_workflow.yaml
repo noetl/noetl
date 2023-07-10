@@ -6,6 +6,10 @@ spec:
   vars:
     message1: hello
     message2: world
+    message3: hello task 2
+    message4: hello task 3
+    message5: hello task 4
+    message6: hello task 5
   timeout: 60
   initialSettings:
     start: [task1, task3]
@@ -55,3 +59,35 @@ spec:
             tasks.task1.steps.command1.stdout == "hello world"
             || tasks.task1.steps.httpreq1.statusCode == 201
         - next: [task25, task27]
+    task2:
+      steps:
+        command1:
+          description: hello task 2
+          type: shell
+          command: "echo "
+          args:
+            - "{{ vars.message3 }}"
+    task3:
+      steps:
+        command1:
+          description: hello task 3
+          type: shell
+          command: "echo "
+          args:
+            - "{{ vars.message4 }}"
+    task4:
+      steps:
+        command1:
+          description: hello task 4
+          type: shell
+          command: "echo "
+          args:
+            - "{{ vars.message5 }}"
+    task5:
+      steps:
+        command1:
+          description: hello task 5
+          type: shell
+          command: "echo "
+          args:
+            - "{{ vars.message6 }}"
