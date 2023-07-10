@@ -11,6 +11,7 @@ spec:
     message5: hello task 4
     message6: hello task 5
   timeout: 60
+  schedule: "*/5 * * * *"
   initialSettings:
     start: [task1, task3]
     state: ready
@@ -23,18 +24,14 @@ spec:
     task1:
       steps:
         command1:
-          description: tratata
+          description: hello task 1
           type: shell
           command: "echo "
           args:
             - "{{ vars.message1 }}"
             - "{{ vars.message2 }}"
-          # outputs:
-          #   stdout: "hello world"
-          #   stderr: ""
-          #   exitCode: 0
         httpreq1:
-          description: tratata
+          description: hello task 1
           type: http
           method: post
           url: "https://example.com/req1/{{ tasks.task1.steps.command1.stdout }}"
@@ -45,10 +42,6 @@ spec:
               {
                 "{{ vars.message1 }}": "{{ vars.message2 }}"
               }
-          # outputs:
-              # statusCode: 401
-              # responseType: application/json
-              # responseBody: {}
       switch:
         - next: [task3, task5]
           condition: |
