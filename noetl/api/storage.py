@@ -1,9 +1,18 @@
 import os
-
+from abc import ABC, abstractmethod
 from redis import asyncio as aioredis
 from typing import Any, Optional, Union
 from loguru import logger
-from .base_storage import BaseStorage
+
+
+class BaseStorage(ABC):
+    @abstractmethod
+    def save(self, key, value):
+        pass
+
+    @abstractmethod
+    def load(self, key):
+        pass
 
 
 class RedisStorage(BaseStorage):
@@ -182,20 +191,3 @@ class RedisStorage(BaseStorage):
             return redis_result
         except Exception as e:
             logger.error(f'Redis hash get all error {e}')
-
-
-async def get_state_key(self, workflow_name: str, workflow_instance_id: str, job_name: str, task_name: str) -> str:
-    """
-    Constructs a state key for the given workflow, instance, job, and task names.
-    :param workflow_name: Name of the workflow
-    :type workflow_name: str
-    :param workflow_instance_id: ID of the workflow instance
-    :type workflow_instance_id: str
-    :param job_name: Name of the job
-    :type job_name: str
-    :param task_name: Name of the task
-    :type task_name: str
-    :return: State key
-    :rtype: str
-    """
-    return f"/workflow_state_db/{workflow_name}/{workflow_instance_id}/jobs/{job_name}/tasks/{task_name}"

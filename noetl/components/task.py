@@ -1,11 +1,11 @@
 from loguru import logger
 
-from src.components import Kind
-from src.components.fsm import FiniteAutomata
-from src.components.action import Action
-from src.components.meta import Metadata
-from src.components.spec import Spec
-from src.components.template import get_object_value
+from noetl.components import Kind
+from noetl.components.fsm import FiniteAutomata
+from noetl.components.action import Action
+from noetl.components.meta import Metadata
+from noetl.components.spec import Spec
+from noetl.components.template import get_object_value
 
 
 class Task(FiniteAutomata):

@@ -1,10 +1,10 @@
 from loguru import logger
-from src.components import Kind
-from src.components.exceptions import KindException, MetadataException
-from src.components.fsm import FiniteAutomata
-from src.components.meta import Metadata
-from src.components.spec import Spec
-from src.components.config import Config
+from noetl.components import Kind
+from noetl.components.exceptions import KindException, MetadataException
+from noetl.components.fsm import FiniteAutomata
+from noetl.components.meta import Metadata
+from noetl.components.spec import Spec
+from noetl.components.config import Config
 
 
 class Workflow(FiniteAutomata):

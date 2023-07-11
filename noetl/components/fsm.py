@@ -1,6 +1,6 @@
 from typing import Optional
-from src.components import BaseRepr
-from src.components.template import evaluate_template_input
+from noetl.components import BaseRepr
+from noetl.components.template import evaluate_template_input
 
 
 class FiniteAutomata(BaseRepr):

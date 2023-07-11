@@ -1,5 +1,5 @@
 from typing import Optional
-from src.components import Kind, BaseRepr
+from noetl.components import Kind, BaseRepr
 
 
 class Metadata(BaseRepr):

@@ -2,7 +2,7 @@ import os
 from typing import Optional,Any
 from loguru import logger
 import re
-from src.api.storage import read_yaml
+from noetl.api.storage import read_yaml
 
 
 class Config(dict):

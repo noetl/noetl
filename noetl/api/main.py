@@ -1,8 +1,7 @@
-from storage import db
 from fastapi import FastAPI
 from strawberry.asgi import GraphQL
-from schema.workflow import schema
-
+from schema import schema
+from common import db
 app = FastAPI()
 """
 Not Only ETL is a Workflow Engine designed to manage the execution of complex workflows. 
@@ -25,3 +24,4 @@ async def root():
 
 
 app.add_route("/graphql", GraphQL(schema=schema, graphiql=True))
+app.add_websocket_route("/graphql", app)
