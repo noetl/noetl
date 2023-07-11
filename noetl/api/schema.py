@@ -198,5 +198,11 @@ class Mutation:
         await db.save(f'workflow:{workflow.metadata.name}', json.dumps(workflow_dict))
         return True
 
+# @strawberry.type
+# class Subscription:
+#     @strawberry.subscription
+#     async def run_command(self, target: int = 100) -> AsyncGenerator[str, None]:
+#         proc = await exec_proc(target)
+#         return tail(proc)
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)

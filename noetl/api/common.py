@@ -5,8 +5,6 @@ import aiofiles
 from typing import Any
 from storage import RedisStorage
 
-
-
 db = RedisStorage()
 
 
