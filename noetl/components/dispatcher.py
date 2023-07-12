@@ -4,7 +4,7 @@ from noetl.components import generate_instance_id, Kind, BaseRepr
 from noetl.components.exceptions import KindException, MetadataException, WorkflowConfigException
 from noetl.components.meta import Metadata
 from loguru import logger
-from noetl.components.config import Config
+from src.api.config import Config
 from noetl.components.spec import Spec
 from noetl.api.storage import db
 

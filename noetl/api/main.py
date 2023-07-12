@@ -40,8 +40,6 @@ async def root():
     return {"message": "Not Only ETL is a Workflow Engine"}
 
 
-# app.add_route("/graphql", GraphQL(schema=schema, graphiql=True))
-# app.add_websocket_route("/graphql", app)
 app.include_router(graphql_router, prefix="/graphql")
 
 

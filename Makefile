@@ -37,18 +37,8 @@ noetl-start:
 	docker-compose up --detach noetl
 
 
-redis-build:
-	docker-compose build noetldb
-
 redis-start:
-	docker-compose up --detach noetldb
-
-redis-stop:
-	docker-compose stop noetldb
-
-redis-restart:
-	docker-compose restart noetldb
-
+	 docker run -p 6379:6379 --name redis-stack redis/redis-stack:latest
 
 noetl:
 	source $(VENV)/bin/activate &&

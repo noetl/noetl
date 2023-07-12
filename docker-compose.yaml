@@ -6,6 +6,7 @@ services:
     container_name: noetldb
     ports:
       - 6379:6379
+    command: ["redis-server", "--loadmodule", "/usr/lib/redis/modules/librejson.so"]
 
 #  workflow_engine:
 #    build: ./workflow_engine

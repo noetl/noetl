@@ -1,7 +1,7 @@
 from typing import Optional
 from loguru import logger
 from noetl.components import BaseRepr
-from noetl.components.config import Config
+from src.api.config import Config
 
 
 class WorkflowConfigPath(BaseRepr):

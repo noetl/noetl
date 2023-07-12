@@ -4,7 +4,7 @@ from noetl.components.exceptions import KindException, MetadataException
 from noetl.components.fsm import FiniteAutomata
 from noetl.components.meta import Metadata
 from noetl.components.spec import Spec
-from noetl.components.config import Config
+from src.api.config import Config
 
 
 class Workflow(FiniteAutomata):

@@ -1,100 +1,28 @@
-import strawberry
+import yaml
 import json
 from loguru import logger
-from typing import List, Optional
 from common import db
-from common import to_dict
+from config import Config
+from strawberry.scalars import JSON
+import strawberry
+from strawberry.file_uploads import Upload
 
 
-@strawberry.type
-class Metadata:
-    name: str
-
-
-@strawberry.type
-class Command:
-    description: None | str
-    type: str
-    command: str
-    args: List[str]
-
-
-@strawberry.type
-class Header:
-    key: str
-    value: str
-
-
-@strawberry.type
-class HttpRequest:
-    description: None | str
-    type: str
-    method: str
-    url: str
-    headers: None | List[Header]
-    requestBody: None | str
-
-
-@strawberry.type
-class Step:
-    command: None | Command
-    httpRequest: None | HttpRequest
-
-
-@strawberry.type
-class Task:
-    steps: None | Step
-
-
-@strawberry.type
-class TaskEntry:
-    key: str
-    task: None | Task
-
-
-@strawberry.type
-class InitialSettings:
-    start: List[str]
-    state: str
-
-
-@strawberry.type
-class Transition:
-    ready: List[str]
-    running: List[str]
-    idle: List[str]
-    paused: List[str]
-
-
-@strawberry.type
-class Variable:
-    key: str
-    value: str
-
-
-@strawberry.type
-class Spec:
-    vars: None | List[Variable]
-    timeout: None | int
-    schedule: None | str
-    initialSettings: InitialSettings
-    transitions: Transition
-    tasks: None | List[TaskEntry]
+@strawberry.input
+class FolderInput:
+    files: list[Upload]
 
 
 @strawberry.type
 class Workflow:
-    apiVersion: str
-    kind: str
-    metadata: Metadata
-    spec: Spec
+    data: JSON
 
 
 @strawberry.type
 class Query:
     @strawberry.field
-    async def get_workflow(self, name: str) -> Optional[Workflow]:
-        workflow_json = await db.load(f'workflow:{name}')
+    async def get_workflow(self, name: str) -> None | Workflow:
+        workflow_json =  await db.load_json(f'workflow:{name}')
         if workflow_json is None:
             return None
         else:
@@ -102,107 +30,37 @@ class Query:
             return Workflow(**workflow_data)
 
 
-@strawberry.input
-class MetadataInput:
-    name: str
-
-
-@strawberry.input
-class CommandInput:
-    description: None | str = strawberry.field(default_factory=lambda: strawberry.UNSET)
-    type: str
-    command: str
-    args: List[str]
-
-
-@strawberry.input
-class HeaderInput:
-    key: str
-    value: str
-
-
-@strawberry.input
-class HttpRequestInput:
-    description: None | str = strawberry.field(default_factory=lambda: strawberry.UNSET)
-    type: str
-    method: str
-    url: str
-    headers: None | List[HeaderInput] = strawberry.field(default_factory=lambda: strawberry.UNSET)
-    requestBody: None | str = strawberry.field(default_factory=lambda: strawberry.UNSET)
-
-
-@strawberry.input
-class StepInput:
-    command: None | CommandInput = strawberry.field(default_factory=lambda: strawberry.UNSET)
-    httpRequest: None | HttpRequestInput = strawberry.field(default_factory=lambda: strawberry.UNSET)
-
-
-@strawberry.input
-class TaskInput:
-    steps: List[StepInput]
-
-
-@strawberry.input
-class TaskEntryInput:
-    key: str
-    task: TaskInput
-
-
-@strawberry.input
-class InitialSettingsInput:
-    start: List[str]
-    state: str
-
-
-@strawberry.input
-class TransitionInput:
-    ready: List[str]
-    running: List[str]
-    idle: List[str]
-    paused: List[str]
-
-
-@strawberry.input
-class VariableInput:
-    key: str
-    value: str
-
-
-@strawberry.input
-class SpecInput:
-    vars: List[VariableInput] = strawberry.field(default_factory=list)
-    timeout: int = 30
-    schedule: None | str = strawberry.field(default_factory=lambda: strawberry.UNSET)
-    initialSettings: InitialSettingsInput
-    transitions: TransitionInput
-    tasks: None | List[TaskEntryInput] = strawberry.field(default_factory=lambda: strawberry.UNSET)
-
-
-@strawberry.input
-class WorkflowInput:
-    apiVersion: str
-    kind: str
-    metadata: MetadataInput
-    spec: SpecInput
-
-
 @strawberry.type
 class Mutation:
+    @strawberry.mutation
+    async def read_file(self, file: Upload) -> str:
+        try:
+            config = Config(yaml.safe_load((await file.read()).decode("utf-8")))
+            logger.info(config)
+            workflow_name = config.get_value("metadata.name")
+            logger.info(workflow_name)
+            await db.save_json(f'workflow:{workflow_name}', config)
+            workflow_json = await db.load_json(f'workflow:{workflow_name}')
+            logger.info(workflow_json)
+            return json.dumps(workflow_json)
+        except yaml.YAMLError as e:
+            logger.error(e)
 
     @strawberry.mutation
-    async def submit_workflow(self, workflow: WorkflowInput) -> bool:
-        logger.info(workflow)
+    async def read_files(self, files: list[Upload]) -> list[str]:
+        contents = []
+        for file in files:
+            content = (await file.read()).decode("utf-8")
+            contents.append(content)
+        return contents
 
-        workflow_dict = to_dict(workflow)
-        logger.info(workflow_dict)
-        await db.save(f'workflow:{workflow.metadata.name}', json.dumps(workflow_dict))
-        return True
+    @strawberry.mutation
+    async def read_folder(self, folder: FolderInput) -> list[str]:
+        contents = []
+        for file in folder.files:
+            content = (await file.read()).decode("utf-8")
+            contents.append(content)
+        return contents
 
-# @strawberry.type
-# class Subscription:
-#     @strawberry.subscription
-#     async def run_command(self, target: int = 100) -> AsyncGenerator[str, None]:
-#         proc = await exec_proc(target)
-#         return tail(proc)
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)

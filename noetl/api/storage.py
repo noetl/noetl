@@ -1,6 +1,8 @@
 import os
 from abc import ABC, abstractmethod
 from redis import asyncio as aioredis
+from redis import Redis
+from redis.commands.json.path import Path
 from typing import Any, Optional, Union
 from loguru import logger
 
@@ -38,6 +40,15 @@ class RedisStorage(BaseStorage):
     async def load(self, key):
         await self.pool_connect()
         return await self.get(key)
+
+    async def save_json(self, key: str, jsonval):
+        await self.pool_connect()
+        logger.info(f"{key}, {jsonval}")
+        await self.client.json().set(key, '$', jsonval)
+
+    async def load_json(self, key, path='.'):
+        await self.pool_connect()
+        return await self.client.json().get(key, Path(path))
 
     def get_redis_url(self):
         """
