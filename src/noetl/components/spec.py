@@ -1,6 +1,6 @@
 from typing import Optional
 from loguru import logger
-from noetl.components import BaseRepr
+from src.noetl.components import BaseRepr
 from src.api.config import Config
 
 

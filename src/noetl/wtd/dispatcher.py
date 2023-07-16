@@ -1,12 +1,12 @@
 import json
 import sys
-from noetl.components import generate_instance_id, Kind, BaseRepr
-from noetl.components.exceptions import KindException, MetadataException, WorkflowConfigException
-from noetl.components.meta import Metadata
+from src.noetl.components import generate_instance_id, Kind, BaseRepr
+from src.noetl.wtd.exceptions import KindException, MetadataException, WorkflowConfigException
+from src.noetl.components.meta import Metadata
 from loguru import logger
 from src.api.config import Config
-from noetl.components.spec import Spec
-from noetl.api.storage import db
+from src.noetl.components.spec import Spec
+from storage import db
 
 
 class Dispatcher(BaseRepr):

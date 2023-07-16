@@ -2,12 +2,12 @@ from loguru import logger
 from datetime import datetime
 from croniter import croniter
 
-from noetl.components import Kind
-from noetl.components.fsm import FiniteAutomata
-from noetl.components.meta import Metadata
-from noetl.components.spec import Spec
-from noetl.components.task import Task
-from noetl.components.template import get_object_value
+from src.noetl.components import Kind
+from fsm import FiniteAutomata
+from src.noetl.components.meta import Metadata
+from src.noetl.components.spec import Spec
+from src.noetl.components.task import Task
+from src.noetl.components.template import get_object_value
 
 
 class Job(FiniteAutomata):
