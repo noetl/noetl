@@ -1,6 +1,6 @@
 from loguru import logger
 import re
-from common import read_yaml
+from .common import read_yaml
 
 
 class Config(dict):

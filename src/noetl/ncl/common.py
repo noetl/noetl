@@ -1,29 +1,18 @@
-import sys
-from datetime import datetime
-from enum import Enum
-from pathlib import Path
-from typing import Optional
-
-import asyncio
+import yaml
 from loguru import logger
+import aiofiles
+from datetime import datetime
 from httpx import AsyncClient, Timeout, HTTPError
-
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
-"""
-__init__.py: A collection of utility functions for the components package.
-"""
+import asyncio
 
 
-class Kind(Enum):
-    """
-    Enum class to represent the different kinds of entities.
-    """
-    DISPATCHER = "dispatcher"
-    WORKFLOW = "workflow"
-    JOB = "job"
-    TASK = "task"
-    ACTION = "action"
+async def read_yaml(path):
+    async with aiofiles.open(path, "r") as f:
+        yaml_config = await f.read()
+        try:
+            return yaml.safe_load(yaml_config)
+        except yaml.YAMLError as e:
+            logger.error(e)
 
 
 class BaseRepr:
@@ -37,7 +26,7 @@ class BaseRepr:
         logger.debug(self.__repr__())
 
 
-def generate_instance_id(prefix: Optional[str] = None) -> str:
+def generate_instance_id(prefix: None | str = None) -> str:
     """
     Generate a unique instance ID based on the workflow name and the current timestamp.
     The generated ID will have the format "name-YYYYmmddTHHMMSSZ" naturally ordered.

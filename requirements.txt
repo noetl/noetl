@@ -1,9 +1,9 @@
 requests==2.31.0
 aiohttp==3.8.4
 aiofiles==23.1.0
-strawberry-graphql==0.194.4
+strawberry-graphql==0.195.2
 PyYAML==6.0
 croniter==1.3.14
 loguru==0.7.0
-redis==4.5.4
+redis==4.6.0
 aioconsole==0.6.1

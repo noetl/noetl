@@ -3,7 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 from strawberry.subscriptions import GRAPHQL_TRANSPORT_WS_PROTOCOL, GRAPHQL_WS_PROTOCOL
 from strawberry.fastapi import GraphQLRouter
 from schema import schema
-from common import db
+from noetl.api.schema import db
 
 graphql_router = GraphQLRouter(
     schema,

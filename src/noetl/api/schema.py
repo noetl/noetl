@@ -1,11 +1,34 @@
+from strawberry import UNSET, asdict
 import yaml
 import json
 from loguru import logger
-from common import db
-from config import Config
+from noetl.ncl.config import Config
 from strawberry.scalars import JSON
 import strawberry
 from strawberry.file_uploads import Upload
+from storage import RedisStorage
+
+db = RedisStorage()
+
+default_transition = {
+    "ready": ["running"],
+    "running": ["idle", "paused", "completed", "failed", "terminated"],
+    "idle": ["running"],
+    "paused": ["running"]
+}
+
+
+# remove unset
+def to_dict(obj: any) -> any:
+    if isinstance(obj, dict):
+        return {k: to_dict(v) for k, v in obj.items() if v != UNSET}
+    elif isinstance(obj, list):
+        return [to_dict(item) for item in obj]
+    elif hasattr(obj, '__annotations__'):
+        return to_dict(asdict(obj))
+    else:
+        return obj
+
 
 
 @strawberry.input
