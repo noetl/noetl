@@ -16,34 +16,28 @@ spec:
     idle: [ running ]
     paused: [ running ]
   tasks:
-    task1:
+    task_1:
       steps:
-        command1:
-          description: task 1
+        step_1:
+          description: task 1 step 1
           type: shell
           command: psql -h localhost -p 5432 -U {{spec.vars.username}} -d {{spec.vars.database}} -c "CALL load_data_ibkr_realtime2data_raw2data();"
-      switch:
-        - next: [task2]
-          condition: |
-            {{ tasks.task1.steps.command1.exitCode }} == 0
-            && now().strftime('%M') | int >= 5
-            && now().strftime('%M') | int < 10
-        - next: [task3]
-          condition: |
-            {{ tasks.task1.steps.command1.exitCode }} == 0
-    task2:
-      steps:
-        command1:
-          description: task 2
+        step_2:
+          description: task 1 step 2
           type: shell
           command: psql -h localhost -p 5432 -U {{spec.vars.username}} -d {{spec.vars.database}} -c "CALL initial_calculation();"
-      switch:
-        - next: [task3]
           condition: |
-            {{ tasks.task2.steps.command1.exitCode }} == 0
-    task3:
+            {{ tasks.task_1.steps.step_1.exitCode }} == 0
+            && now().strftime('%M') | int >= 5
+            && now().strftime('%M') | int < 10
+      switch:
+        - next: [task_2]
+          condition: |
+            {{ tasks.task_1.steps.step_1.exitCode }} == 0
+            && {{ tasks.task_1.steps.step_2.exitCode }} == 0
+    task_2:
       steps:
-        command1:
-          description: task 3
+        step_1:
+          description: task 2 step 1
           type: shell
           command: psql -h localhost -p 5432 -U {{spec.vars.username}} -d {{spec.vars.database}} -c "CALL run_at_setup_group_trades(0, false);"
