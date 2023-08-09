@@ -1,7 +1,7 @@
 apiVersion: workflow.noetl.io/v1
 kind: Workflow
 metadata:
-  name: trade-workflow
+  name: tradetrend-realtime-data-load-workflow
 spec:
   vars:
     username: username
