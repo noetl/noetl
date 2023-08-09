@@ -6,7 +6,7 @@ spec:
   vars:
     username: username
     database: dbname
-  schedule: "*/5 * * * *"
+  schedule: "10 */5 * * *"
   initialSettings:
     start: [task1]
     state: ready
