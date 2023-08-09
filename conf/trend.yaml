@@ -46,4 +46,4 @@ spec:
         command1:
           description: task 3
           type: shell
-          command: psql" -h localhost -p 5434 -U {{spec.vars.username}} -d {{spec.vars.database}} -c "CALL run_at_setup_group_trades(0, false);"
+          command: psql -h localhost -p 5434 -U {{spec.vars.username}} -d {{spec.vars.database}} -c "CALL run_at_setup_group_trades(0, false);"
