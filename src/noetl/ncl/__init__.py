@@ -1,3 +1,0 @@
-"""
-NoETL Common Library
-"""
