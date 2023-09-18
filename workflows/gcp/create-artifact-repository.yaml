@@ -1,0 +1,52 @@
+apiVersion: workflow.noetl.io/v1
+kind: Workflow
+metadata:
+  name: create-gcp-artifact-repository
+spec:
+  vars:
+    GCP_PROJECT_ID: test
+    GCP_REGION: us-west1
+    REPOSITORY_NAME: test
+    INITIAL_TASK: "check-repository"
+  timeout: 60
+  schedule: "*/5 * * * *"
+  initialSettings:
+    start: "{{ spec.vars.INITIAL_TASK }}"
+    state: ready
+  transitions:
+    ready: running
+    running: "completed, failed, terminated"
+  tasks:
+    check-repository:
+      steps:
+        check-repo-exists:
+          description: Check if the repository exists
+          type: shell
+          command: "gcloud"
+          args:
+            - "artifacts"
+            - "repositories"
+            - "describe"
+            - "{{ spec.vars.REPOSITORY_NAME }}"
+            - "--location={{ spec.vars.GCP_REGION }}"
+            - "--project={{ spec.vars.GCP_PROJECT_ID }}"
+          exitCode: 0
+      switch:
+        - next: [create-repository]
+          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} != 0"
+        - next: []
+          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
+    create-repository:
+      steps:
+        create-repo:
+          description: Create the repository
+          type: shell
+          command: "gcloud"
+          args:
+            - "artifacts"
+            - "repositories"
+            - "create"
+            - "{{ vars.REPOSITORY_NAME }}"
+            - "--repository-format=docker"
+            - "--location={{ vars.GCP_REGION }}"
+            - "--project={{ vars.GCP_PROJECT_ID }}"
