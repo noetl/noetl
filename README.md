@@ -124,29 +124,8 @@ workflow = Workflow.create(workflow_template, EventStore("event_store"))
 ```python
 asyncio.run(workflow.run_workflow())
 ```
-4. Customize Your Workflow: Extend the functionality of NoETL by creating custom steps, tasks, and event handling logic to suit any specific workflow requirements.
+4. Customize Workflow: Extend the functionality of NoETL by creating custom steps, tasks, and event handling logic to suit any specific workflow requirements.
 5. Monitor and Debug: Use logging and event handling to monitor the progress of the workflow and handle errors gracefully.
-
-## Folder Structure
-The folder structure of your NoETL project might look like this:
-```
-.
-├── LICENSE
-├── README.md
-├── noetl/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── event_store.py
-│   ├── noetl.py
-│   ├── step.py
-│   └── task.py
-├── requirements.txt
-└── tests/
-    ├── __init__.py
-    ├── test_config.py
-    ├── test_data/
-    └── test_event_store.py
-```
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
