@@ -92,7 +92,6 @@ class TestConfig(unittest.IsolatedAsyncioTestCase):
         self.config = Config(self.sample_config)
 
     async def asyncTearDown(self):
-        # Clean up test data directory
         test_data_dir = "test_data"
         for filename in os.listdir(test_data_dir):
             file_path = os.path.join(test_data_dir, filename)

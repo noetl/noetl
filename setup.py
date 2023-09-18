@@ -10,5 +10,7 @@ setup(
         "asyncio==3.4.3",
         "loguru==0.7.2",
         "aiofiles==23.2.1",
+        "pyyaml==6.0",
+        "requests==2.28.2"
     ],
 )

@@ -1,4 +1,5 @@
 .idea
+.venv
 *.iml
 *.pyc
 target

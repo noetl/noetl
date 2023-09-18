@@ -11,7 +11,6 @@ NoETL is a workflow automation framework designed to simplify the process of def
   - [Referencing Data and Configuration](#referencing-data-and-configuration)
 - [Usage](#usage)
 - [Folder Structure](#folder-structure)
-- [Contributing](#contributing)
 - [License](#license)
 
 Managing and orchestrating complex workflows is challenging, especially when dealing with data processing tasks, dependencies, and error handling. NoETL aims to address these challenges by providing the following benefits:
@@ -27,15 +26,12 @@ Managing and orchestrating complex workflows is challenging, especially when dea
 ## Getting Started
 
 ### Prerequisites
-
-Before using NoETL, make sure you have the following prerequisites installed on your system:
-
 - Python 3.10 or later
 - [pip](https://pip.pypa.io/en/stable/installation/)
 
 ### Installation
 
-To install NoETL, you can use `pip`:
+To install NoETL use `pip`:
 
 ```bash
 pip install noetl
@@ -97,7 +93,7 @@ In NoETL workflow, we can refer both data and configuration settings using place
 ### Example
 
 #### Data Referencing
-Suppose you have the following placeholder: `{{data.exampleField}}`.
+Suppose we have the following placeholder: `{{data.exampleField}}`.
 
 - If the workflow instanceId is `test-instance`, it would look up `test-instance.exampleField` in the event store.
 
@@ -106,47 +102,22 @@ Suppose we have the following placeholder: `{{spec.vars.GCP_PROJECT_ID}}`.
 
 - NoETL will search through the configuration settings, starting with `spec`, to find the value of `GCP_PROJECT_ID`.
 
-This convention allows to refer both data and configuration settings within NoETL to control workflows.
+This convention allows us to refer both data and configuration settings within NoETL to control workflows.
 
 ## Usage
 NoETL automates workflow management and automation. 
 
 1. Define Workflow Configuration: Create a configuration file that defines workflow. Use the configuration rules mentioned above to structure your workflow.
-
-2. Initialize a Workflow: Use the Workflow.create() method to initialize a new workflow instance. Provide it with a workflow template and an event store.
-
+Configuration File: Example of configuration file named `create-artifact-repository.yaml` in the `workflows/gcp` project folder.
+2. To execute the noetl.py script, run the following command: 
 ```python
-workflow_template = Config.create()
-workflow = Workflow.create(workflow_template, EventStore("event_store"))
+python noetl.py CONFIG=${WORKFLOW_DIR}/create-artifact-repository.yaml GCP_PROJECT_ID=test GCP_REGION=us-west1 REPOSITORY_NAME=test
 ```
+- CONFIG: Path to the workflow configuration file.
+- GCP_PROJECT_ID: Google Cloud Platform (GCP) project ID.
+- GCP_REGION: The GCP region of the artifact repository.
+- REPOSITORY_NAME: The name of the artifact repository to be created.
 
-3. Run Workflow: Call the run_workflow() method on a workflow instance to start the execution of the workflow. This method will handle initializing tasks, managing transitions, and executing steps.
-```python
-asyncio.run(workflow.run_workflow())
-```
-4. Customize Your Workflow: Extend the functionality of NoETL by creating custom steps, tasks, and event handling logic to suit any specific workflow requirements.
-5. Monitor and Debug: Use logging and event handling to monitor the progress of the workflow and handle errors gracefully.
-
-## Folder Structure
-The folder structure of your NoETL project might look like this:
-```
-.
-├── LICENSE
-├── README.md
-├── noetl/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── event_store.py
-│   ├── noetl.py
-│   ├── step.py
-│   └── task.py
-├── requirements.txt
-└── tests/
-    ├── __init__.py
-    ├── test_config.py
-    ├── test_data/
-    └── test_event_store.py
-```
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
