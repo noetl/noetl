@@ -9,13 +9,12 @@ class TestEventStore(unittest.IsolatedAsyncioTestCase):
         self.event_store = EventStore("test_data")
         self.workflow_instance_id = f"workflow-test-events-{uuid.uuid4()}"
 
-    # async def asyncTearDown(self):
-    #     # Clean up test data directory
-    #     test_data_dir = "test_data"
-    #     for filename in os.listdir(test_data_dir):
-    #         file_path = os.path.join(test_data_dir, filename)
-    #         if os.path.isfile(file_path):
-    #             os.remove(file_path)
+    async def asyncTearDown(self):
+        test_data_dir = "test_data"
+        for filename in os.listdir(test_data_dir):
+            file_path = os.path.join(test_data_dir, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
 
     async def test_store_and_retrieve_event(self):
         event = Event(event_id="test_instance", event_type="task_status", payload={"status": "completed"})

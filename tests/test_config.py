@@ -19,7 +19,7 @@ class TestConfig(unittest.IsolatedAsyncioTestCase):
             },
             "spec": {
                 "vars": {
-                    "GCP_PROJECT_ID": "tradetrend",
+                    "GCP_PROJECT_ID": "test",
                     "GCP_REGION": "us-west1",
                     "REPOSITORY_NAME": "test",
                     "INITIAL_TASK": "check-repository"
