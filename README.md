@@ -149,4 +149,4 @@ The folder structure of your NoETL project might look like this:
 ```
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/noetl/noetl/blob/main/LICENSE) file for details.
