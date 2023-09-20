@@ -1,6 +1,8 @@
 import unittest
 from config import Config
-from event_store import EventStore, Event
+from store import Store
+from event import Event, EventType
+from loguru import logger
 import uuid
 import os
 
@@ -8,7 +10,7 @@ import os
 class TestConfig(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
-        self.event_store = EventStore("test_data")
+        self.store = Store("test_data")
         self.workflow_instance_id = f"workflow-test-events-{uuid.uuid4()}"
 
         self.sample_config = {
@@ -32,7 +34,7 @@ class TestConfig(unittest.IsolatedAsyncioTestCase):
                 },
                 "transitions": {
                     "ready": "running",
-                    "running": "completed, failed, terminated"
+                    "running": ["completed", "failed", "terminated"]
                 },
                 "tasks": [
                     {
@@ -109,17 +111,19 @@ class TestConfig(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(value, expected_value)
 
     async def test_evaluate(self):
-        event_id = f"{self.workflow_instance_id}.task1.step1.output"
-        event = Event(event_id=event_id, event_type="step_output", payload={"exitCode": "failed"})
-        print("\nTesting Event's lookup")
-        print(self.workflow_instance_id)
-        await self.event_store.publish(self.workflow_instance_id, event)
-        retrieved_event = await self.event_store.lookup(event.event_id)
-        print(retrieved_event)
-        input_string = "{{spec.initialSettings.start}} sdfagsdf {{ spec.vars.REPOSITORY_NAME }} and {{data.task1.step1.output.exitCode}}"
-        placeholder_value = await self.config.evaluate(input_string, event_store=self.event_store,
+        event = await self.store.publish_event(
+            instance_id=f"{self.workflow_instance_id}.task1.step1",
+            event_type=EventType.STEP_OUTPUT,
+            payload={"exitCode": "failed"}
+        )
+        logger.info(event)
+        retrieved_event = await self.store.lookup(event.event_id)
+        logger.info(retrieved_event)
+        input_string = "{{spec.initialSettings.start}} sdfagsdf {{ spec.vars.REPOSITORY_NAME }} and {{data.task1.step1.step_output.exitCode}}"
+        logger.info(input_string)
+        placeholder_value = await self.config.evaluate(input_value=input_string, store=self.store,
                                                        instance_id=self.workflow_instance_id)
-        print(placeholder_value)
+        logger.info(placeholder_value)
         expected_result = "check-repository sdfagsdf test and failed"
         self.assertEqual(placeholder_value, expected_result)
 

@@ -15,7 +15,7 @@ spec:
     state: ready
   transitions:
     ready: running
-    running: "completed, failed, terminated"
+    running: [completed, failed, terminated]
   tasks:
     check-repository:
       steps:
@@ -29,11 +29,23 @@ spec:
             - "describe"
             - "{{ spec.vars.REPOSITORY_NAME }}"
             - "--location={{ spec.vars.GCP_REGION }}"
-            - "--project={{ spec.vars.GCP_PROJECT_ID }}"
+            - "--project={{ spec.vars.GCP_PROJECT_ID }} "
+          exitCode: 0
+        check-repo-exists-2:
+          description: Check if the repository exists
+          type: shell
+          command: "gcloud"
+          args:
+            - "artifacts"
+            - "repositories"
+            - "describe"
+            - "{{ spec.vars.REPOSITORY_NAME }}"
+            - "--location={{ spec.vars.GCP_REGION }}"
+            - "--project={{ spec.vars.GCP_PROJECT_ID }} {{ $.tasks.check-repository.steps.check-repo-exists.exitCode }}"
           exitCode: 0
       switch:
         - next: [create-repository]
-          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} != 0"
+          condition: "{{ $.tasks.check-repository.steps.check-repo-exists.exitCode }} != 0"
         - next: []
           condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
     create-repository:

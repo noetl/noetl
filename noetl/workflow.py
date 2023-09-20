@@ -1,11 +1,10 @@
-import json
 from dataclasses import dataclass
 from datetime import datetime
 import uuid
-import asyncio
 from loguru import logger
 from config import Config
-from store import Store, Event, EventType
+from store import Store
+from event import EventType
 from task import Task
 from step import Step
 
@@ -17,27 +16,28 @@ class Workflow:
     start_date: datetime
     template: Config
     state: str
-    event_store: Store
+    store: Store
     initial_tasks: list[Task]
 
     @classmethod
-    def create(cls, template: Config, event_store: Store):
+    def create(cls, template: Config, store: Store):
         return cls(
             instance_id=f"{template.get_value('metadata.name')}-{uuid.uuid4()}",
             name=template.get_value('metadata.name'),
             start_date=datetime.now(),
             template=template,
             state=template.get_value('spec.initialSettings.state'),
-            event_store=event_store,
+            store=store,
             initial_tasks=[]
 
         )
 
+    def get_instance_id(self):
+        return f"{self.instance_id}.{self.name}"
+
     async def publish_event(self, event_type, payload):
-        event_id = f"{self.instance_id}.{event_type.as_str()}"
-        if self.event_store:
-            event = Event(event_id, event_type.as_str(), payload)
-            await self.event_store.publish(workflow_instance_id=self.instance_id, event=event)
+        if self.store:
+            await self.store.publish_event(instance_id=self.get_instance_id(), event_type=event_type, payload=payload)
 
     async def initialize_steps(self, task_name, task_config):
         logger.info(task_config)
@@ -50,18 +50,22 @@ class Workflow:
                 step_type=step_entry.get("type"),
                 command=step_entry.get("command"),
                 args=step_entry.get("args"),
-                status="ready",
-                event_store=self.event_store
+                state="ready",
+                store=self.store
             )
             for step_key, step_entry in task_config.get("steps").items()
         )
 
     async def initialize_tasks(self):
-        task_configs = await self.template.get_async("spec.initialSettings.start", self.event_store, self.instance_id)
+        task_configs = await self.template.get_async(
+            path="spec.initialSettings.start",
+            store=self.store,
+            instance_id=self.instance_id
+        )
         task_names = task_configs.split(",")
         logger.info(task_names)
         for task_name in task_names:
-            task_config = await self.template.get_async(f"spec.tasks.{task_name}", self.event_store, self.instance_id)
+            task_config = await self.template.get_async(f"spec.tasks.{task_name}", self.store, self.instance_id)
             steps = await self.initialize_steps(task_name, task_config)
             steps = list(steps)
             for step in steps:
@@ -70,8 +74,8 @@ class Workflow:
                 task_name=task_name,
                 steps=steps,
                 workflow_instance_id=self.instance_id,
-                event_store=self.event_store,
-                status=await self.template.get_async("spec.initialSettings.state", self.event_store, self.instance_id)
+                store=self.store,
+                state=await self.template.get_async("spec.initialSettings.state", self.store, self.instance_id)
             )
             self.initial_tasks.append(task)
 
@@ -80,16 +84,9 @@ class Workflow:
             await task.execute()
 
     async def run_workflow(self):
-        await self.publish_event(EventType.WORKFLOW_INITIALIZED, self.state)
-        await self.publish_event(EventType.WORKFLOW_TEMPLATE, self.template)
+        _ = await self.publish_event(EventType.WORKFLOW_INITIALIZED, self.state)
+        _ = await self.publish_event(EventType.WORKFLOW_TEMPLATE, self.template)
         await self.initialize_tasks()
-        await self.publish_event(EventType.WORKFLOW_STARTED, self.state)
+        _ = await self.publish_event(EventType.WORKFLOW_STARTED, self.state)
         await self.execute_tasks()
-
-
-if __name__ == "__main__":
-    workflow_template = Config.create()
-    logger.info(json.dumps(workflow_template, indent=4))
-    workflow_template.update_vars()
-    workflow = Workflow.create(workflow_template, Store("event_store"))
-    asyncio.run(workflow.run_workflow())
+        await self.store.reload_events(self.instance_id)

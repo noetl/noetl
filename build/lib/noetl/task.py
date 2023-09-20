@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from event_store import EventStore, Event, EventType
+from store import Store, Event, EventType
 from step import Step
 from loguru import logger
 
@@ -10,7 +10,7 @@ class Task:
                  name: str,
                  steps: list[Step],
                  status: str,
-                 event_store: EventStore
+                 event_store: Store
                  ):
         self.workflow_instance_id = workflow_instance_id
         self.name = name
@@ -25,7 +25,7 @@ class Task:
                steps,
                status,
                workflow_instance_id: str,
-               event_store: EventStore
+               event_store: Store
                ):
         return cls(name=task_name,
                    steps=steps,

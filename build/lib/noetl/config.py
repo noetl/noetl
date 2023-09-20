@@ -3,7 +3,7 @@ import yaml
 import sys
 from loguru import logger
 from dataclasses import dataclass
-from event_store import EventStore, Event
+from store import Store, Event
 
 
 async def get_path_value(object_value, path):
@@ -21,9 +21,9 @@ class EventStorePath:
     event_store_key: str | None
     payload_key: str | None
     payload: dict | None  # TODO need to clarify datatype
-    event_store: EventStore | None
+    event_store: Store | None
 
-    def __init__(self, path: str, instance_id: str = None, event_store: EventStore = None):
+    def __init__(self, path: str, instance_id: str = None, event_store: Store = None):
         self.event_store_key, self.payload_key = self.parse_path(path, instance_id)
         self.event_store = event_store
 
@@ -58,7 +58,7 @@ class EventStorePath:
         return f"Error: Key '{self.event_store_key}' not found in event_store"
 
     @classmethod
-    def create(cls, path: str, instance_id: str, event_store: EventStore = None):
+    def create(cls, path: str, instance_id: str, event_store: Store = None):
         event_store_path = cls(path, instance_id, event_store)
         if not event_store_path.event_store_key:
             return None

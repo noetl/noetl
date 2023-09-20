@@ -1,8 +1,10 @@
 import json
 from dataclasses import dataclass
 import asyncio
-from event_store import EventStore, Event, EventType
+from store import Store
+from event import EventType
 from loguru import logger
+
 
 @dataclass
 class Step:
@@ -14,8 +16,8 @@ class Step:
                  step_type: str,
                  command: str,
                  args: list[str],
-                 status: str,
-                 event_store: EventStore
+                 state: str,
+                 store: Store
                  ):
         self.workflow_instance_id = workflow_instance_id
         self.task_name = task_name
@@ -24,40 +26,40 @@ class Step:
         self.step_type = step_type
         self.command = command
         self.args = args
-        self.status = status
-        self.event_store = event_store
+        self.state = state
+        self.store = store
         self.output = ""
         self.error = ""
-        self.exit_code = None
+        self.exit_code = ""
 
     def __str__(self):
         return ", ".join(f"{key}: {value}" for key, value in vars(self).items())
 
+    def get_instance_id(self):
+        return f"{self.workflow_instance_id}.{self.task_name}.{self.name}"
+
     async def publish_event(self, event_type, payload):
-        event_id = f"{self.workflow_instance_id}.{self.task_name}.{self.name}.{event_type.as_str()}"
-        if self.event_store:
-            event = Event(event_id, event_type.as_str(), payload)
-            await self.event_store.publish(workflow_instance_id=self.workflow_instance_id, event=event)
+        if self.store:
+            await self.store.publish_event(instance_id=self.get_instance_id(), event_type=event_type, payload=payload)
 
     async def execute(self):
         self.status = "in progress"
         try:
-            await self.publish_event(EventType.STEP_STARTED, self.status)
-            logger.info(f"{EventType.STEP_STARTED.as_str()}, {self.status}")
+            _ = await self.publish_event(EventType.STEP_STARTED, payload=self.status)
             if self.step_type == "shell":
                 result = await self.execute_shell()
                 self.output, self.error, self.exit_code = result
                 self.status = "completed" if self.exit_code == 0 else "failed"
-                await self.publish_event(EventType.TASK_COMPLETED, self.status)
-                await self.publish_event(EventType.STEP_OUTPUT, json.dumps({self.output, self.error, self.exit_code}))
+                _ = await self.publish_event(EventType.TASK_COMPLETED, payload=self.status)
+                _ = await self.publish_event(EventType.STEP_OUTPUT, payload={self.output, self.error, self.exit_code})
             else:
                 self.error = "Unsupported step_type"
                 self.status = "failed"
-                await self.publish_event(EventType.TASK_FAILED, json.dumps({self.output, self.error, self.exit_code}))
+                _ = await self.publish_event(EventType.TASK_FAILED, payload={self.output, self.error, self.exit_code})
         except Exception as e:
             self.error = str(e)
             self.status = "failed"
-            await self.publish_event(EventType.TASK_FAILED, self.error)
+            _ = await self.publish_event(EventType.TASK_FAILED, payload=self.error)
 
     async def execute_shell(self):
         process = await asyncio.create_subprocess_exec(
@@ -70,13 +72,15 @@ class Step:
         return stdout, stderr, process.returncode
 
     def as_dict(self):
-        return {
+        self_dict = {
             "name": self.name,
             "step_type": self.step_type,
             "command": self.command,
             "args": self.args,
-            "status": self.status,
+            "state": self.state,
             "output": self.output,
             "error": self.error,
             "exit_code": self.exit_code
         }
+        logger.debug(self_dict)
+        return self_dict

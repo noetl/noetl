@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 import asyncio
-from event_store import EventStore, Event, EventType
+from store import Store, Event, EventType
 from loguru import logger
 
 @dataclass
@@ -15,7 +15,7 @@ class Step:
                  command: str,
                  args: list[str],
                  status: str,
-                 event_store: EventStore
+                 event_store: Store
                  ):
         self.workflow_instance_id = workflow_instance_id
         self.task_name = task_name

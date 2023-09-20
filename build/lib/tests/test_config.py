@@ -1,6 +1,6 @@
 import unittest
 from config import Config
-from event_store import EventStore, Event
+from store import Store, Event
 import uuid
 import os
 
@@ -8,7 +8,7 @@ import os
 class TestConfig(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
-        self.event_store = EventStore("test_data")
+        self.event_store = Store("test_data")
         self.workflow_instance_id = f"workflow-test-events-{uuid.uuid4()}"
 
         self.sample_config = {
