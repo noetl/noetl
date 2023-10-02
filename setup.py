@@ -1,16 +1,39 @@
 from setuptools import setup, find_packages
+from setuptools.command.install import install as InstallCommand
+import subprocess
+
+
+class CustomInstallCommand(InstallCommand):
+    def run(self):
+        subprocess.call(["python", "spacy_download.py"])
+        super().run()
+
 
 setup(
     name="noetl",
     version="0.1.0",
-    author="Alexey Kuksin",
-    description="NoETL Python package",
+    author="NoETL Team",
+    description="NoETL: A Python package for managing workflows",
     packages=find_packages(),
     install_requires=[
         "asyncio==3.4.3",
         "loguru==0.7.2",
         "aiofiles==23.2.1",
         "pyyaml==6.0",
-        "requests==2.28.2"
+        "requests==2.31.0",
+        "spacy==3.6.1",
+        "psutil==5.9.5",
+        "fastapi==0.103.1"
+        "uvicorn==0.23.2",
+        "aiofile==3.8.8"
+
     ],
+    entry_points={
+        "console_scripts": [
+            "noetl = noetl.cli:main",
+        ],
+    },
+    cmdclass={
+        "install": CustomInstallCommand,
+    },
 )

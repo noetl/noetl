@@ -7,7 +7,7 @@ spec:
     GCP_PROJECT_ID: test
     GCP_REGION: us-west1
     REPOSITORY_NAME: test
-    INITIAL_TASK: "check-repository"
+    INITIAL_TASK: "start"
   timeout: 60
   schedule: "*/5 * * * *"
   initialSettings:
@@ -17,6 +17,13 @@ spec:
     ready: running
     running: [completed, failed, terminated]
   tasks:
+    start:
+      switch:
+        - next: [ create-repository ]
+          condition: "{{ $.tasks.check-repository.steps.check-repo-exists.exitCode }} != 0"
+        - next: [ ]
+          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
+
     check-repository:
       steps:
         check-repo-exists:

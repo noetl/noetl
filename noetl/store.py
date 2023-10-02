@@ -3,7 +3,6 @@ import json
 import aiofiles
 import threading
 from event import Event
-from functools import wraps
 from loguru import logger
 
 

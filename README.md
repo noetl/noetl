@@ -121,3 +121,9 @@ python noetl.py CONFIG=${WORKFLOW_DIR}/create-artifact-repository.yaml GCP_PROJE
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+## CLI 
+```bash
+ python -m spacy download en_core_web_sm
+```

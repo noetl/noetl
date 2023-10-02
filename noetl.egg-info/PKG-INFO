@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: noetl
 Version: 0.1.0
-Summary: NoETL Python package
-Author: Alexey Kuksin
+Summary: NoETL: A Python package for managing workflows
+Author: NoETL Team
 License-File: LICENSE
