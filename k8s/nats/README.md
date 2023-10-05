@@ -141,6 +141,10 @@ kubectl apply -f consumer1-pull.yaml -n nats
 kubectl apply -f consumer2-pull.yaml -n nats
 kubectl apply -f consumer-push.yaml -n nats
 ```
+Additional information about consumres can be found here:  
+
+Push Consumers - https://natsbyexample.com/examples/jetstream/push-consumer/go  
+Pull Consumers - https://natsbyexample.com/examples/jetstream/pull-consumer/go
 
 ### Check that Consumers are successfully created
 With `kubectl`
