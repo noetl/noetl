@@ -6,7 +6,9 @@ noetl/cli.py
 noetl/command.py
 noetl/config.py
 noetl/event.py
+noetl/local_storage.py
 noetl/noetl.py
+noetl/simple_storage.py
 noetl/step.py
 noetl/store.py
 noetl/task.py
@@ -19,4 +21,3 @@ noetl.egg-info/requires.txt
 noetl.egg-info/top_level.txt
 tests/__init__.py
 tests/test_config.py
-tests/test_event_store.py

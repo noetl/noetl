@@ -69,3 +69,20 @@ spec:
             - "--repository-format=docker"
             - "--location={{ vars.GCP_REGION }}"
             - "--project={{ vars.GCP_PROJECT_ID }}"
+
+
+#id, re, me, pa
+#
+#11, 11, {},{},
+#workflow.11.create-gcp-artifact-repository.task.create-repository.step.create-repo.event_type.created, 11, {event_type:create}, {task:create-repository, step: create-repo, event_type: reg}
+#2, 11, {task:create-repository, step: create-repo, event_type: completed}
+#
+#
+#workflow.11.create-gcp-artifact-repository.task.create-repository.step.create-repo.command_type.create, 11, {event_type:create}, {task:create-repository, step: create-repo, event_type: reg}
+#
+#
+#workflow.11.create-gcp-artifact-repository.task.create-repository.step.create-repo.command_type.create, 11, {command_type:create, workflow}, {task:create-repository, step: create-repo, event_type: reg}
+#
+#
+#command API: create workflow create-gcp-artifact-repository payload{user_id: aqwedasdfs, message_id: 23412341234}                    workfklow_id
+#command API: run step workflow.11.create-gcp-artifact-repository.task.create-repository.step.create-repo.command_type.create

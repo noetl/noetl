@@ -15,6 +15,7 @@ from datetime import datetime
 class StorageKeyError(Exception):
     pass
 
+MAX_INDEX_RECORDS = 1000000
 
 class ObjectKind(Enum):
     WORKFLOW = 1
@@ -187,26 +188,18 @@ class Record:
 
 
 @dataclass
-class Index:
-    key_length: int
-    key_offset: int
+class IndexEntry:
     key: str
-    key_name_length: int
-    key_name: str
+    offset: int
+    length: int
 
     def serialize(self):
-        return struct.pack(
-            f"IQ{self.key_length}sI{self.key_name_length}s",
-            self.key_length, self.key_offset, self.key.encode(), self.key_name_length, self.key_name.encode()
-        )
+        return struct.pack('QQQ', self.key, self.offset, self.length)
 
     @classmethod
     def deserialize(cls, data):
-        if len(data) < 230:
-            raise ValueError("Data buffer is too short for deserialization.")
-        unpacked_data = struct.unpack(f"IQ64sI64sQ64s", data[:230])
-        key_length, key_offset, key, _, _ = unpacked_data
-        return cls(key_length, key_offset, key.decode(), 0, "")
+        key, offset, length = struct.unpack('QQQ', data)
+        return cls(key, offset, length)
 
 
 class FileHandler:
@@ -268,7 +261,15 @@ class Storage:
 
     async def store(self, record):
         try:
-            offset = await self.dbf_write.persist(record.serialize())
+            serialized_record = record.serialize()
+            hash_value = hash(record.identifier)
+            offset = await self.dbf_write.persist(serialized_record)
+            hash_value = hash(record.identifier) % MAX_INDEX_RECORDS
+
+            entry = IndexEntry(hash_value, offset, len(record.serialize()))
+
+            entry = IndexEntry(hash_value, offset, len(record.serialize()))
+            entry = IndexEntry(hash_value, offset, len(record.serialize()))
             logger.info(offset)
         except StorageKeyError as e:
             logger.error(e)

@@ -2,9 +2,9 @@
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-COMMAND_PATH="$DIR/../noetl/command.py"
+NOETL_API_PATH="$DIR/../noetl/api.py"
 
 HOST="localhost"
 PORT="8021"
 
-python ${COMMAND_PATH} --host $HOST --port $PORT
+python ${NOETL_API_PATH} --host $HOST --port $PORT

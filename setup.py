@@ -25,7 +25,8 @@ setup(
         "psutil==5.9.5",
         "fastapi==0.103.1"
         "uvicorn==0.23.2",
-        "aiofile==3.8.8"
+        "aiofile==3.8.8",
+        "nats-py==2.4.0"
 
     ],
     entry_points={
