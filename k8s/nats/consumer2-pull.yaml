@@ -1,0 +1,11 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Consumer
+metadata:
+  name: dumbledore-pull
+spec:
+  streamName: hogwarts
+  durableName: dumbledore-pull
+  deliverPolicy: all
+  filterSubject: "magic.*"
+  maxDeliver: 20
+  ackPolicy: explicit
