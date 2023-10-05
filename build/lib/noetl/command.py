@@ -5,9 +5,13 @@ from pydantic import BaseModel
 import spacy
 from loguru import logger
 import argparse
+from nats.aio.client import Client as NATS
+from nats.aio.errors import ErrTimeout
+from nats.aio.jetstream import JetStream
 
 nlp = spacy.load("en_core_web_sm")
 app = FastAPI()
+nc = None
 
 
 class CommandValidationResult(BaseModel):
@@ -21,15 +25,9 @@ class Command(BaseModel):
     data: dict
 
 
-command_storage_folder = "command_db"
-pending_folder = os.path.join(command_storage_folder, "pending")
-processing_folder = os.path.join(command_storage_folder, "processing")
-processed_folder = os.path.join(command_storage_folder, "processed")
-failed_folder = os.path.join(command_storage_folder, "failed")
-os.makedirs(pending_folder, exist_ok=True)
-os.makedirs(processing_folder, exist_ok=True)
-os.makedirs(processed_folder, exist_ok=True)
-os.makedirs(failed_folder, exist_ok=True)
+async def connect_to_nats():
+    global nc
+    nc = await nats.connect("nats://localhost:4222")
 
 
 def validate_command(command_text):
@@ -63,13 +61,10 @@ async def validate_command_endpoint(command: Command):
 
 @app.post("/add_command/")
 async def add_command(command: Command):
-    command_filename = f"{command['name']}.json"
-    command_path = os.path.join(pending_folder, command_filename)
+    command_subject = "commands." + command.name
+    await nc.publish(command_subject, command.json().encode())
+    return {"message": "Command added to the queue"}
 
-    with open(command_path, "w") as f:
-        f.write(command.json())
-
-    return {"message": "Command added to the queue."}
 
 
 @app.post("/process_command/")
@@ -104,10 +99,21 @@ async def http_exception_handler(request, exc):
     return {"status_code": exc.status_code, "detail": exc.detail}
 
 
-@app.post("/shutdown")
-async def shutdown():
+@app.on_event("startup")
+async def on_startup():
+    await connect_to_nats()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
     logger.info("""Shutting down Command API application.""")
-    os.kill(os.getpid(), 9)
+    await nc.drain()
+
+
+# @app.post("/shutdown")
+# async def shutdown():
+#     logger.info("""Shutting down Command API application.""")
+#     os.kill(os.getpid(), 9)
 
 
 def main(args):
