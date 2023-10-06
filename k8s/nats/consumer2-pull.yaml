@@ -3,9 +3,12 @@ kind: Consumer
 metadata:
   name: dumbledore-pull
 spec:
+  deliverGroup: dumbledore-team
   streamName: hogwarts
   durableName: dumbledore-pull
   deliverPolicy: all
   filterSubject: "magic.*"
   maxDeliver: 20
   ackPolicy: explicit
+  # ackWait must be determined becouse default = 0
+  ackWait: "30s"

@@ -3,9 +3,12 @@ kind: Consumer
 metadata:
   name: hermione-pull
 spec:
+  deliverGroup: harry-potter-team
   streamName: hogwarts
   durableName: hermione-pull
   deliverPolicy: all
   filterSubject: "magic.*"
   maxDeliver: 20
   ackPolicy: explicit
+  ackWait: "30s"
+

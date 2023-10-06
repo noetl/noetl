@@ -3,6 +3,7 @@ kind: Stream
 metadata:
   name: hogwarts
 spec:
+  retention: workqueue
   name: hogwarts
   subjects: ["magic.*"]
   storage: file
