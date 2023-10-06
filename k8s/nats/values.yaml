@@ -24,4 +24,9 @@ config:
 service:
   merge:
     spec:
-      type: NodePort
+      type: NodePort      
+  ports:
+    nats:
+      enabled: true
+    monitor:
+      enabled: true
