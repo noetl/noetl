@@ -12,6 +12,7 @@ from datetime import datetime
 class StorageKeyError(Exception):
     pass
 
+
 class ObjectKind(Enum):
     WORKFLOW = 1
     TASK = 2
@@ -26,7 +27,6 @@ class ObjectKind(Enum):
             if kind.name.lower() == value:
                 return kind
         raise ValueError(f"No match {cls.__name__} for value: {value}")
-
 
 
 @dataclass
