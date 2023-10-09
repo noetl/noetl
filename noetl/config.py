@@ -5,7 +5,7 @@ from loguru import logger
 from dataclasses import dataclass
 from store import Store
 from event import Event
-
+import base64
 
 async def get_path_value(object_value, path):
     keys = path.split(".")
@@ -176,7 +176,7 @@ class Config(dict):
         return custom_args
 
     @classmethod
-    def create(cls):
+    def create_from_file(cls):
         if len(sys.argv) < 2 or not sys.argv[1].startswith("CONFIG="):
             print("Usage: python noetl/noetl.py CONFIG=/path/to/config")
             sys.exit(1)
@@ -185,3 +185,12 @@ class Config(dict):
         with open(config_path, 'r') as file:
             config = yaml.safe_load(file)
             return cls(config)
+
+    @classmethod
+    def create(cls, payload):
+        try:
+            payload_config = base64.b64decode(payload.get("config").encode()).decode()
+            config = yaml.safe_load(payload_config)
+            return cls(config)
+        except Exception as e:
+            logger.error(f"NoETL API failed to create config: {str(e)}.")

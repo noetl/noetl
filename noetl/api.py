@@ -1,46 +1,81 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
-import os
 import spacy
-import json
 from loguru import logger
 import argparse
-from nats.aio.client import Client
 from natstream import NatsConnectionPool
+from config import Config
+from record import Record
+
+
+class ApiConfig(BaseModel):
+    nats_url: str = "nats://localhost:32645"
+    nats_pool_size: int = 10
+    host: str = "localhost"
+    port: int = 8021
+    reload: bool = False
+    workers: int = 1
+    limit_concurrency: int = 100
+    limit_max_requests: int = 100
+
+    def update(self, args):
+        if args.nats_url:
+            self.nats_url = args.nats_url
+        if args.host:
+            self.host = args.host
+        if args.port:
+            self.port = int(args.port)
+        if args.reload:
+            self.reload = args.reload
+        if args.workers:
+            self.workers = int(args.workers)
+        if args.limit_concurrency:
+            self.limit_concurrency = int(args.limit_concurrency)
+        if args.limit_max_requests:
+            self.limit_max_requests = int(args.limit_max_requests)
+
 
 nlp = spacy.load("en_core_web_sm")
 app = FastAPI()
-nats_pool = NatsConnectionPool(url="nats://localhost:30518", size=5)
+api_config: ApiConfig = ApiConfig()
+nats_pool: NatsConnectionPool | None = None
+
+
+def get_nats_pool():
+    return nats_pool
+
+
 @app.get("/test")
-async def test():
-    async def func(js):
-        await js.add_stream(name='hello', subjects=['hello'])
-        ack = await js.publish('hello', b'Hello JS!')
+async def test(nats_pool: NatsConnectionPool = Depends(get_nats_pool)):
+    async with nats_pool.connection() as js:
+        ack = await js.publish('test.greeting', b'Hello TestDrivenDevelopment!')
         logger.info(f'Ack: stream={ack.stream}, sequence={ack.seq}')
 
-    return await nats_pool.execute(func)
-# nats_pool = NatsConnectionPool(size=5)
+        async def cb(msg):
+            logger.info(msg)
+            await msg.ack()
 
+        await js.subscribe('test.greeting', cb=cb)
+        foo = await js.subscribe('test.greeting', cb=cb, durable='foo')
+        bar = await js.subscribe('test.greeting', durable='bar')
+        workers = await js.subscribe('test.greeting', 'workers', cb=cb)
+        logger.info(f"{foo._id}, {bar._id}, {workers._id}")
+        await foo.unsubscribe()
+        await bar.unsubscribe()
+        await workers.unsubscribe()
+        return ack.seq
 
-# class NatsJetStream:
-#     async def __aenter__(self):
-#         self.nc = await nats.connect("nats://localhost:4222")
-#         self.js = self.nc.jetstream()
-#         return self.js
-#
-#     async def __aexit__(self, exc_type, exc_value, traceback):
-#         await self.nc.close()
-#
 
 class CommandValidationResult(BaseModel):
-    is_valid: bool
-    function_name: str
-    message: str
+    is_valid: bool = False
+    function_name: str | None = None
+    message: str | None = None
 
 
 class Command(BaseModel):
-    name: str
-    data: dict
+    tokens: str
+    metadata: dict
+    payload: dict
 
 
 def validate_command(command_text):
@@ -59,69 +94,98 @@ def validate_command(command_text):
             is_valid = all(t1 == t2 or isinstance(t2, type) and isinstance(t1, t2)
                            for t1, t2 in zip(tokens, structure))
             if is_valid:
-                return True, function_name, " ".join(tokens[len(structure):])
+                return CommandValidationResult(is_valid=True, function_name=function_name,
+                                               message=" ".join(tokens[len(structure):]))
 
-    return False, None, None
-
-
-@app.post("/validate_command/")
-async def validate_command_endpoint(command: Command):
-    is_valid, function_name, message = validate_command(command["name"])
-    if not is_valid:
-        return {"is_valid": False}
-    return {"is_valid": True, "function_name": function_name, "message": message}
+    return CommandValidationResult()
 
 
-# @app.post("/command/")
-# async def add_command(
-#         command: Command,
-#         nc: Client = Depends(lambda: nats_connection)
-#     ):
-#     js = nc.jetstream()
-#     command_subject = "commands." + command.name
-#     await js.publish(command_subject, json.dumps(command.dict()).encode())
-#     return {"message": "Command added to the queue"}
+async def add_workflow_config(command: Command):
+    try:
+        workflow_config = Config.create(command.payload)
+        logger.info(workflow_config)
+        record = Record.create(
+            name=workflow_config.get_value("metadata.name"),
+            kind=workflow_config.get_value("kind"),
+            metadata=command.metadata,
+            reference=None,
+            payload=workflow_config
+        )
+        return record
+
+    except Exception as e:
+        logger.error(f"NoETL API workflow config error: {str(e)}.")
+
+
+@app.post("/command/")
+async def add_command(
+        command: Command,
+        nats_pool: NatsConnectionPool = Depends(get_nats_pool)
+):
+    logger.info(command)
+    command_validation_result: CommandValidationResult = validate_command(command.tokens)
+    if command_validation_result.function_name == "add_workflow_config":
+        record = await add_workflow_config(command)
+        async with nats_pool.connection() as js:
+            ack = await js.publish(f"command.api.add.workflow.{record.identifier}", record.serialize())
+            logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
+        return {"message": f"Command added. Identifier: {record.identifier}, stream={ack.stream}, sequence={ack.seq}"}
+    return {"message": f"Command IS NOT added {command}."}
+
 
 @app.get("/health")
 async def health_check():
     """
-    Command API Health check.
+    NoETL API Health check.
     """
-    return {"status": "healthy"}
+    return {
+        "status": "healthy"
+    }
 
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     """
-    Command API exception handler.
+    NoETL API exception handler.
     """
-    return {"status_code": exc.status_code, "detail": exc.detail}
+    return {
+        "status_code": exc.status_code,
+        "detail": exc.detail
+    }
 
 
 @app.on_event("startup")
 async def on_startup():
-    logger.info("""Starting NoETL API""")
+    global api_config
+    global nats_pool
+    nats_pool = NatsConnectionPool(
+        url=api_config.nats_url,
+        size=api_config.nats_pool_size
+    )
+    logger.info("""NoETL API is starting...""")
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    logger.info("""Shutting down NoETL API""")
-    await nats_pool.close_all()
+    global nats_pool
+    await nats_pool.close_pool()
 
 
 def main(args):
+    global api_config
+    api_config.update(args)
     try:
-        logger.info(f"Starting Command API application with args {args}")
+        logger.info(f"Starting NoETL API {args}")
         uvicorn.run("api:app",
-                    host=args.host,
-                    port=int(args.port),
-                    reload=False,
-                    workers=int(args.workers),
-                    limit_concurrency=int(args.limit_concurrency),
-                    limit_max_requests=int(args.limit_max_requests)
+                    host=api_config.host,
+                    port=api_config.port,
+                    reload=api_config.reload,
+                    workers=api_config.workers,
+                    limit_concurrency=api_config.limit_concurrency,
+                    limit_max_requests=api_config.limit_max_requests
                     )
     except Exception as e:
-        logger.error(f"Command API error: {e}")
+        logger.error(f"NoETL API error: {e}")
 
 
 if __name__ == "__main__":
@@ -130,8 +194,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FastAPI Command API")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
     parser.add_argument("--port", default="8021", help="Port to listen on (default: 8021)")
-    parser.add_argument("--workers", default="3", help="Number of workers (default: 1)")
-    parser.add_argument("--limit_concurrency", default="100", help="Limit concurrency (default: 1)")
-    parser.add_argument("--limit_max_requests", default="100", help="Limit max requests (default: 1)")
-    args = parser.parse_args()
-    main(args)
+    parser.add_argument("--workers", default="1", help="Number of workers (default: 1)")
+    parser.add_argument("--reload", action='store_true', help="Enable auto-reload (default: disabled)")
+    parser.add_argument("--limit_concurrency", default="100", help="Limit concurrency (default: 100)")
+    parser.add_argument("--limit_max_requests", default="100", help="Limit max requests (default: 100)")
+    parser.add_argument("--nats_url", default="nats://localhost:32645", help="nats://<host>:<port>")
+    main(parser.parse_args())

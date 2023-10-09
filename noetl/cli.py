@@ -1,9 +1,10 @@
 import sys
 import requests
-import psutil
+import re
 import os
-from enum import Enum
 from loguru import logger
+import base64
+import yaml
 
 cwd = os.getcwd()
 csd = os.path.dirname(os.path.abspath(__file__))
@@ -16,109 +17,86 @@ class Goodbye:
         sys.exit()
 
 
-class SystemService(Enum):
-    COMMAND_API = "command-api"
-    EVENT_API = "event-api"
-    DISPATCHER = "dispatcher"
-
-    @classmethod
-    def create(cls, value):
-        for member in cls:
-            if member.value == value:
-                return member
-        raise ValueError(f"No Service with value {value} in {cls.__name__}")
-
-    def get_module(self):
-        if self == SystemService.COMMAND_API:
-            return "command"
-        elif self == SystemService.EVENT_API:
-            return "event"
-        elif self == SystemService.DISPATCHER:
-            return "dispatcher"
-        else:
-            return None
-
-    def get_module_path(self):
-        module_path = os.path.join(csd, f"{self.get_module()}")
-        if os.path.isfile(f"{module_path}.py"):
-            logger.info(f"Path to {self.get_module()}: {module_path}")
-        else:
-            logger.error(f"{self.get_module()} not found in the {csd}.")
-        return module_path
-
-
-def is_process_running(service_name):
-    if service_name.value == SystemService.COMMAND_API.value:
-        return is_command_api_running()
-    for process in psutil.process_iter(attrs=['name']):
-        if process.info['name'] == service_name.value:
-            return True
-    return False
-
-
-def is_command_api_running():
+def is_api_running():
     try:
         response = requests.get("http://localhost:8021/health")
         if response.status_code == 200:
             return True
     except Exception as e:
-        logger.info(f"Error Command API is not healthy: {str(e)}.")
+        logger.info(f"NoETL API is not healthy: {str(e)}.")
     return False
 
 
-def command_api(command_text):
+def command_api(tokens, metadata=None, payload=None):
+    if payload is None:
+        payload = {"message": "empty payload"}
+    if metadata is None:
+        metadata = {"message": "empty metadata"}
+    logger.info(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
     try:
-        response = requests.post("http://localhost:8021/process-command", json={"command_text": command_text})
+        response = requests.post(
+            "http://localhost:8021/command",
+            json={"tokens": tokens, "metadata": metadata, "payload": payload}
+        )
         response.raise_for_status()
         result = response.json()
         return result
     except requests.exceptions.Timeout:
-        logger.info(f"Command API request timed out.")
+        logger.error(f"NoETL API request timed out.")
         return None
     except requests.exceptions.ConnectionError:
-        logger.info(f"Command API is not running.")
+        logger.error(f"NoETL API is not running.")
         return None
     except Exception as e:
-        logger.info(f"Error validating command with Command API: {str(e)}.")
+        logger.error(f"NoETL command validation error: {str(e)}.")
         return None
 
 
-def system_command(command_text):
-    tokens = command_text.strip().lower().split()
-    if "service" in tokens:
-        action_index = None
-        for action in ["status"]:
-            if action in tokens:
-                action_index = tokens.index(action)
-                break
-        if action_index is not None:
-            action = tokens[action_index]
-            service_tokens = tokens[action_index + 1:]
-            arguments = " ".join(service_tokens[1:])
-            service_action(action, SystemService.create(service_tokens[0]), arguments)
+def validate_command(command):
+    if not is_api_running:
+        logger.error("NoETL API not responding")
+        raise
+    pattern = re.compile(r'^add workflow config file (.+)$', re.IGNORECASE)
+    match = pattern.match(command)
+    if match:
+        file_path = match.group(1).strip()
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return
+        try:
+            with open(file_path, 'r') as file:
+                file_source = file.read()
+                encoded_config = base64.b64encode(file_source.encode()).decode()
+        except Exception as e:
+            logger.error(f"Error reading file: {str(e)}")
+            return
+
+        metadata = {
+            "source": "noetl-cli",
+            "command": "api.add.workflow"
+        }
+        payload = {
+            "config": encoded_config
+        }
+
+        response = command_api(tokens="add workflow config file", metadata=metadata, payload=payload)
+        if response is not None:
+            logger.info(response)
         else:
-            logger.info("Invalid service action.")
+            logger.info("NoETL API is not responding.")
     else:
-        logger.info("Invalid system command.")
-
-
-def service_action(action, service_name, arguments):
-    if action == "status":
-        if is_process_running(service_name):
-            logger.info(f"{service_name} is running.")
-        else:
-            logger.info(f"{service_name} is not running.")
-
-
-def validate_command_path(command):
-    if command.startswith("service"):
-        system_command(command)
-    else:
-        result = command_api(command)
+        metadata = {
+            "source": "noetl-cli",
+            "command": "api.spellcheck"
+        }
+        payload = {
+            "command": command
+        }
+        result = command_api(tokens=command, metadata=metadata, payload=payload)
         if result is not None:
             logger.info(result)
         else:
-            logger.info("No response from the Command API.")
+            logger.info("NoETL API is not responding.")
 
 
 def main():
@@ -126,7 +104,7 @@ def main():
         if len(sys.argv) > 1:
             command = " ".join(sys.argv[1:])
             logger.info(command)
-            validate_command_path(command)
+            validate_command(command)
         else:
             logger.info("NoETL command line terminal.\nEnter a command or 'exit' to quit")
             while True:
@@ -134,11 +112,11 @@ def main():
                 if command.lower() == 'exit':
                     Goodbye.exit()
                     break
-                validate_command_path(command.lstrip())
+                validate_command(command.lstrip())
     except KeyboardInterrupt:
         Goodbye.exit()
     except Exception as e:
-        logger.info(f"NoETL cli Error: {str(e)}.")
+        logger.info(f"NoETL cli error: {str(e)}.")
 
 
 if __name__ == "__main__":

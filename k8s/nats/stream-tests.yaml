@@ -1,0 +1,9 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Stream
+metadata:
+  name: tests
+spec:
+  name: tests
+  subjects: ["test.>"]
+  storage: file
+  maxAge: 10h

@@ -4,7 +4,7 @@ from nats.js import JetStreamManager
 nc = NATS()
 
 async def main():
-    await nc.connect("nats://localhost:30518")
+    await nc.connect("nats://localhost:32645")
     # inbox = nc.new_inbox()
     # sub = await nc.subscribe('hello')
     # await nc.publish('hello', b'Hello World!')
@@ -26,7 +26,7 @@ async def main():
     print(js_info)
 
     #await js.add_stream(name='command', subjects=['hello'])
-    ack = await js.publish('command.command', b'Hello JS!')
+    ack = await js.publish('command.add.workflow', b'Hello JS!')
     print(f'Ack: stream={ack.stream}, sequence={ack.seq}')
     await nc.close()
 
