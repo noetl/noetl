@@ -1,0 +1,11 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Consumer
+metadata:
+  name: events
+spec:
+  streamName: events
+  durableName: events-pull
+  deliverPolicy: all
+  filterSubject: "event.>"
+  maxDeliver: 20
+  ackPolicy: explicit

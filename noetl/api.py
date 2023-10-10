@@ -1,11 +1,13 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request, Header, Response
 from pydantic import BaseModel
+from typing import List
 import spacy
 from loguru import logger
 import argparse
 from natstream import NatsConnectionPool
 from config import Config
 from record import Record
+from aioprometheus import render, Counter, Registry, REGISTRY
 
 
 class ApiConfig(BaseModel):
@@ -35,14 +37,51 @@ class ApiConfig(BaseModel):
             self.limit_max_requests = int(args.limit_max_requests)
 
 
-nlp = spacy.load("en_core_web_sm")
-app = FastAPI()
-api_config: ApiConfig = ApiConfig()
-nats_pool: NatsConnectionPool | None = None
+class CommandValidationResult(BaseModel):
+    is_valid: bool = False
+    function_name: str | None = None
+    message: str | None = None
+
+
+class Command(BaseModel):
+    tokens: str
+    metadata: dict
+    payload: dict
 
 
 def get_nats_pool():
     return nats_pool
+
+
+app = FastAPI()
+REGISTRY.clear()
+app.registry = Registry()
+app.api_commands_counter = Counter("api_commands", "Count of commands")
+app.api_health_check_counter = Counter("api_health_checks", "Count of health checks")
+app.api_events_counter = Counter("api_events", "Count of events")
+app.api_errors_counter = Counter("api_errors", "Count of errors")
+
+app.registry.register(app.api_commands_counter)
+app.registry.register(app.api_health_check_counter)
+app.registry.register(app.api_events_counter)
+app.registry.register(app.api_errors_counter)
+
+
+@app.get("/metrics")
+async def handle_metrics(accept: List[str] = Header(None)):
+    content, http_headers = render(app.registry, accept)
+    return Response(content=content, media_type=http_headers["Content-Type"])
+
+
+nlp = spacy.load("en_core_web_sm")
+api_config: ApiConfig = ApiConfig()
+nats_pool: NatsConnectionPool | None = None
+
+
+@app.get("/")
+async def get_root():
+    app.api_events_counter.inc({"path": "/"})
+    return {"Hello": "Workflow"}
 
 
 @app.get("/test")
@@ -64,18 +103,6 @@ async def test(nats_pool: NatsConnectionPool = Depends(get_nats_pool)):
         await bar.unsubscribe()
         await workers.unsubscribe()
         return ack.seq
-
-
-class CommandValidationResult(BaseModel):
-    is_valid: bool = False
-    function_name: str | None = None
-    message: str | None = None
-
-
-class Command(BaseModel):
-    tokens: str
-    metadata: dict
-    payload: dict
 
 
 def validate_command(command_text):
@@ -120,9 +147,11 @@ async def add_workflow_config(command: Command):
 @app.post("/command/")
 async def add_command(
         command: Command,
+        request: Request,
         nats_pool: NatsConnectionPool = Depends(get_nats_pool)
 ):
     logger.info(command)
+    app.api_commands_counter.inc({"path": request.scope["path"]})
     command_validation_result: CommandValidationResult = validate_command(command.tokens)
     if command_validation_result.function_name == "add_workflow_config":
         record = await add_workflow_config(command)
@@ -134,10 +163,11 @@ async def add_command(
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """
     NoETL API Health check.
     """
+    app.api_health_check_counter.inc({"path": request.scope["path"]})
     return {
         "status": "healthy"
     }
@@ -148,6 +178,7 @@ async def http_exception_handler(request, exc):
     """
     NoETL API exception handler.
     """
+    app.api_errors_counter.inc({"path": request.scope["path"]})
     return {
         "status_code": exc.status_code,
         "detail": exc.detail
@@ -169,6 +200,7 @@ async def on_startup():
 async def on_shutdown():
     global nats_pool
     await nats_pool.close_pool()
+    REGISTRY.clear()
 
 
 def main(args):
@@ -186,6 +218,7 @@ def main(args):
                     )
     except Exception as e:
         logger.error(f"NoETL API error: {e}")
+
 
 
 if __name__ == "__main__":

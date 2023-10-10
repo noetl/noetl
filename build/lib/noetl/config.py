@@ -3,8 +3,9 @@ import yaml
 import sys
 from loguru import logger
 from dataclasses import dataclass
-from store import Store, Event
-
+from store import Store
+from event import Event
+import base64
 
 async def get_path_value(object_value, path):
     keys = path.split(".")
@@ -15,56 +16,61 @@ async def get_path_value(object_value, path):
             return ""
     return current_value
 
+def parse_path(path: str, instance_id: str):
+    if path.startswith("data."):
+        path = path.replace("data.", f"{instance_id}.", 1)
+
+        if path.endswith(".output"):
+            return path, None
+
+        if ".output." in path:
+            event_store_key, payload_key = path.split(".output.", 1)
+            event_store_key = f"{event_store_key}.output"
+            return event_store_key, payload_key
+
+    return None, None
 
 @dataclass
 class EventStorePath:
     event_store_key: str | None
     payload_key: str | None
-    payload: dict | None  # TODO need to clarify datatype
-    event_store: Store | None
+    payload: dict | None
+    store: Store | None
 
-    def __init__(self, path: str, instance_id: str = None, event_store: Store = None):
-        self.event_store_key, self.payload_key = self.parse_path(path, instance_id)
-        self.event_store = event_store
+    def __init__(self, path: str, instance_id: str = None, store: Store = None):
+        (self.event_store_key,
+         self.payload_key
+         ) = parse_path(path, instance_id)
+        self.store = store
 
     def __repr__(self):
         return f"EventStorePath(event_store_key='{self.event_store_key}', payload_key='{self.payload_key}', data='{self.payload}')"
 
-    def parse_path(self, path: str, instance_id: str):
-        if path.startswith("data."):
-            path = path.replace("data.", f"{instance_id}.", 1)
-
-            if path.endswith(".output"):
-                return path, None
-
-            if ".output." in path:
-                event_store_key, payload_key = path.split(".output.", 1)
-                event_store_key = f"{event_store_key}.output"
-                return event_store_key, payload_key
-
-        return None, None
-
     async def get_payload(self):
-        event = await self.event_store.lookup(self.event_store_key)
-        if isinstance(event, Event):
-            self.payload = event.payload
-            if self.payload and self.payload_key:
-                data = await get_path_value(self.payload, self.payload_key)
-                if data:
-                    return data
-            else:
-                return self.payload
-        logger.error(f"Error: Key '{self.event_store_key}' not found in event_store")
-        return f"Error: Key '{self.event_store_key}' not found in event_store"
+        try:
+            logger.info(self.event_store_key)
+            event = await self.store.lookup(self.event_store_key)
+            if isinstance(event, Event):
+                self.payload = event.payload
+                if self.payload and self.payload_key:
+                    data = await get_path_value(self.payload, self.payload_key)
+                    if data:
+                        return data
+                else:
+                    return self.payload
+            logger.error(f"Error: Key '{self.event_store_key}' not found in event_store")
+            return f"Error: Key '{self.event_store_key}' not found in event_store"
+        except Exception as e:
+            logger.error(f"Error: {e}")
 
     @classmethod
-    def create(cls, path: str, instance_id: str, event_store: Store = None):
-        event_store_path = cls(path, instance_id, event_store)
+    def create(cls, path: str, instance_id: str, store: Store = None):
+        event_store_path = cls(path, instance_id, store)
         if not event_store_path.event_store_key:
             return None
         if all(value is None for value in (
                 event_store_path.event_store_key,
-                event_store_path.event_store
+                event_store_path.store
         )
                ):
             logger.error(
@@ -94,18 +100,18 @@ class Config(dict):
         except Exception as e:
             logger.error(e)
 
-    async def get_async(self, path: str = None, event_store=None, instance_id=None):
+    async def get_async(self, path: str = None, store=None, instance_id=None):
         try:
             value = self
             if path is None:
-                result = await self.evaluate(value, event_store, instance_id)
+                result = await self.evaluate(value, store, instance_id)
                 return result
             keys = path.split(".")
             for key in keys:
                 value = value.get(key)
                 if value is None:
                     return None
-            result = await self.evaluate(value, event_store, instance_id)
+            result = await self.evaluate(value, store, instance_id)
             return result
         except Exception as e:
             logger.error(e)
@@ -120,13 +126,13 @@ class Config(dict):
         except Exception as e:
             logger.error(e)
 
-    async def evaluate(self, input_value, event_store=None, instance_id=None):
+    async def evaluate(self, input_value, store: Store=None, instance_id=None):
         async def get_match(match):
             query_path = match.group(1)
             event_store_data = EventStorePath.create(
                 path=query_path,
                 instance_id=instance_id,
-                event_store=event_store
+                store=store
             )
             if event_store_data:
                 return await event_store_data.get_payload()
@@ -170,7 +176,7 @@ class Config(dict):
         return custom_args
 
     @classmethod
-    def create(cls):
+    def create_from_file(cls):
         if len(sys.argv) < 2 or not sys.argv[1].startswith("CONFIG="):
             print("Usage: python noetl/noetl.py CONFIG=/path/to/config")
             sys.exit(1)
@@ -179,3 +185,12 @@ class Config(dict):
         with open(config_path, 'r') as file:
             config = yaml.safe_load(file)
             return cls(config)
+
+    @classmethod
+    def create(cls, payload):
+        try:
+            payload_config = base64.b64decode(payload.get("config").encode()).decode()
+            config = yaml.safe_load(payload_config)
+            return cls(config)
+        except Exception as e:
+            logger.error(f"NoETL API failed to create config: {str(e)}.")
