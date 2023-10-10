@@ -4,7 +4,6 @@ import re
 import os
 from loguru import logger
 import base64
-import yaml
 
 cwd = os.getcwd()
 csd = os.path.dirname(os.path.abspath(__file__))

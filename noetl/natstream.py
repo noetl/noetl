@@ -75,7 +75,6 @@ class NatsConnectionPool:
         async def __aexit__(self, exc_type, exc_value, traceback):
             await self.pool.put(self.nc)
 
-
     def connection(self):
         return self._ConnectionContextManager(self)
 

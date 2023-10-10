@@ -1,12 +1,12 @@
 import struct
 import json
-import zlib
 import base64
 from loguru import logger
 import uuid
 from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Iterable, Any
 
 
 class StorageKeyError(Exception):
@@ -30,63 +30,105 @@ class ObjectKind(Enum):
 
 
 @dataclass
+class RecordField:
+    name: str
+    value: str | dict | bytes
+    type: str
+    length: int
+
+    @classmethod
+    def create(cls, name: str, value: Any):
+        length = 0
+        if isinstance(value, Iterable):
+            length = len(value)
+        value_type = cls.infer_type(value)
+        return RecordField(
+            name=name,
+            value=value,
+            length=length,
+            type=value_type
+        )
+
+    @classmethod
+    def infer_type(cls, value):
+        return type(value).__name__
+
+    def encode(self):
+        encoded_value = json.dumps(self.value).encode()
+        if self.name in ('metadata', 'payload'):
+            encoded_value = base64.b64encode(encoded_value)
+        return RecordField(
+            name=self.name,
+            value=encoded_value,
+            length=len(encoded_value),
+            type='bytes'
+        )
+
+    @classmethod
+    def decode(cls, name, value):
+        if not isinstance(value, bytes):
+            raise ValueError("Failed to decoded")
+        decoded_value = value
+        if name in ('metadata', 'payload'):
+            try:
+                decoded_value = base64.b64decode(decoded_value)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"Failed to decode base64: {e}")
+        try:
+            decoded_value = json.loads(decoded_value.decode())
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise ValueError(f"Failed to decode JSON: {e}")
+        length = len(json.dumps(decoded_value)) if isinstance(decoded_value, dict) else len(decoded_value)
+        return RecordField(
+            name=name,
+            value=decoded_value,
+            length=length,
+            type=cls.infer_type(decoded_value)
+        )
+
+
+    @classmethod
+    def is_base64(cls, value):
+        if not isinstance(value, (bytes, str)):
+            return False
+        if isinstance(value, str):
+            value = value.encode()
+        try:
+            decoded_value = base64.b64decode(value)
+        except (TypeError, ValueError):
+            return False
+        return base64.b64encode(decoded_value) == value
+
+
+@dataclass
 class Record:
     identifier: str
     reference: str | None
-    name: str
-    name_length: int | None
+    name: RecordField
     kind: ObjectKind
-    metadata: str
-    metadata_length: int | None
-    payload: str
-    payload_length: int | None
+    metadata: RecordField
+    payload: RecordField
     timestamp: int
     offset: int | None = None
 
-    def get_encoded(self, field_name, compress=False, base64_encode=False):
-        try:
-            value = getattr(self, field_name)
-
-            if field_name in ('metadata', 'payload'):
-                value = json.dumps(value).encode()
-                if compress and field_name == 'payload':
-                    value = zlib.compress(value)
-                if base64_encode and field_name == 'payload':
-                    value = base64.b64encode(value)
-            else:
-                value = value.encode()
-            logger.debug(f"length: {len(value)}, value: {value}")
-            return len(value), value
-        except AttributeError as e:
-            logger.error(f"NoETL record attribute error: {str(e)}.")
-            return None, None
-
-    def serialize(self, compress=False, base64_encode=False):
+    def serialize(self):
         try:
             logger.debug(self.__str__())
-            name_length, name_encoded = self.get_encoded(field_name="name")
-            metadata_length, metadata_encoded = self.get_encoded(
-                field_name="metadata",
-                compress=compress,
-                base64_encode=base64_encode
-            )
-            payload_length, payload_encoded = self.get_encoded(
-                field_name="payload",
-                compress=compress,
-                base64_encode=base64_encode
-            )
+            name_encoded = self.name.encode()
+            metadata_encoded = self.metadata.encode()
+            payload_encoded = self.payload.encode()
             record_struct = struct.pack(
-                f"16s16sI{name_length}sBQI{metadata_length}sI{payload_length}s",
+                f"16s16sI{name_encoded.length}sBQI{metadata_encoded.length}sI{payload_encoded.length}s",
                 self.identifier.encode(),
                 self.reference.encode(),
-                name_length,
-                name_encoded,
+                name_encoded.length,
+                name_encoded.value,
                 self.kind.value,
                 self.timestamp,
-                metadata_length,
-                metadata_encoded,
-                payload_length,
-                payload_encoded
+                metadata_encoded.length,
+                metadata_encoded.value,
+                payload_encoded.length,
+                payload_encoded.value
             )
             logger.debug(record_struct)
             return record_struct
@@ -101,9 +143,16 @@ class Record:
         )
         identifier = unpacked_data[0].decode().strip("\x00")
         reference = unpacked_data[1].decode().strip("\x00")
-        name_length, name, kind, timestamp, metadata_length, metadata, payload_length, payload = unpacked_data[2:]
-        return cls(identifier, reference, name_length, name, kind, timestamp, metadata_length, metadata, payload_length,
-                   payload)
+        name_length, name_byte, kind_byte, timestamp, metadata_length, metadata_byte, payload_length, payload_byte = unpacked_data[2:]
+        return cls(
+            identifier=identifier,
+            reference=reference,
+            name=RecordField.decode(name="name", value=name_byte),
+            kind=ObjectKind(kind_byte),
+            timestamp=timestamp,
+            metadata=RecordField.decode(name="metadata", value=metadata_byte),
+            payload=RecordField.decode(name="payload", value=payload_byte)
+        )
 
     @classmethod
     def create(cls,
@@ -114,15 +163,15 @@ class Record:
                payload
                ):
         identifier = str(uuid.uuid1())
+        name_field = RecordField.create(name="name", value=name)
+        metadata_field = RecordField.create(name="metadata", value=metadata)
+        payload_field = RecordField.create(name="payload", value=payload)
         return cls(
-            name=name,
+            name=name_field,
             identifier=identifier,
             kind=ObjectKind.create(kind),
             reference=reference if reference else identifier,
-            metadata=metadata,
-            payload=payload,
+            metadata=metadata_field,
+            payload=payload_field,
             timestamp=int(datetime.now().timestamp() * 1000),
-            name_length=None,
-            metadata_length=None,
-            payload_length=None
         )
