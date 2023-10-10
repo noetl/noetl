@@ -189,9 +189,6 @@ class Record:
             metadata_value = RecordField.decode(name="metadata",value=data[metadata_start:metadata_end])
             logger.info(metadata_value)
 
-            # Debug log to check values
-            # logger.debug(
-            #     f"metadata_end: {metadata_end}, data[metadata_end:metadata_end + 4]: {data[metadata_end:metadata_end + 4]}")
 
             payload_length = struct.unpack('I', data[metadata_end:metadata_end + 4])[0]
             payload_value = data[metadata_end + 4:metadata_end + 4 + payload_length]
