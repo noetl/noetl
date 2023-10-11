@@ -13,6 +13,13 @@ class StorageKeyError(Exception):
     pass
 
 
+class RecordFieldType(Enum):
+    NAME = "name"
+    PAYLOAD = "payload"
+    METADATA = "metadata"
+    BYTES = "bytes"
+
+
 class ObjectKind(Enum):
     WORKFLOW = 1
     TASK = 2
@@ -54,7 +61,7 @@ class RecordField:
         return type(value).__name__
 
     def encode(self):
-        if self.name in ('metadata', 'payload'):
+        if self.name in (RecordFieldType.METADATA.value, RecordFieldType.PAYLOAD.value):
             encoded_value = json.dumps(self.value).encode()
             encoded_value = base64.b64encode(encoded_value)
         elif isinstance(self.value, str):
@@ -62,22 +69,20 @@ class RecordField:
         else:
             encoded_value = self.value
         logger.debug(encoded_value)
+        length = len(encoded_value)
         return RecordField(
             name=self.name,
             value=encoded_value,
-            length=len(encoded_value),
-            type='bytes'
+            length=length,
+            type=RecordFieldType.BYTES.value
         )
 
     @classmethod
     def decode(cls, name, value):
-        if name in ('metadata', 'payload'):
+        if name in (RecordFieldType.METADATA.value, RecordFieldType.PAYLOAD.value):
             try:
-                logger.debug(value)
                 decoded_value = base64.b64decode(value)
-                logger.info(decoded_value)
                 decoded_value = json.loads(decoded_value.decode())
-                logger.info(decoded_value)
             except (TypeError, ValueError) as e:
                 raise ValueError(f"Failed to decode base64: {e}")
             except (UnicodeDecodeError, json.JSONDecodeError) as e:
@@ -93,7 +98,6 @@ class RecordField:
             length=length,
             type=cls.infer_type(decoded_value)
         )
-
 
     @classmethod
     def is_base64(cls, value):
@@ -125,85 +129,44 @@ class Record:
             name_encoded = self.name.encode()
             metadata_encoded = self.metadata.encode()
             payload_encoded = self.payload.encode()
-
             record_struct = struct.pack(
-                f"16s16sI{name_encoded.length}sBQI{metadata_encoded.length}sI{payload_encoded.length}s",
-                uuid.UUID(self.identifier).bytes,
-                uuid.UUID(self.reference).bytes,
+                f"IIIIQ16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
                 name_encoded.length,
-                name_encoded.value,
+                metadata_encoded.length,
+                payload_encoded.length,
                 self.kind.value,
                 self.timestamp,
-                metadata_encoded.length,
+                uuid.UUID(self.identifier).bytes,
+                uuid.UUID(self.reference).bytes,
+                name_encoded.value,
                 metadata_encoded.value,
-                payload_encoded.length,
                 payload_encoded.value
             )
-            logger.debug(record_struct)
             return record_struct
         except Exception as e:
             logger.error(f"Serialize error: {str(e)}.")
 
-    # @classmethod
-    # def deserialize(cls, data):
-    #     unpacked_data = struct.unpack(
-    #         f"16s16sI{len(data) - 68}sBQI{len(data) - 68 - 12}sI{len(data) - 68 - 12 - 4}s",
-    #         data
-    #     )
-    #     identifier = unpacked_data[0].decode().strip("\x00")
-    #     reference = unpacked_data[1].decode().strip("\x00")
-    #     name_length, name_byte, kind_byte, timestamp, metadata_length, metadata_byte, payload_length, payload_byte = unpacked_data[2:]
-    #     return cls(
-    #         identifier=identifier,
-    #         reference=reference,
-    #         name=RecordField.decode(name="name", value=name_byte),
-    #         kind=ObjectKind(kind_byte),
-    #         timestamp=timestamp,
-    #         metadata=RecordField.decode(name="metadata", value=metadata_byte),
-    #         payload=RecordField.decode(name="payload", value=payload_byte)
-    #     )
-
     @classmethod
     def deserialize(cls, data):
         try:
-            identifier, reference, name_length = struct.unpack('16s16sI', data[:36])
-            identifier_decoded =  str(uuid.UUID(bytes=struct.unpack('16s', identifier)[0]))
-            reference_decoded = str(uuid.UUID(bytes=struct.unpack('16s', reference)[0]))
-            logger.debug(f"{identifier_decoded} , {reference_decoded} , {name_length}")
-            name_end = 36 + name_length
-            name_decoded = RecordField.decode(name="name",value=data[36:name_end])
-            logger.debug(name_decoded)
-
-            logger.debug(f"name_end: {name_end}, data[name_end:name_end + 12]: {data[name_end:name_end + 12]}")
-
-            bq_slice = data[name_end:name_end + 9]
-            logger.info(f"{bq_slice} {len(bq_slice)}")
-            kind_value, timestamp = struct.unpack('=BQ', bq_slice)
-            logger.info(f"{kind_value}, {timestamp}")
-
-            metadata_start = name_end + 13
-            metadata_length = struct.unpack('I', data[name_end + 9:metadata_start])[0]
-            logger.debug(metadata_length)
-            metadata_end = metadata_start + metadata_length
-            logger.debug(metadata_end)
-            metadata_value = RecordField.decode(name="metadata",value=data[metadata_start:metadata_end])
-            logger.info(metadata_value)
-
-
-            payload_length = struct.unpack('I', data[metadata_end:metadata_end + 4])[0]
-            payload_value = data[metadata_end + 4:metadata_end + 4 + payload_length]
+            name_length, metadata_length, payload_length, kind_value, timestamp, identifier, reference = \
+                struct.unpack_from('IIIIQ16s16s', data, 0)
+            offset = struct.calcsize('I') * 4 + struct.calcsize('Q') + struct.calcsize('16s') * 2
+            name_encoded, metadata_encoded, payload_encoded = struct.unpack_from(
+                f"{name_length}s{metadata_length}s{payload_length}s", data, offset)
             return cls(
-                identifier=identifier.decode(),
-                reference=reference.decode(),
-                name=RecordField(length=name_length, value=name_value),
+                identifier=str(uuid.UUID(bytes=identifier)),
+                reference=str(uuid.UUID(bytes=reference)),
+                name=RecordField.decode(name=RecordFieldType.NAME.value, value=name_encoded),
                 kind=ObjectKind(kind_value),
-                metadata=RecordField(length=metadata_length, value=metadata_value),
-                payload=RecordField(length=payload_length, value=payload_value),
+                metadata=RecordField.decode(name=RecordFieldType.METADATA.value, value=metadata_encoded),
+                payload=RecordField.decode(name=RecordFieldType.PAYLOAD.value, value=payload_encoded),
                 timestamp=timestamp
             )
         except struct.error as e:
             logger.error(f"Deserialize error: {str(e)}.")
             raise
+
     @classmethod
     def create(cls,
                name,
