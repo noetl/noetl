@@ -130,7 +130,7 @@ class Record:
             metadata_encoded = self.metadata.encode()
             payload_encoded = self.payload.encode()
             record_struct = struct.pack(
-                f"QIIIB16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
+                f"=QIIIB16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
                 self.timestamp,
                 name_encoded.length,
                 metadata_encoded.length,
@@ -150,8 +150,8 @@ class Record:
     def deserialize(cls, data):
         try:
             timestamp, name_length, metadata_length, payload_length, kind_value,  identifier, reference = \
-                struct.unpack_from('QIIIB16s16s', data, 0)
-            offset = struct.calcsize('QIIIB16s16s')
+                struct.unpack_from('=QIIIB16s16s', data, 0)
+            offset = struct.calcsize('=QIIIB16s16s')
             name_encoded, metadata_encoded, payload_encoded = struct.unpack_from(
                 f"{name_length}s{metadata_length}s{payload_length}s", data, offset)
             return cls(
