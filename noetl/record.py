@@ -7,7 +7,7 @@ from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, Any
-
+import sys
 
 class StorageKeyError(Exception):
     pass
@@ -114,13 +114,13 @@ class RecordField:
 
 @dataclass
 class Record:
+    timestamp: int
     identifier: str
     reference: str | None
     name: RecordField
     kind: ObjectKind
     metadata: RecordField
     payload: RecordField
-    timestamp: int
     offset: int | None = None
 
     def serialize(self):
@@ -130,12 +130,12 @@ class Record:
             metadata_encoded = self.metadata.encode()
             payload_encoded = self.payload.encode()
             record_struct = struct.pack(
-                f"IIIIQ16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
+                f"QIIIB16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
+                self.timestamp,
                 name_encoded.length,
                 metadata_encoded.length,
                 payload_encoded.length,
                 self.kind.value,
-                self.timestamp,
                 uuid.UUID(self.identifier).bytes,
                 uuid.UUID(self.reference).bytes,
                 name_encoded.value,
@@ -149,19 +149,19 @@ class Record:
     @classmethod
     def deserialize(cls, data):
         try:
-            name_length, metadata_length, payload_length, kind_value, timestamp, identifier, reference = \
-                struct.unpack_from('IIIIQ16s16s', data, 0)
-            offset = struct.calcsize('I') * 4 + struct.calcsize('Q') + struct.calcsize('16s') * 2
+            timestamp, name_length, metadata_length, payload_length, kind_value,  identifier, reference = \
+                struct.unpack_from('QIIIB16s16s', data, 0)
+            offset = struct.calcsize('QIIIB16s16s')
             name_encoded, metadata_encoded, payload_encoded = struct.unpack_from(
                 f"{name_length}s{metadata_length}s{payload_length}s", data, offset)
             return cls(
+                timestamp=timestamp,
                 identifier=str(uuid.UUID(bytes=identifier)),
                 reference=str(uuid.UUID(bytes=reference)),
                 name=RecordField.decode(name=RecordFieldType.NAME.value, value=name_encoded),
                 kind=ObjectKind(kind_value),
                 metadata=RecordField.decode(name=RecordFieldType.METADATA.value, value=metadata_encoded),
-                payload=RecordField.decode(name=RecordFieldType.PAYLOAD.value, value=payload_encoded),
-                timestamp=timestamp
+                payload=RecordField.decode(name=RecordFieldType.PAYLOAD.value, value=payload_encoded)
             )
         except struct.error as e:
             logger.error(f"Deserialize error: {str(e)}.")
@@ -180,11 +180,12 @@ class Record:
         metadata_field = RecordField.create(name="metadata", value=metadata)
         payload_field = RecordField.create(name="payload", value=payload)
         return cls(
-            name=name_field,
+            timestamp=int(datetime.now().timestamp() * 1000),
             identifier=identifier,
-            kind=ObjectKind.create(kind),
             reference=reference if reference else identifier,
+            name=name_field,
+            kind=ObjectKind.create(kind),
             metadata=metadata_field,
             payload=payload_field,
-            timestamp=int(datetime.now().timestamp() * 1000),
+
         )
