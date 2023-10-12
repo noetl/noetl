@@ -99,6 +99,34 @@ class RecordField:
             type=cls.infer_type(decoded_value)
         )
 
+    def serialize(self):
+        try:
+            logger.debug(self.__str__())
+            name_encoded = self.name.encode('utf-8')
+            name_encoded_length = len(name_encoded)
+            value_encoded = self.encode()
+            field_struct = struct.pack(
+                f"=II{name_encoded_length}s{value_encoded.length}s",
+                name_encoded_length,
+                value_encoded.length,
+                name_encoded,
+                value_encoded.value
+            )
+            return field_struct
+        except Exception as e:
+            logger.error(f"Serialize error: {str(e)}.")
+
+    @classmethod
+    def deserialize(cls, data):
+        try:
+            name_length,value_length, = struct.unpack_from('=II', data, 0)
+            offset = struct.calcsize('=II')
+            name_decoded, value_decoded, = struct.unpack_from(f"{name_length}s{value_length}s", data, offset)
+            return cls.decode(name=name_decoded, value=value_decoded)
+        except struct.error as e:
+            logger.error(f"Deserialize error: {str(e)}.")
+            raise
+
     @classmethod
     def is_base64(cls, value):
         if not isinstance(value, (bytes, str)):

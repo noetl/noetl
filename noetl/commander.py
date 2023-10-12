@@ -22,10 +22,37 @@ class CommandHander:
             nats_pool=NatsConnectionPool(args.nats_url, 10)
         )
 
+
+    async def add_wrokflow_catalog(self, record: Record):
+        async with self.nats_pool.connection() as nc:
+            workflow_catalog = await nc.create_key_value(bucket="workflow_catalog")
+            try:
+                await workflow_catalog.delete(record.name.value)
+                await workflow_catalog.put(record.name.value, record.payload.serialize())
+                entry = await workflow_catalog.get(record.name.value)
+                entry_value = RecordField.deserialize(entry.value)
+                logger.info(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
+            except Exception as e:
+                print(f"Bucket does not exist: {e}")
+    async def api_add_workflow(self, record: Record):
+        logger.debug(f"{record}")
+        await self.add_wrokflow_catalog(record=record)
+
+    def default_command(self):
+        logger.error(f"No Command handler implemented yet")
+        return f"No Command handler implemented yet"
+    async def switch(self, value):
+        command=value.metadata.value.get("command")
+        method_name = command.replace('.', '_')
+        method = getattr(self, method_name, self.default_command)
+        return await method(value)
+
     async def handle_command(self, msg):
         logger.info(msg)
-        command = Record.deserialize(msg.data)
-        logger.info(command)
+        command_data = Record.deserialize(msg.data)
+        _= await self.switch(command_data)
+        logger.info(command_data)
+
         # event = f"Processed {command}"
         # logger.info(event)
         # # Create a Record instance
