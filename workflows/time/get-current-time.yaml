@@ -17,6 +17,23 @@ spec:
     running: [completed, failed, terminated]
   tasks:
     start:
+      inputSchema:
+        type: object
+        properties:
+          NTP_SRV_POOL:
+            type: string
+          GOOGLE_URL:
+            type: string
+        required:
+          - NTP_SRV_POOL
+          - GOOGLE_URL
+      outputSchema:
+        type: object
+        properties:
+          time:
+            type: string
+        required:
+          - time
       steps:
         get-time-ntp:
           description: "Get time from time.google.com" # ntpdate -q time.google.com | grep date | sed 's/ ntpdate.*//'
