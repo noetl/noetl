@@ -30,6 +30,7 @@ class CommandHander:
                 await workflow_catalog.delete(record.name.value)
                 await workflow_catalog.put(record.name.value, record.payload.serialize())
                 entry = await workflow_catalog.get(record.name.value)
+                logger.debug(entry)
                 entry_value = RecordField.deserialize(entry.value)
                 logger.info(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
             except Exception as e:

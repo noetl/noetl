@@ -122,7 +122,7 @@ class RecordField:
             name_length,value_length, = struct.unpack_from('=II', data, 0)
             offset = struct.calcsize('=II')
             name_decoded, value_decoded, = struct.unpack_from(f"{name_length}s{value_length}s", data, offset)
-            return cls.decode(name=name_decoded, value=value_decoded)
+            return cls.decode(name=name_decoded.decode('utf-8'), value=value_decoded)
         except struct.error as e:
             logger.error(f"Deserialize error: {str(e)}.")
             raise
