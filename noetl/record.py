@@ -7,7 +7,7 @@ from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, Any
-import sys
+
 
 class StorageKeyError(Exception):
     pass
@@ -119,7 +119,7 @@ class RecordField:
     @classmethod
     def deserialize(cls, data):
         try:
-            name_length,value_length, = struct.unpack_from('=II', data, 0)
+            name_length, value_length, = struct.unpack_from('=II', data, 0)
             offset = struct.calcsize('=II')
             name_decoded, value_decoded, = struct.unpack_from(f"{name_length}s{value_length}s", data, offset)
             return cls.decode(name=name_decoded.decode('utf-8'), value=value_decoded)
@@ -177,7 +177,7 @@ class Record:
     @classmethod
     def deserialize(cls, data):
         try:
-            timestamp, name_length, metadata_length, payload_length, kind_value,  identifier, reference = \
+            timestamp, name_length, metadata_length, payload_length, kind_value, identifier, reference = \
                 struct.unpack_from('=QIIIB16s16s', data, 0)
             offset = struct.calcsize('=QIIIB16s16s')
             name_encoded, metadata_encoded, payload_encoded = struct.unpack_from(

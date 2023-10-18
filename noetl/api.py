@@ -37,13 +37,13 @@ class ApiConfig(BaseModel):
             self.limit_max_requests = int(args.limit_max_requests)
 
 
-class CommandValidationResult(BaseModel):
+class InputValidationResult(BaseModel):
     is_valid: bool = False
     function_name: str | None = None
     message: str | None = None
 
 
-class Command(BaseModel):
+class Input(BaseModel):
     tokens: str
     metadata: dict
     payload: dict
@@ -66,13 +66,6 @@ app.registry.register(app.api_health_check_counter)
 app.registry.register(app.api_events_counter)
 app.registry.register(app.api_errors_counter)
 
-
-@app.get("/metrics")
-async def handle_metrics(accept: List[str] = Header(None)):
-    content, http_headers = render(app.registry, accept)
-    return Response(content=content, media_type=http_headers["Content-Type"])
-
-
 nlp = spacy.load("en_core_web_sm")
 api_config: ApiConfig = ApiConfig()
 nats_pool: NatsConnectionPool | None = None
@@ -82,6 +75,12 @@ nats_pool: NatsConnectionPool | None = None
 async def get_root():
     app.api_events_counter.inc({"path": "/"})
     return {"Hello": "Workflow"}
+
+
+@app.get("/metrics")
+async def handle_metrics(accept: List[str] = Header(None)):
+    content, http_headers = render(app.registry, accept)
+    return Response(content=content, media_type=http_headers["Content-Type"])
 
 
 @app.get("/test")
@@ -121,13 +120,13 @@ def validate_command(command_text):
             is_valid = all(t1 == t2 or isinstance(t2, type) and isinstance(t1, t2)
                            for t1, t2 in zip(tokens, structure))
             if is_valid:
-                return CommandValidationResult(is_valid=True, function_name=function_name,
-                                               message=" ".join(tokens[len(structure):]))
+                return InputValidationResult(is_valid=True, function_name=function_name,
+                                             message=" ".join(tokens[len(structure):]))
 
-    return CommandValidationResult()
+    return InputValidationResult()
 
 
-async def add_workflow_config(command: Command):
+async def add_workflow_config(command: Input):
     try:
         workflow_config = Config.create(command.payload)
         logger.info(workflow_config)
@@ -144,20 +143,29 @@ async def add_workflow_config(command: Command):
         logger.error(f"NoETL API workflow config error: {str(e)}.")
 
 
+async def publish(pool: NatsConnectionPool, subject, message):
+    async with pool.connection() as js:
+        ack = await js.publish(f"{subject}", message)
+    return ack
+
+
 @app.post("/command/")
 async def add_command(
-        command: Command,
+        command: Input,
         request: Request,
-        nats_pool: NatsConnectionPool = Depends(get_nats_pool)
+        pool: NatsConnectionPool = Depends(get_nats_pool)
 ):
     logger.info(command)
     app.api_commands_counter.inc({"path": request.scope["path"]})
-    command_validation_result: CommandValidationResult = validate_command(command.tokens)
+    command_validation_result: InputValidationResult = validate_command(command.tokens)
     if command_validation_result.function_name == "add_workflow_config":
         record = await add_workflow_config(command)
-        async with nats_pool.connection() as js:
-            ack = await js.publish(f"command.api.add.workflow.{record.identifier}", record.serialize())
-            logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
+        ack = await publish(
+            pool=pool,
+            subject=f"command.api.add.workflow.{record.identifier}",
+            message=record.serialize()
+        )
+        logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
         return {"message": f"Command added. Identifier: {record.identifier}, stream={ack.stream}, sequence={ack.seq}"}
     return {"message": f"Command IS NOT added {command}."}
 
@@ -218,7 +226,6 @@ def main(args):
                     )
     except Exception as e:
         logger.error(f"NoETL API error: {e}")
-
 
 
 if __name__ == "__main__":

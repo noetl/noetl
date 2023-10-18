@@ -37,7 +37,7 @@ spec:
       steps:
         get-time-ntp:
           description: "Get time from time.google.com" # ntpdate -q time.google.com | grep date | sed 's/ ntpdate.*//'
-          type: shell
+          plugin: http-requests
           command: "ntpdate"
           args:
             - "-q"
