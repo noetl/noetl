@@ -1,0 +1,106 @@
+PLUGIN
+
+COMMAND PAYLOAD TOKENS
+add plugin <imageUrl>
+NOTE: Plugin can have version in the name if needed to use different images for different workflows.
+We can enhance it with updates and deletes in the future.
+
+[UC-1] PLUGIN REGISTRATION
+NOTE: UC stay for USE CASE.
+NOTE: A stay for ACTION. Number e.g. 1.1 - stay for action order.
+
+[A-0.1] GRAPHQL CLIENT
+DESCRIPTION: Submits plugin registration GraphQL query to NoETL API.
+CLI
+curl http://api.noetl.io/gql payload: {pluginName: <pluginName>, imageUrl: <image url>, callbackApi: <http://api.com>}
+
+STEPS
+
+
+[A-1.1] GRAPHQL API HANDLER
+DESCRIPTION: Handles GraphQL Query requests.
+QUERY:
+[MUTATION] {query: PluginRegistrationRequest, payload: {pluginName: <plugin name>, imageUrl: <image url>}}
+
+[A-1.2] API NATS STREAM PUBLISH
+DESCRIPTION: Converts HTTP requests to the NATS events. EventType[PluginImageRegistrationRequestReceived].
+stream: events
+subject: dispatcher.api
+payload: {
+    eventType: PluginImageRegistrationRequestReceived,
+    pluginName: <plugin name>,
+    requestSource: {gateway: "API"},
+    refId: <ID>,
+    imageUrl: <image url>
+    }
+API RETURN -> {refId: <ref ID>}
+
+[A-2.1] DISPATCHER NATS STREAM SUBSCRIPTION HANDLER
+DESCRIPTION: Analyze events published by API service.
+stream: events
+subject: dispatcher.api
+payload: {
+    eventType: PluginImageRegistrationRequestReceived,
+    pluginName: <plugin name>,
+    requestSource: {gateway: "API"},
+    refId: <ID>,
+    imageUrl: <image url>
+    }
+
+[A-2.2] DISPATCHER NATS STREAM PUBLISH HANDLER
+DESCRIPTION: Dispatcher service converts events from API to the commands executed by Catalog service.
+stream: commands
+subject: catalog.plugin.register
+payload: {
+    commandType: RegisterPluginImage,
+    pluginName: <plugin name>,
+    requestSource: {gateway: "API"},
+    refId: <ID>,
+    imageUrl: <image url>
+    }
+
+[A-3.1] CATALOG NATS STREAM SUBSCRIPTION HANDLER
+DESCRIPTION: Catalog service Listens "registration" commands
+stream: commands
+subject: catalog.plugin.register
+payload: {
+    commandType: RegisterPluginImage,
+    pluginName: <plugin name>,
+    requestSource: {gateway: "API"},
+    refId: <ID>,
+    imageUrl: <image url>
+    }
+
+[A-3.2] CATALOG NATS KV PUT HANDLER
+DESCRIPTION: Adding Key Value to the JetStreams bucket
+bucket: plugins
+key: <pluginName>
+value: imageUrl: <imageUrl>
+
+[A-3.3] CATALOG KUBERNETES JOB HANDLER
+DESCRIPTION: SCHEMA REGISTRATION. Run plugin with flag --registration.
+TODO: There are two options - either plugin directly publish to NATS,
+TODO: or the Job that validates the run gets output and publish the result to NUTS.
+TODO: Job can report error in case plugin failed to register itself.
+kubernetes api: job
+execute: imageUrl: <image url>
+envs: NATS_URL=<nats server url>
+args: --registration
+
+[A-4.1] PLUGIN NATS STREAM PUBLISH HANDLER
+
+CASE: PluginSchemaRegistrationRequestCompleted
+stream: events
+subject: catalog.schema.registration
+payload: {eventType: pluginSchemaRegistrationCompleted, pluginName: <plugin name>, refId:<ref ID>}
+
+CASE: PluginSchemaRegistrationRequestFailed
+stream: events
+subject: catalog.schema.registration
+payload: {eventType: pluginSchemaRegistrationFailed, pluginName: <plugin name>, refId:<ref ID>, imageUrl: <image url>}
+
+[A-5.1] DISPATCHER->NATS STREAM PUBLISH
+DESCRIPTION: Report the registration process back to the requestor using noetl core plugin.
+stream: commands
+subject: plugin.<noetl-http-request>
+payload: {pluginName: <plugin name>, refId: <ref ID>, state: <success|failed>}
