@@ -130,6 +130,10 @@ def validate_command(command):
 
 
 def main():
+    """
+    python noetl/cli.py add workflow config file "workflows/time/get-current-time.yaml"
+    :return:
+    """
     try:
         if len(sys.argv) > 1:
             command = " ".join(sys.argv[1:])
