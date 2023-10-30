@@ -88,10 +88,10 @@ class WorkflowMutations:
 
     @strawberry.mutation
     async def register_workflow_config(self,
-                                  payload: JSON,
-                                  metadata: JSON | None = None,
-                                  tokens: str | None = None,
-                                  ) -> WorkflowResponse:
+                                       payload: JSON,
+                                       metadata: JSON | None = None,
+                                       tokens: str | None = None,
+                                       ) -> WorkflowResponse:
         logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
         pool = get_nats_pool()
         if pool is None:

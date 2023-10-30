@@ -19,15 +19,6 @@ class RecordFieldType(Enum):
     METADATA = "metadata"
     BYTES = "bytes"
 
-
-# class ObjectKind(Enum):
-#     WORKFLOW = 1
-#     PLUGIN = 2
-#     TASK = 3
-#     STEP = 4
-#     LOOP = 5
-#     CASE = 6
-
     @classmethod
     def create(cls, value):
         value = value.lower()
@@ -147,7 +138,6 @@ class Record:
     identifier: str
     reference: str | None
     name: RecordField
-    # kind: ObjectKind
     metadata: RecordField
     payload: RecordField
     offset: int | None = None
@@ -159,13 +149,11 @@ class Record:
             metadata_encoded = self.metadata.encode()
             payload_encoded = self.payload.encode()
             record_struct = struct.pack(
-                #f"=QIIIB16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
                 f"=QIII16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
                 self.timestamp,
                 name_encoded.length,
                 metadata_encoded.length,
                 payload_encoded.length,
-                # self.kind.value,
                 uuid.UUID(self.identifier).bytes,
                 uuid.UUID(self.reference).bytes,
                 name_encoded.value,
@@ -189,7 +177,6 @@ class Record:
                 identifier=str(uuid.UUID(bytes=identifier)),
                 reference=str(uuid.UUID(bytes=reference)),
                 name=RecordField.decode(name=RecordFieldType.NAME.value, value=name_encoded),
-                # kind=ObjectKind(kind_value),
                 metadata=RecordField.decode(name=RecordFieldType.METADATA.value, value=metadata_encoded),
                 payload=RecordField.decode(name=RecordFieldType.PAYLOAD.value, value=payload_encoded)
             )
@@ -200,7 +187,6 @@ class Record:
     @classmethod
     def create(cls,
                name,
-               #kind,
                reference,
                metadata,
                payload
@@ -214,7 +200,6 @@ class Record:
             identifier=identifier,
             reference=reference if reference else identifier,
             name=name_field,
-            # kind=ObjectKind.create(kind),
             metadata=metadata_field,
             payload=payload_field,
 
