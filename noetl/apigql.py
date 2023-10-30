@@ -31,7 +31,7 @@ def validate_command(command_text):
         return False, None, None
 
     command_structures = {
-        "add_workflow_config": ["add", "workflow", "config", str],
+        "register_workflow_config": ["register", "workflow", "config", str],
     }
 
     for function_name, structure in command_structures.items():
@@ -65,10 +65,10 @@ class WorkflowMutations:
     """
     GraphQL Mutations for NoETL Workflows.
 
-    addWorkflowConfig Example:
+    registerWorkflowConfig Example:
     ```
     mutation {
-      addWorkflowConfig(
+      registerWorkflowConfig(
         tokens: "add workflow config",
         metadata: "{ \"key\": \"value\" }",
         payload: {
@@ -87,7 +87,7 @@ class WorkflowMutations:
     """
 
     @strawberry.mutation
-    async def add_workflow_config(self,
+    async def register_workflow_config(self,
                                   payload: JSON,
                                   metadata: JSON | None = None,
                                   tokens: str | None = None,
@@ -98,7 +98,7 @@ class WorkflowMutations:
             logger.error("NatsPoolContainer is not initialized")
             raise ValueError("NatsPoolContainer is not initialized")
         command_validation_result: InputValidationResult = validate_command(tokens)
-        if command_validation_result.function_name == "add_workflow_config":
+        if command_validation_result.function_name == "register_workflow_config":
             try:
                 logger.debug(type(payload))
                 workflow_config = Config.create_workflow(payload)
@@ -113,7 +113,7 @@ class WorkflowMutations:
                 )
 
                 ack = await pool.publish(
-                    subject=f"event.RegistrationRequested.{record.identifier}",
+                    subject=f"event.registration.requested.{record.identifier}",
                     message=record.serialize()
                 )
                 logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
