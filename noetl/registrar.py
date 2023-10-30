@@ -10,7 +10,7 @@ from record import Record, RecordField
 
 
 @dataclass
-class CommandHander:
+class Command:
     events_counter: Counter
     nats_pool: NatsConnectionPool
     records: list[Record] | None = None
@@ -39,13 +39,13 @@ class CommandHander:
         logger.debug(f"{record}")
         await self.add_wrokflow_catalog(record=record)
 
-    def default_command(self):
+    async def command_not_found(self, value=None):
         logger.error(f"No Command handler implemented yet")
         return f"No Command handler implemented yet"
     async def switch(self, value):
         command=value.metadata.value.get("command")
         method_name = command.replace('.', '_')
-        method = getattr(self, method_name, self.default_command)
+        method = getattr(self, method_name, self.command_not_found)
         return await method(value)
 
     async def handle_command(self, msg):
@@ -53,25 +53,6 @@ class CommandHander:
         command_data = Record.deserialize(msg.data)
         _= await self.switch(command_data)
         logger.info(command_data)
-
-        # event = f"Processed {command}"
-        # logger.info(event)
-        # # Create a Record instance
-        # record = Record.create(
-        #     name='CommandEvent',
-        #     kind='TASK',
-        #     reference=None,
-        #     metadata={'command': command},
-        #     payload={'event': event}
-        # )
-        # # Serialize the record
-        # serialized_record = record.serialize()
-        #
-        # # Publish event
-        # async with self.nats_pool.connection() as nc:
-        #     await nc.publish('events', serialized_record)
-        # # Increment events counter
-        # events_counter.inc({"kind": "command_processed"})
 
     async def nats_subscribe(self):
         async with self.nats_pool.connection() as nc:
@@ -87,7 +68,7 @@ async def main(args):
     service = Service()
     await service.start(addr=args.prom_host, port=args.prom_port)
     logger.info(f"Serving prometheus metrics on: {service.metrics_url}")
-    command_handler = CommandHander.create(args)
+    command_handler = Command.create(args)
     _ = await command_handler.nats_subscribe()
 
 

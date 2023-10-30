@@ -2,6 +2,7 @@ import sys
 import requests
 import re
 import os
+import json
 from loguru import logger
 import base64
 
@@ -16,17 +17,36 @@ class Goodbye:
         sys.exit()
 
 
-def is_api_running():
-    try:
-        response = requests.get("http://localhost:8021/health")
-        if response.status_code == 200:
-            return True
-    except Exception as e:
-        logger.info(f"NoETL API is not healthy: {str(e)}.")
-    return False
+class GraphqlMutation:
+    @staticmethod
+    def add_workflow_config(payload, tokens=None, metadata=None):
+        mutation = """
+        mutation AddWorkflowConfig($payload: JSON!, $metadata: JSON,$tokens: String ) {
+          addWorkflowConfig(payload: $payload, metadata: $metadata, tokens: $tokens) {
+            identifier
+            name
+            eventType
+            ackSeq
+            status
+            message
+          }
+        }
+        """
+        payload_json = payload if payload is not None else None
+        metadata_json = metadata if metadata is not None else None
+
+        variables = {
+            "payload": payload_json,
+            "metadata": metadata_json,
+            "tokens": tokens,
+        }
+        return {
+            "query": mutation,
+            "variables": variables
+        }
 
 
-def command_api(tokens, metadata=None, payload=None):
+def noetl_api(mutation, tokens, metadata=None, payload=None):
     if payload is None:
         payload = {"message": "empty payload"}
     if metadata is None:
@@ -34,8 +54,8 @@ def command_api(tokens, metadata=None, payload=None):
     logger.info(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
     try:
         response = requests.post(
-            "http://localhost:8021/command",
-            json={"tokens": tokens, "metadata": metadata, "payload": payload}
+            "http://localhost:8021/noetl",
+            json=GraphqlMutation.add_workflow_config(payload=payload, metadata=metadata, tokens=tokens)
         )
         response.raise_for_status()
         result = response.json()
@@ -49,6 +69,16 @@ def command_api(tokens, metadata=None, payload=None):
     except Exception as e:
         logger.error(f"NoETL command validation error: {str(e)}.")
         return None
+
+
+def is_api_running():
+    try:
+        response = requests.get("http://localhost:8021/health")
+        if response.status_code == 200:
+            return True
+    except Exception as e:
+        logger.info(f"NoETL API is not healthy: {str(e)}.")
+    return False
 
 
 def validate_command(command):
@@ -75,10 +105,11 @@ def validate_command(command):
             "command": "api.add.workflow"
         }
         payload = {
-            "config": encoded_config
+            "workflow_config_base64": encoded_config
         }
 
-        response = command_api(tokens="add workflow config file", metadata=metadata, payload=payload)
+        response = noetl_api(mutation="addWorkflowConfig", tokens="add workflow config file", metadata=metadata,
+                             payload=payload)
         if response is not None:
             logger.info(response)
         else:
@@ -91,7 +122,7 @@ def validate_command(command):
         payload = {
             "command": command
         }
-        result = command_api(tokens=command, metadata=metadata, payload=payload)
+        result = noetl_api(mutation="spellcheck", tokens=command, metadata=metadata, payload=payload)
         if result is not None:
             logger.info(result)
         else:

@@ -1,7 +1,14 @@
 import asyncio
 import nats
+from dataclasses import dataclass
 from nats.aio.errors import ErrTimeout
 from loguru import logger
+
+
+@dataclass
+class NatsConfig:
+    nats_url: str = "nats://localhost:32645"
+    nats_pool_size: int = 10
 
 
 class NatsConnectionPool:
@@ -77,6 +84,41 @@ class NatsConnectionPool:
 
     def connection(self):
         return self._ConnectionContextManager(self)
+
+
+async def publish(pool: NatsConnectionPool, subject, message):
+    async with pool.connection() as js:
+        ack = await js.publish(f"{subject}", message)
+    return ack
+
+
+class NatsPoolContainer:
+    def __init__(self, pool: NatsConnectionPool):
+        self.pool = pool
+
+    async def publish(self, subject, message):
+        async with self.pool.connection() as js:
+            ack = await js.publish(f"{subject}", message)
+        return ack
+
+    async def close_connections(self):
+        await self.pool.close_pool()
+
+
+nats_pool: NatsConnectionPool | None = None
+
+
+def get_nats_pool():
+    global nats_pool
+    return nats_pool
+
+
+async def initialize_nats_pool(nats_config: NatsConfig):
+    global nats_pool
+    nats_pool = NatsPoolContainer(NatsConnectionPool(
+        url=nats_config.nats_url,
+        size=nats_config.nats_pool_size
+    ))
 
 
 if __name__ == "__main__":

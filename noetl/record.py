@@ -20,12 +20,13 @@ class RecordFieldType(Enum):
     BYTES = "bytes"
 
 
-class ObjectKind(Enum):
-    WORKFLOW = 1
-    TASK = 2
-    STEP = 3
-    LOOP = 4
-    SWITCH = 5
+# class ObjectKind(Enum):
+#     WORKFLOW = 1
+#     PLUGIN = 2
+#     TASK = 3
+#     STEP = 4
+#     LOOP = 5
+#     CASE = 6
 
     @classmethod
     def create(cls, value):
@@ -146,7 +147,7 @@ class Record:
     identifier: str
     reference: str | None
     name: RecordField
-    kind: ObjectKind
+    # kind: ObjectKind
     metadata: RecordField
     payload: RecordField
     offset: int | None = None
@@ -158,12 +159,13 @@ class Record:
             metadata_encoded = self.metadata.encode()
             payload_encoded = self.payload.encode()
             record_struct = struct.pack(
-                f"=QIIIB16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
+                #f"=QIIIB16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
+                f"=QIII16s16s{name_encoded.length}s{metadata_encoded.length}s{payload_encoded.length}s",
                 self.timestamp,
                 name_encoded.length,
                 metadata_encoded.length,
                 payload_encoded.length,
-                self.kind.value,
+                # self.kind.value,
                 uuid.UUID(self.identifier).bytes,
                 uuid.UUID(self.reference).bytes,
                 name_encoded.value,
@@ -177,9 +179,9 @@ class Record:
     @classmethod
     def deserialize(cls, data):
         try:
-            timestamp, name_length, metadata_length, payload_length, kind_value, identifier, reference = \
-                struct.unpack_from('=QIIIB16s16s', data, 0)
-            offset = struct.calcsize('=QIIIB16s16s')
+            timestamp, name_length, metadata_length, payload_length, identifier, reference = \
+                struct.unpack_from('=QIII16s16s', data, 0)
+            offset = struct.calcsize('=QIII16s16s')
             name_encoded, metadata_encoded, payload_encoded = struct.unpack_from(
                 f"{name_length}s{metadata_length}s{payload_length}s", data, offset)
             return cls(
@@ -187,7 +189,7 @@ class Record:
                 identifier=str(uuid.UUID(bytes=identifier)),
                 reference=str(uuid.UUID(bytes=reference)),
                 name=RecordField.decode(name=RecordFieldType.NAME.value, value=name_encoded),
-                kind=ObjectKind(kind_value),
+                # kind=ObjectKind(kind_value),
                 metadata=RecordField.decode(name=RecordFieldType.METADATA.value, value=metadata_encoded),
                 payload=RecordField.decode(name=RecordFieldType.PAYLOAD.value, value=payload_encoded)
             )
@@ -198,7 +200,7 @@ class Record:
     @classmethod
     def create(cls,
                name,
-               kind,
+               #kind,
                reference,
                metadata,
                payload
@@ -212,7 +214,7 @@ class Record:
             identifier=identifier,
             reference=reference if reference else identifier,
             name=name_field,
-            kind=ObjectKind.create(kind),
+            # kind=ObjectKind.create(kind),
             metadata=metadata_field,
             payload=payload_field,
 
