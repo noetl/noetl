@@ -3,6 +3,7 @@ import nats
 from dataclasses import dataclass
 from nats.aio.errors import ErrTimeout
 from loguru import logger
+from record import Record, RecordField
 
 
 @dataclass
@@ -12,15 +13,14 @@ class NatsConfig:
 
 
 class NatsConnectionPool:
-    def __init__(self, url, size):
-        self.connection_url = url
-        self.size = size
+    def __init__(self, config: NatsConfig):
+        self.config: NatsConfig = config
         self.pool = asyncio.Queue()
 
     async def get(self):
         try:
             if self.pool.empty():
-                nc = await nats.connect(self.connection_url)
+                nc = await nats.connect(self.config.nats_url)
                 return nc
             else:
                 return await self.pool.get()
@@ -31,8 +31,8 @@ class NatsConnectionPool:
             logger.error(f"NATS connection error: {e}")
             raise
 
-    def get_size(self):
-        return self.size
+    def get_pool_size(self):
+        return self.config.nats_pool_size
 
     async def put(self, nc):
         try:
@@ -57,6 +57,14 @@ class NatsConnectionPool:
         finally:
             await self.put(nc)
 
+    def connection(self):
+        return self._ConnectionContextManager(self)
+
+    async def publish(self, subject, message):
+        async with self.connection() as js:
+            ack = await js.publish(f"{subject}", message)
+        return ack
+
     async def close_pool(self):
         while not self.pool.empty():
             nc = await self.pool.get()
@@ -67,6 +75,57 @@ class NatsConnectionPool:
             else:
                 logger.info("NATS connection closed.")
         logger.info("NATS connections in the pool closed.")
+
+    async def catalog_create(self, catalog_name: str):
+        async with self.connection() as nc:
+            try:
+                catalog = await nc.create_key_value(bucket=catalog_name)
+                logger.info(f"Catalog {catalog_name} created.")
+                return catalog
+            except Exception as e:
+                print(f"Catalog create error: {e}")
+
+    async def catalog_delete(self, catalog_name: str):
+        async with self.connection() as nc:
+            try:
+                catalog = await nc.create_key_value(catalog_name)
+                await catalog.delete(catalog_name)
+                logger.info(f"Catalog {catalog_name} deleted.")
+            except Exception as e:
+                print(f"Catalog delete error: {e}")
+
+    async def catalog_add(self, catalog_name: str, record: Record):
+        async with self.connection() as nc:
+            try:
+                # catalog = await nc.kv(catalog_name)
+                catalog = await nc.create_key_value(bucket=catalog_name)
+                await catalog.put(record.name.value, record.payload.serialize())
+                entry = await catalog.get(record.name.value)
+                entry_value = RecordField.deserialize(entry.value)
+                logger.debug(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
+                return entry.key
+            except Exception as e:
+                logger.error(f"Catalog {catalog_name} failed to add record {record}. Error: {e}")
+
+    async def catalog_get(self, catalog_name, key: str):
+        async with self.connection() as nc:
+            try:
+                catalog = await nc.create_key_value(bucket=catalog_name)
+                entry = await catalog.get(key)
+                entry_value = RecordField.deserialize(entry.value)
+                logger.debug(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
+                return entry.value
+            except Exception as e:
+                logger.error(f"Catalog {catalog_name} failed to get record {key}. Error: {e}")
+
+    async def catalog_del(self, catalog_name, key: str):
+        async with self.connection() as nc:
+            try:
+                catalog = await nc.create_key_value(bucket=catalog_name)
+                await catalog.delete(key)
+                logger.debug(f"Catalog {catalog_name} record {key} deleted")
+            except Exception as e:
+                logger.error(f"Catalog {catalog_name} failed to delete record {key}. Error: {e}")
 
     class _ConnectionContextManager:
         def __init__(self, pool):
@@ -82,28 +141,6 @@ class NatsConnectionPool:
         async def __aexit__(self, exc_type, exc_value, traceback):
             await self.pool.put(self.nc)
 
-    def connection(self):
-        return self._ConnectionContextManager(self)
-
-
-async def publish(pool: NatsConnectionPool, subject, message):
-    async with pool.connection() as js:
-        ack = await js.publish(f"{subject}", message)
-    return ack
-
-
-class NatsPoolContainer:
-    def __init__(self, pool: NatsConnectionPool):
-        self.pool = pool
-
-    async def publish(self, subject, message):
-        async with self.pool.connection() as js:
-            ack = await js.publish(f"{subject}", message)
-        return ack
-
-    async def close_connections(self):
-        await self.pool.close_pool()
-
 
 nats_pool: NatsConnectionPool | None = None
 
@@ -115,14 +152,14 @@ def get_nats_pool():
 
 async def initialize_nats_pool(nats_config: NatsConfig):
     global nats_pool
-    nats_pool = NatsPoolContainer(NatsConnectionPool(
-        url=nats_config.nats_url,
-        size=nats_config.nats_pool_size
-    ))
+    nats_pool = NatsConnectionPool(
+        config=nats_config
+    )
 
 
 if __name__ == "__main__":
-    nats_pool = NatsConnectionPool('nats://localhost:32645', 10)
+    nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32645", nats_pool_size=10)
+    nats_pool = NatsConnectionPool(config=nats_config)
 
 
     async def test():

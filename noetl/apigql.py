@@ -1,5 +1,4 @@
 import strawberry
-import json
 from loguru import logger
 from natstream import get_nats_pool
 from config import Config
@@ -113,7 +112,7 @@ class WorkflowMutations:
                 )
 
                 ack = await pool.publish(
-                    subject=f"event.registration.requested.{record.identifier}",
+                    subject=f"event.dispatcher.{record.identifier}",
                     message=record.serialize()
                 )
                 logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
@@ -123,7 +122,7 @@ class WorkflowMutations:
                     event_type=event_type,
                     ack_seq=ack.seq,
                     status="WorkflowConfigRegistrationRequested",
-                    message="Workflow config has been successfully requested for addition"
+                    message="Workflow config registration has been successfully requested"
                 )
 
             except Exception as e:

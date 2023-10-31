@@ -10,7 +10,7 @@ from apigql import schema
 
 
 class ApiConfig(BaseModel):
-    nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32645", nats_pool_size=10)
+    nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32645", nats_pool_size=1)
     host: str = "localhost"
     port: int = 8021
     reload: bool = False
@@ -20,19 +20,19 @@ class ApiConfig(BaseModel):
 
     def update(self, args):
         if args.nats_url:
-            self.nats_config.nats_url = args.nats_url
+            self.nats_config.nats_url = NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size)
         if args.host:
             self.host = args.host
         if args.port:
-            self.port = int(args.port)
+            self.port = args.port
         if args.reload:
             self.reload = args.reload
         if args.workers:
-            self.workers = int(args.workers)
+            self.workers = args.workers
         if args.limit_concurrency:
-            self.limit_concurrency = int(args.limit_concurrency)
+            self.limit_concurrency = args.limit_concurrency
         if args.limit_max_requests:
-            self.limit_max_requests = int(args.limit_max_requests)
+            self.limit_max_requests = args.limit_max_requests
 
 
 app = FastAPI()
@@ -97,6 +97,9 @@ async def http_exception_handler(request, exc):
 
 @app.on_event("startup")
 async def on_startup():
+    """
+    NoETL API startup.
+    """
     global api_config
     await initialize_nats_pool(nats_config=api_config.nats_config)
     logger.info("""NoETL API is starting...""")
@@ -104,16 +107,20 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    """
+    NoETL API shutdown.
+    """
     pool = get_nats_pool()
-    await pool.close_connections()
+    await pool.close_pool()
     REGISTRY.clear()
 
 
 def main(args):
+    import uvicorn
     global api_config
     api_config.update(args)
     try:
-        logger.info(f"Starting NoETL API {args}")
+        logger.info(f"NoETL API starting with {args}")
         uvicorn.run("api:app",
                     host=api_config.host,
                     port=api_config.port,
@@ -127,14 +134,13 @@ def main(args):
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    parser = argparse.ArgumentParser(description="FastAPI Command API")
+    parser = argparse.ArgumentParser(description="NoETL API")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    parser.add_argument("--port", default="8021", help="Port to listen on (default: 8021)")
-    parser.add_argument("--workers", default="1", help="Number of workers (default: 1)")
+    parser.add_argument("--port", type=int, default=8021, help="Port to listen on (default: 8021)")
+    parser.add_argument("--workers", type=int, default=1, help="Number of workers (default: 1)")
     parser.add_argument("--reload", action='store_true', help="Enable auto-reload (default: disabled)")
-    parser.add_argument("--limit_concurrency", default="100", help="Limit concurrency (default: 100)")
-    parser.add_argument("--limit_max_requests", default="100", help="Limit max requests (default: 100)")
+    parser.add_argument("--limit_concurrency", type=int, default=100, help="Limit concurrency (default: 100)")
+    parser.add_argument("--limit_max_requests", type=int, default=100, help="Limit max requests (default: 100)")
     parser.add_argument("--nats_url", default="nats://localhost:32645", help="nats://<host>:<port>")
+    parser.add_argument("--nats_pool_size", type=int, default=10, help="NATS max pool size (default: 10)")
     main(parser.parse_args())

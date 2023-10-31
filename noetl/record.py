@@ -1,4 +1,6 @@
 import struct
+from collections.abc import Sized
+from typing import Any, Union
 import json
 import base64
 from loguru import logger
@@ -162,7 +164,7 @@ class Record:
             )
             return record_struct
         except Exception as e:
-            logger.error(f"Serialize error: {str(e)}.")
+            logger.error(f"Serialize error: {str(e)} {self}.")
 
     @classmethod
     def deserialize(cls, data):

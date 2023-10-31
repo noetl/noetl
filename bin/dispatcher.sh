@@ -2,7 +2,7 @@
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-NOETL_CMD_PATH="$DIR/../noetl/commander.py"
+NOETL_CMD_PATH="$DIR/../noetl/dispatcher.py"
 PROM_HOST="localhost"
 PROM_PORT="9100"
 NATS_URL="nats://localhost:32645"
