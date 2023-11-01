@@ -30,11 +30,11 @@ def validate_command(command_text):
         return False, None, None
 
     command_structures = {
-        "register_workflow_config": ["register", "workflow", "config", str],
+        "register_workflow": ["register", "workflow", str],
     }
 
     for function_name, structure in command_structures.items():
-        if len(tokens) == len(structure):
+        if len(tokens) == len(structure) - 1:
             is_valid = all(t1 == t2 or isinstance(t2, type) and isinstance(t1, t2)
                            for t1, t2 in zip(tokens, structure))
             if is_valid:
@@ -64,14 +64,14 @@ class WorkflowMutations:
     """
     GraphQL Mutations for NoETL Workflows.
 
-    registerWorkflowConfig Example:
+    registerWorkflow Example:
     ```
     mutation {
-      registerWorkflowConfig(
-        tokens: "add workflow config",
+      registerWorkflow(
+        tokens: "add workflow",
         metadata: "{ \"key\": \"value\" }",
         payload: {
-          workflow_config_base64: "Base64 encoded string representing the YAML file"
+          workflow_base64: "Base64 encoded string representing the YAML file"
         }
       ) {
             identifier
@@ -86,7 +86,7 @@ class WorkflowMutations:
     """
 
     @strawberry.mutation
-    async def register_workflow_config(self,
+    async def register_workflow(self,
                                        payload: JSON,
                                        metadata: JSON | None = None,
                                        tokens: str | None = None,
@@ -94,21 +94,20 @@ class WorkflowMutations:
         logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
         pool = get_nats_pool()
         if pool is None:
-            logger.error("NatsPoolContainer is not initialized")
-            raise ValueError("NatsPoolContainer is not initialized")
+            logger.error("NatsPool is not initialized")
+            raise ValueError("NatsPool is not initialized")
         command_validation_result: InputValidationResult = validate_command(tokens)
-        if command_validation_result.function_name == "register_workflow_config":
+        if command_validation_result.function_name == "register_workflow":
             try:
-                logger.debug(type(payload))
-                workflow_config = Config.create_workflow(payload)
-                workflow_name = workflow_config.get_value("metadata.name")
-                event_type = "WorkflowConfigRegistrationRequested"
-                logger.info(workflow_config)
+                workflow_template = Config.create_workflow(payload)
+                workflow_name = workflow_template.get_value("metadata.name")
+                event_type = "WorkflowRegistrationRequested"
+                logger.debug(workflow_template)
                 record = Record.create(
                     name=workflow_name,
                     metadata=metadata | {"event_type": event_type} if metadata else {"event_type": event_type},
                     reference=None,
-                    payload=workflow_config
+                    payload=workflow_template
                 )
 
                 ack = await pool.publish(
@@ -121,8 +120,8 @@ class WorkflowMutations:
                     name=workflow_name,
                     event_type=event_type,
                     ack_seq=ack.seq,
-                    status="WorkflowConfigRegistrationRequested",
-                    message="Workflow config registration has been successfully requested"
+                    status="WorkflowRegistrationRequested",
+                    message="Workflow registration has been successfully requested"
                 )
 
             except Exception as e:
@@ -133,14 +132,14 @@ class WorkflowMutations:
             raise ValueError(f"Request IS NOT added {tokens}")
 
     @strawberry.mutation
-    async def delete_workflow_config(self, workflow_id: str) -> str:
+    async def delete_workflow(self, workflow_id: str) -> str:
         pass
 
 
 @strawberry.type
 class WorkflowQueries:
     @strawberry.field
-    async def get_workflow_config(self, workflow_id: str) -> str:
+    async def get_workflow(self, workflow_id: str) -> str:
         pass
 
 

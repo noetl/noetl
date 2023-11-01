@@ -1,16 +1,18 @@
 from fastapi import FastAPI, HTTPException, Request, Header, Response
 from strawberry.fastapi import GraphQLRouter
-from pydantic import BaseModel
+from dataclasses import dataclass, field
 from typing import List
 from loguru import logger
 import argparse
+import os
 from natstream import NatsConnectionPool, NatsConfig, initialize_nats_pool, get_nats_pool
 from aioprometheus import render, Counter, Registry, REGISTRY
-from apigql import schema
+from gql import schema
 
-
-class ApiConfig(BaseModel):
-    nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32645", nats_pool_size=1)
+@dataclass
+class ApiConfig:
+    nats_config: NatsConfig = field(default_factory=lambda: NatsConfig(nats_url="nats://localhost:32645", nats_pool_size=1))
+    host: str = "localhost"
     host: str = "localhost"
     port: int = 8021
     reload: bool = False
@@ -38,12 +40,12 @@ class ApiConfig(BaseModel):
 app = FastAPI()
 REGISTRY.clear()
 app.registry = Registry()
-app.api_commands_counter = Counter("api_commands_total", "Count of commands")
+app.api_requests_counter = Counter("api_requests_total", "Count of requests")
 app.api_health_check_counter = Counter("api_health_checks_total", "Count of health checks")
 app.api_events_counter = Counter("api_events_total", "Count of events")
 app.api_errors_counter = Counter("api_errors_total", "Count of errors")
 
-app.registry.register(app.api_commands_counter)
+app.registry.register(app.api_requests_counter)
 app.registry.register(app.api_health_check_counter)
 app.registry.register(app.api_events_counter)
 app.registry.register(app.api_errors_counter)
@@ -102,7 +104,7 @@ async def on_startup():
     """
     global api_config
     await initialize_nats_pool(nats_config=api_config.nats_config)
-    logger.info("""NoETL API is starting...""")
+    logger.info("""NoETL API is started.""")
 
 
 @app.on_event("shutdown")
@@ -120,7 +122,7 @@ def main(args):
     global api_config
     api_config.update(args)
     try:
-        logger.info(f"NoETL API starting with {args}")
+        logger.info(f"NoETL API starting with {args}.")
         uvicorn.run("api:app",
                     host=api_config.host,
                     port=api_config.port,
@@ -130,17 +132,25 @@ def main(args):
                     limit_max_requests=api_config.limit_max_requests
                     )
     except Exception as e:
-        logger.error(f"NoETL API error: {e}")
+        logger.error(f"NoETL API error: {e}.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NoETL API")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8021, help="Port to listen on (default: 8021)")
-    parser.add_argument("--workers", type=int, default=1, help="Number of workers (default: 1)")
-    parser.add_argument("--reload", action='store_true', help="Enable auto-reload (default: disabled)")
-    parser.add_argument("--limit_concurrency", type=int, default=100, help="Limit concurrency (default: 100)")
-    parser.add_argument("--limit_max_requests", type=int, default=100, help="Limit max requests (default: 100)")
-    parser.add_argument("--nats_url", default="nats://localhost:32645", help="nats://<host>:<port>")
-    parser.add_argument("--nats_pool_size", type=int, default=10, help="NATS max pool size (default: 10)")
+    parser.add_argument("--host", default=os.getenv("HOST", "0.0.0.0"),
+                        help="Host to bind (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", 8021)),
+                        help="Port to listen on (default: 8021)")
+    parser.add_argument("--workers", type=int, default=int(os.getenv("WORKERS", 1)),
+                        help="Number of workers (default: 1)")
+    parser.add_argument("--reload", action='store_true',
+                        help="Enable auto-reload (default: disabled)")
+    parser.add_argument("--limit_concurrency", type=int, default=int(os.getenv("MAX_CONCURRENCY", 100)),
+                        help="Limit concurrency (default: 100)")
+    parser.add_argument("--limit_max_requests", type=int, default=int(os.getenv("MAX_REQUESTS", 100)),
+                        help="Limit requests (default: 100)")
+    parser.add_argument("--nats_url", default=os.getenv("NATS_URL", "nats://localhost:32645"),
+                        help="nats://<host>:<port>")
+    parser.add_argument("--nats_pool_size", type=int, default=int(os.getenv("NATS_POOL_SIZE", 10)),
+                        help="NATS max pool size (default: 10)")
     main(parser.parse_args())

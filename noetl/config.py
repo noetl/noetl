@@ -149,8 +149,8 @@ class Config(dict):
     @classmethod
     def create_workflow(cls, payload):
         try:
-            payload_config = base64.b64decode(payload.get("workflow_config_base64").encode()).decode()
+            payload_config = base64.b64decode(payload.get("workflow_base64").encode()).decode()
             config = yaml.safe_load(payload_config)
             return cls(config)
         except Exception as e:
-            logger.error(f"NoETL API failed to create config: {str(e)}.")
+            logger.error(f"NoETL API failed to create workflow template: {str(e)}.")

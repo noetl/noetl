@@ -1,4 +1,5 @@
 import argparse
+import os
 import asyncio
 import socket
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from loguru import logger
 
 
 @dataclass
-class NoETLHandler:
+class Plugin:
     events_counter: Counter
     nats_pool: NatsConnectionPool
     records: list[Record] | None = None
@@ -53,8 +54,12 @@ class NoETLHandler:
 
 def parse_args(description, default_nats_url, default_nats_pool_size, default_prom_host, default_prom_port):
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--nats_url", default=default_nats_url, help="NATS server URL")
-    parser.add_argument("--nats_pool_size", type=int, default=default_nats_pool_size, help="NATS pool size")
-    parser.add_argument("--prom_host", default=default_prom_host, help="Prometheus host")
-    parser.add_argument("--prom_port", type=int, default=default_prom_port, help="Prometheus port")
+    parser.add_argument("--nats_url",
+                        default=os.getenv('NATS_URL', default_nats_url), help="NATS server URL")
+    parser.add_argument("--nats_pool_size", type=int,
+                        default=int(os.getenv('NATS_POLL_SIZE', default_nats_pool_size)), help="NATS pool size")
+    parser.add_argument("--prom_host",
+                        default=os.getenv('PROM_HOST', default_prom_host), help="Prometheus host")
+    parser.add_argument("--prom_port", type=int,
+                        default=int(os.getenv('PROM_PORT', default_prom_port)), help="Prometheus port")
     return parser.parse_args()

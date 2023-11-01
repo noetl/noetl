@@ -1,17 +1,16 @@
 import asyncio
-from noetl import NoETLHandler, parse_args
+from plugin import Plugin, parse_args
 from record import Record
 from loguru import logger
 from natstream import NatsConfig
 
 
-class Dispatcher(NoETLHandler):
+class Dispatcher(Plugin):
 
     async def workflow_register(self, data: Record):
-        command = "RegisterWorkflowConfig"
         record = Record.create(
             name=data.name.value,
-            metadata=data.metadata.value | {"command": command},
+            metadata=data.metadata.value | {"command": "RegisterWorkflow"},
             reference=data.identifier,
             payload=data.payload.value
         )
@@ -23,7 +22,7 @@ class Dispatcher(NoETLHandler):
         )
 
     async def switch(self, data):
-        if data.metadata.value.get("event_type") == "WorkflowConfigRegistrationRequested":
+        if data.metadata.value.get("event_type") == "WorkflowRegistrationRequested":
             await self.workflow_register(data)
 
 

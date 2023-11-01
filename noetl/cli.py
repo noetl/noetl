@@ -19,10 +19,10 @@ class Goodbye:
 
 class GraphqlMutation:
     @staticmethod
-    def register_workflow_config(payload, tokens=None, metadata=None):
+    def register_workflow(payload, tokens=None, metadata=None):
         mutation = """
-        mutation RegisterWorkflowConfig($payload: JSON!, $metadata: JSON,$tokens: String ) {
-          registerWorkflowConfig(payload: $payload, metadata: $metadata, tokens: $tokens) {
+        mutation RegisterWorkflow($payload: JSON!, $metadata: JSON,$tokens: String ) {
+          registerWorkflow(payload: $payload, metadata: $metadata, tokens: $tokens) {
             identifier
             name
             eventType
@@ -55,7 +55,7 @@ def noetl_api(mutation, tokens, metadata=None, payload=None):
     try:
         response = requests.post(
             "http://localhost:8021/noetl",
-            json=GraphqlMutation.register_workflow_config(payload=payload, metadata=metadata, tokens=tokens)
+            json=GraphqlMutation.register_workflow(payload=payload, metadata=metadata, tokens=tokens)
         )
         response.raise_for_status()
         result = response.json()
@@ -85,7 +85,7 @@ def validate_command(command):
     if not is_api_running:
         logger.error("NoETL API not responding")
         raise
-    pattern = re.compile(r'^register workflow config file (.+)$', re.IGNORECASE)
+    pattern = re.compile(r'^register workflow (.+)$', re.IGNORECASE)
     match = pattern.match(command)
     if match:
         file_path = match.group(1).strip()
@@ -102,13 +102,13 @@ def validate_command(command):
 
         metadata = {
             "source": "noetl-cli",
-            "request": "api.request.register_workflow_config"
+            "request": "api.request.register_workflow"
         }
         payload = {
-            "workflow_config_base64": encoded_config
+            "workflow_base64": encoded_config
         }
 
-        response = noetl_api(mutation="registerWorkflowConfig", tokens="register workflow config file", metadata=metadata,
+        response = noetl_api(mutation="registerWorkflow", tokens="register workflow", metadata=metadata,
                              payload=payload)
         if response is not None:
             logger.info(response)
@@ -131,8 +131,7 @@ def validate_command(command):
 
 def main():
     """
-    python noetl/cli.py register workflow config file "workflows/time/get-current-time.yaml"
-    :return:
+    python noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
     """
     try:
         if len(sys.argv) > 1:

@@ -1,11 +1,11 @@
 import asyncio
-from noetl import NoETLHandler, parse_args
+from plugin import Plugin, parse_args
 from record import Record
 from loguru import logger
 from natstream import NatsConfig
 
 
-class Registrar(NoETLHandler):
+class Registrar(Plugin):
 
     async def create_workflow_catalog(self):
         await self.nats_pool.catalog_create(catalog_name="workflows")
@@ -36,7 +36,7 @@ class Registrar(NoETLHandler):
 
     async def workflow_register(self, data: Record):
         key = await self.add_workflow(record=data)
-        event = "WorkflowTemplateRegistered"
+        event = "WorkflowRegistered"
         record = Record.create(
             name=data.name.value,
             metadata=data.metadata.value | {"event": event},
@@ -51,7 +51,7 @@ class Registrar(NoETLHandler):
         )
 
     async def switch(self, data):
-        if data.metadata.value.get("event_type") == "WorkflowConfigRegistrationRequested":
+        if data.metadata.value.get("event_type") == "WorkflowRegistrationRequested":
             await self.workflow_register(data)
 
 
