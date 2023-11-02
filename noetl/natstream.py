@@ -76,56 +76,56 @@ class NatsConnectionPool:
                 logger.info("NATS connection closed.")
         logger.info("NATS connections in the pool closed.")
 
-    async def catalog_create(self, catalog_name: str):
+    async def bucket_create(self, bucket_name: str):
         async with self.connection() as nc:
             try:
-                catalog = await nc.create_key_value(bucket=catalog_name)
-                logger.info(f"Catalog {catalog_name} created.")
-                return catalog
+                bucket = await nc.create_key_value(bucket=bucket_name)
+                logger.info(f"Bucket {bucket_name} created.")
+                return bucket
             except Exception as e:
-                print(f"Catalog create error: {e}")
+                print(f"Bucket create error: {e}")
 
-    async def catalog_delete(self, catalog_name: str):
+    async def bucket_delete(self, bucket_name: str):
         async with self.connection() as nc:
             try:
-                catalog = await nc.create_key_value(catalog_name)
-                await catalog.delete(catalog_name)
-                logger.info(f"Catalog {catalog_name} deleted.")
+                bucket = await nc.create_key_value(bucket_name)
+                await bucket.delete(bucket_name)
+                logger.info(f"Bucket {bucket_name} deleted.")
             except Exception as e:
-                print(f"Catalog delete error: {e}")
+                print(f"Bucket delete error: {e}")
 
-    async def catalog_add(self, catalog_name: str, record: Record):
+    async def kv_put(self, bucket_name: str, record: Record):
         async with self.connection() as nc:
             try:
                 # catalog = await nc.kv(catalog_name)
-                catalog = await nc.create_key_value(bucket=catalog_name)
-                await catalog.put(record.name.value, record.payload.serialize())
-                entry = await catalog.get(record.name.value)
+                kv = await nc.create_key_value(bucket=bucket_name)
+                await kv.put(record.name.value, record.payload.serialize())
+                entry = await kv.get(record.name.value)
                 entry_value = RecordField.deserialize(entry.value)
                 logger.debug(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
                 return entry.key
             except Exception as e:
-                logger.error(f"Catalog {catalog_name} failed to add record {record}. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to add record {record}. Error: {e}")
 
-    async def catalog_get(self, catalog_name, key: str):
+    async def kv_get(self, bucket_name, key: str):
         async with self.connection() as nc:
             try:
-                catalog = await nc.create_key_value(bucket=catalog_name)
-                entry = await catalog.get(key)
+                kv = await nc.create_key_value(bucket=bucket_name)
+                entry = await kv.get(key)
                 entry_value = RecordField.deserialize(entry.value)
                 logger.debug(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
                 return entry.value
             except Exception as e:
-                logger.error(f"Catalog {catalog_name} failed to get record {key}. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
 
-    async def catalog_del(self, catalog_name, key: str):
+    async def kv_rm(self, bucket_name, key: str):
         async with self.connection() as nc:
             try:
-                catalog = await nc.create_key_value(bucket=catalog_name)
-                await catalog.delete(key)
-                logger.debug(f"Catalog {catalog_name} record {key} deleted")
+                kv = await nc.create_key_value(bucket=bucket_name)
+                await kv.delete(key)
+                logger.debug(f"Bucket {bucket_name} record {key} deleted")
             except Exception as e:
-                logger.error(f"Catalog {catalog_name} failed to delete record {key}. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to delete record {key}. Error: {e}")
 
     class _ConnectionContextManager:
         def __init__(self, pool):

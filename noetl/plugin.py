@@ -37,10 +37,46 @@ class Plugin:
         async with self.nats_pool.connection() as nc:
             await nc.publish(subject, message)
 
+    async def command_write(self, subject: str, message: bytes):
+        await self.nats_write(f"command.{subject}", message)
+
+    async def event_write(self, subject: str, message: bytes):
+        await self.nats_write(f"event.{subject}", message)
+
     async def process_stream(self, msg):
         input_data = Record.deserialize(msg.data)
         _ = await self.switch(input_data)
         logger.debug(input_data)
+
+    async def workflow_catalog_create(self):
+        await self.nats_pool.bucket_create(bucket_name="workflows")
+
+    async def workflow_catalog_delete(self):
+        await self.nats_pool.bucket_delete(bucket_name="workflows")
+
+    async def workflow_put(self, record: Record):
+        return await self.nats_pool.kv_put(bucket_name="workflows", record=record)
+
+    async def workflow_get(self, key: str):
+        return await self.nats_pool.kv_get(bucket_name="workflows", key=key)
+
+    async def workflow_rm(self, key: str):
+        await self.nats_pool.kv_rm(bucket_name="workflows", key=key)
+
+    async def plugin_catalog_create(self):
+        await self.nats_pool.bucket_create(bucket_name="plugins")
+
+    async def plugin_catalog_delete(self):
+        await self.nats_pool.kv_rm(bucket_name="plugins")
+
+    async def plugin_put(self, record: Record):
+        await self.nats_pool.kv_put(bucket_name="plugins", record=record)
+
+    async def plugin_get(self, key: str):
+        await self.nats_pool.kv_get(bucket_name="plugins", key=key)
+
+    async def plugin_rm(self, key: str):
+        await self.nats_pool.kv_rm(bucket_name="plugins", key=key)
 
     async def switch(self, data):
         raise NotImplementedError("Subclasses must implement this method")
