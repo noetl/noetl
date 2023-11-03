@@ -48,10 +48,10 @@ class Plugin:
         _ = await self.switch(input_data)
         logger.debug(input_data)
 
-    async def workflow_catalog_create(self):
+    async def workflow_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="workflows")
 
-    async def workflow_catalog_delete(self):
+    async def workflow_bucket_delete(self):
         await self.nats_pool.bucket_delete(bucket_name="workflows")
 
     async def workflow_put(self, record: Record):

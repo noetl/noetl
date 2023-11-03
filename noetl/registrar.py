@@ -18,8 +18,8 @@ class Registrar(Plugin):
         )
         logger.debug(record)
 
-        await self.nats_write(
-            subject=f"event.result.{record.identifier}",
+        await self.event_write(
+            subject=f"dispatcher.{record.identifier}",
             message=record.serialize()
         )
 

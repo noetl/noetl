@@ -16,8 +16,8 @@ class Dispatcher(Plugin):
         )
         logger.debug(record)
 
-        await self.nats_write(
-            subject=f"command.registrar.{record.identifier}",
+        await self.command_write(
+            subject=f"registrar.{record.identifier}",
             message=record.serialize()
         )
 
