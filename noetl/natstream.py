@@ -118,7 +118,7 @@ class NatsConnectionPool:
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
 
-    async def kv_rm(self, bucket_name, key: str):
+    async def kv_delete(self, bucket_name, key: str):
         async with self.connection() as nc:
             try:
                 kv = await nc.create_key_value(bucket=bucket_name)

@@ -60,14 +60,14 @@ class Plugin:
     async def workflow_get(self, key: str):
         return await self.nats_pool.kv_get(bucket_name="workflows", key=key)
 
-    async def workflow_rm(self, key: str):
-        await self.nats_pool.kv_rm(bucket_name="workflows", key=key)
+    async def workflow_delete(self, key: str):
+        await self.nats_pool.kv_delete(bucket_name="workflows", key=key)
 
-    async def plugin_catalog_create(self):
+    async def plugin_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="plugins")
 
-    async def plugin_catalog_delete(self):
-        await self.nats_pool.kv_rm(bucket_name="plugins")
+    async def plugin_bucket_delete(self):
+        await self.nats_pool.kv_delete(bucket_name="plugins")
 
     async def plugin_put(self, record: Record):
         await self.nats_pool.kv_put(bucket_name="plugins", record=record)
@@ -75,8 +75,8 @@ class Plugin:
     async def plugin_get(self, key: str):
         await self.nats_pool.kv_get(bucket_name="plugins", key=key)
 
-    async def plugin_rm(self, key: str):
-        await self.nats_pool.kv_rm(bucket_name="plugins", key=key)
+    async def plugin_delete(self, key: str):
+        await self.nats_pool.kv_delete(bucket_name="plugins", key=key)
 
     async def switch(self, data):
         raise NotImplementedError("Subclasses must implement this method")
