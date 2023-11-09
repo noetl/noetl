@@ -1,153 +1,133 @@
 import sys
 import requests
-import re
 import os
-import json
 from loguru import logger
 import base64
 
-cwd = os.getcwd()
-csd = os.path.dirname(os.path.abspath(__file__))
+CWD = os.getcwd()
+CSD = os.path.dirname(os.path.abspath(__file__))
+API_URL = os.getenv('NOETL_API_URL', "http://localhost:8021/noetl")
 
 
-class Goodbye:
-    @staticmethod
-    def exit():
-        logger.info("\nGoodbye...")
-        sys.exit()
+class TokenCommand:
+    def __init__(self, payload, metadata, tokens, handler):
+        self.payload = payload
+        self.metadata = metadata
+        self.tokens = tokens
+        self.handler = handler
 
+    @classmethod
+    def create(cls, tokens):
+        logger.info(tokens)
+        tokens_list = tokens.split(" ")
+        if tokens_list[0].lower() == "exit":
+            logger.info("\nGoodbye...")
+            sys.exit()
+        elif len(tokens_list) > 2:
+            handler = f"{tokens_list[0]}_{tokens_list[1]}"
+            args = tokens_list[2:]
 
-class GraphqlMutation:
-    @staticmethod
-    def register_workflow(payload, tokens=None, metadata=None):
-        mutation = """
-        mutation RegisterWorkflow($payload: JSON!, $metadata: JSON,$tokens: String ) {
-          registerWorkflow(payload: $payload, metadata: $metadata, tokens: $tokens) {
-            identifier
-            name
-            eventType
-            ackSeq
-            status
-            message
-          }
+            if handler == "register_workflow":
+                with open(args[0], 'r') as file:
+                    file_content = base64.b64encode(file.read().encode()).decode()
+                return cls(
+                    payload={"workflow_base64": file_content},
+                    metadata={"source": "noetl-cli", "request": "api.request.register_workflow"},
+                    tokens=f"{tokens_list[0]} {tokens_list[1]}",
+                    handler=handler
+                )
+            elif handler == "register_plugin":
+                if len(args) == 2:
+                    return cls(
+                        payload={"plugin_name": args[0], "image_url": args[1]},
+                        metadata={"source": "noetl-cli", "request": "api.request.register_plugin"},
+                        tokens=tokens,
+                        handler=handler
+                    )
+        raise ValueError(f"Unknown command: {tokens}")
+
+    def execute(self):
+        mutation = {
+            "query": self.create_mutation(),
+            "variables": {
+                "payload": self.payload,
+                "metadata": self.metadata,
+                "tokens": self.tokens
+            }
         }
-        """
-        payload_json = payload if payload is not None else None
-        metadata_json = metadata if metadata is not None else None
+        graphql_request(mutation)
 
-        variables = {
-            "payload": payload_json,
-            "metadata": metadata_json,
-            "tokens": tokens,
-        }
-        return {
-            "query": mutation,
-            "variables": variables
-        }
+    def create_mutation(self):
+        if self.handler == "register_workflow":
+            return """
+                    mutation RegisterWorkflow($payload: JSON!, $metadata: JSON, $tokens: String) {
+                        registerWorkflow(payload: $payload, metadata: $metadata, tokens: $tokens) {
+                            identifier
+                            name
+                            eventType
+                            ackSeq
+                            status
+                            message
+                        }
+                    }
+                    """
+        if self.handler == "register_plugin":
+            return """
+            mutation RegisterPlugin($payload: JSON!, $metadata: JSON, $tokens: String) {
+              registerPlugin(payload: $payload, metadata: $metadata, tokens: $tokens) {
+                identifier
+                name
+                eventType
+                ackSeq
+                status
+                message
+              }
+            }
+            """
+
+        else:
+            raise NotImplementedError(f"Mutation for tokens '{self.tokens}' does not exists.")
 
 
-def noetl_api(mutation, tokens, metadata=None, payload=None):
-    if payload is None:
-        payload = {"message": "empty payload"}
-    if metadata is None:
-        metadata = {"message": "empty metadata"}
-    logger.info(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
+def graphql_request(mutation):
     try:
-        response = requests.post(
-            "http://localhost:8021/noetl",
-            json=GraphqlMutation.register_workflow(payload=payload, metadata=metadata, tokens=tokens)
-        )
+        response = requests.post(API_URL, json=mutation)
         response.raise_for_status()
-        result = response.json()
-        return result
-    except requests.exceptions.Timeout:
-        logger.error(f"NoETL API request timed out.")
-        return None
-    except requests.exceptions.ConnectionError:
-        logger.error(f"NoETL API is not running.")
-        return None
-    except Exception as e:
-        logger.error(f"NoETL command validation error: {str(e)}.")
+        print(response.json())
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request error: {e}")
         return None
 
 
 def is_api_running():
     try:
-        response = requests.get("http://localhost:8021/health")
-        if response.status_code == 200:
-            return True
-    except Exception as e:
-        logger.info(f"NoETL API is not healthy: {str(e)}.")
-    return False
-
-
-def validate_command(command):
-    if not is_api_running:
-        logger.error("NoETL API not responding")
-        raise
-    pattern = re.compile(r'^register workflow (.+)$', re.IGNORECASE)
-    match = pattern.match(command)
-    if match:
-        file_path = match.group(1).strip()
-        if not os.path.exists(file_path):
-            logger.error(f"File not found: {file_path}")
-            return
-        try:
-            with open(file_path, 'r') as file:
-                file_source = file.read()
-                encoded_config = base64.b64encode(file_source.encode()).decode()
-        except Exception as e:
-            logger.error(f"Error reading file: {str(e)}")
-            return
-
-        metadata = {
-            "source": "noetl-cli",
-            "request": "api.request.register_workflow"
-        }
-        payload = {
-            "workflow_base64": encoded_config
-        }
-
-        response = noetl_api(mutation="registerWorkflow", tokens="register workflow", metadata=metadata,
-                             payload=payload)
-        if response is not None:
-            logger.info(response)
-        else:
-            logger.info("NoETL API is not responding.")
-    else:
-        metadata = {
-            "source": "noetl-cli",
-            "command": "api.spellcheck"
-        }
-        payload = {
-            "command": command
-        }
-        result = noetl_api(mutation="spellcheck", tokens=command, metadata=metadata, payload=payload)
-        if result is not None:
-            logger.info(result)
-        else:
-            logger.info("NoETL API is not responding.")
+        response = requests.get(f"{API_URL}/health")
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        logger.error(f"NoETL API health check failed: {e}")
+        return False
 
 
 def main():
     """
-    python noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
+    NoETL command line interface.
+    Usage:
+      - To register a workflow: python noetl/cli.py register workflow "<path_to_workflow_yaml>"
+      - To register a plugin: python noetl/cli.py register plugin "<plugin_name>" "<image_url>"
+      - To exit the CLI: Type 'exit' when prompted for a command.
+    The NoETL CLI supports registering workflows and plugins by sending GraphQL mutations to the NoETL API endpoint.
+    Set the NoETL API endpoint with an environment variable, e.g., NOETL_API_URL="http://localhost:8021/noetl".
     """
     try:
         if len(sys.argv) > 1:
-            command = " ".join(sys.argv[1:])
-            logger.info(command)
-            validate_command(command)
+            TokenCommand.create(" ".join(sys.argv[1:])).execute()
         else:
-            logger.info("NoETL command line terminal.\nEnter a command or 'exit' to quit")
+            logger.info("NoETL command line terminal.\nEnter a <command> or 'exit' to quit")
             while True:
-                command = input("> ")
-                if command.lower() == 'exit':
-                    Goodbye.exit()
-                    break
-                validate_command(command.lstrip())
+                TokenCommand.create(input("> ").lstrip()).execute()
+
     except KeyboardInterrupt:
-        Goodbye.exit()
+        TokenCommand.create("exit").execute()
     except Exception as e:
         logger.info(f"NoETL cli error: {str(e)}.")
 

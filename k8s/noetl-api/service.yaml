@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: noetl-api
+  namespace: noetl
+spec:
+  selector:
+    app: noetl-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8021

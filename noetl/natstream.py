@@ -8,14 +8,27 @@ from record import Record, RecordField
 
 @dataclass
 class NatsConfig:
-    nats_url: str = "nats://localhost:32645"
-    nats_pool_size: int = 10
+    nats_url: str
+    nats_pool_size: int
 
 
 class NatsConnectionPool:
-    def __init__(self, config: NatsConfig):
-        self.config: NatsConfig = config
-        self.pool = asyncio.Queue()
+    _instance = None
+
+    def __new__(cls, config: NatsConfig | None):
+        if cls._instance is None:
+            cls._instance = super(NatsConnectionPool, cls).__new__(cls)
+            cls._instance.config = config
+            cls._instance.pool = asyncio.Queue()
+        else:
+            raise Exception("NatsConnectionPool is a singleton")
+        return cls._instance
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            raise Exception("NatsConnectionPool instance was not initialized.")
+        return cls._instance
 
     async def get(self):
         try:
@@ -140,21 +153,6 @@ class NatsConnectionPool:
 
         async def __aexit__(self, exc_type, exc_value, traceback):
             await self.pool.put(self.nc)
-
-
-nats_pool: NatsConnectionPool | None = None
-
-
-def get_nats_pool():
-    global nats_pool
-    return nats_pool
-
-
-async def initialize_nats_pool(nats_config: NatsConfig):
-    global nats_pool
-    nats_pool = NatsConnectionPool(
-        config=nats_config
-    )
 
 
 if __name__ == "__main__":

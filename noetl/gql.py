@@ -1,6 +1,6 @@
 import strawberry
 from loguru import logger
-from natstream import get_nats_pool
+from natstream import NatsConnectionPool
 from config import Config
 from record import Record
 from pydantic import BaseModel
@@ -31,6 +31,7 @@ def validate_command(command_text):
 
     command_structures = {
         "register_workflow": ["register", "workflow", str],
+        "register_plugin": ["register", "plugin", str],
     }
 
     for function_name, structure in command_structures.items():
@@ -50,7 +51,7 @@ class ResponseMessage:
 
 
 @strawberry.type
-class WorkflowResponse:
+class RegistrationResponse:
     identifier: str
     name: str
     event_type: str
@@ -68,7 +69,7 @@ class WorkflowMutations:
     ```
     mutation {
       registerWorkflow(
-        tokens: "add workflow",
+        tokens: "register workflow",
         metadata: "{ \"key\": \"value\" }",
         payload: {
           workflow_base64: "Base64 encoded string representing the YAML file"
@@ -90,9 +91,9 @@ class WorkflowMutations:
                                        payload: JSON,
                                        metadata: JSON | None = None,
                                        tokens: str | None = None,
-                                       ) -> WorkflowResponse:
+                                       ) -> RegistrationResponse:
         logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
-        pool = get_nats_pool()
+        pool = NatsConnectionPool.get_instance()
         if pool is None:
             logger.error("NatsPool is not initialized")
             raise ValueError("NatsPool is not initialized")
@@ -115,7 +116,7 @@ class WorkflowMutations:
                     message=record.serialize()
                 )
                 logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
-                return WorkflowResponse(
+                return RegistrationResponse(
                     identifier=record.identifier,
                     name=workflow_name,
                     event_type=event_type,
@@ -149,8 +150,48 @@ class WorkflowQueries:
 @strawberry.type
 class PluginMutations:
     @strawberry.mutation
-    async def add_plugin(self, plugin_data: JSON) -> str:
-        pass
+    async def register_plugin(self,
+                                       payload: JSON,
+                                       metadata: JSON | None = None,
+                                       tokens: str | None = None,
+                                       ) -> RegistrationResponse:
+        logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
+        pool = NatsConnectionPool.get_instance()
+        if pool is None:
+            logger.error("NatsPool is not initialized")
+            raise ValueError("NatsPool is not initialized")
+        command_validation_result: InputValidationResult = validate_command(tokens)
+        if command_validation_result.function_name == "register_plugin":
+            try:
+                plugin_name = payload.get("plugin_name")
+                event_type = "PluginRegistrationRequested"
+                record = Record.create(
+                    name=plugin_name,
+                    metadata=metadata | {"event_type": event_type} if metadata else {"event_type": event_type},
+                    reference=None,
+                    payload=payload
+                )
+
+                ack = await pool.publish(
+                    subject=f"event.dispatcher.{record.identifier}",
+                    message=record.serialize()
+                )
+                logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
+                return RegistrationResponse(
+                    identifier=record.identifier,
+                    name=plugin_name,
+                    event_type=event_type,
+                    ack_seq=ack.seq,
+                    status="PluginRegistrationRequested",
+                    message="Plugin registration has been successfully requested"
+                )
+
+            except Exception as e:
+                logger.error(f"Request failed due to error: {str(e)}")
+                raise ValueError(f"Request failed due to error: {str(e)}")
+        else:
+            logger.error(f"Request IS NOT added {tokens}")
+            raise ValueError(f"Request IS NOT added {tokens}")
 
     @strawberry.mutation
     async def delete_plugin(self, plugin_id: str) -> str:
