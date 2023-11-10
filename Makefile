@@ -1,18 +1,23 @@
 GHCR_USERNAME=noetl
 VERSION=latest
 K8S_DIR=k8s
+define get_nats_port
+$(shell kubectl get svc nats -n nats -o=jsonpath='{.spec.ports[0].nodePort}')
+endef
 
-
+NATS_URL = nats://localhost:$(call get_nats_port)
 API_SERVICE_NAME=noetl-api
 DISPATCHER_SERVICE_NAME=noetl-dispatcher
 REGISTRAR_SERVICE_NAME=noetl-registrar
-
 API_DOCKERFILE=docker/api/Dockerfile-api
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 
-all: build-api build-dispatcher build-registrar
-.PHONY: build-api build-dispatcher build-registrar
+all: build-all push-all
+
+build-all: build-api build-dispatcher build-registrar
+.PHONY: build-api build-dispatcher build-registrar build-all clean
+
 build-api:
 	docker build --build-arg PRJ_PATH=../../ -f $(API_DOCKERFILE) -t $(API_SERVICE_NAME) .
 
@@ -58,7 +63,7 @@ push-all: push-api push-dispatcher push-registrar
 .PHONY: docker-login tag-api tag-dispatcher tag-registrar push-api push-dispatcher push-registrar push-all
 
 api-all: delete-api build-api tag-api push-api deploy-api
-	@echo "NoETL api service deployed to Kubernetes"
+	@echo "Redeploy NoETL api service to Kubernetes"
 
 .PHONY: deploy-api deploy-dispatcher deploy-registrar deploy-api api-all
 
@@ -79,7 +84,7 @@ deploy-registrar:
 	@kubectl apply -f $(K8S_DIR)/noetl-registrar/service.yaml
 
 deploy-all: deploy-api deploy-dispatcher deploy-registrar
-	@echo "NoETL core services deployed to Kubernetes"
+	@echo "Redeploy NoETL core services to Kubernetes"
 
 
 .PHONY: delete-api
@@ -92,7 +97,7 @@ delete-api:
 
 
 nats-all: nats-delete-events nats-delete-commands nats-delete-events nats-create-commands
-	@echo "NATS reset all streams in Kubernetes"
+	@echo "Reset all NATS streams in Kubernetes"
 
 .PHONY: nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all
 
@@ -111,3 +116,19 @@ nats-delete-commands:
 nats-create-commands:
 	@echo "Creating NATS commands"
 	@kubectl apply -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
+
+.PHONY: purge-commands purge-events purge-all stream-ls
+
+purge-all: purge-commands purge-events stream-ls
+	@echo "Purged NATS events and commands streams"
+
+purge-commands:
+	@echo "Purging NATS commands streams"
+	@nats stream purge commands --force -s $(NATS_URL)
+
+purge-events:
+	@echo "Purging NATS events streams"
+	@nats stream purge events --force -s $(NATS_URL)
+
+stream-ls:
+	@nats stream ls -s $(NATS_URL)
