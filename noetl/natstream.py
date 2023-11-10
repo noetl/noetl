@@ -1,5 +1,6 @@
 import asyncio
 import nats
+from nats.js.api import StreamConfig
 from dataclasses import dataclass
 from nats.aio.errors import ErrTimeout
 from loguru import logger
@@ -78,6 +79,14 @@ class NatsConnectionPool:
             ack = await js.publish(f"{subject}", message)
         return ack
 
+    async def truncate_stream(self, stream_name):
+        try:
+            async with self.connection() as js:
+                await js.update_stream(name=stream_name, config=StreamConfig(max_msgs=0))
+                print(f"Stream {stream_name} truncated.")
+        except Exception as e:
+            print(f"Error truncating stream: {e}")
+
     async def close_pool(self):
         while not self.pool.empty():
             nc = await self.pool.get()
@@ -130,6 +139,15 @@ class NatsConnectionPool:
                 return entry.value
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
+
+    async def kv_get_all(self, bucket_name):
+        async with self.connection() as nc:
+            try:
+                kv = await nc.create_key_value(bucket=bucket_name)
+                keys = await kv.keys()
+                return keys
+            except Exception as e:
+                logger.error(f"Bucket {bucket_name} failed to get keys. Error: {e}")
 
     async def kv_delete(self, bucket_name, key: str):
         async with self.connection() as nc:

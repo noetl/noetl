@@ -23,32 +23,53 @@ class TokenCommand:
         if tokens_list[0].lower() == "exit":
             logger.info("\nGoodbye...")
             sys.exit()
-        elif len(tokens_list) > 2:
+        elif len(tokens_list) > 1:
             handler = f"{tokens_list[0]}_{tokens_list[1]}"
             args = tokens_list[2:]
-
-            if handler == "register_workflow":
-                with open(args[0], 'r') as file:
-                    file_content = base64.b64encode(file.read().encode()).decode()
-                return cls(
-                    payload={"workflow_base64": file_content},
-                    metadata={"source": "noetl-cli", "request": "api.request.register_workflow"},
-                    tokens=f"{tokens_list[0]} {tokens_list[1]}",
-                    handler=handler
-                )
-            elif handler == "register_plugin":
-                if len(args) == 2:
+            match handler:
+                case "register_workflow":
+                    with open(args[0], 'r') as file:
+                        file_content = base64.b64encode(file.read().encode()).decode()
                     return cls(
-                        payload={"plugin_name": args[0], "image_url": args[1]},
-                        metadata={"source": "noetl-cli", "request": "api.request.register_plugin"},
-                        tokens=tokens,
+                        payload={"workflow_base64": file_content},
+                        metadata={"source": "noetl-cli", "request": "api.request.register_workflow"},
+                        tokens=f"{tokens_list[0]} {tokens_list[1]}",
                         handler=handler
+                    )
+                case "register_plugin":
+                    if len(args) == 2:
+                        return cls(
+                            payload={"plugin_name": args[0], "image_url": args[1]},
+                            metadata={"source": "noetl-cli", "request": "api.request.register_plugin"},
+                            tokens=tokens,
+                            handler=handler
+                        )
+                case "list_workflows":
+                    return cls(
+                        payload={},
+                        metadata={},
+                        tokens="list workflows",
+                        handler="list_workflows"
+                    )
+                case "delete_events":
+                    return cls(
+                        payload={},
+                        metadata={},
+                        tokens="delete_events",
+                        handler="delete_events"
+                    )
+                case "delete_commands":
+                    return cls(
+                        payload={},
+                        metadata={},
+                        tokens="delete commands",
+                        handler="delete_commands"
                     )
         raise ValueError(f"Unknown command: {tokens}")
 
     def execute(self):
         mutation = {
-            "query": self.create_mutation(),
+            "query": self.create_gql(),
             "variables": {
                 "payload": self.payload,
                 "metadata": self.metadata,
@@ -57,36 +78,58 @@ class TokenCommand:
         }
         graphql_request(mutation)
 
-    def create_mutation(self):
-        if self.handler == "register_workflow":
-            return """
-                    mutation RegisterWorkflow($payload: JSON!, $metadata: JSON, $tokens: String) {
-                        registerWorkflow(payload: $payload, metadata: $metadata, tokens: $tokens) {
-                            identifier
-                            name
-                            eventType
-                            ackSeq
-                            status
-                            message
+    def create_gql(self):
+        match self.handler:
+            case "register_workflow":
+                return """
+                        mutation RegisterWorkflow($payload: JSON!, $metadata: JSON, $tokens: String) {
+                            registerWorkflow(payload: $payload, metadata: $metadata, tokens: $tokens) {
+                                identifier
+                                name
+                                eventType
+                                ackSeq
+                                status
+                                message
+                            }
                         }
+                        """
+            case "register_plugin":
+                return """
+                mutation RegisterPlugin($payload: JSON!, $metadata: JSON, $tokens: String) {
+                  registerPlugin(payload: $payload, metadata: $metadata, tokens: $tokens) {
+                    identifier
+                    name
+                    eventType
+                    ackSeq
+                    status
+                    message
+                  }
+                }
+                """
+            case "list_workflows":
+                return """
+                query ListWorkflows {
+                    listWorkflows
+                }
+                """
+            case "delete_events":
+                return """
+                mutation DeleteEvents {
+                    deleteEvents {
+                        message
                     }
-                    """
-        if self.handler == "register_plugin":
-            return """
-            mutation RegisterPlugin($payload: JSON!, $metadata: JSON, $tokens: String) {
-              registerPlugin(payload: $payload, metadata: $metadata, tokens: $tokens) {
-                identifier
-                name
-                eventType
-                ackSeq
-                status
-                message
-              }
-            }
-            """
-
-        else:
-            raise NotImplementedError(f"Mutation for tokens '{self.tokens}' does not exists.")
+                }
+                """
+            case "delete_commands":
+                return """
+                mutation DeleteCommands {
+                    deleteCommands {
+                        message
+                    }
+                }
+                """
+            case _:
+                raise NotImplementedError(f"Mutation for tokens '{self.tokens}' does not exists.")
 
 
 def graphql_request(mutation):

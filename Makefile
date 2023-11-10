@@ -92,3 +92,25 @@ delete-api:
 	@kubectl delete -f $(K8S_DIR)/noetl-api/deployment.yaml -n noetl
 	@kubectl delete -f $(K8S_DIR)/noetl-api/service.yaml -n noetl
 	@kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl
+
+
+nats-all: nats-delete-events nats-delete-commands nats-delete-events nats-create-commands
+	@echo "NATS reset all streams in Kubernetes"
+
+.PHONY: nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all
+
+nats-delete-events:
+	@echo "Deleting NATS events"
+	@kubectl delete -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
+
+nats-create-events:
+	@echo "Creating NATS events"
+	@kubectl apply -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
+
+nats-delete-commands:
+	@echo "Deleting NATS commands"
+	@kubectl delete -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
+
+nats-create-commands:
+	@echo "Creating NATS commands"
+	@kubectl apply -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats

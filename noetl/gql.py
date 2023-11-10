@@ -29,20 +29,40 @@ def validate_command(command_text):
     if not tokens:
         return False, None, None
 
+    match_command = None
+    match_token_count = 0
     command_structures = {
         "register_workflow": ["register", "workflow", str],
+        "run_workflow": ["run", "workflow", str],
+        "describe_workflow": ["describe", "workflow", str],
+        "show_workflow": ["show", "workflow", str],
+        "stop_workflow": ["stop", "workflow", str],
+        "kill_workflow": ["kill", "workflow", str],
+        "drop_workflow": ["drop", "workflow", str],
+        "list_workflows": ["list", "workflows"],
+        "list_events": ["list", "events"],
+        "list_commands": ["list", "commands"],
+        "list_plugins": ["list", "plugins"],
+        "delete_events": ["delete", "events"],
+        "delete_commands": ["delete", "commands"],
         "register_plugin": ["register", "plugin", str],
+        "describe_plugin": ["describe", "plugin", str],
+        "delete_plugin": ["delete", "plugin", str],
     }
 
     for function_name, structure in command_structures.items():
-        if len(tokens) == len(structure) - 1:
-            is_valid = all(t1 == t2 or isinstance(t2, type) and isinstance(t1, t2)
-                           for t1, t2 in zip(tokens, structure))
-            if is_valid:
-                return InputValidationResult(is_valid=True, function_name=function_name,
-                                             message=" ".join(tokens[len(structure):]))
+        match_length = min(len(tokens), len(structure) - 1)
+        is_valid = all(t1 == t2 or isinstance(t2, type) and isinstance(t1, t2)
+                       for t1, t2 in zip(tokens[:match_length], structure))
+        if is_valid and match_length >= match_token_count:
+            match_command = function_name
+            match_token_count = match_length
 
-    return InputValidationResult()
+    if match_command:
+        return InputValidationResult(is_valid=True, function_name=match_command,
+                                     message=" ".join(tokens[match_token_count:]))
+    else:
+        return InputValidationResult()
 
 
 @strawberry.type
@@ -143,6 +163,21 @@ class WorkflowQueries:
     async def get_workflow(self, workflow_id: str) -> str:
         pass
 
+    @strawberry.field
+    async def list_workflows(self) -> JSON:
+        """
+        Retrieves list all workflows in the NATS KV store.
+        """
+        pool = NatsConnectionPool.get_instance()
+
+
+        try:
+            keys = await pool.kv_get_all("workflows")
+            return {"workflows": keys}
+        except Exception as e:
+            logger.error(f"Error listing workflows: {e}")
+            return {"error": str(e)}
+
 
 # plugin
 
@@ -205,9 +240,32 @@ class PluginQueries:
         pass
 
 
-# schema
 @strawberry.type
-class Mutations(WorkflowMutations, PluginMutations):
+class EventCommandMutations:
+    @strawberry.mutation
+    async def delete_events(self) -> ResponseMessage:
+        try:
+            pool = NatsConnectionPool.get_instance()
+            await pool.truncate_stream("events")
+            return ResponseMessage(message="Events deleted successfully.")
+        except Exception as e:
+            logger.error(f"Failed to delete events: {str(e)}")
+            return ResponseMessage(message=f"Error: {str(e)}")
+
+    @strawberry.mutation
+    async def delete_commands(self) -> ResponseMessage:
+        try:
+            pool = NatsConnectionPool.get_instance()
+            await pool.truncate_stream("commands")
+            return ResponseMessage(message="Commands deleted successfully.")
+        except Exception as e:
+            logger.error(f"Failed to delete commands: {str(e)}")
+            return ResponseMessage(message=f"Error: {str(e)}")
+
+
+
+@strawberry.type
+class Mutations(WorkflowMutations, PluginMutations, EventCommandMutations):
     pass
 
 
