@@ -136,7 +136,7 @@ class NatsConnectionPool:
                 entry = await kv.get(key)
                 entry_value = RecordField.deserialize(entry.value)
                 logger.debug(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
-                return entry.value
+                return entry_value.value
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
 

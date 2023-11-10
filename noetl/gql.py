@@ -160,8 +160,22 @@ class WorkflowMutations:
 @strawberry.type
 class WorkflowQueries:
     @strawberry.field
-    async def get_workflow(self, workflow_id: str) -> str:
-        pass
+    async def describe_workflow(self, payload: JSON) -> JSON:
+        """
+        Retrieves details of a workflow by workflow name.
+        """
+        pool = NatsConnectionPool.get_instance()
+        workflow_name = payload.get("workflowName")
+        try:
+            if workflow_name:
+                workflow_details = await pool.kv_get("workflows", workflow_name)
+                return {"workflow": workflow_details}
+            else:
+                return {"error": "Workflow name is required"}
+        except Exception as e:
+            logger.error(f"Error describing workflow {workflow_name}: {e}")
+            return {"error": str(e)}
+
 
     @strawberry.field
     async def list_workflows(self) -> JSON:
@@ -169,8 +183,6 @@ class WorkflowQueries:
         Retrieves list all workflows in the NATS KV store.
         """
         pool = NatsConnectionPool.get_instance()
-
-
         try:
             keys = await pool.kv_get_all("workflows")
             return {"workflows": keys}

@@ -51,6 +51,14 @@ class TokenCommand:
                         tokens="list workflows",
                         handler="list_workflows"
                     )
+                case "describe_workflow":
+                    if len(args) == 1:
+                        return cls(
+                            payload={"workflowName": args[0]},
+                            metadata={},
+                            tokens="describe workflow",
+                            handler="describe_workflow"
+                        )
                 case "delete_events":
                     return cls(
                         payload={},
@@ -126,6 +134,12 @@ class TokenCommand:
                     deleteCommands {
                         message
                     }
+                }
+                """
+            case "describe_workflow":
+                return """
+                query DescribeWorkflow($payload: JSON!) {
+                    describeWorkflow(payload: $payload)
                 }
                 """
             case _:
