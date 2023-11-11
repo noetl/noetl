@@ -1,11 +1,11 @@
 import strawberry
 from loguru import logger
 from natstream import NatsConnectionPool
-from config import Config
 from record import Record
 from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
+from payload import Payload
 
 nlp = spacy.load("en_core_web_sm")
 
@@ -108,10 +108,10 @@ class WorkflowMutations:
 
     @strawberry.mutation
     async def register_workflow(self,
-                                       payload: JSON,
-                                       metadata: JSON | None = None,
-                                       tokens: str | None = None,
-                                       ) -> RegistrationResponse:
+                                payload: JSON,
+                                metadata: JSON | None = None,
+                                tokens: str | None = None,
+                                ) -> RegistrationResponse:
         logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
@@ -120,30 +120,22 @@ class WorkflowMutations:
         command_validation_result: InputValidationResult = validate_command(tokens)
         if command_validation_result.function_name == "register_workflow":
             try:
-                workflow_template = Config.create_workflow(payload)
-                workflow_name = workflow_template.get_value("metadata.name")
                 event_type = "WorkflowRegistrationRequested"
-                logger.debug(workflow_template)
-                record = Record.create(
-                    name=workflow_name,
-                    metadata=metadata | {"event_type": event_type} if metadata else {"event_type": event_type},
-                    reference=None,
-                    payload=workflow_template
-                )
-
+                nats_payload = Payload.create_workflow(payload, metadata, tokens, event_type)
                 ack = await pool.publish(
-                    subject=f"event.dispatcher.{record.identifier}",
-                    message=record.serialize()
+                    subject=f"event.dispatcher.{nats_payload.get_value('metadata.identifier')}",
+                    message=nats_payload.encode()
                 )
-                logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
-                return RegistrationResponse(
-                    identifier=record.identifier,
-                    name=workflow_name,
-                    event_type=event_type,
+                registration_response = RegistrationResponse(
+                    identifier=nats_payload.get_value("metadata.identifier"),
+                    name=nats_payload.get_value("name"),
+                    event_type=nats_payload.get_value("metadata.event_type"),
                     ack_seq=ack.seq,
                     status="WorkflowRegistrationRequested",
                     message="Workflow registration has been successfully requested"
                 )
+                logger.info(f"Ack: {registration_response}")
+                return registration_response
 
             except Exception as e:
                 logger.error(f"Request failed due to error: {str(e)}")
@@ -176,7 +168,6 @@ class WorkflowQueries:
             logger.error(f"Error describing workflow {workflow_name}: {e}")
             return {"error": str(e)}
 
-
     @strawberry.field
     async def list_workflows(self) -> JSON:
         """
@@ -198,10 +189,10 @@ class WorkflowQueries:
 class PluginMutations:
     @strawberry.mutation
     async def register_plugin(self,
-                                       payload: JSON,
-                                       metadata: JSON | None = None,
-                                       tokens: str | None = None,
-                                       ) -> RegistrationResponse:
+                              payload: JSON,
+                              metadata: JSON | None = None,
+                              tokens: str | None = None,
+                              ) -> RegistrationResponse:
         logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
@@ -273,7 +264,6 @@ class EventCommandMutations:
         except Exception as e:
             logger.error(f"Failed to delete commands: {str(e)}")
             return ResponseMessage(message=f"Error: {str(e)}")
-
 
 
 @strawberry.type

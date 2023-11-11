@@ -8,6 +8,7 @@ from aioprometheus import Counter
 from aioprometheus.service import Service
 from record import Record
 from loguru import logger
+from payload import Payload
 
 
 @dataclass
@@ -44,7 +45,7 @@ class Plugin:
         await self.nats_write(f"event.{subject}", message)
 
     async def process_stream(self, msg):
-        input_data = Record.deserialize(msg.data)
+        input_data = Payload.decode(msg.data)
         _ = await self.switch(input_data)
         logger.debug(input_data)
 
@@ -54,8 +55,9 @@ class Plugin:
     async def workflow_bucket_delete(self):
         await self.nats_pool.bucket_delete(bucket_name="workflows")
 
-    async def workflow_put(self, record: Record):
-        return await self.nats_pool.kv_put(bucket_name="workflows", record=record)
+    async def workflow_put(self, payload: Payload):
+        workflow_template=Payload(payload.get("workflow_template"))
+        return await self.nats_pool.kv_put(bucket_name="workflows", record=payload)
 
     async def workflow_get(self, key: str):
         return await self.nats_pool.kv_get(bucket_name="workflows", key=key)
