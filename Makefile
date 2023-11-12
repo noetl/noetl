@@ -62,7 +62,7 @@ push-all: push-api push-dispatcher push-registrar
 
 .PHONY: docker-login tag-api tag-dispatcher tag-registrar push-api push-dispatcher push-registrar push-all
 
-api-all: delete-api build-api tag-api push-api deploy-api
+api-all: build-api tag-api push-api deploy-api
 	@echo "Redeploy NoETL api service to Kubernetes"
 
 .PHONY: deploy-api deploy-dispatcher deploy-registrar deploy-api api-all
