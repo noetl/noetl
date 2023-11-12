@@ -3,11 +3,13 @@ import os
 import asyncio
 import socket
 from dataclasses import dataclass
-from natstream import NatsConnectionPool, NatsConfig
+from natstream import NatsConnectionPool, NatsConfig, NatsStreamReference
 from aioprometheus import Counter
 from aioprometheus.service import Service
 from loguru import logger
 from payload import Payload
+
+
 
 @dataclass
 class Plugin:
@@ -44,7 +46,12 @@ class Plugin:
 
     async def process_stream(self, msg):
         payload = Payload.decode(msg.data)
-        _ = await self.switch(payload)
+        nats_reference=NatsStreamReference(
+            nats_msg_metadata=msg.metadata,
+            nats_msg_subject=msg.subject,
+            nats_msg_headers=msg.headers
+        )
+        _ = await self.switch(payload=payload, nats_reference=nats_reference)
         logger.debug(payload)
 
     async def workflow_bucket_create(self):
@@ -77,7 +84,10 @@ class Plugin:
     async def plugin_delete(self, key: str):
         await self.nats_pool.kv_delete(bucket_name="plugins", key=key)
 
-    async def switch(self, payload):
+    async def switch(self,
+                     payload: Payload,
+                     nats_reference: NatsStreamReference
+                     ):
         raise NotImplementedError("Subclasses must implement this method")
 
     async def run(self, args, subject_prefix):

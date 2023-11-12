@@ -1,15 +1,43 @@
 import asyncio
 import nats
 from nats.js.api import StreamConfig
-from dataclasses import dataclass
+from nats.aio.msg import Msg
+from dataclasses import dataclass, asdict
+import json
 from nats.aio.errors import ErrTimeout
 from loguru import logger
+from datetime import datetime
 
 
 @dataclass
 class NatsConfig:
     nats_url: str
     nats_pool_size: int
+
+
+@dataclass
+class NatsStreamReference:
+    nats_msg_subject: str | None = None
+    nats_msg_metadata: Msg.Metadata | None = None
+    nats_msg_headers: dict | None = None
+
+    def to_dict(self):
+        data = asdict(self)
+
+        def convert_datetime(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            elif isinstance(obj, dict):
+                return {k: convert_datetime(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_datetime(i) for i in obj]
+            else:
+                return obj
+
+        return convert_datetime(data)
+
+    def to_json(self):
+        return json.dumps(self.to_dict())
 
 
 class NatsConnectionPool:
@@ -177,6 +205,7 @@ if __name__ == "__main__":
         async def func(js):
             ack = await js.publish('test.greeting', b'Hello JS!')
             logger.info(f'Ack: stream={ack.stream}, sequence={ack.seq}')
+
         return await nats_pool.execute(func)
 
 

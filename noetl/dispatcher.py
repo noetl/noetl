@@ -3,16 +3,21 @@ import sys
 from plugin import Plugin, parse_args
 from payload import Payload
 from loguru import logger
-from natstream import NatsConfig
+from natstream import NatsConfig, NatsStreamReference
 
 
 class Dispatcher(Plugin):
 
-    async def workflow_register(self, payload_data: Payload):
+    async def workflow_register(self,
+                                payload_data: Payload,
+                                nats_reference: NatsStreamReference
+                                ):
         payload = Payload.create(
-            payload_data={"workflow_base64": payload_data.get_value("workflow_base64")} | \
-                         {"metadata": payload_data.get_value("metadata")} | \
-                         {"command_type": "RegisterWorkflow"},
+            payload_data={
+                "workflow_base64": payload_data.get_value("workflow_base64"),
+                "metadata": payload_data.get_value("metadata") | nats_reference.to_dict(),
+                "command_type": "RegisterWorkflow"
+            },
             prefix="metadata",
             reference=payload_data.get_value("metadata.identifier")
         )
@@ -23,9 +28,12 @@ class Dispatcher(Plugin):
             message=payload.encode()
         )
 
-    async def switch(self, payload: Payload):
+    async def switch(self,
+                     payload: Payload,
+                     nats_reference: NatsStreamReference
+                     ):
         if payload.get_value("event_type") == "WorkflowRegistrationRequested":
-            await self.workflow_register(payload)
+            await self.workflow_register(payload_data=payload, nats_reference=nats_reference)
 
 
 if __name__ == "__main__":
