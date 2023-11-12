@@ -62,7 +62,7 @@ push-all: push-api push-dispatcher push-registrar
 
 .PHONY: docker-login tag-api tag-dispatcher tag-registrar push-api push-dispatcher push-registrar push-all
 
-api-all: build-api tag-api push-api deploy-api
+api-all: delete-api build-api tag-api push-api deploy-api
 	@echo "Redeploy NoETL api service to Kubernetes"
 
 .PHONY: deploy-api deploy-dispatcher deploy-registrar deploy-api api-all
@@ -91,9 +91,9 @@ deploy-all: deploy-api deploy-dispatcher deploy-registrar
 
 delete-api:
 	@echo "Deleting NoETL API Service"
-	@kubectl delete -f $(K8S_DIR)/noetl-api/deployment.yaml -n noetl
-	@kubectl delete -f $(K8S_DIR)/noetl-api/service.yaml -n noetl
-	@kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl
+	@kubectl delete -f $(K8S_DIR)/noetl-api/deployment.yaml -n noetl || true
+	@kubectl delete -f $(K8S_DIR)/noetl-api/service.yaml -n noetl || true
+	@kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl || true
 
 
 nats-all: nats-delete-events nats-delete-commands nats-delete-events nats-create-commands
