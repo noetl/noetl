@@ -1,7 +1,6 @@
 import strawberry
 from loguru import logger
 from natstream import NatsConnectionPool
-from record import Record
 from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
