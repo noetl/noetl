@@ -4,6 +4,7 @@ import os
 from loguru import logger
 import base64
 
+
 CWD = os.getcwd()
 CSD = os.path.dirname(os.path.abspath(__file__))
 API_URL = os.getenv('NOETL_API_URL', "http://localhost:8021/noetl")
@@ -32,7 +33,7 @@ class TokenCommand:
                         file_content = base64.b64encode(file.read().encode()).decode()
                     return cls(
                         payload={"workflow_base64": file_content},
-                        metadata={"source": "noetl-cli", "request": "api.request.register_workflow"},
+                        metadata={"source": "noetl-cli", "request": "register_workflow"},
                         tokens=f"{tokens_list[0]} {tokens_list[1]}",
                         handler=handler
                     )
@@ -40,7 +41,7 @@ class TokenCommand:
                     if len(args) == 2:
                         return cls(
                             payload={"plugin_name": args[0], "image_url": args[1]},
-                            metadata={"source": "noetl-cli", "request": "api.request.register_plugin"},
+                            metadata={"source": "noetl-cli", "request": "register_plugin"},
                             tokens=tokens,
                             handler=handler
                         )

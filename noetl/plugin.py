@@ -6,16 +6,14 @@ from dataclasses import dataclass
 from natstream import NatsConnectionPool, NatsConfig
 from aioprometheus import Counter
 from aioprometheus.service import Service
-from record import Record
 from loguru import logger
 from payload import Payload
-
 
 @dataclass
 class Plugin:
     events_counter: Counter
     nats_pool: NatsConnectionPool
-    records: list[Record] | None = None
+    records: list[Payload] | None = None
 
     @classmethod
     def create(cls, nats_config: NatsConfig):
@@ -45,9 +43,9 @@ class Plugin:
         await self.nats_write(f"event.{subject}", message)
 
     async def process_stream(self, msg):
-        input_data = Payload.decode(msg.data)
-        _ = await self.switch(input_data)
-        logger.debug(input_data)
+        payload = Payload.decode(msg.data)
+        _ = await self.switch(payload)
+        logger.debug(payload)
 
     async def workflow_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="workflows")
@@ -55,9 +53,8 @@ class Plugin:
     async def workflow_bucket_delete(self):
         await self.nats_pool.bucket_delete(bucket_name="workflows")
 
-    async def workflow_put(self, payload: Payload):
-        workflow_template=Payload(payload.get("workflow_template"))
-        return await self.nats_pool.kv_put(bucket_name="workflows", record=payload)
+    async def workflow_put(self, key: str, value: bytes):
+        return await self.nats_pool.kv_put(bucket_name="workflows", key=key, value=value)
 
     async def workflow_get(self, key: str):
         return await self.nats_pool.kv_get(bucket_name="workflows", key=key)
@@ -69,10 +66,10 @@ class Plugin:
         await self.nats_pool.bucket_create(bucket_name="plugins")
 
     async def plugin_bucket_delete(self):
-        await self.nats_pool.kv_delete(bucket_name="plugins")
+        await self.nats_pool.bucket_delete(bucket_name="plugins")
 
-    async def plugin_put(self, record: Record):
-        await self.nats_pool.kv_put(bucket_name="plugins", record=record)
+    async def plugin_put(self, key: str, value: bytes):
+        await self.nats_pool.kv_put(bucket_name="plugins", key=key, value=value)
 
     async def plugin_get(self, key: str):
         await self.nats_pool.kv_get(bucket_name="plugins", key=key)
@@ -80,7 +77,7 @@ class Plugin:
     async def plugin_delete(self, key: str):
         await self.nats_pool.kv_delete(bucket_name="plugins", key=key)
 
-    async def switch(self, data):
+    async def switch(self, payload):
         raise NotImplementedError("Subclasses must implement this method")
 
     async def run(self, args, subject_prefix):

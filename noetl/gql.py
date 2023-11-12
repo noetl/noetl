@@ -6,7 +6,6 @@ from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
 from payload import Payload
-
 nlp = spacy.load("en_core_web_sm")
 
 
@@ -121,15 +120,15 @@ class WorkflowMutations:
         if command_validation_result.function_name == "register_workflow":
             try:
                 event_type = "WorkflowRegistrationRequested"
-                nats_payload = Payload.create_workflow(payload, metadata, tokens, event_type)
+                nats_payload = Payload.workflow_create(payload, metadata, tokens, event_type)
                 ack = await pool.publish(
                     subject=f"event.dispatcher.{nats_payload.get_value('metadata.identifier')}",
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
                     identifier=nats_payload.get_value("metadata.identifier"),
-                    name=nats_payload.get_value("name"),
-                    event_type=nats_payload.get_value("metadata.event_type"),
+                    name=nats_payload.get_value("metadata.workflow_name"),
+                    event_type=nats_payload.get_value("event_type"),
                     ack_seq=ack.seq,
                     status="WorkflowRegistrationRequested",
                     message="Workflow registration has been successfully requested"

@@ -1,29 +1,31 @@
 import asyncio
+import sys
 from plugin import Plugin, parse_args
-from record import Record
+from payload import Payload
 from loguru import logger
 from natstream import NatsConfig
 
 
 class Dispatcher(Plugin):
 
-    async def workflow_register(self, data: Record):
-        record = Record.create(
-            name=data.name.value,
-            metadata=data.metadata.value | {"command": "RegisterWorkflow"},
-            reference=data.identifier,
-            payload=data.payload.value
+    async def workflow_register(self, payload_data: Payload):
+        payload = Payload.create(
+            payload_data={"workflow_base64": payload_data.get_value("workflow_base64")} | \
+                         {"metadata": payload_data.get_value("metadata")} | \
+                         {"command_type": "RegisterWorkflow"},
+            prefix="metadata",
+            reference=payload_data.get_value("metadata.identifier")
         )
-        logger.debug(record)
+        logger.debug(payload)
 
         await self.command_write(
-            subject=f"registrar.{record.identifier}",
-            message=record.serialize()
+            subject=f"registrar.{payload.get_value('metadata.identifier')}",
+            message=payload.encode()
         )
 
-    async def switch(self, data):
-        if data.metadata.value.get("event_type") == "WorkflowRegistrationRequested":
-            await self.workflow_register(data)
+    async def switch(self, payload: Payload):
+        if payload.get_value("event_type") == "WorkflowRegistrationRequested":
+            await self.workflow_register(payload)
 
 
 if __name__ == "__main__":
@@ -32,7 +34,12 @@ if __name__ == "__main__":
         default_nats_url="nats://localhost:32645",
         default_nats_pool_size=10,
         default_prom_host="localhost",
-        default_prom_port=8000
+        default_prom_port=9091
     )
-    dispatcher = Dispatcher.create(NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
-    asyncio.run(dispatcher.run(args, subject_prefix="event.dispatcher"))
+    try:
+        dispatcher = Dispatcher.create(NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
+        asyncio.run(dispatcher.run(args, subject_prefix="event.dispatcher"))
+    except KeyboardInterrupt:
+        sys.exit()
+    except Exception as e:
+        logger.info(f"Dispatcher error: {str(e)}.")

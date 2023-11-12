@@ -4,7 +4,6 @@ from nats.js.api import StreamConfig
 from dataclasses import dataclass
 from nats.aio.errors import ErrTimeout
 from loguru import logger
-from record import Record, RecordField
 
 
 @dataclass
@@ -116,27 +115,23 @@ class NatsConnectionPool:
             except Exception as e:
                 print(f"Bucket delete error: {e}")
 
-    async def kv_put(self, bucket_name: str, record: Record):
+    async def kv_put(self, bucket_name: str, key: str, value: bytes):
         async with self.connection() as nc:
             try:
-                # catalog = await nc.kv(catalog_name)
                 kv = await nc.create_key_value(bucket=bucket_name)
-                await kv.put(record.name.value, record.payload.serialize())
-                entry = await kv.get(record.name.value)
-                entry_value = RecordField.deserialize(entry.value)
-                logger.debug(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
-                return entry.key
+                revision_number = await kv.put(key, value)
+                entry = await kv.get(key)
+                logger.debug(f"KeyValue: bucket={bucket_name}, key={entry.key}, revision_number={revision_number}")
+                return revision_number
             except Exception as e:
-                logger.error(f"Bucket {bucket_name} failed to add record {record}. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to add kv {key}. Error: {e}")
 
     async def kv_get(self, bucket_name, key: str):
         async with self.connection() as nc:
             try:
                 kv = await nc.create_key_value(bucket=bucket_name)
                 entry = await kv.get(key)
-                entry_value = RecordField.deserialize(entry.value)
-                logger.debug(f"KeyValue.Entry: key={entry.key}, value={entry_value}")
-                return entry_value.value
+                return entry
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
 
@@ -182,7 +177,6 @@ if __name__ == "__main__":
         async def func(js):
             ack = await js.publish('test.greeting', b'Hello JS!')
             logger.info(f'Ack: stream={ack.stream}, sequence={ack.seq}')
-
         return await nats_pool.execute(func)
 
 
