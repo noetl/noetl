@@ -51,8 +51,9 @@ class Plugin:
             nats_msg_subject=msg.subject,
             nats_msg_headers=msg.headers
         )
+        logger.debug(f"payload: {payload}, nats_reference: {nats_reference}")
         _ = await self.switch(payload=payload, nats_reference=nats_reference)
-        logger.debug(payload)
+
 
     async def workflow_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="workflows")
