@@ -5,7 +5,7 @@ define get_nats_port
 $(shell kubectl get svc nats -n nats -o=jsonpath='{.spec.ports[0].nodePort}')
 endef
 
-NATS_URL = nats://localhost:$(call get_nats_port)
+NATS_URL=nats://localhost:$(call get_nats_port)
 CLI_SERVICE_NAME=noetl-api
 API_SERVICE_NAME=noetl-api
 DISPATCHER_SERVICE_NAME=noetl-dispatcher
