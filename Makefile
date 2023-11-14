@@ -6,17 +6,22 @@ $(shell kubectl get svc nats -n nats -o=jsonpath='{.spec.ports[0].nodePort}')
 endef
 
 NATS_URL = nats://localhost:$(call get_nats_port)
+CLI_SERVICE_NAME=noetl-api
 API_SERVICE_NAME=noetl-api
 DISPATCHER_SERVICE_NAME=noetl-dispatcher
 REGISTRAR_SERVICE_NAME=noetl-registrar
+CLI_DOCKERFILE=docker/cli/Dockerfile-cli
 API_DOCKERFILE=docker/api/Dockerfile-api
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 
 all: build-all push-all
 
-build-all: build-api build-dispatcher build-registrar
-.PHONY: build-api build-dispatcher build-registrar build-all clean
+build-all: build-api build-dispatcher build-registrar build-cli
+.PHONY: build-api build-dispatcher build-registrar build-cli build-all clean
+
+build-cli:
+	docker build --build-arg PRJ_PATH=../../ -f $(CLI_DOCKERFILE) -t $(CLI_SERVICE_NAME) .
 
 build-api:
 	docker build --build-arg PRJ_PATH=../../ -f $(API_DOCKERFILE) -t $(API_SERVICE_NAME) .
@@ -34,6 +39,10 @@ docker-login:
 	@echo "Logging in to GitHub Container Registry"
 	@echo $$PAT | docker login ghcr.io -u noetl --password-stdin
 
+tag-cli:
+	@echo "Tagging CLI image"
+	@docker tag $(CLI_SERVICE_NAME) ghcr.io/$(GHCR_USERNAME)/noetl-cli:$(VERSION)
+
 tag-api:
 	@echo "Tagging API image"
 	@docker tag $(API_SERVICE_NAME) ghcr.io/$(GHCR_USERNAME)/noetl-api:$(VERSION)
@@ -45,6 +54,10 @@ tag-dispatcher:
 tag-registrar:
 	@echo "Tagging Registrar image"
 	@docker tag $(REGISTRAR_SERVICE_NAME) ghcr.io/$(GHCR_USERNAME)/noetl-registrar:$(VERSION)
+
+push-api: tag-cli
+	@echo "Pushing CLI image to GitHub Container Registry"
+	@docker push ghcr.io/$(GHCR_USERNAME)/noetl-cli:$(VERSION)
 
 push-api: tag-api
 	@echo "Pushing API image to GitHub Container Registry"
