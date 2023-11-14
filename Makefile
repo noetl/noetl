@@ -32,7 +32,7 @@ clean:
 
 docker-login:
 	@echo "Logging in to GitHub Container Registry"
-	@echo $$PAT | docker login ghcr.io -u akuksin --password-stdin
+	@echo $$PAT | docker login ghcr.io -u noetl --password-stdin
 
 tag-api:
 	@echo "Tagging API image"
@@ -96,7 +96,7 @@ delete-api:
 	@kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl || true
 
 
-nats-all: nats-delete-events nats-delete-commands nats-delete-events nats-create-commands
+nats-all: nats-delete-events nats-delete-commands nats-create-events nats-create-commands
 	@echo "Reset all NATS streams in Kubernetes"
 
 .PHONY: nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all

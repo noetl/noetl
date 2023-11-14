@@ -150,6 +150,18 @@ class WorkflowMutations:
 @strawberry.type
 class WorkflowQueries:
     @strawberry.field
+    async def list_workflows(self) -> JSON:
+        """
+        Retrieves list all workflows in the NATS KV store.
+        """
+        pool = NatsConnectionPool.get_instance()
+        try:
+            keys = await pool.kv_get_all("workflows")
+            return {"workflows": keys}
+        except Exception as e:
+            logger.error(f"Error listing workflows: {e}")
+            return {"error": str(e)}
+    @strawberry.field
     async def describe_workflow(self, workflow_name: str, revision: str = None) -> JSON:
         """
         Retrieves details of a workflow by workflow name.
@@ -166,17 +178,41 @@ class WorkflowQueries:
             return {"error": str(e)}
 
     @strawberry.field
-    async def list_workflows(self) -> JSON:
+    async def run_workflow(self, workflow_name: str, revision: str = None) -> JSON:
         """
-        Retrieves list all workflows in the NATS KV store.
+        Requests to execute a workflow by workflow name.
         """
         pool = NatsConnectionPool.get_instance()
+        if pool is None:
+            raise ValueError("NatsPool is not initialized")
         try:
-            keys = await pool.kv_get_all("workflows")
-            return {"workflows": keys}
+            event_type = "WorkflowExecutionRequested"
+            revision = {"revision": revision} if revision else {}
+            nats_payload = Payload.create(
+                {"workflow_name": workflow_name} | revision,
+                prefix="metadata",
+                event_type=event_type,
+                )
+            ack = await pool.publish(
+                subject=f"event.dispatcher.{nats_payload.get_value('origin_ref')}",
+                message=nats_payload.encode()
+            )
+            registration_response = RegistrationResponse(
+                identifier=nats_payload.get_value("metadata.identifier"),
+                kind="Workflow",
+                name=nats_payload.get_value("workflow_name"),
+                event_type=nats_payload.get_value("event_type"),
+                ack_seq=ack.seq,
+                status="WorkflowExecutionRequested",
+                message="Workflow execution has been successfully requested"
+            )
+            logger.info(f"Ack: {registration_response}")
+            return registration_response
+
         except Exception as e:
-            logger.error(f"Error listing workflows: {e}")
-            return {"error": str(e)}
+            logger.error(f"Request failed due to error: {str(e)}")
+            raise ValueError(f"Request failed due to error: {str(e)}")
+
 
 
 @strawberry.type

@@ -14,7 +14,6 @@ from payload import Payload
 class Plugin:
     events_counter: Counter
     nats_pool: NatsConnectionPool
-    records: list[Payload] | None = None
 
     @classmethod
     def create(cls, nats_config: NatsConfig):

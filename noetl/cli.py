@@ -90,6 +90,12 @@ class TokenCommand(KeyVal):
                     describePlugin(pluginName: $pluginName)
                 }
                 """
+            case "run_workflow":
+                return """
+                query RunWorkflow($workflowName: String!) {
+                    runWorkflow(workflowName: $workflowName)
+                }
+                """
             case _:
                 raise NotImplementedError(f"Mutation for tokens '{self.tokens}' does not exists.")
 
@@ -142,6 +148,13 @@ class TokenCommand(KeyVal):
                             variables={"workflowName": args[0]},
                             tokens="describe workflow",
                             handler="describe_workflow"
+                        )
+                case "run_workflow":
+                    if len(args) == 1:
+                        return cls(
+                            variables={"workflowName": args[0]},
+                            tokens="run workflow",
+                            handler="run_workflow"
                         )
                 case "describe_plugin":
                     if len(args) == 1:
