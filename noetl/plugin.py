@@ -10,7 +10,6 @@ from loguru import logger
 from payload import Payload
 
 
-
 @dataclass
 class Plugin:
     events_counter: Counter
@@ -46,14 +45,13 @@ class Plugin:
 
     async def process_stream(self, msg):
         payload = Payload.decode(msg.data)
-        nats_reference=NatsStreamReference(
+        nats_reference = NatsStreamReference(
             nats_msg_metadata=msg.metadata,
             nats_msg_subject=msg.subject,
             nats_msg_headers=msg.headers
         )
         logger.debug(f"payload: {payload}, nats_reference: {nats_reference}")
         _ = await self.switch(payload=payload, nats_reference=nats_reference)
-
 
     async def workflow_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="workflows")
@@ -77,10 +75,10 @@ class Plugin:
         await self.nats_pool.bucket_delete(bucket_name="plugins")
 
     async def plugin_put(self, key: str, value: bytes):
-        await self.nats_pool.kv_put(bucket_name="plugins", key=key, value=value)
+        return await self.nats_pool.kv_put(bucket_name="plugins", key=key, value=value)
 
     async def plugin_get(self, key: str):
-        await self.nats_pool.kv_get(bucket_name="plugins", key=key)
+        return await self.nats_pool.kv_get(bucket_name="plugins", key=key)
 
     async def plugin_delete(self, key: str):
         await self.nats_pool.kv_delete(bucket_name="plugins", key=key)

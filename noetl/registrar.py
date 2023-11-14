@@ -12,11 +12,12 @@ class Registrar(Plugin):
                                 payload_data: Payload,
                                 nats_reference: NatsStreamReference
                                 ):
+        origin_ref = payload_data.get_value("origin_ref")
         key = payload_data.get_value("metadata.workflow_name")
         payload_kv_value = Payload.kv(
             {
                 "value": payload_data.get_value("workflow_base64"),
-                "metadata": payload_data.get_value("metadata") | {"value_type": "base64"}
+                "metadata": payload_data.get_value("metadata") | {"value_type": "base64", "origin_ref": origin_ref}
             }
         )
         revision_number = await self.workflow_put(key=key, value=payload_kv_value.encode())
@@ -26,13 +27,47 @@ class Registrar(Plugin):
                 "metadata": payload_data.get_value("metadata") | nats_reference.to_dict(),
                 "event_type": "WorkflowRegistered"
             },
+            origin_ref=origin_ref,
             prefix="metadata",
             reference=payload_data.get_value("metadata.identifier")
         )
         logger.debug(payload)
 
         await self.event_write(
-            subject=f"registrar.{payload.get_value('metadata.identifier')}",
+            subject=f"registrar.{origin_ref}",
+            message=payload.encode()
+        )
+
+    async def plugin_register(self,
+                              payload_data: Payload,
+                              nats_reference: NatsStreamReference
+                              ):
+        origin_ref = payload_data.get_value("origin_ref")
+        key = payload_data.get_value("plugin_name")
+        payload_kv_value = Payload.kv(
+            {
+                "value": {
+                    "plugin_name": payload_data.get_value("plugin_name"),
+                    "image_url": payload_data.get_value("image_url")
+                },
+                "metadata": payload_data.get_value("metadata") | {"value_type": "string", "origin_ref": origin_ref}
+            }
+        )
+        revision_number = await self.plugin_put(key=key, value=payload_kv_value.encode())
+        payload = Payload.create(
+            payload_data={
+                "revision_number": revision_number,
+                "metadata": payload_data.get_value("metadata") | nats_reference.to_dict(),
+                "event_type": "PluginRegistered"
+            },
+            origin_ref=origin_ref,
+            prefix="metadata",
+            reference=payload_data.get_value("metadata.identifier")
+        )
+        logger.debug(payload)
+
+        await self.event_write(
+            subject=f"registrar.{origin_ref}",
             message=payload.encode()
         )
 
@@ -40,8 +75,11 @@ class Registrar(Plugin):
                      payload: Payload,
                      nats_reference: NatsStreamReference
                      ):
-        if payload.get_value("command_type") == "RegisterWorkflow":
-            await self.workflow_register(payload_data=payload, nats_reference=nats_reference)
+        match payload.get_value("command_type"):
+            case "RegisterWorkflow":
+                await self.workflow_register(payload_data=payload, nats_reference=nats_reference)
+            case "RegisterPlugin":
+                await self.plugin_register(payload_data=payload, nats_reference=nats_reference)
 
 
 if __name__ == "__main__":

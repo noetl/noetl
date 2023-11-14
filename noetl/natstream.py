@@ -159,7 +159,7 @@ class NatsConnectionPool:
             try:
                 kv = await nc.create_key_value(bucket=bucket_name)
                 entry = await kv.get(key)
-                return entry
+                return entry.value
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
 

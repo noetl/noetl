@@ -12,19 +12,44 @@ class Dispatcher(Plugin):
                                 payload_data: Payload,
                                 nats_reference: NatsStreamReference
                                 ):
+        origin_ref = payload_data.get_value("origin_ref")
         payload = Payload.create(
             payload_data={
                 "workflow_base64": payload_data.get_value("workflow_base64"),
                 "metadata": payload_data.get_value("metadata") | nats_reference.to_dict(),
                 "command_type": "RegisterWorkflow"
             },
+            origin_ref=origin_ref,
             prefix="metadata",
             reference=payload_data.get_value("metadata.identifier")
         )
         logger.debug(payload)
 
         await self.command_write(
-            subject=f"registrar.{payload.get_value('metadata.identifier')}",
+            subject=f"registrar.{origin_ref}",
+            message=payload.encode()
+        )
+
+    async def plugin_register(self,
+                              payload_data: Payload,
+                              nats_reference: NatsStreamReference
+                              ):
+        origin_ref = payload_data.get_value("origin_ref")
+        payload = Payload.create(
+            payload_data={
+                "plugin_name": payload_data.get_value("plugin_name"),
+                "image_url": payload_data.get_value("image_url"),
+                "metadata": payload_data.get_value("metadata") | nats_reference.to_dict(),
+                "command_type": "RegisterPlugin"
+            },
+            origin_ref=origin_ref,
+            prefix="metadata",
+            reference=payload_data.get_value("metadata.identifier")
+        )
+        logger.debug(payload)
+
+        await self.command_write(
+            subject=f"registrar.{origin_ref}",
             message=payload.encode()
         )
 
@@ -32,8 +57,11 @@ class Dispatcher(Plugin):
                      payload: Payload,
                      nats_reference: NatsStreamReference
                      ):
-        if payload.get_value("event_type") == "WorkflowRegistrationRequested":
-            await self.workflow_register(payload_data=payload, nats_reference=nats_reference)
+        match payload.get_value("event_type"):
+            case "WorkflowRegistrationRequested":
+                await self.workflow_register(payload_data=payload, nats_reference=nats_reference)
+            case "PluginRegistrationRequested":
+                await self.plugin_register(payload_data=payload, nats_reference=nats_reference)
 
 
 if __name__ == "__main__":

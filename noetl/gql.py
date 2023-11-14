@@ -70,12 +70,14 @@ class ResponseMessage:
 
 @strawberry.type
 class RegistrationResponse:
-    identifier: str
-    name: str
-    event_type: str
-    ack_seq: str
-    status: str
-    message: str
+    identifier: str | None = None
+    reference: str | None = None
+    kind: str | None = None
+    name: str | None = None
+    event_type: str | None = None
+    ack_seq: str | None = None
+    status: str | None = None
+    message: str | None = None
 
 
 @strawberry.type
@@ -88,10 +90,8 @@ class WorkflowMutations:
     mutation {
       registerWorkflow(
         tokens: "register workflow",
-        metadata: "{ \"key\": \"value\" }",
-        payload: {
-          workflow_base64: "Base64 encoded string representing the YAML file"
-        }
+        metadata: {"source": "noetl-cli", "handler": "register_workflow"},
+        workflow_base64: "Base64 encoded string of workflow template YAML"
       ) {
             identifier
             name
@@ -106,26 +106,26 @@ class WorkflowMutations:
 
     @strawberry.mutation
     async def register_workflow(self,
-                                payload: JSON,
+                                workflow_base64: str,
                                 metadata: JSON | None = None,
                                 tokens: str | None = None,
                                 ) -> RegistrationResponse:
-        logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
+        logger.debug(f"tokens: {tokens}, metadata: {metadata}, workflow_base64: {workflow_base64}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
-            logger.error("NatsPool is not initialized")
             raise ValueError("NatsPool is not initialized")
         command_validation_result: InputValidationResult = validate_command(tokens)
         if command_validation_result.function_name == "register_workflow":
             try:
                 event_type = "WorkflowRegistrationRequested"
-                nats_payload = Payload.workflow_create(payload, metadata, tokens, event_type)
+                nats_payload = Payload.workflow_create(workflow_base64, metadata, tokens, event_type)
                 ack = await pool.publish(
-                    subject=f"event.dispatcher.{nats_payload.get_value('metadata.identifier')}",
+                    subject=f"event.dispatcher.{nats_payload.get_value('origin_ref')}",
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
                     identifier=nats_payload.get_value("metadata.identifier"),
+                    kind="Workflow",
                     name=nats_payload.get_value("metadata.workflow_name"),
                     event_type=nats_payload.get_value("event_type"),
                     ack_seq=ack.seq,
@@ -150,16 +150,15 @@ class WorkflowMutations:
 @strawberry.type
 class WorkflowQueries:
     @strawberry.field
-    async def describe_workflow(self, payload: JSON) -> JSON:
+    async def describe_workflow(self, workflow_name: str, revision: str = None) -> JSON:
         """
         Retrieves details of a workflow by workflow name.
         """
         pool = NatsConnectionPool.get_instance()
-        workflow_name = payload.get("workflowName")
         try:
             if workflow_name:
-                workflow_details = await pool.kv_get("workflows", workflow_name)
-                return {"workflow": workflow_details}
+                value = await pool.kv_get("workflows", workflow_name)
+                return {"workflow": Payload.decode(value).yaml_value()}
             else:
                 return {"error": "Workflow name is required"}
         except Exception as e:
@@ -187,11 +186,12 @@ class WorkflowQueries:
 class PluginMutations:
     @strawberry.mutation
     async def register_plugin(self,
-                              payload: JSON,
+                              plugin_name: str,
+                              image_url: str,
                               metadata: JSON | None = None,
                               tokens: str | None = None,
                               ) -> RegistrationResponse:
-        logger.debug(f"tokens: {tokens}, metadata: {metadata}, payload: {payload}")
+        logger.debug(f"tokens: {tokens}, metadata: {metadata}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
             logger.error("NatsPool is not initialized")
@@ -199,28 +199,27 @@ class PluginMutations:
         command_validation_result: InputValidationResult = validate_command(tokens)
         if command_validation_result.function_name == "register_plugin":
             try:
-                plugin_name = payload.get("plugin_name")
-                event_type = "PluginRegistrationRequested"
-                record = Record.create(
-                    name=plugin_name,
-                    metadata=metadata | {"event_type": event_type} if metadata else {"event_type": event_type},
-                    reference=None,
-                    payload=payload
+                nats_payload = Payload.create(
+                    payload_data={"plugin_name": plugin_name, "image_url": image_url, "metadata": metadata},
+                    event_type="PluginRegistrationRequested",
+                    prefix = "metadata"
                 )
 
                 ack = await pool.publish(
-                    subject=f"event.dispatcher.{record.identifier}",
-                    message=record.serialize()
+                    subject=f"event.dispatcher.{nats_payload.get_value('metadata.identifier')}",
+                    message=nats_payload.encode()
                 )
-                logger.info(f"Ack: stream={ack.stream}, sequence={ack.seq}, Identifier={record.identifier}")
-                return RegistrationResponse(
-                    identifier=record.identifier,
+                registration_response = RegistrationResponse(
+                    identifier=nats_payload.get_value("metadata.identifier"),
+                    kind="Plugin",
                     name=plugin_name,
-                    event_type=event_type,
+                    event_type=nats_payload.get_value("event_type"),
                     ack_seq=ack.seq,
                     status="PluginRegistrationRequested",
                     message="Plugin registration has been successfully requested"
                 )
+                logger.info(f"Ack: {registration_response}")
+                return registration_response
 
             except Exception as e:
                 logger.error(f"Request failed due to error: {str(e)}")
