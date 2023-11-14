@@ -18,7 +18,7 @@ class TokenCommand(KeyVal):
     def execute(self):
         mutation = {
             "query": self.create_gql(),
-            "variables": self.get_value("variables")
+            "variables": self.get_value("variables", {})
         }
         graphql_request(mutation)
 
@@ -56,6 +56,12 @@ class TokenCommand(KeyVal):
                     listWorkflows
                 }
                 """
+            case "list_plugins":
+                return """
+                query ListPlugins {
+                    listPlugins
+                }
+                """
             case "delete_events":
                 return """
                 mutation DeleteEvents {
@@ -76,6 +82,12 @@ class TokenCommand(KeyVal):
                 return """
                 query DescribeWorkflow($workflowName: String!) {
                     describeWorkflow(workflowName: $workflowName)
+                }
+                """
+            case "describe_plugin":
+                return """
+                query DescribePlugin($pluginName: String!) {
+                    describePlugin(pluginName: $pluginName)
                 }
                 """
             case _:
@@ -116,10 +128,13 @@ class TokenCommand(KeyVal):
                         )
                 case "list_workflows":
                     return cls(
-                        payload={},
-                        metadata={},
-                        tokens="list workflows",
-                        handler="list_workflows"
+                        tokens=tokens,
+                        handler=handler
+                    )
+                case "list_plugins":
+                    return cls(
+                        tokens=tokens,
+                        handler=handler
                     )
                 case "describe_workflow":
                     if len(args) == 1:
@@ -127,6 +142,13 @@ class TokenCommand(KeyVal):
                             variables={"workflowName": args[0]},
                             tokens="describe workflow",
                             handler="describe_workflow"
+                        )
+                case "describe_plugin":
+                    if len(args) == 1:
+                        return cls(
+                            variables={"pluginName": args[0]},
+                            tokens="describe plugin",
+                            handler="describe_plugin"
                         )
                 case "delete_events":
                     return cls(

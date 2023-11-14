@@ -179,9 +179,6 @@ class WorkflowQueries:
             return {"error": str(e)}
 
 
-# plugin
-
-
 @strawberry.type
 class PluginMutations:
     @strawberry.mutation
@@ -235,9 +232,34 @@ class PluginMutations:
 
 @strawberry.type
 class PluginQueries:
+
     @strawberry.field
-    async def get_plugin(self, plugin_id: str) -> str:
-        pass
+    async def list_plugins(self) -> JSON:
+        """
+        Retrieves list all plugins in the NATS KV store.
+        """
+        pool = NatsConnectionPool.get_instance()
+        try:
+            keys = await pool.kv_get_all("plugins")
+            return {"plugins": keys}
+        except Exception as e:
+            logger.error(f"Error listing plugins: {e}")
+            return {"error": str(e)}
+    @strawberry.field
+    async def describe_plugin(self, plugin_name: str, revision: str = None) -> JSON:
+        """
+        Retrieves details of a plugin by plugin name.
+        """
+        pool = NatsConnectionPool.get_instance()
+        try:
+            if plugin_name:
+                value = await pool.kv_get("plugins", plugin_name)
+                return {"plugin": Payload.decode(value)}
+            else:
+                return {"error": "Plugin name is required"}
+        except Exception as e:
+            logger.error(f"Error describing plugin {plugin_name}: {e}")
+            return {"error": str(e)}
 
 
 @strawberry.type

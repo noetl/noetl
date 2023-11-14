@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY  ${PRJ_PATH}/noetl/plugin.py \
+      ${PRJ_PATH}/noetl/keyval.py \
       ${PRJ_PATH}/noetl/payload.py \
       ${PRJ_PATH}/noetl/natstream.py \
       ${PRJ_PATH}/noetl/registrar.py ./
