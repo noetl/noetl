@@ -4,6 +4,8 @@ from payload import Payload
 from loguru import logger
 from natstream import NatsConfig, NatsStreamReference
 import aiohttp
+import sys
+
 
 class HTTPHandler(Plugin):
 
