@@ -34,9 +34,10 @@ def validate_command(command_text):
         "run_workflow": ["run", "workflow", str],
         "describe_workflow": ["describe", "workflow", str],
         "show_workflow": ["show", "workflow", str],
-        "stop_workflow": ["stop", "workflow", str],
+        "status_workflow": ["status", "workflow", str],
+        "append_data_to_workflow": ["append", "data", "to", "workflow", str],
         "kill_workflow": ["kill", "workflow", str],
-        "drop_workflow": ["drop", "workflow", str],
+        "unregister_workflow": ["drop", "workflow", str],
         "list_workflows": ["list", "workflows"],
         "list_events": ["list", "events"],
         "list_commands": ["list", "commands"],
@@ -45,7 +46,7 @@ def validate_command(command_text):
         "delete_commands": ["delete", "commands"],
         "register_plugin": ["register", "plugin", str],
         "describe_plugin": ["describe", "plugin", str],
-        "delete_plugin": ["delete", "plugin", str],
+        "unregister_plugin": ["delete", "plugin", str],
     }
 
     for function_name, structure in command_structures.items():
@@ -178,7 +179,13 @@ class WorkflowQueries:
             return {"error": str(e)}
 
     @strawberry.field
-    async def run_workflow(self, workflow_name: str, revision: str = None) -> JSON:
+    async def run_workflow(
+            self,
+            workflow_name: str,
+            metadata: JSON | None = None,
+            workflow_input: JSON = None,
+            revision: str = None
+    ) -> JSON:
         """
         Requests to execute a workflow by workflow name.
         """
@@ -188,8 +195,9 @@ class WorkflowQueries:
         try:
             event_type = "WorkflowExecutionRequested"
             revision = {"revision": revision} if revision else {}
+            workflow_input = {workflow_input: workflow_input} if workflow_input else {}
             nats_payload = Payload.create(
-                {"workflow_name": workflow_name} | revision,
+                {"workflow_name": workflow_name} | workflow_input | revision,
                 prefix="metadata",
                 event_type=event_type,
                 )

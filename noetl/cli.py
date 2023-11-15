@@ -92,8 +92,8 @@ class TokenCommand(KeyVal):
                 """
             case "run_workflow":
                 return """
-                query RunWorkflow($workflowName: String!) {
-                    runWorkflow(workflowName: $workflowName)
+                query RunWorkflow($workflowName: String!, $workflowInput: JSON) {
+                    runWorkflow(workflowName: $workflowName, workflowInput: $workflowInput)
                 }
                 """
             case _:
@@ -150,9 +150,9 @@ class TokenCommand(KeyVal):
                             handler="describe_workflow"
                         )
                 case "run_workflow":
-                    if len(args) == 1:
+                    if len(args) == 2:
                         return cls(
-                            variables={"workflowName": args[0]},
+                            variables={"workflowName": args[0], "workflowInput": args[1]},
                             tokens="run workflow",
                             handler="run_workflow"
                         )
