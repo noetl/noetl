@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-registrar
+  labels:
+    app: noetl-registrar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noetl-registrar
+  template:
+    metadata:
+      labels:
+        app: noetl-registrar
+    spec:
+      containers:
+      - name: dispatcher
+        image: ghcr.io/noetl/noetl-registrar:latest
+        ports:
+        - containerPort: 9091
+        env:
+        - name: NATS_URL
+          value: "nats://nats.nats.svc.cluster.local:4222"
+        - name: NATS_POLL_SIZE
+          value: "10"
+        - name: PROM_HOST
+          value: "localhost"
+        - name: PROM_PORT
+          value: "9091"
