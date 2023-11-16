@@ -14,6 +14,11 @@ make nats-all
 ```bash
 make deploy-all
 ```
+## Set NOETL_API_URL environment variable
+
+```bash
+export NOETL_API_URL=http://localhost/noetl
+```
 
 ## Run commands via CLI
 
