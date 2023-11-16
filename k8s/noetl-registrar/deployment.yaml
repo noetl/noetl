@@ -25,6 +25,6 @@ spec:
         - name: NATS_POLL_SIZE
           value: "10"
         - name: PROM_HOST
-          value: "localhost"
+          value: "127.0.0.1"
         - name: PROM_PORT
           value: "9091"

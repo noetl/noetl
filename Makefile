@@ -6,7 +6,7 @@ $(shell kubectl get svc nats -n nats -o=jsonpath='{.spec.ports[0].nodePort}')
 endef
 
 NATS_URL=nats://localhost:$(call get_nats_port)
-CLI_SERVICE_NAME=noetl-api
+CLI_SERVICE_NAME=noetl-cli
 API_SERVICE_NAME=noetl-api
 DISPATCHER_SERVICE_NAME=noetl-dispatcher
 REGISTRAR_SERVICE_NAME=noetl-registrar
@@ -55,7 +55,7 @@ tag-registrar:
 	@echo "Tagging Registrar image"
 	@docker tag $(REGISTRAR_SERVICE_NAME) ghcr.io/$(GHCR_USERNAME)/noetl-registrar:$(VERSION)
 
-push-api: tag-cli
+push-cli: tag-cli
 	@echo "Pushing CLI image to GitHub Container Registry"
 	@docker push ghcr.io/$(GHCR_USERNAME)/noetl-cli:$(VERSION)
 
@@ -82,6 +82,7 @@ api-all: delete-api build-api tag-api push-api deploy-api
 
 deploy-api:
 	@echo "Deploying NoETL API Service"
+	@kubectl apply -f $(K8S_DIR)/noetl-api/namespace.yaml
 	@kubectl apply -f $(K8S_DIR)/noetl-api/deployment.yaml
 	@kubectl apply -f $(K8S_DIR)/noetl-api/service.yaml
 	@kubectl apply -f $(K8S_DIR)/noetl-api/ingress.yaml
@@ -89,12 +90,12 @@ deploy-api:
 deploy-dispatcher:
 	@echo "Deploying NoETL Dispatcher Service"
 	@kubectl apply -f $(K8S_DIR)/noetl-dispatcher/deployment.yaml
-	@kubectl apply -f $(K8S_DIR)/noetl-dispatcher/service.yaml
+	# @kubectl apply -f $(K8S_DIR)/noetl-dispatcher/service.yaml
 
 deploy-registrar:
 	@echo "Deploying NoETL Registrar Service"
 	@kubectl apply -f $(K8S_DIR)/noetl-registrar/deployment.yaml
-	@kubectl apply -f $(K8S_DIR)/noetl-registrar/service.yaml
+	# @kubectl apply -f $(K8S_DIR)/noetl-registrar/service.yaml
 
 deploy-all: deploy-api deploy-dispatcher deploy-registrar
 	@echo "Redeploy NoETL core services to Kubernetes"
@@ -104,6 +105,7 @@ deploy-all: deploy-api deploy-dispatcher deploy-registrar
 
 delete-api:
 	@echo "Deleting NoETL API Service"
+	@kubectl delete -f $(K8S_DIR)/noetl-api/namespace.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/deployment.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/service.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl || true
