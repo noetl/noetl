@@ -66,16 +66,16 @@ class Dispatcher(Plugin):
 
 if __name__ == "__main__":
     args = parse_args(
-        description="NoETL Dispatcher Service",
+        description="NoETL Dispatcher Plugin",
         default_nats_url="nats://localhost:32645",
         default_nats_pool_size=10,
         default_prom_host="localhost",
         default_prom_port=9091
     )
     try:
-        dispatcher = Dispatcher.create(NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
-        asyncio.run(dispatcher.run(args, subject_prefix="event.dispatcher"))
+        dispatcher_plugin = Dispatcher.create(NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
+        asyncio.run(dispatcher_plugin.run(args, subject_prefix="event.dispatcher"))
     except KeyboardInterrupt:
         sys.exit()
     except Exception as e:
-        logger.info(f"Dispatcher error: {str(e)}.")
+        logger.info(f"Dispatcher plugin error: {str(e)}.")

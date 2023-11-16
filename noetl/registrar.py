@@ -84,16 +84,16 @@ class Registrar(Plugin):
 
 if __name__ == "__main__":
     args = parse_args(
-        description="NoETL Registrar Service",
+        description="NoETL Registrar Plugin",
         default_nats_url="nats://localhost:32645",
         default_nats_pool_size=10,
         default_prom_host="localhost",
         default_prom_port=9092
     )
     try:
-        registrar = Registrar.create(NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
-        asyncio.run(registrar.run(args, subject_prefix="command.registrar"))
+        registrar_plugin = Registrar.create(NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
+        asyncio.run(registrar_plugin.run(args, subject_prefix="command.registrar"))
     except KeyboardInterrupt:
         sys.exit()
     except Exception as e:
-        logger.info(f"Dispatcher error: {str(e)}.")
+        logger.info(f"Registrar plugin error: {str(e)}.")

@@ -13,7 +13,7 @@ class HTTPHandler(Plugin):
         url = payload_data.get_value("url")
         method = payload_data.get_value("method")
         data = payload_data.get_value("data")
-
+        origin_ref = payload_data.get_value("origin_ref")
         async with aiohttp.ClientSession() as session:
             async with session.request(method, url, data=data) as response:
                 response_data = await response.text()
@@ -24,7 +24,7 @@ class HTTPHandler(Plugin):
             prefix="metadata",
             reference=nats_reference.to_dict()
         )
-        await self.event_write(subject="http.response", message=response_payload.encode())
+        await self.event_write(subject=f"http-request.output.{origin_ref}", message=response_payload.encode())
 
     async def switch(self, payload: Payload, nats_reference: NatsStreamReference):
         if payload.get_value("command_type") == "HTTPRequest":
@@ -33,17 +33,17 @@ class HTTPHandler(Plugin):
 
 if __name__ == "__main__":
     args = parse_args(
-        description="HTTP Handler Service",
+        description="HTTP Handler Plugin",
         default_nats_url="nats://localhost:32645",
         default_nats_pool_size=10,
         default_prom_host="localhost",
         default_prom_port=9093
     )
     try:
-        http_handler_service = HTTPHandler.create(
+        http_handler_plugin = HTTPHandler.create(
             NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
-        asyncio.run(http_handler_service.run(args, subject_prefix="command.http-handler"))
+        asyncio.run(http_handler_plugin.run(args, subject_prefix="command.http-handler"))
     except KeyboardInterrupt:
         sys.exit()
     except Exception as e:
-        logger.error(f"HTTP Handler service error: {str(e)}")
+        logger.error(f"HTTP Handler plugin error: {str(e)}")
