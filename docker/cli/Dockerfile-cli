@@ -14,4 +14,4 @@ COPY ${PRJ_PATH}/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "./dispatcher.py"]
+CMD ["python", "./cli.py"]
