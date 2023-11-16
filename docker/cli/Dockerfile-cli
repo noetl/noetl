@@ -5,6 +5,7 @@ WORKDIR /usr/noetl
 RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
+    bash \
     && rm -rf /var/lib/apt/lists/*
 
 COPY  ${PRJ_PATH}/noetl/cli.py \

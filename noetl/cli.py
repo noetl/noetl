@@ -1,6 +1,7 @@
 import sys
 import requests
 import os
+import readline
 from loguru import logger
 from keyval import KeyVal
 
@@ -215,12 +216,23 @@ def main():
         else:
             logger.info("NoETL command line terminal.\nEnter a <command> or 'exit' to quit")
             while True:
-                TokenCommand.create(input("> ").lstrip()).execute()
+                line = input("> ").lstrip()
+                if line.lower() == "exit":
+                    logger.info("\nGoodbye...")
+                    break
+                try:
+                    TokenCommand.create(line).execute()
+                except ValueError as e:
+                    logger.error(f"Invalid command: {e}")
+                except FileNotFoundError:
+                    logger.error(f"File not found")
+                except NotImplementedError as e:
+                    logger.error(f"Not implemented: {e}")
 
     except KeyboardInterrupt:
-        TokenCommand.create("exit").execute()
+        logger.info("\nGoodbye...")
     except Exception as e:
-        logger.info(f"NoETL cli error: {str(e)}.")
+        logger.error(f"Unexpected error: {str(e)}")
 
 
 if __name__ == "__main__":
