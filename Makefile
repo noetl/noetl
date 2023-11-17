@@ -1,5 +1,5 @@
 GHCR_USERNAME=noetl
-VERSION=latest
+VERSION="0.1.0"
 K8S_DIR=k8s
 define get_nats_port
 $(shell kubectl get svc nats -n nats -o=jsonpath='{.spec.ports[0].nodePort}')
@@ -15,7 +15,7 @@ API_DOCKERFILE=docker/api/Dockerfile-api
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 
-all: build-all push-all
+all: build-all push-all delete-all deploy-all
 
 build-all: build-api build-dispatcher build-registrar build-cli
 .PHONY: build-api build-dispatcher build-registrar build-cli build-all clean
@@ -80,6 +80,10 @@ api-all: delete-api build-api tag-api push-api deploy-api
 
 .PHONY: deploy-api deploy-dispatcher deploy-registrar deploy-api api-all
 
+
+deploy-all: deploy-api deploy-dispatcher deploy-registrar
+	@echo "Redeploy NoETL core services to Kubernetes"
+
 deploy-api:
 	@echo "Deploying NoETL API Service"
 	@kubectl apply -f $(K8S_DIR)/noetl-api/namespace.yaml
@@ -97,18 +101,29 @@ deploy-registrar:
 	@kubectl apply -f $(K8S_DIR)/noetl-registrar/deployment.yaml
 	# @kubectl apply -f $(K8S_DIR)/noetl-registrar/service.yaml
 
-deploy-all: deploy-api deploy-dispatcher deploy-registrar
-	@echo "Redeploy NoETL core services to Kubernetes"
 
 
-.PHONY: delete-api
+
+.PHONY: delete-all delete-api delete-dispatcher delete-registrar
+
+delete-all: delete-dispatcher delete-registrar delete-api
+		@echo "Delete NoETL core services to Kubernetes"
 
 delete-api:
 	@echo "Deleting NoETL API Service"
-	@kubectl delete -f $(K8S_DIR)/noetl-api/namespace.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/deployment.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/service.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl || true
+	@kubectl delete -f $(K8S_DIR)/noetl-api/namespace.yaml -n noetl || true
+
+delete-dispatcher:
+	@echo "Deleting NoETL Dispatcher Service"
+	@kubectl delete -f $(K8S_DIR)/noetl-dispatcher/deployment.yaml -n noetl || true
+
+delete-registrar:
+	@echo "Deleting NoETL Registrar Service"
+	@kubectl delete -f $(K8S_DIR)/noetl-registrar/deployment.yaml -n noetl || true
+
 
 
 nats-all: nats-delete-events nats-delete-commands nats-create-events nats-create-commands
