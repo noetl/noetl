@@ -15,6 +15,30 @@ API_DOCKERFILE=docker/api/Dockerfile-api
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 
+VENV_NAME := .venv
+REQUIREMENTS := requirements.txt
+
+venv:
+	@echo "Creating Python virtual environment..."
+	@python -m venv $(VENV_NAME)
+	@. $(VENV_NAME)/bin/activate; \
+	pip install --upgrade pip; \
+	deactivate
+	@echo "Virtual environment created."
+
+requirements:
+	@echo "Installing python requirements..."
+	@. $(VENV_NAME)/bin/activate; \
+	pip install -r $(REQUIREMENTS); \
+	echo "Requirements installed."
+
+activate:
+	@echo "To activate the virtual environment:"
+	@echo "source $(VENV_NAME)/bin/activate"
+
+.PHONY: venv requirements activate
+
+
 all: build-all push-all delete-all deploy-all
 
 build-all: build-api build-dispatcher build-registrar build-cli
@@ -162,3 +186,9 @@ purge-events:
 
 stream-ls:
 	@nats stream ls -s $(NATS_URL)
+
+
+get-current-time-workflow:
+	@python noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
+
+.PHONY: get-current-time-workflow
