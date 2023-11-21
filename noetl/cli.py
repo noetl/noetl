@@ -1,7 +1,7 @@
 import sys
 import requests
 import os
-import readline
+import json
 from loguru import logger
 from keyval import KeyVal
 
@@ -151,12 +151,23 @@ class TokenCommand(KeyVal):
                             handler="describe_workflow"
                         )
                 case "run_workflow":
-                    if len(args) == 2:
+                    if len(args) >= 2:
+                        try:
+                            workflow_input = json.loads(args[1])
+                            workflow_input_json = json.dumps(workflow_input)
+                        except json.JSONDecodeError:
+                            raise ValueError("Invalid JSON for workflowInput")
+
                         return cls(
-                            variables={"workflowName": args[0], "workflowInput": args[1]},
+                            variables={
+                                "workflowName": args[0],
+                                "workflowInput": workflow_input_json
+                            },
                             tokens="run workflow",
                             handler="run_workflow"
                         )
+                    else:
+                        raise ValueError("Need workflowName, workflowInput arguments for run workflow")
                 case "describe_plugin":
                     if len(args) == 1:
                         return cls(

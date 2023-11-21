@@ -80,6 +80,18 @@ class RegistrationResponse:
     status: str | None = None
     message: str | None = None
 
+    def to_dict(self):
+        return {
+            "identifier": self.identifier,
+            "reference": self.reference,
+            "kind": self.kind,
+            "name": self.name,
+            "event_type": self.event_type,
+            "ack_seq": self.ack_seq,
+            "status": self.status,
+            "message": self.message,
+        }
+
 
 @strawberry.type
 class WorkflowMutations:
@@ -197,7 +209,7 @@ class WorkflowQueries:
             revision = {"revision": revision} if revision else {}
             workflow_input = {workflow_input: workflow_input} if workflow_input else {}
             nats_payload = Payload.create(
-                {"workflow_name": workflow_name} | workflow_input | revision,
+                {"workflow_name": workflow_name,  "workflow_input": workflow_input},
                 prefix="metadata",
                 event_type=event_type,
                 )
@@ -215,7 +227,7 @@ class WorkflowQueries:
                 message="Workflow execution has been successfully requested"
             )
             logger.info(f"Ack: {registration_response}")
-            return registration_response
+            return registration_response.to_dict()
 
         except Exception as e:
             logger.error(f"Request failed due to error: {str(e)}")
