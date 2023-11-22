@@ -5,7 +5,8 @@ define get_nats_port
 $(shell kubectl get svc nats -n nats -o=jsonpath='{.spec.ports[0].nodePort}')
 endef
 
-NATS_URL=nats://localhost:$(call get_nats_port)
+# NATS_URL=nats://localhost:$(call get_nats_port)
+NATS_URL=nats://localhost:32222
 CLI_SERVICE_NAME=noetl-cli
 API_SERVICE_NAME=noetl-api
 DISPATCHER_SERVICE_NAME=noetl-dispatcher
@@ -110,18 +111,21 @@ deploy-all: deploy-api deploy-dispatcher deploy-registrar
 
 deploy-api:
 	@echo "Deploying NoETL API Service"
+	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/noetl-api/namespace.yaml
 	@kubectl apply -f $(K8S_DIR)/noetl-api/deployment.yaml
 	@kubectl apply -f $(K8S_DIR)/noetl-api/service.yaml
-	@kubectl apply -f $(K8S_DIR)/noetl-api/ingress.yaml
+	# @kubectl apply -f $(K8S_DIR)/noetl-api/ingress.yaml
 
 deploy-dispatcher:
 	@echo "Deploying NoETL Dispatcher Service"
+	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/noetl-dispatcher/deployment.yaml
 	# @kubectl apply -f $(K8S_DIR)/noetl-dispatcher/service.yaml
 
 deploy-registrar:
 	@echo "Deploying NoETL Registrar Service"
+	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/noetl-registrar/deployment.yaml
 	# @kubectl apply -f $(K8S_DIR)/noetl-registrar/service.yaml
 
@@ -135,17 +139,20 @@ delete-all: delete-dispatcher delete-registrar delete-api
 
 delete-api:
 	@echo "Deleting NoETL API Service"
+	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/noetl-api/deployment.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/service.yaml -n noetl || true
-	@kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl || true
+	# @kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/namespace.yaml -n noetl || true
 
 delete-dispatcher:
 	@echo "Deleting NoETL Dispatcher Service"
+	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/noetl-dispatcher/deployment.yaml -n noetl || true
 
 delete-registrar:
 	@echo "Deleting NoETL Registrar Service"
+	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/noetl-registrar/deployment.yaml -n noetl || true
 
 
@@ -157,18 +164,22 @@ nats-all: nats-delete-events nats-delete-commands nats-create-events nats-create
 
 nats-delete-events:
 	@echo "Deleting NATS events"
+	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
 
 nats-create-events:
 	@echo "Creating NATS events"
+	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
 
 nats-delete-commands:
 	@echo "Deleting NATS commands"
+	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
 
 nats-create-commands:
 	@echo "Creating NATS commands"
+	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
 
 .PHONY: purge-commands purge-events purge-all stream-ls
