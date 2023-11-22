@@ -157,35 +157,88 @@ delete-registrar:
 	@kubectl delete -f $(K8S_DIR)/noetl-registrar/deployment.yaml -n noetl || true
 
 
+install-helm:
+	@echo "Installing Helm..."
+	@brew install helm
+	@echo "Helm installation complete."
 
-nats-all: nats-delete-events nats-delete-commands nats-create-events nats-create-commands
-	@echo "Reset all NATS streams in Kubernetes"
+add-nats-repo:
+	@echo "Adding NATS helm repo..."
+	@helm repo add nats https://nats-io.github.io/k8s/helm/charts/
+	@echo "NATS helm repo added."
 
-.PHONY: nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all
+add-ingress-repo:
+	@echo "Adding ingress-nginx helm repo..."
+	@helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+	@helm repo update
+	@echo "ingress-nginx helm repo added."
+
+install-nats-tools:
+	@echo "Tapping nats-io/nats-tools..."
+	@brew tap nats-io/nats-tools
+	@echo "Installing nats from nats-io/nats-tools..."
+	@brew install nats-io/nats-tools/nats
+	@echo "NATS installation complete."
+
+set-k8s-context:
+	@echo "Setting Kubernetes context to docker-desktop..."
+	@kubectx docker-desktop
+	@echo "Context set to docker-desktop."
+
+install-ingress-nginx: add-ingress-repo
+	@echo "Checking if ingress-nginx is already installed..."
+	@if ! helm list -n ingress-nginx | grep -q ingress-nginx; then \
+        echo "Installing ingress-nginx..."; \
+        helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace; \
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml; \
+        echo "ingress-nginx installed."; \
+    else \
+        echo "ingress-nginx is already installed, skipping installation."; \
+    fi
+
+install-nats:
+	@echo "Installing NATS..."
+	@helm install nats nats/nats --values k8s/nats/values.yaml --namespace nats --create-namespace
+	@helm helm install nack nats/nack --set jetstream.nats.url=nats://nats:4222 -n nats
+	@echo "NATS installed."
+
+install-nats-crd:
+	@echo "Installing NATS JetStream CRDs..."
+	@kubectl apply -f kubectl apply -f https://github.com/nats-io/nack/releases/latest/download/crds.yml -n nats
+	@echo "NATS JetStream CRDs installed."
+
+.PHONY: install-helm install-nats-tools add-nats-repo set-k8s-context install-ingress-nginx install-nats install-nats-crd
+
+install-all-nats: set-k8s-context install-helm install-nats-tools add-nats-repo set-k8s-context install-ingress-nginx install-nats install-nats-crd
+	@echo "All components installed."
+
+.PHONY: install-all-nats
 
 nats-delete-events:
 	@echo "Deleting NATS events"
-	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
 
 nats-create-events:
 	@echo "Creating NATS events"
-	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
 
 nats-delete-commands:
 	@echo "Deleting NATS commands"
-	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
 
 nats-create-commands:
 	@echo "Creating NATS commands"
-	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
+
+nats-all-streams: set-k8s-context nats-delete-events nats-delete-commands nats-create-events nats-create-commands
+	@echo "Reset all NATS streams in Kubernetes"
+
+.PHONY: install-nats-crd nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all
+
 
 .PHONY: purge-commands purge-events purge-all stream-ls
 
-purge-all: purge-commands purge-events stream-ls
+purge-all: purge-commands purge-events nats-ls
 	@echo "Purged NATS events and commands streams"
 
 purge-commands:
@@ -196,7 +249,7 @@ purge-events:
 	@echo "Purging NATS events streams"
 	@nats stream purge events --force -s $(NATS_URL)
 
-stream-ls:
+nats-ls:
 	@nats stream ls -s $(NATS_URL)
 
 
