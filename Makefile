@@ -16,12 +16,13 @@ API_DOCKERFILE=docker/api/Dockerfile-api
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 
+PYTHON := python3
 VENV_NAME := .venv
 REQUIREMENTS := requirements.txt
 
 venv:
 	@echo "Creating Python virtual environment..."
-	@python -m venv $(VENV_NAME)
+	@$(PYTHON) -m venv $(VENV_NAME)
 	@. $(VENV_NAME)/bin/activate; \
 	pip install --upgrade pip; \
 	deactivate
