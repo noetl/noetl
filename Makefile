@@ -32,6 +32,7 @@ requirements:
 	@echo "Installing python requirements..."
 	@. $(VENV_NAME)/bin/activate; \
 	pip install -r $(REQUIREMENTS); \
+	python -m spacy download en_core_web_sm; \
 	echo "Requirements installed."
 
 activate:
@@ -253,7 +254,10 @@ nats-ls:
 	@nats stream ls -s $(NATS_URL)
 
 
+register-workflow:
+	@python noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
+
 get-current-time-workflow:
 	@python noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
 
-.PHONY: get-current-time-workflow
+.PHONY: workflow get-current-time-workflow

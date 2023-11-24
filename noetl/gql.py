@@ -131,9 +131,14 @@ class WorkflowMutations:
         if command_validation_result.function_name == "register_workflow":
             try:
                 event_type = "WorkflowRegistrationRequested"
-                nats_payload = Payload.workflow_create(workflow_base64, metadata, tokens, event_type)
-                ack = await pool.publish(
-                    subject=f"event.dispatcher.{nats_payload.get_value('origin_ref')}",
+                nats_payload = Payload.workflow_create(
+                    workflow_base64=workflow_base64,
+                    metadata=metadata,
+                    tokens=tokens,
+                    event_type=event_type,
+                    nats_pool=pool)
+                ack = await nats_payload.event_write(
+                    subject=f"dispatcher.{nats_payload.get_value('origin_ref')}",
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
