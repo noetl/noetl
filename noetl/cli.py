@@ -104,7 +104,19 @@ class TokenCommand(KeyVal):
             case "run_workflow":
                 return """
                 query RunWorkflow($workflowName: String!, $workflowInput: JSON) {
-                    runWorkflow(workflowName: $workflowName, workflowInput: $workflowInput)
+                    runWorkflow(workflowName: $workflowName, workflowInput: $workflowInput){
+                    referenceIdentifier {
+                        timestamp
+                        identifier
+                        reference
+                        origin
+                    }
+                    name
+                    eventType
+                    ackSeq
+                    status
+                    message
+                  }
                 }
                 """
             case _:

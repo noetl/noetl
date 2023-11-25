@@ -142,15 +142,15 @@ class WorkflowMutations:
             try:
                 event_type = "WorkflowRegistrationRequested"
 
-                name = Payload.base64_yaml(workflow_base64).get("metadata").get("name")
-                if name is None:
+                workflow_name = Payload.base64_yaml(workflow_base64).get("metadata").get("name")
+                if workflow_name is None:
                     raise ValueError("Workflow name is missing in the YAML.")
                 nats_payload = Payload.create(
                     payload_data={
-                        "workflow_name": name,
+                        "workflow_name": workflow_name,
                         "workflow_base64": workflow_base64,
                         "metadata": metadata | {
-                            "workflow_name": name,
+                            "workflow_name": workflow_name,
                             "tokens": tokens
                         }
                     },
@@ -222,8 +222,9 @@ class WorkflowQueries:
             workflow_name: str,
             metadata: JSON | None = None,
             workflow_input: JSON = None,
+            tokens: str | None = None,
             revision: str = None
-    ) -> JSON:
+    ) -> RegistrationResponse:
         """
         Requests to execute a workflow by workflow name.
         """
@@ -232,28 +233,36 @@ class WorkflowQueries:
             raise ValueError("NatsPool is not initialized")
         try:
             event_type = "WorkflowExecutionRequested"
-            revision = {"revision": revision} if revision else {}
+            metadata = metadata or {}
+            revision = {"revision": revision} or {}
             workflow_input = {workflow_input: workflow_input} if workflow_input else {}
             nats_payload = Payload.create(
-                {"workflow_name": workflow_name, "workflow_input": workflow_input},
-                prefix="metadata",
+                payload_data={
+                    "workflow_name": workflow_name,
+                    "workflow_input": workflow_input,
+                    "metadata": metadata | {
+                        "workflow_name": workflow_name,
+                        "tokens": tokens
+                    }
+                },
                 event_type=event_type,
+                nats_pool=pool
             )
-            ack = await pool.publish(
-                subject=f"event.dispatcher.{nats_payload.get_value('origin_ref')}",
+            ack = await nats_payload.event_write(
+                subject=f"dispatcher.{nats_payload.get_subject_ref()}",
                 message=nats_payload.encode()
             )
             registration_response = RegistrationResponse(
-                identifier=nats_payload.get_value("metadata.identifier"),
-                kind="Workflow",
+                reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
+                kind="RunWorkflow",
                 name=nats_payload.get_value("workflow_name"),
-                event_type=nats_payload.get_value("event_type"),
+                event_type=nats_payload.get_value("metadata.event_type"),
                 ack_seq=ack.seq,
                 status="WorkflowExecutionRequested",
                 message="Workflow execution has been successfully requested"
             )
             logger.info(f"Ack: {registration_response}")
-            return registration_response.to_dict()
+            return registration_response
 
         except Exception as e:
             logger.error(f"Request failed due to error: {str(e)}")

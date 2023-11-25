@@ -257,10 +257,21 @@ nats-ls:
 	@nats stream ls -s $(NATS_URL)
 
 
-register-workflow: activate-venv
-	$(PYTHON) noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
+run-api: activate-venv
+	bin/api.sh
 
-get-current-time-workflow: activate-venv
+.PHONY: run-api
+
+register-workflow: activate-venv
+	$(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
+
+list-workflows: activate-venv
+	$(PYTHON) noetl/cli.py list workflows
+
+describe-workflow: activate-venv
+	$(PYTHON) noetl/cli.py describe workflow $(filter-out $@,$(MAKECMDGOALS))
+
+run-current-time-workflow: activate-venv
 	$(PYTHON) noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
 
-.PHONY: register-workflow get-current-time-workflow
+.PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow
