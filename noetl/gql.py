@@ -157,9 +157,6 @@ class WorkflowMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-                logger.info(nats_payload)
-                logger.info(nats_payload.get_subject_ref())
-                logger.info(nats_payload.get_ref())
                 ack = await nats_payload.event_write(
                     subject=f"dispatcher.{nats_payload.get_subject_ref()}",
                     message=nats_payload.encode()
