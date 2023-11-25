@@ -35,11 +35,14 @@ requirements:
 	python -m spacy download en_core_web_sm; \
 	echo "Requirements installed."
 
-activate:
+activate-venv:
+	@. $(VENV_NAME)/bin/activate;
+
+activate-help:
 	@echo "To activate the virtual environment:"
 	@echo "source $(VENV_NAME)/bin/activate"
 
-.PHONY: venv requirements activate
+.PHONY: venv requirements activate-venv activate-help
 
 
 all: build-all push-all delete-all deploy-all
@@ -254,10 +257,10 @@ nats-ls:
 	@nats stream ls -s $(NATS_URL)
 
 
-register-workflow:
-	@python noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
+register-workflow: activate-venv
+	$(PYTHON) noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
 
-get-current-time-workflow:
-	@python noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
+get-current-time-workflow: activate-venv
+	$(PYTHON) noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
 
-.PHONY: workflow get-current-time-workflow
+.PHONY: register-workflow get-current-time-workflow
