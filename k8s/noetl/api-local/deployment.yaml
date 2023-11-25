@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-api
+  namespace: noetl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noetl-api
+  template:
+    metadata:
+      labels:
+        app: noetl-api
+    spec:
+      containers:
+      - name: noetl-api
+        image: local.sre/noetl-registrar:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8021
+        env:
+        - name: NATS_URL
+          value: "nats://nats.nats.svc.cluster.local:4222"
+        - name: MAX_REQUESTS
+          value: "1000"
+        - name: MAX_CONCURRENCY
+          value: "200"
+        - name: ENV
+          value: "local"
+        - name: LOG_LEVEL
+          value: "INFO"
