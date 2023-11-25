@@ -29,7 +29,12 @@ class TokenCommand(KeyVal):
                 return """
                         mutation RegisterWorkflow($workflowBase64: String!, $metadata: JSON, $tokens: String) {
                             registerWorkflow(workflowBase64: $workflowBase64, metadata: $metadata, tokens: $tokens) {
-                                identifier
+                                referenceIdentifier {
+                                    timestamp
+                                    identifier
+                                    reference
+                                    origin
+                                }
                                 name
                                 eventType
                                 ackSeq
@@ -42,7 +47,12 @@ class TokenCommand(KeyVal):
                 return """
                 mutation RegisterPlugin($pluginName: String!, $imageUrl: String!, $metadata: JSON, $tokens: String) {
                   registerPlugin(pluginName: $pluginName, imageUrl: $imageUrl, metadata: $metadata, tokens: $tokens) {
-                    identifier
+                    referenceIdentifier {
+                        timestamp
+                        identifier
+                        reference
+                        origin
+                    }
                     name
                     eventType
                     ackSeq

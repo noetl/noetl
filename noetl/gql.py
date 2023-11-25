@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
 from payload import Payload
+
 nlp = spacy.load("en_core_web_sm")
 
 
@@ -68,11 +69,16 @@ def validate_command(command_text):
 class ResponseMessage:
     message: JSON
 
+@strawberry.type
+class ReferenceIdentifierType:
+    timestamp: str
+    identifier: str
+    reference: str
+    origin: str
 
 @strawberry.type
 class RegistrationResponse:
-    identifier: str | None = None
-    reference: str | None = None
+    reference_identifier: ReferenceIdentifierType | None = None
     kind: str | None = None
     name: str | None = None
     event_type: str | None = None
@@ -82,8 +88,7 @@ class RegistrationResponse:
 
     def to_dict(self):
         return {
-            "identifier": self.identifier,
-            "reference": self.reference,
+            "reference_identifier": self.reference_identifier,
             "kind": self.kind,
             "name": self.name,
             "event_type": self.event_type,
@@ -106,7 +111,12 @@ class WorkflowMutations:
         metadata: {"source": "noetl-cli", "handler": "register_workflow"},
         workflow_base64: "Base64 encoded string of workflow template YAML"
       ) {
-            identifier
+            referenceIdentifier {
+                timestamp
+                identifier
+                reference
+                origin
+            }
             name
             eventType
             ackSeq
@@ -131,21 +141,34 @@ class WorkflowMutations:
         if command_validation_result.function_name == "register_workflow":
             try:
                 event_type = "WorkflowRegistrationRequested"
-                nats_payload = Payload.workflow_create(
-                    workflow_base64=workflow_base64,
-                    metadata=metadata,
-                    tokens=tokens,
+
+                name = Payload.base64_yaml(workflow_base64).get("metadata").get("name")
+                if name is None:
+                    raise ValueError("Workflow name is missing in the YAML.")
+                nats_payload = Payload.create(
+                    payload_data={
+                        "workflow_name": name,
+                        "workflow_base64": workflow_base64,
+                        "metadata": metadata | {
+                            "workflow_name": name,
+                            "tokens": tokens
+                        }
+                    },
                     event_type=event_type,
-                    nats_pool=pool)
+                    nats_pool=pool
+                )
+                logger.info(nats_payload)
+                logger.info(nats_payload.get_subject_ref())
+                logger.info(nats_payload.get_ref())
                 ack = await nats_payload.event_write(
-                    subject=f"dispatcher.{nats_payload.get_value('origin_ref')}",
+                    subject=f"dispatcher.{nats_payload.get_subject_ref()}",
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    identifier=nats_payload.get_value("metadata.identifier"),
+                    reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
                     kind="Workflow",
-                    name=nats_payload.get_value("metadata.workflow_name"),
-                    event_type=nats_payload.get_value("event_type"),
+                    name=nats_payload.get_value("workflow_name"),
+                    event_type=nats_payload.get_value("metadata.event_type"),
                     ack_seq=ack.seq,
                     status="WorkflowRegistrationRequested",
                     message="Workflow registration has been successfully requested"
@@ -179,6 +202,7 @@ class WorkflowQueries:
         except Exception as e:
             logger.error(f"Error listing workflows: {e}")
             return {"error": str(e)}
+
     @strawberry.field
     async def describe_workflow(self, workflow_name: str, revision: str = None) -> JSON:
         """
@@ -214,10 +238,10 @@ class WorkflowQueries:
             revision = {"revision": revision} if revision else {}
             workflow_input = {workflow_input: workflow_input} if workflow_input else {}
             nats_payload = Payload.create(
-                {"workflow_name": workflow_name,  "workflow_input": workflow_input},
+                {"workflow_name": workflow_name, "workflow_input": workflow_input},
                 prefix="metadata",
                 event_type=event_type,
-                )
+            )
             ack = await pool.publish(
                 subject=f"event.dispatcher.{nats_payload.get_value('origin_ref')}",
                 message=nats_payload.encode()
@@ -237,7 +261,6 @@ class WorkflowQueries:
         except Exception as e:
             logger.error(f"Request failed due to error: {str(e)}")
             raise ValueError(f"Request failed due to error: {str(e)}")
-
 
 
 @strawberry.type
@@ -260,7 +283,7 @@ class PluginMutations:
                 nats_payload = Payload.create(
                     payload_data={"plugin_name": plugin_name, "image_url": image_url, "metadata": metadata},
                     event_type="PluginRegistrationRequested",
-                    prefix = "metadata"
+                    prefix="metadata"
                 )
 
                 ack = await pool.publish(
@@ -268,7 +291,7 @@ class PluginMutations:
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    identifier=nats_payload.get_value("metadata.identifier"),
+                    identifier=ReferenceIdentifierType(**nats_payload.get_value("metadata.identifier")),
                     kind="Plugin",
                     name=plugin_name,
                     event_type=nats_payload.get_value("event_type"),
@@ -306,6 +329,7 @@ class PluginQueries:
         except Exception as e:
             logger.error(f"Error listing plugins: {e}")
             return {"error": str(e)}
+
     @strawberry.field
     async def describe_plugin(self, plugin_name: str, revision: str = None) -> JSON:
         """
