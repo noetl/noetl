@@ -34,7 +34,7 @@ class HTTPHandler(Plugin):
 if __name__ == "__main__":
     args = parse_args(
         description="HTTP Handler Plugin",
-        default_nats_url="nats://localhost:32645",
+        default_nats_url="nats://localhost:32222",
         default_nats_pool_size=10,
         default_prom_host="localhost",
         default_prom_port=9093

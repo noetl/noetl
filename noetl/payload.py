@@ -1,10 +1,8 @@
-import asyncio
-from loguru import logger
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from keyval import KeyVal
-from natstream import NatsConnectionPool, NatsConfig
+from natstream import NatsPool, NatsConnectionPool, NatsConfig
 
 
 @dataclass
@@ -36,14 +34,26 @@ class PayloadReference:
     identifier: str = None
     """The unique identifier of the current event or instance."""
 
-    timestamp: int = None
+    timestamp: str = None
     """The Unix timestamp of the payload creation time."""
 
     def __init__(self, origin=None, reference=None):
-        self.timestamp = int(datetime.now().timestamp() * 1000)
+        self.timestamp = str(int(datetime.now().timestamp() * 1000))
         self.identifier = str(uuid.uuid4())
         self.reference = reference if reference is not None else self.identifier
         self.origin = origin if origin is not None else self.identifier
+
+    def update(self):
+        """
+        Creates a new PayloadReference instance with updated values.
+
+        Returns:
+            PayloadReference: A new instance with updated timestamp, identifier, and reference.
+        """
+        return PayloadReference(
+            origin=self.origin,
+            reference=self.identifier
+        )
 
     def get_ref(self):
         """
@@ -53,33 +63,25 @@ class PayloadReference:
             dict: timestamp, identifier, reference, and origin.
         """
         return {
-            "timestamp": str(self.timestamp),
+            "timestamp": self.timestamp,
             "identifier": self.identifier,
             "reference": self.reference,
             "origin": self.origin
         }
 
 
-class Payload(KeyVal):
-    nats_pool: NatsConnectionPool
+class Payload(KeyVal, NatsPool):
 
     def __init__(self, *args, nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
         super().__init__(*args, **kwargs)
         if nats_pool:
-            self.set_nats_pool(nats_pool)
-
-    def set_nats_pool(self, nats_pool: NatsConnectionPool | NatsConfig):
-        if nats_pool is None:
-            self.nats_pool = NatsConnectionPool.get_instance()
-        elif isinstance(nats_pool, NatsConfig):
-            self.nats_pool = NatsConnectionPool(config=nats_pool)
-        elif isinstance(nats_pool, NatsConnectionPool):
-            self.nats_pool = nats_pool
-        else:
-            raise TypeError("nats_pool must be type of NatsConnectionPool or NatsConfig")
+            self.initialize_nats_pool(nats_pool)
 
     def set_ref(self, reference: PayloadReference):
         self.set_value("metadata.ref", reference.get_ref())
+
+    def get_payload_reference(self):
+        return self.get_value("metadata.ref")
 
     def get_subject_ref(self):
         origin = self.get_value("metadata.ref.origin")
@@ -94,52 +96,6 @@ class Payload(KeyVal):
 
     def set_command_type(self, command_type):
         self.set_value("metadata.command_type", command_type)
-
-    async def nats_read(self, subject: str, cb):
-        async with self.nats_pool.connection() as nc:
-            await nc.subscribe(subject, cb=cb)
-            while True:
-                await asyncio.sleep(1)
-
-    async def nats_write(self, subject: str, message: bytes):
-        async with self.nats_pool.connection() as nc:
-            return await nc.publish(subject, message)
-
-    async def command_write(self, subject: str, message: bytes):
-        return await self.nats_write(f"command.{subject}", message)
-
-    async def event_write(self, subject: str, message: bytes):
-        return await self.nats_write(f"event.{subject}", message)
-
-    async def workflow_bucket_create(self):
-        await self.nats_pool.bucket_create(bucket_name="workflows")
-
-    async def workflow_bucket_delete(self):
-        await self.nats_pool.bucket_delete(bucket_name="workflows")
-
-    async def workflow_put(self, key: str, value: bytes):
-        return await self.nats_pool.kv_put(bucket_name="workflows", key=key, value=value)
-
-    async def workflow_get(self, key: str):
-        return await self.nats_pool.kv_get(bucket_name="workflows", key=key)
-
-    async def workflow_delete(self, key: str):
-        await self.nats_pool.kv_delete(bucket_name="workflows", key=key)
-
-    async def plugin_bucket_create(self):
-        await self.nats_pool.bucket_create(bucket_name="plugins")
-
-    async def plugin_bucket_delete(self):
-        await self.nats_pool.bucket_delete(bucket_name="plugins")
-
-    async def plugin_put(self, key: str, value: bytes):
-        return await self.nats_pool.kv_put(bucket_name="plugins", key=key, value=value)
-
-    async def plugin_get(self, key: str):
-        return await self.nats_pool.kv_get(bucket_name="plugins", key=key)
-
-    async def plugin_delete(self, key: str):
-        await self.nats_pool.kv_delete(bucket_name="plugins", key=key)
 
     @classmethod
     def create(cls,

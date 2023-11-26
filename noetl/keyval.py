@@ -7,7 +7,7 @@ class KeyVal(dict):
     def get_keys(self) -> list:
         return list(self.keys())
 
-    def get_value(self, path: str = None, default: any = None):
+    def get_value(self, path: str = None, default: any = None, exclude: list[str] = None):
         if path is None:
             return self
         try:
@@ -18,9 +18,12 @@ class KeyVal(dict):
                 value = value.get(key)
                 if value is None:
                     return default
+            if exclude and isinstance(value, dict):
+                return {key: val for key, val in value.items() if key not in exclude}
             return value
         except Exception as e:
             raise ValueError(f"Error getting value for '{path}': {e}")
+
 
     def set_value(self, path: str, value):
         if path is None:

@@ -141,7 +141,6 @@ class WorkflowMutations:
         if command_validation_result.function_name == "register_workflow":
             try:
                 event_type = "WorkflowRegistrationRequested"
-
                 workflow_name = Payload.base64_yaml(workflow_base64).get("metadata").get("name")
                 if workflow_name is None:
                     raise ValueError("Workflow name is missing in the YAML.")

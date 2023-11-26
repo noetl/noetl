@@ -260,10 +260,20 @@ nats-ls:
 run-api: activate-venv
 	bin/api.sh
 
-.PHONY: run-api
+run-dispatcher: activate-venv
+	bin/dispatcher.sh
+
+run-registrar: activate-venv
+	bin/registrar.sh
+
+.PHONY: run-api run-dispatcher run-registrar
 
 register-workflow: activate-venv
-	$(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
+    ifeq ($(WORKFLOW),)
+	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/get-current-time.yaml"
+    else
+	    $(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
+    endif
 
 list-workflows: activate-venv
 	$(PYTHON) noetl/cli.py list workflows

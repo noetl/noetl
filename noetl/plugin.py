@@ -1,15 +1,13 @@
 import argparse
 import os
-from dataclasses import dataclass
-from natstream import NatsStreamReference
+from natstream import NatsStreamReference, NatsPool
 from aioprometheus import Counter
 from aioprometheus.service import Service
 from loguru import logger
 from payload import Payload
 
 
-@dataclass
-class Plugin(Payload):
+class Plugin(NatsPool):
     events_counter: Counter
 
     async def process_stream(self, msg):
@@ -26,13 +24,17 @@ class Plugin(Payload):
                      payload: Payload,
                      nats_reference: NatsStreamReference
                      ):
-        raise NotImplementedError("Subclasses must implement this method")
+        raise NotImplementedError("Plugin subclass must implement switch method")
 
     async def run(self, args, subject_prefix):
         service = Service()
         await service.start(addr=args.prom_host, port=args.prom_port)
         logger.info(f"Serving prometheus metrics on: {service.metrics_url}")
         _ = await self.nats_read(f"{subject_prefix}.>", self.process_stream)
+
+    async def shutdown(self):
+        if self.nats_pool:
+            await self.nats_pool.close_pool()
 
 
 def parse_args(description, default_nats_url, default_nats_pool_size, default_prom_host, default_prom_port):
