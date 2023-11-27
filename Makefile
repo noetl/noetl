@@ -16,7 +16,7 @@ API_DOCKERFILE=docker/api/Dockerfile-api
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 
-PYTHON := python3
+PYTHON := python3.11
 VENV_NAME := .venv
 REQUIREMENTS := requirements.txt
 
@@ -24,15 +24,15 @@ venv:
 	@echo "Creating Python virtual environment..."
 	@$(PYTHON) -m venv $(VENV_NAME)
 	@. $(VENV_NAME)/bin/activate; \
-	pip install --upgrade pip; \
+	pip3 install --upgrade pip; \
 	deactivate
 	@echo "Virtual environment created."
 
 requirements:
 	@echo "Installing python requirements..."
 	@. $(VENV_NAME)/bin/activate; \
-	pip install -r $(REQUIREMENTS); \
-	python -m spacy download en_core_web_sm; \
+	pip3 install -r $(REQUIREMENTS); \
+	@$(PYTHON) -m spacy download en_core_web_sm; \
 	echo "Requirements installed."
 
 activate-venv:
@@ -203,12 +203,12 @@ install-ingress-nginx: add-ingress-repo
 install-nats:
 	@echo "Installing NATS..."
 	@helm install nats nats/nats --values k8s/nats/values.yaml --namespace nats --create-namespace
-	@helm helm install nack nats/nack --set jetstream.nats.url=nats://nats:4222 -n nats
+	@helm install nack nats/nack --set jetstream.nats.url=nats://nats:4222 -n nats
 	@echo "NATS installed."
 
 install-nats-crd:
 	@echo "Installing NATS JetStream CRDs..."
-	@kubectl apply -f kubectl apply -f https://github.com/nats-io/nack/releases/latest/download/crds.yml -n nats
+	@kubectl apply -f https://github.com/nats-io/nack/releases/latest/download/crds.yml -n nats
 	@echo "NATS JetStream CRDs installed."
 
 .PHONY: install-helm install-nats-tools add-nats-repo set-k8s-context install-ingress-nginx install-nats install-nats-crd
@@ -234,10 +234,16 @@ nats-create-commands:
 	@echo "Creating NATS commands"
 	@kubectl apply -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
 
-nats-all-streams: set-k8s-context nats-delete-events nats-delete-commands nats-create-events nats-create-commands
+nats-install-all-streams: set-k8s-context nats-create-events nats-create-commands
+
+nats-delete-all-streams: set-k8s-context nats-delete-events nats-delete-commands
+
+nats-all-streams: nats-delete-all-streams nats-install-all-streams
+
+
 	@echo "Reset all NATS streams in Kubernetes"
 
-.PHONY: install-nats-crd nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all
+.PHONY: nats-install-all-streams nats-delete-all-streams nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all-streams
 
 
 .PHONY: purge-commands purge-events purge-all stream-ls
