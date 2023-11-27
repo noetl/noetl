@@ -21,7 +21,7 @@ setup(
         "aiofiles==23.2.1",
         "aiohttp==3.8.6",
         "pyyaml==6.0",
-        "requests==2.31.0",
+        "requests>=2.31.0",
         "spacy==3.6.1",
         "psutil==5.9.5",
         "fastapi==0.103.1",
