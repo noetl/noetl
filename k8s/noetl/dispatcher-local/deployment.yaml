@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: dispatcher
-        image: local.sre/noetl-dispatcher:latest
+        image: local/noetl-dispatcher:latest
         imagePullPolicy: Never
         ports:
         - containerPort: 9091

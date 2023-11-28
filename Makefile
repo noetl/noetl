@@ -12,22 +12,22 @@ NATS_URL=nats://localhost:32222
 CLI_SERVICE_NAME=noetl-cli
 CLI_DOCKERFILE=docker/cli/Dockerfile-cli
 CLI_VERSION=latest
-CLI_SERVICE_TAG=local.sre/$(CLI_SERVICE_NAME):$(CLI_VERSION)
+CLI_SERVICE_TAG=local/$(CLI_SERVICE_NAME):$(CLI_VERSION)
 
 API_SERVICE_NAME=noetl-api
 API_DOCKERFILE=docker/api/Dockerfile-api
 API_VERSION=latest
-API_SERVICE_TAG=local.sre/$(API_SERVICE_NAME):$(API_VERSION)
+API_SERVICE_TAG=local/$(API_SERVICE_NAME):$(API_VERSION)
 
 DISPATCHER_SERVICE_NAME=noetl-dispatcher
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 DISPATCHER_VERSION=latest
-DISPATCHER_SERVICE_TAG=local.sre/$(DISPATCHER_SERVICE_NAME):$(DISPATCHER_VERSION)
+DISPATCHER_SERVICE_TAG=local/$(DISPATCHER_SERVICE_NAME):$(DISPATCHER_VERSION)
 
 REGISTRAR_SERVICE_NAME=noetl-registrar
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 REGISTRAR_VERSION=latest
-REGISTRAR_SERVICE_TAG=local.sre/$(REGISTRAR_SERVICE_NAME):$(REGISTRAR_VERSION)
+REGISTRAR_SERVICE_TAG=local/$(REGISTRAR_SERVICE_NAME):$(REGISTRAR_VERSION)
 
 PYTHON := python
 VENV_NAME := .venv
@@ -333,6 +333,7 @@ run-registrar: activate-venv
 
 .PHONY: run-api run-dispatcher run-registrar
 
+#[WORKFLOW COMMANDS]######################################################################
 register-workflow: activate-venv
     ifeq ($(WORKFLOW),)
 	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/get-current-time.yaml"
@@ -343,20 +344,13 @@ register-workflow: activate-venv
 list-workflows: activate-venv
 	$(PYTHON) noetl/cli.py list workflows
 
-
-#[OTHERS]######################################################################
-register-workflow:
-	@python noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
-
 describe-workflow: activate-venv
 	$(PYTHON) noetl/cli.py describe workflow $(filter-out $@,$(MAKECMDGOALS))
-
 
 run-current-time-workflow: activate-venv
 	$(PYTHON) noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
 
-
-.PHONY: workflow get-current-time-workflow
+.PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow
 
 
 api-all: delete-api build-api tag-api push-api deploy-api
@@ -421,4 +415,3 @@ install-nats-tools:
 # .PHONY: install-all-nats
 
 # .PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow
-

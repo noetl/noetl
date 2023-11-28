@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: noetl-api
-        image: local.sre/noetl-registrar:latest
+        image: local/noetl-api:latest
         imagePullPolicy: Never
         ports:
         - containerPort: 8021
