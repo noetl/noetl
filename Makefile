@@ -16,13 +16,13 @@ API_DOCKERFILE=docker/api/Dockerfile-api
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
 REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 
-PYTHON := python3.11
+PYTHON := python
 VENV_NAME := .venv
 REQUIREMENTS := requirements.txt
 
 venv:
 	@echo "Creating Python virtual environment..."
-	@$(PYTHON) -m venv $(VENV_NAME)
+	$(PYTHON) -m venv $(VENV_NAME)
 	@. $(VENV_NAME)/bin/activate; \
 	pip3 install --upgrade pip; \
 	deactivate
@@ -32,7 +32,7 @@ requirements:
 	@echo "Installing python requirements..."
 	@. $(VENV_NAME)/bin/activate; \
 	pip3 install -r $(REQUIREMENTS); \
-	@$(PYTHON) -m spacy download en_core_web_sm; \
+	$(PYTHON) -m spacy download en_core_web_sm; \
 	echo "Requirements installed."
 
 activate-venv:
@@ -105,61 +105,77 @@ push-all: push-api push-dispatcher push-registrar
 
 .PHONY: docker-login tag-api tag-dispatcher tag-registrar push-api push-dispatcher push-registrar push-all
 
-api-all: delete-api build-api tag-api push-api deploy-api
-	@echo "Redeploy NoETL api service to Kubernetes"
-
-.PHONY: deploy-api deploy-dispatcher deploy-registrar deploy-api api-all
-
+set-k8s-context:
+	@echo "Setting Kubernetes context to docker-desktop..."
+	#@kubectx docker-desktop
+	@kubectl config use-context docker-desktop
+	@echo "Context set to docker-desktop."
 
 deploy-all: deploy-api deploy-dispatcher deploy-registrar
 	@echo "Redeploy NoETL core services to Kubernetes"
 
-deploy-api:
+deploy-api: set-k8s-context
 	@echo "Deploying NoETL API Service"
-	kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/noetl-api/namespace.yaml
 	@kubectl apply -f $(K8S_DIR)/noetl-api/deployment.yaml
 	@kubectl apply -f $(K8S_DIR)/noetl-api/service.yaml
 	# @kubectl apply -f $(K8S_DIR)/noetl-api/ingress.yaml
 
-deploy-dispatcher:
+deploy-dispatcher: set-k8s-context
 	@echo "Deploying NoETL Dispatcher Service"
-	kubectl config use-context docker-desktop
+	@kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/noetl-dispatcher/deployment.yaml
 	# @kubectl apply -f $(K8S_DIR)/noetl-dispatcher/service.yaml
 
-deploy-registrar:
+deploy-registrar: set-k8s-context
 	@echo "Deploying NoETL Registrar Service"
-	kubectl config use-context docker-desktop
+	@kubectl config use-context docker-desktop
 	@kubectl apply -f $(K8S_DIR)/noetl-registrar/deployment.yaml
 	# @kubectl apply -f $(K8S_DIR)/noetl-registrar/service.yaml
 
+.PHONY: deploy-api deploy-dispatcher deploy-registrar deploy-api api-all
 
 
-
-.PHONY: delete-all delete-api delete-dispatcher delete-registrar
-
-delete-all: delete-dispatcher delete-registrar delete-api
+delete-all: set-k8s-context delete-dispatcher delete-registrar delete-api
 		@echo "Delete NoETL core services to Kubernetes"
 
-delete-api:
+delete-api: set-k8s-context
 	@echo "Deleting NoETL API Service"
-	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/noetl-api/deployment.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/service.yaml -n noetl || true
 	# @kubectl delete -f $(K8S_DIR)/noetl-api/ingress.yaml -n noetl || true
 	@kubectl delete -f $(K8S_DIR)/noetl-api/namespace.yaml -n noetl || true
 
-delete-dispatcher:
+delete-dispatcher: set-k8s-context
 	@echo "Deleting NoETL Dispatcher Service"
-	kubectl config use-context docker-desktop
+	@kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/noetl-dispatcher/deployment.yaml -n noetl || true
 
-delete-registrar:
+delete-registrar: set-k8s-context
 	@echo "Deleting NoETL Registrar Service"
-	kubectl config use-context docker-desktop
+	@kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/noetl-registrar/deployment.yaml -n noetl || true
 
+.PHONY: delete-all delete-api delete-dispatcher delete-registrar
+
+api-all: delete-api build-api tag-api push-api deploy-api
+	@echo "Redeploy NoETL api service to Kubernetes"
+
+
+destroy-all-nats: set-k8s-context
+	@echo "Destroying NATS cluster..."
+	@kubectl delete namespace nats || true
+	@echo "NATS cluster destroyed."
+
+.PHONY: destroy-all-nats
+
+delete-ingress-nginx: set-k8s-context
+	@echo "Deleting ingress-nginx..."
+	@helm uninstall ingress-nginx -n ingress-nginx || true
+	@kubectl delete namespace ingress-nginx || true
+	@echo "ingress-nginx deleted."
+
+.PHONY: delete-ingress-nginx
 
 install-helm:
 	@echo "Installing Helm..."
@@ -184,10 +200,6 @@ install-nats-tools:
 	@brew install nats-io/nats-tools/nats
 	@echo "NATS installation complete."
 
-set-k8s-context:
-	@echo "Setting Kubernetes context to docker-desktop..."
-	@kubectx docker-desktop
-	@echo "Context set to docker-desktop."
 
 install-ingress-nginx: add-ingress-repo
 	@echo "Checking if ingress-nginx is already installed..."
@@ -211,9 +223,9 @@ install-nats-crd:
 	@kubectl apply -f https://github.com/nats-io/nack/releases/latest/download/crds.yml -n nats
 	@echo "NATS JetStream CRDs installed."
 
-.PHONY: install-helm install-nats-tools add-nats-repo set-k8s-context install-ingress-nginx install-nats install-nats-crd
+.PHONY: set-k8s-context install-helm install-nats-tools add-nats-repo install-ingress-nginx install-nats install-nats-crd
 
-install-all-nats: set-k8s-context install-helm install-nats-tools add-nats-repo set-k8s-context install-ingress-nginx install-nats install-nats-crd
+install-all-nats: set-k8s-context install-helm install-nats-tools add-nats-repo install-ingress-nginx install-nats install-nats-crd
 	@echo "All components installed."
 
 .PHONY: install-all-nats
@@ -239,14 +251,11 @@ nats-install-all-streams: set-k8s-context nats-create-events nats-create-command
 nats-delete-all-streams: set-k8s-context nats-delete-events nats-delete-commands
 
 nats-all-streams: nats-delete-all-streams nats-install-all-streams
-
-
 	@echo "Reset all NATS streams in Kubernetes"
 
-.PHONY: nats-install-all-streams nats-delete-all-streams nats-delete-events nats-delete-commands nats-create-events nats-create-commands nats-all-streams
+.PHONY: nats-install-all-streams nats-delete-all-streams nats-delete-events nats-delete-commands
+.PHONY: nats-create-events nats-create-commands nats-all-streams
 
-
-.PHONY: purge-commands purge-events purge-all stream-ls
 
 purge-all: purge-commands purge-events nats-ls
 	@echo "Purged NATS events and commands streams"
@@ -262,6 +271,7 @@ purge-events:
 nats-ls:
 	@nats stream ls -s $(NATS_URL)
 
+.PHONY: purge-commands purge-events purge-all stream-ls
 
 run-api: activate-venv
 	bin/api.sh
