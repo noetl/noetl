@@ -62,6 +62,10 @@ build-dispatcher:
 build-registrar:
 	docker build --build-arg PRJ_PATH=../../ -f $(REGISTRAR_DOCKERFILE) -t $(REGISTRAR_SERVICE_NAME) .
 
+build-shell-handler:
+	docker build --build-arg PRJ_PATH=../../ -f $(REGISTRAR_DOCKERFILE) -t $(REGISTRAR_SERVICE_NAME) .
+
+
 clean:
 	docker rmi $$(docker images -f "dangling=true" -q)
 
