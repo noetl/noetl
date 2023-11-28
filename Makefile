@@ -29,7 +29,7 @@ REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
 REGISTRAR_VERSION=latest
 REGISTRAR_SERVICE_TAG=local.sre/$(REGISTRAR_SERVICE_NAME):$(REGISTRAR_VERSION)
 
-PYTHON := python3
+PYTHON := python
 VENV_NAME := .venv
 REQUIREMENTS := requirements.txt
 
@@ -38,24 +38,31 @@ REQUIREMENTS := requirements.txt
 
 venv:
 	@echo "Creating Python virtual environment..."
-	@$(PYTHON) -m venv $(VENV_NAME)
+	$(PYTHON) -m venv $(VENV_NAME)
 	@. $(VENV_NAME)/bin/activate; \
-	pip install --upgrade pip; \
+	pip3 install --upgrade pip; \
 	deactivate
 	@echo "Virtual environment created."
 
 requirements:
 	@echo "Installing python requirements..."
 	@. $(VENV_NAME)/bin/activate; \
-	pip install -r $(REQUIREMENTS); \
-	python -m spacy download en_core_web_sm; \
+	pip3 install -r $(REQUIREMENTS); \
+	$(PYTHON) -m spacy download en_core_web_sm; \
 	echo "Requirements installed."
 
-activate:
+activate-venv:
+	@. $(VENV_NAME)/bin/activate;
+
+activate-help:
 	@echo "To activate the virtual environment:"
 	@echo "source $(VENV_NAME)/bin/activate"
 
+
 #all: build-all push-all delete-all deploy-all
+
+.PHONY: venv requirements activate-venv activate-help
+
 
 
 #[BUILD]#######################################################################
@@ -110,6 +117,10 @@ remove-registrar-image:
 	docker rmi $(REGISTRAR_SERVICE_TAG)
 
 rebuild-registrar: remove-registrar-image build-registrar
+
+
+build-shell-handler:
+	docker build --build-arg PRJ_PATH=../../ -f $(REGISTRAR_DOCKERFILE) -t $(REGISTRAR_SERVICE_NAME) .
 
 
 clean:
@@ -236,6 +247,7 @@ delete-dispatcher-deploy:
 	kubectl config use-context docker-desktop
 	@kubectl delete -f $(K8S_DIR)/noetl/dispatcher/deployment.yaml -n noetl
 
+
 delete-dispatcher-local-deploy:
 	@echo "Deleting NoETL Dispatcher Service"
 	kubectl config use-context docker-desktop
@@ -252,10 +264,13 @@ delete-registrar-local-deploy:
 	kubectl delete -f $(K8S_DIR)/noetl/registrar-local/deployment.yaml -n noetl
 
 
+
 #[NATS]#######################################################################
 .PHONY: nats-create-events nats-create-commands nats-create-all
 
+
 nats-create-all: nats-create-events nats-create-commands
+
 
 nats-create-events:
 	@echo "Creating NATS events"
@@ -269,6 +284,7 @@ nats-create-commands:
 
 
 .PHONY: nats-delete-events nats-delete-commands nats-delete-all
+
 
 nats-delete-all: nats-delete-events nats-delete-commands
 
@@ -289,6 +305,7 @@ nats-reset-all: nats-delete-all nats-create-all
 
 .PHONY: nats-purge-commands nats-purge-events nats-purge-all nats-stream-ls
 
+
 nats-purge-all: nats-purge-commands nats-purge-events nats-stream-ls
 	@echo "Purged NATS events and commands streams"
 
@@ -303,13 +320,41 @@ nats-purge-events:
 nats-stream-ls:
 	@nats stream ls -s $(NATS_URL)
 
+.PHONY: purge-commands purge-events purge-all stream-ls
+
+run-api: activate-venv
+	bin/api.sh
+
+run-dispatcher: activate-venv
+	bin/dispatcher.sh
+
+run-registrar: activate-venv
+	bin/registrar.sh
+
+.PHONY: run-api run-dispatcher run-registrar
+
+register-workflow: activate-venv
+    ifeq ($(WORKFLOW),)
+	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/get-current-time.yaml"
+    else
+	    $(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
+    endif
+
+list-workflows: activate-venv
+	$(PYTHON) noetl/cli.py list workflows
+
 
 #[OTHERS]######################################################################
 register-workflow:
 	@python noetl/cli.py register workflow "workflows/time/get-current-time.yaml"
 
-get-current-time-workflow:
-	@python noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
+describe-workflow: activate-venv
+	$(PYTHON) noetl/cli.py describe workflow $(filter-out $@,$(MAKECMDGOALS))
+
+
+run-current-time-workflow: activate-venv
+	$(PYTHON) noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
+
 
 .PHONY: workflow get-current-time-workflow
 
@@ -374,3 +419,6 @@ install-nats-tools:
 # 	@echo "All components installed."
 
 # .PHONY: install-all-nats
+
+# .PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow
+

@@ -196,6 +196,76 @@ class NatsConnectionPool:
             await self.pool.put(self.nc)
 
 
+class NatsPool:
+    nats_pool: NatsConnectionPool
+
+    def __init__(self, nats_pool: NatsConnectionPool | NatsConfig = None):
+        if nats_pool:
+            self.initialize_nats_pool(nats_pool)
+
+    def initialize_nats_pool(self, nats_pool: NatsConnectionPool | NatsConfig):
+        if nats_pool is None:
+            self.nats_pool = NatsConnectionPool.get_instance()
+        elif isinstance(nats_pool, NatsConfig):
+            self.nats_pool = NatsConnectionPool(config=nats_pool)
+        elif isinstance(nats_pool, NatsConnectionPool):
+            self.nats_pool = nats_pool
+        else:
+            raise TypeError("nats_pool must be type of NatsConnectionPool or NatsConfig")
+
+    async def get_nats_pool(self):
+        if self.nats_pool is None:
+            raise ValueError("NatsPool is not initialized")
+        else:
+            return self.nats_pool
+
+    async def nats_read(self, subject: str, cb):
+        async with self.nats_pool.connection() as nc:
+            await nc.subscribe(subject, cb=cb)
+            while True:
+                await asyncio.sleep(1)
+
+    async def nats_write(self, subject: str, message: bytes):
+        async with self.nats_pool.connection() as nc:
+            return await nc.publish(subject, message)
+
+    async def command_write(self, subject: str, message: bytes):
+        return await self.nats_write(f"command.{subject}", message)
+
+    async def event_write(self, subject: str, message: bytes):
+        return await self.nats_write(f"event.{subject}", message)
+
+    async def workflow_bucket_create(self):
+        await self.nats_pool.bucket_create(bucket_name="workflows")
+
+    async def workflow_bucket_delete(self):
+        await self.nats_pool.bucket_delete(bucket_name="workflows")
+
+    async def workflow_put(self, key: str, value: bytes):
+        return await self.nats_pool.kv_put(bucket_name="workflows", key=key, value=value)
+
+    async def workflow_get(self, key: str):
+        return await self.nats_pool.kv_get(bucket_name="workflows", key=key)
+
+    async def workflow_delete(self, key: str):
+        await self.nats_pool.kv_delete(bucket_name="workflows", key=key)
+
+    async def plugin_bucket_create(self):
+        await self.nats_pool.bucket_create(bucket_name="plugins")
+
+    async def plugin_bucket_delete(self):
+        await self.nats_pool.bucket_delete(bucket_name="plugins")
+
+    async def plugin_put(self, key: str, value: bytes):
+        return await self.nats_pool.kv_put(bucket_name="plugins", key=key, value=value)
+
+    async def plugin_get(self, key: str):
+        return await self.nats_pool.kv_get(bucket_name="plugins", key=key)
+
+    async def plugin_delete(self, key: str):
+        await self.nats_pool.kv_delete(bucket_name="plugins", key=key)
+
+
 if __name__ == "__main__":
     nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32645", nats_pool_size=10)
     nats_pool = NatsConnectionPool(config=nats_config)
