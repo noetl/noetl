@@ -15,9 +15,12 @@ CLI_VERSION=latest
 CLI_SERVICE_TAG=local/$(CLI_SERVICE_NAME):$(CLI_VERSION)
 
 API_SERVICE_NAME=noetl-api
-API_DOCKERFILE=docker/api/Dockerfile-api
+API_DOCKERFILE_BASE=docker/api/Dockerfile-base
+API_DOCKERFILE=docker/api/Dockerfile
 API_VERSION=latest
+API_BASE_VERSION=latest
 API_SERVICE_TAG=local/$(API_SERVICE_NAME):$(API_VERSION)
+API_SERVICE_BASE_TAG=local/noetl-api-base:$(API_BASE_VERSION)
 
 DISPATCHER_SERVICE_NAME=noetl-dispatcher
 DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
@@ -85,10 +88,13 @@ remove-cli-image:
 
 rebuild-cli: remove-cli-image build-cli
 
+build-api-base:
+	@echo "Building API Base image..."
+	docker build --no-cache --build-arg PRJ_PATH=../.. -f $(API_DOCKERFILE_BASE) -t $(API_SERVICE_BASE_TAG) .
 
 build-api:
 	@echo "Building API image..."
-	docker build --build-arg PRJ_PATH=../../ -f $(API_DOCKERFILE) -t $(API_SERVICE_TAG) .
+	docker build --no-cache --build-arg PRJ_PATH=../.. -f $(API_DOCKERFILE) -t $(API_SERVICE_TAG) .
 
 remove-api-image:
 	@echo "Removing API image..."
@@ -362,16 +368,6 @@ install-helm:
 	@brew install helm
 	@echo "Helm installation complete."
 
-# add-nats-repo:
-# 	@echo "Adding NATS helm repo..."
-# 	@helm repo add nats https://nats-io.github.io/k8s/helm/charts/
-# 	@echo "NATS helm repo added."
-
-# add-ingress-repo:
-# 	@echo "Adding ingress-nginx helm repo..."
-# 	@helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-# 	@helm repo update
-# 	@echo "ingress-nginx helm repo added."
 
 install-nats-tools:
 	@echo "Tapping nats-io/nats-tools..."
@@ -379,39 +375,3 @@ install-nats-tools:
 	@echo "Installing nats from nats-io/nats-tools..."
 	@brew install nats-io/nats-tools/nats
 	@echo "NATS installation complete."
-
-# set-k8s-context:
-# 	@echo "Setting Kubernetes context to docker-desktop..."
-# 	@kubectx docker-desktop
-# 	@echo "Context set to docker-desktop."
-
-# install-ingress-nginx: add-ingress-repo
-# 	@echo "Checking if ingress-nginx is already installed..."
-# 	@if ! helm list -n ingress-nginx | grep -q ingress-nginx; then \
-#         echo "Installing ingress-nginx..."; \
-#         helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace; \
-#         kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml; \
-#         echo "ingress-nginx installed."; \
-#     else \
-#         echo "ingress-nginx is already installed, skipping installation."; \
-#     fi
-
-# install-nats:
-# 	@echo "Installing NATS..."
-# 	@helm install nats nats/nats --values k8s/nats/values.yaml --namespace nats --create-namespace
-# 	@helm helm install nack nats/nack --set jetstream.nats.url=nats://nats:4222 -n nats
-# 	@echo "NATS installed."
-
-# install-nats-crd:
-# 	@echo "Installing NATS JetStream CRDs..."
-# 	@kubectl apply -f kubectl apply -f https://github.com/nats-io/nack/releases/latest/download/crds.yml -n nats
-# 	@echo "NATS JetStream CRDs installed."
-
-# .PHONY: install-helm install-nats-tools add-nats-repo set-k8s-context install-ingress-nginx install-nats install-nats-crd
-
-# install-all-nats: set-k8s-context install-helm install-nats-tools add-nats-repo set-k8s-context install-ingress-nginx install-nats install-nats-crd
-# 	@echo "All components installed."
-
-# .PHONY: install-all-nats
-
-# .PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow
