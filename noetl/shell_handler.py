@@ -3,12 +3,16 @@ from plugin import Plugin, parse_args
 from payload import Payload
 from loguru import logger
 from natstream import NatsConfig, NatsStreamReference
-import sys
 
 
 class ShellHandler(Plugin):
 
-    async def execute_shell_command(self, payload_data: Payload, nats_reference: NatsStreamReference):
+    async def execute_shell_command(self,
+                                    payload_data: Payload,
+                                    nats_reference: NatsStreamReference
+                                    ):
+        payload_reference = payload_data.get_payload_reference()
+
         command = payload_data.get_value("command")
         origin_ref = payload_data.get_value("origin_ref")
         process = await asyncio.create_subprocess_shell(
@@ -26,9 +30,8 @@ class ShellHandler(Plugin):
                 "stderr": stderr,
                 "exit_code": process.returncode
             },
-            origin_ref=payload_data.get_value("origin_ref"),
-            prefix="metadata",
-            reference=nats_reference.to_dict()
+            origin_ref=origin_ref,
+            nats_pool=await self.get_nats_pool()
         )
 
         await self.event_write(subject=f"shell-handler.output.{origin_ref}", message=response_payload.encode())
@@ -46,10 +49,14 @@ if __name__ == "__main__":
         default_prom_host="localhost",
         default_prom_port=9094
     )
+    shell_handler_plugin = ShellHandler()
+    shell_handler_plugin.initialize_nats_pool(NatsConfig(
+        nats_url=args.nats_url,
+        nats_pool_size=args.nats_pool_size
+    ))
+    loop = asyncio.get_event_loop()
     try:
-        shell_handler_plugin = ShellHandler.create(
-            NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
-        asyncio.run(shell_handler_plugin.run(args, subject_prefix="command.shell-handler"))
+        loop.run_until_complete(shell_handler_plugin.run(args=args, subject_prefix="command.shell-handler"))
     except KeyboardInterrupt:
         sys.exit()
     except Exception as e:
