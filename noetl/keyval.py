@@ -24,7 +24,6 @@ class KeyVal(dict):
         except Exception as e:
             raise ValueError(f"Error getting value for '{path}': {e}")
 
-
     def set_value(self, path: str, value):
         if path is None:
             raise TypeError("Path cannot be None")
@@ -45,7 +44,7 @@ class KeyVal(dict):
         except (TypeError, ValueError) as e:
             raise ValueError(f"Error converting to JSON: {e}")
 
-    def base64_path(self, path="workflow_base64"):
+    def base64_path(self, path: str = "workflow_base64"):
         base64_value = self.get_value(path)
         if base64_value is None:
             raise ValueError(f"No base64 string found at {path}")
@@ -57,8 +56,8 @@ class KeyVal(dict):
         json_representation = self.to_json()
         return base64.b64encode(json_representation)
 
-    def yaml_value(self):
-        value = self.get_value("value")
+    def yaml_value(self, path: str = "value"):
+        value = self.get_value(path)
         if value is None:
             raise ValueError("No value found for key 'value'")
         return yaml.safe_load(base64.b64decode(value.encode()).decode('utf-8'))
