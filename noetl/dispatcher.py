@@ -80,7 +80,7 @@ class Dispatcher(Plugin):
         )
         logger.debug(ack)
 
-    async def start_workflow(
+    async def generate_workflow_command(
             self,
             payload_data: Payload,
             nats_reference: NatsStreamReference
@@ -118,7 +118,7 @@ class Dispatcher(Plugin):
             case "WorkflowExecutionRequested":
                 await self.run_workflow_register(payload_data=payload, nats_reference=nats_reference)
             case "RunWorkflowRegistered":
-                await self.start_workflow(payload_data=payload, nats_reference=nats_reference)
+                await self.generate_workflow_command(payload_data=payload, nats_reference=nats_reference)
 
 
 if __name__ == "__main__":

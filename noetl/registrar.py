@@ -105,7 +105,7 @@ class Registrar(Plugin):
                     "workflow_input": payload_data.get_value("workflow_input"),
                     "workflow_metadata": workflow_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
-                        { "nats_reference": nats_reference.to_dict(), "event_type": "RunWorkflowRegistered" }
+                        {"nats_reference": nats_reference.to_dict(), "event_type": "RunWorkflowRegistered"}
                 },
                 origin=payload_reference.get("origin"),
                 reference=payload_reference.get("identifier"),
