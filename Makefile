@@ -320,28 +320,6 @@ delete-api-local-deploy:
 	kubectl delete -f $(K8S_DIR)/noetl/api-local/deployment.yaml -n noetl
 	kubectl delete -f $(K8S_DIR)/noetl/api-local/service.yaml -n noetl
 
-#delete-dispatcher-deploy:
-#	@echo "Deleting NoETL Dispatcher Service"
-#	kubectl config use-context docker-desktop
-#	@kubectl delete -f $(K8S_DIR)/noetl/dispatcher/deployment.yaml -n noetl
-#
-#
-#delete-dispatcher-local-deploy:
-#	@echo "Deleting NoETL Dispatcher Service"
-#	kubectl config use-context docker-desktop
-#	@kubectl delete -f $(K8S_DIR)/noetl/dispatcher-local/deployment.yaml -n noetl
-
-#delete-registrar-deploy:
-#	@echo "Deleting NoETL Registrar Service"
-#	kubectl config use-context docker-desktop
-#	kubectl delete -f $(K8S_DIR)/noetl/registrar/deployment.yaml -n noetl
-#
-#delete-registrar-local-deploy:
-#	@echo "Deleting NoETL Registrar Service"
-#	kubectl config use-context docker-desktop
-#	kubectl delete -f $(K8S_DIR)/noetl/registrar-local/deployment.yaml -n noetl
-#
-
 delete-plugins-deploy:
 	@echo "Deleting NoETL Plugins"
 	kubectl config use-context docker-desktop

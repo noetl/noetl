@@ -60,7 +60,8 @@ class KeyVal(dict):
         value = self.get_value(path)
         if value is None:
             raise ValueError("No value found for key 'value'")
-        return yaml.safe_load(base64.b64decode(value.encode()).decode('utf-8'))
+        value_decoded = yaml.safe_load(base64.b64decode(value.encode()).decode('utf-8'))
+        return value_decoded
 
     @classmethod
     def decode(cls, encoded_payload):

@@ -4,7 +4,7 @@ from plugin import Plugin, parse_args
 from payload import Payload, PayloadReference
 from loguru import logger
 from natstream import NatsConfig, NatsStreamReference
-
+from workflow import Workflow
 
 class Dispatcher(Plugin):
 
@@ -85,9 +85,13 @@ class Dispatcher(Plugin):
             payload_data: Payload,
             nats_reference: NatsStreamReference
     ):
-
-        payload_reference = payload_data.get_payload_reference()
-        logger.info(payload_data)
+        workflow = Workflow.create(
+            payload_data=payload_data,
+            nats_pool=await self.get_nats_pool()
+        )
+        await workflow.transit()
+        # payload_reference = payload_data.get_payload_reference()
+        logger.info(workflow)
         # payload: Payload = Payload.create(
         #     payload_data={
         #         "workflow_name": payload_data.get_value("workflow_name"),

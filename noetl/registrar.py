@@ -101,7 +101,7 @@ class Registrar(Plugin):
         else:
             payload: Payload = Payload.create(
                 payload_data={
-                    "workflow_template": workflow_template,
+                    "workflow_base64": workflow_template,
                     "workflow_input": payload_data.get_value("workflow_input"),
                     "workflow_metadata": workflow_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
