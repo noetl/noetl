@@ -22,17 +22,32 @@ API_BASE_VERSION=latest
 API_SERVICE_TAG=local/$(API_SERVICE_NAME):$(API_VERSION)
 API_SERVICE_BASE_TAG=local/noetl-api-base:$(API_BASE_VERSION)
 
-DISPATCHER_SERVICE_NAME=noetl-dispatcher
-DISPATCHER_DOCKERFILE=docker/dispatcher/Dockerfile-dispatcher
+
+PLUGIN_BASE_VERSION=latest
+PLUGIN_DOCKERFILE_BASE=docker/plugins/Dockerfile-base
+PLUGIN_BASE_TAG=local/noetl-plugin-base:$(PLUGIN_BASE_VERSION)
+
+DISPATCHER_PLUGIN_NAME=noetl-dispatcher
+DISPATCHER_DOCKERFILE=docker/plugins/dispatcher/Dockerfile
 DISPATCHER_VERSION=latest
-DISPATCHER_SERVICE_TAG=local/$(DISPATCHER_SERVICE_NAME):$(DISPATCHER_VERSION)
+DISPATCHER_PLUGIN_TAG=local/$(DISPATCHER_PLUGIN_NAME):$(DISPATCHER_VERSION)
 
-REGISTRAR_SERVICE_NAME=noetl-registrar
-REGISTRAR_DOCKERFILE=docker/registrar/Dockerfile-registrar
+REGISTRAR_PLUGIN_NAME=noetl-registrar
+REGISTRAR_DOCKERFILE=docker/plugins/registrar/Dockerfile
 REGISTRAR_VERSION=latest
-REGISTRAR_SERVICE_TAG=local/$(REGISTRAR_SERVICE_NAME):$(REGISTRAR_VERSION)
+REGISTRAR_PLUGIN_TAG=local/$(REGISTRAR_PLUGIN_NAME):$(REGISTRAR_VERSION)
 
-PYTHON := python
+HTTP_HANDLER_PLUGIN_NAME=noetl-http-handler
+HTTP_HANDLER_DOCKERFILE=docker/plugins/http-handler/Dockerfile
+HTTP_HANDLER_VERSION=latest
+HTTP_HANDLER_PLUGIN_TAG=local/$(HTTP_HANDLER_PLUGIN_NAME):$(HTTP_HANDLER_VERSION)
+
+SHELL_HANDLER_PLUGIN_NAME=noetl-shell-handler
+SHELL_HANDLER_DOCKERFILE=docker/plugins/shell-handler/Dockerfile
+SHELL_HANDLER_VERSION=latest
+SHELL_HANDLER_PLUGIN_TAG=local/$(SHELL_HANDLER_PLUGIN_NAME):$(SHELL_HANDLER_VERSION)
+
+PYTHON := /opt/homebrew/bin/python3.11
 VENV_NAME := .venv
 REQUIREMENTS := requirements.txt
 
@@ -61,21 +76,33 @@ activate-help:
 	@echo "To activate the virtual environment:"
 	@echo "source $(VENV_NAME)/bin/activate"
 
+install-helm:
+	@echo "Installing Helm..."
+	@brew install helm
+	@echo "Helm installation complete."
+
+
+install-nats-tools:
+	@echo "Tapping nats-io/nats-tools..."
+	@brew tap nats-io/nats-tools
+	@echo "Installing nats from nats-io/nats-tools..."
+	@brew install nats-io/nats-tools/nats
+	@echo "NATS installation complete."
 
 #all: build-all push-all delete-all deploy-all
 
-.PHONY: venv requirements activate-venv activate-help
+.PHONY: venv requirements activate-venv activate-help install-helm install-nats-tools
 
 
 
 #[BUILD]#######################################################################
 .PHONY: build-cli remove-cli-image rebuild-cli
-.PHONY: build-api remove-api-image rebuild-api
+.PHONY: build-api-base build-api remove-api-image rebuild-api
 .PHONY: build-dispatcher remove-dispatcher-image rebuild-dispatcher
 .PHONY: build-registrar remove-registrar-image rebuild-registrar
 .PHONY: build-all rebuild-all clean
 
-build-all: build-cli build-api build-dispatcher build-registrar
+build-all: build-cli build-api-base build-api build-dispatcher build-registrar
 rebuild-all: rebuild-cli rebuild-api rebuild-dispatcher rebuild-registrar
 
 build-cli:
@@ -92,6 +119,19 @@ build-api-base:
 	@echo "Building API Base image..."
 	docker build --no-cache --build-arg PRJ_PATH=../.. -f $(API_DOCKERFILE_BASE) -t $(API_SERVICE_BASE_TAG) .
 
+build-plugin-base:
+	@echo "Building Plugins Base image..."
+	docker build --no-cache --build-arg PRJ_PATH=../.. -f $(PLUGIN_DOCKERFILE_BASE) -t $(PLUGIN_BASE_TAG) .
+
+remove-base-images:
+	@echo "Removing base Docker images..."
+	docker rmi $(API_SERVICE_BASE_TAG)
+	docker rmi $(PLUGIN_BASE_TAG)
+
+build-base-images:  build-api-base build-plugin-base
+
+.PHONY: build-api-base build-plugin-base remove-base-images build-base-images
+
 build-api:
 	@echo "Building API image..."
 	docker build --no-cache --build-arg PRJ_PATH=../.. -f $(API_DOCKERFILE) -t $(API_SERVICE_TAG) .
@@ -105,28 +145,49 @@ rebuild-api: remove-api-image build-api
 
 build-dispatcher:
 	@echo "Building Dispatcher image..."
-	docker build --build-arg PRJ_PATH=../../ -f $(DISPATCHER_DOCKERFILE) -t $(DISPATCHER_SERVICE_TAG) .
+	docker build --build-arg PRJ_PATH=../../ -f $(DISPATCHER_DOCKERFILE) -t $(DISPATCHER_PLUGIN_TAG) .
 
 remove-dispatcher-image:
 	@echo "Removing Dispatcher image..."
-	docker rmi $(DISPATCHER_SERVICE_TAG)
+	docker rmi $(DISPATCHER_PLUGIN_TAG)
 
 rebuild-dispatcher: remove-dispatcher-image build-dispatcher
 
 
 build-registrar:
 	@echo "Building Registrar image..."
-	docker build --build-arg PRJ_PATH=../../ -f $(REGISTRAR_DOCKERFILE) -t $(REGISTRAR_SERVICE_TAG) .
+	docker build --build-arg PRJ_PATH=../../ -f $(REGISTRAR_DOCKERFILE) -t $(REGISTRAR_PLUGIN_TAG) .
 
 remove-registrar-image:
 	@echo "Removing Registrar image..."
-	docker rmi $(REGISTRAR_SERVICE_TAG)
+	docker rmi $(REGISTRAR_PLUGIN_TAG)
 
 rebuild-registrar: remove-registrar-image build-registrar
 
 
+build-http-handler:
+	@echo "Building Registrar image..."
+	docker build --build-arg PRJ_PATH=../../ -f $(HTTP_HANDLER_DOCKERFILE) -t $(HTTP_HANDLER_PLUGIN_TAG) .
+
+remove-http-handler-image:
+	@echo "Removing HTTP Handler plugin image..."
+	docker rmi $(HTTP_HANDLER_PLUGIN_TAG)
+
+rebuild-http-handler: remove-http-handler-image build-http-handler
+
+.PHONY:build-http-handler remove-http-handler-image rebuild-http-handler
+
 build-shell-handler:
-	docker build --build-arg PRJ_PATH=../../ -f $(REGISTRAR_DOCKERFILE) -t $(REGISTRAR_SERVICE_NAME) .
+	@echo "Building Shell Handler Plugin image..."
+	docker build --build-arg PRJ_PATH=../../ -f $(SHELL_HANDLER_DOCKERFILE) -t $(SHELL_HANDLER_PLUGIN_TAG) .
+
+remove-shell-handler-image:
+	@echo "Removing Shell Handler plugin image..."
+	docker rmi $(SHELL_HANDLER_PLUGIN_TAG)
+
+rebuild-shell-handler: remove-shell-handler-image build-shell-handler
+
+.PHONY:build-shell-handler remove-shell-handler-image rebuild-shell-handler
 
 
 clean:
@@ -146,11 +207,11 @@ tag-api:
 
 tag-dispatcher:
 	@echo "Tagging Dispatcher image"
-	docker tag $(DISPATCHER_SERVICE_TAG) ghcr.io/$(GHCR_USERNAME)/noetl-dispatcher:$(DISPATCHER_VERSION)
+	docker tag $(DISPATCHER_PLUGIN_TAG) ghcr.io/$(GHCR_USERNAME)/noetl-dispatcher:$(DISPATCHER_VERSION)
 
 tag-registrar:
 	@echo "Tagging Registrar image"
-	docker tag $(REGISTRAR_SERVICE_TAG) ghcr.io/$(GHCR_USERNAME)/noetl-registrar:$(REGISTRAR_VERSION)
+	docker tag $(REGISTRAR_PLUGIN_TAG) ghcr.io/$(GHCR_USERNAME)/noetl-registrar:$(REGISTRAR_VERSION)
 
 
 #[PUSH]#######################################################################
@@ -204,25 +265,36 @@ deploy-api-local:
 	kubectl apply -f $(K8S_DIR)/noetl/api-local/deployment.yaml
 	kubectl apply -f $(K8S_DIR)/noetl/api-local/service.yaml
 
-deploy-dispatcher:
-	@echo "Deploying NoETL Dispatcher service from ghcr.io ..."
-	kubectl config use-context docker-desktop
-	kubectl apply -f $(K8S_DIR)/noetl/dispatcher/deployment.yaml
+#deploy-dispatcher:
+#	@echo "Deploying NoETL Dispatcher service from ghcr.io ..."
+#	kubectl config use-context docker-desktop
+#	kubectl apply -f $(K8S_DIR)/noetl/dispatcher/deployment.yaml
+#
+#deploy-dispatcher-local:
+#	@echo "Deploying NoETL Dispatcher service from local image..."
+#	kubectl config use-context docker-desktop
+#	kubectl apply -f $(K8S_DIR)/noetl/dispatcher-local/deployment.yaml
 
-deploy-dispatcher-local:
-	@echo "Deploying NoETL Dispatcher service from local image..."
-	kubectl config use-context docker-desktop
-	kubectl apply -f $(K8S_DIR)/noetl/dispatcher-local/deployment.yaml
+#deploy-registrar:
+#	@echo "Deploying NoETL Registrar service from ghcr.io ..."
+#	kubectl config use-context docker-desktop
+#	kubectl apply -f $(K8S_DIR)/noetl/registrar/deployment.yaml
+#
+#deploy-registrar-local:
+#	@echo "Deploying NoETL Registrar service from local image..."
+#	kubectl config use-context docker-desktop
+#	kubectl apply -f $(K8S_DIR)/noetl/registrar-local/deployment.yaml
 
-deploy-registrar:
-	@echo "Deploying NoETL Registrar service from ghcr.io ..."
-	kubectl config use-context docker-desktop
-	kubectl apply -f $(K8S_DIR)/noetl/registrar/deployment.yaml
 
-deploy-registrar-local:
-	@echo "Deploying NoETL Registrar service from local image..."
+deploy-plugins:
+	@echo "Deploying NoETL plugins from ghcr.io ..."
 	kubectl config use-context docker-desktop
-	kubectl apply -f $(K8S_DIR)/noetl/registrar-local/deployment.yaml
+	kubectl apply -f $(K8S_DIR)/noetl/plugins/deployment.yaml
+
+deploy-plugins-local:
+	@echo "Deploying NoETL plugins from local image..."
+	kubectl config use-context docker-desktop
+	kubectl apply -f $(K8S_DIR)/noetl/plugins-local/deployment.yaml
 
 
 .PHONY: delete-ns delete-all-deploy delete-all-local-deploy
@@ -248,28 +320,37 @@ delete-api-local-deploy:
 	kubectl delete -f $(K8S_DIR)/noetl/api-local/deployment.yaml -n noetl
 	kubectl delete -f $(K8S_DIR)/noetl/api-local/service.yaml -n noetl
 
-delete-dispatcher-deploy:
-	@echo "Deleting NoETL Dispatcher Service"
+#delete-dispatcher-deploy:
+#	@echo "Deleting NoETL Dispatcher Service"
+#	kubectl config use-context docker-desktop
+#	@kubectl delete -f $(K8S_DIR)/noetl/dispatcher/deployment.yaml -n noetl
+#
+#
+#delete-dispatcher-local-deploy:
+#	@echo "Deleting NoETL Dispatcher Service"
+#	kubectl config use-context docker-desktop
+#	@kubectl delete -f $(K8S_DIR)/noetl/dispatcher-local/deployment.yaml -n noetl
+
+#delete-registrar-deploy:
+#	@echo "Deleting NoETL Registrar Service"
+#	kubectl config use-context docker-desktop
+#	kubectl delete -f $(K8S_DIR)/noetl/registrar/deployment.yaml -n noetl
+#
+#delete-registrar-local-deploy:
+#	@echo "Deleting NoETL Registrar Service"
+#	kubectl config use-context docker-desktop
+#	kubectl delete -f $(K8S_DIR)/noetl/registrar-local/deployment.yaml -n noetl
+#
+
+delete-plugins-deploy:
+	@echo "Deleting NoETL Plugins"
 	kubectl config use-context docker-desktop
-	@kubectl delete -f $(K8S_DIR)/noetl/dispatcher/deployment.yaml -n noetl
+	kubectl delete -f $(K8S_DIR)/noetl/plugins/deployment.yaml -n noetl
 
-
-delete-dispatcher-local-deploy:
-	@echo "Deleting NoETL Dispatcher Service"
+delete-plugins-local-deploy:
+	@echo "Deleting NoETL Plugins locally"
 	kubectl config use-context docker-desktop
-	@kubectl delete -f $(K8S_DIR)/noetl/dispatcher-local/deployment.yaml -n noetl
-
-delete-registrar-deploy:
-	@echo "Deleting NoETL Registrar Service"
-	kubectl config use-context docker-desktop
-	kubectl delete -f $(K8S_DIR)/noetl/registrar/deployment.yaml -n noetl
-
-delete-registrar-local-deploy:
-	@echo "Deleting NoETL Registrar Service"
-	kubectl config use-context docker-desktop
-	kubectl delete -f $(K8S_DIR)/noetl/registrar-local/deployment.yaml -n noetl
-
-
+	kubectl delete -f $(K8S_DIR)/noetl/plugins-local/deployment.yaml -n noetl
 
 #[NATS]#######################################################################
 .PHONY: nats-create-events nats-create-commands nats-create-all
@@ -311,10 +392,6 @@ nats-reset-all: nats-delete-all nats-create-all
 
 .PHONY: nats-purge-commands nats-purge-events nats-purge-all nats-stream-ls
 
-
-nats-purge-all: nats-purge-commands nats-purge-events nats-stream-ls
-	@echo "Purged NATS events and commands streams"
-
 nats-purge-commands:
 	@echo "Purging NATS commands streams"
 	@nats stream purge commands --force -s $(NATS_URL)
@@ -322,6 +399,10 @@ nats-purge-commands:
 nats-purge-events:
 	@echo "Purging NATS events streams"
 	@nats stream purge events --force -s $(NATS_URL)
+
+
+nats-purge-all: nats-purge-commands nats-purge-events nats-stream-ls
+	@echo "Purged NATS events and commands streams"
 
 nats-stream-ls:
 	@nats stream ls -s $(NATS_URL)
@@ -342,7 +423,7 @@ run-registrar: activate-venv
 #[WORKFLOW COMMANDS]######################################################################
 register-workflow: activate-venv
     ifeq ($(WORKFLOW),)
-	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/get-current-time.yaml"
+	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/get-world-time.yaml"
     else
 	    $(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
     endif
@@ -356,22 +437,8 @@ describe-workflow: activate-venv
 run-current-time-workflow: activate-venv
 	$(PYTHON) noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
 
-.PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow
+world-time-slack: activate-venv
+	$(PYTHON) noetl/cli.py run workflow getTimeAndNotifySlack '{"TIMEZONE":"$(TIMEZONE)","SLACK_WEBHOOK_URL":"$(SLACK_WEBHOOK_URL)"}'
 
 
-api-all: delete-api build-api tag-api push-api deploy-api
-	@echo "Redeploy NoETL api service to Kubernetes"
-
-
-install-helm:
-	@echo "Installing Helm..."
-	@brew install helm
-	@echo "Helm installation complete."
-
-
-install-nats-tools:
-	@echo "Tapping nats-io/nats-tools..."
-	@brew tap nats-io/nats-tools
-	@echo "Installing nats from nats-io/nats-tools..."
-	@brew install nats-io/nats-tools/nats
-	@echo "NATS installation complete."
+.PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow world-time-slack

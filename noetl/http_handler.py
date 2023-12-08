@@ -7,9 +7,13 @@ import aiohttp
 import sys
 
 
-class HTTPHandler(Plugin):
+class HttpHandler(Plugin):
 
-    async def http_request(self, payload_data: Payload, nats_reference: NatsStreamReference):
+    async def http_request(
+            self,
+            payload_data: Payload,
+            nats_reference: NatsStreamReference
+    ):
         url = payload_data.get_value("url")
         method = payload_data.get_value("method")
         data = payload_data.get_value("data")
@@ -27,23 +31,29 @@ class HTTPHandler(Plugin):
         await self.event_write(subject=f"http-request.output.{origin_ref}", message=response_payload.encode())
 
     async def switch(self, payload: Payload, nats_reference: NatsStreamReference):
-        if payload.get_value("command_type") == "HTTPRequest":
+        if payload.get_value("command_type") == "HttpRequest":
             await self.http_request(payload, nats_reference)
 
 
 if __name__ == "__main__":
     args = parse_args(
-        description="HTTP Handler Plugin",
+        description="NoETL HttpHandler Plugin",
         default_nats_url="nats://localhost:32222",
         default_nats_pool_size=10,
         default_prom_host="localhost",
-        default_prom_port=9093
+        default_prom_port=9092
     )
+    http_handler_plugin = HttpHandler()
+    http_handler_plugin.initialize_nats_pool(NatsConfig(
+        nats_url=args.nats_url,
+        nats_pool_size=args.nats_pool_size
+    ))
+    loop = asyncio.get_event_loop()
     try:
-        http_handler_plugin = HTTPHandler.create(
-            NatsConfig(nats_url=args.nats_url, nats_pool_size=args.nats_pool_size))
-        asyncio.run(http_handler_plugin.run(args, subject_prefix="command.http-handler"))
+        loop.run_until_complete(http_handler_plugin.run(args=args, subject_prefix="command.HttpHandler"))
     except KeyboardInterrupt:
-        sys.exit()
+        pass
     except Exception as e:
-        logger.error(f"HTTP Handler plugin error: {str(e)}")
+        logger.info(f"HttpHandler plugin error: {str(e)}.")
+    finally:
+        loop.run_until_complete(http_handler_plugin.shutdown())

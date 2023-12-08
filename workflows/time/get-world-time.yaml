@@ -1,0 +1,43 @@
+apiVersion: workflow.noetl.io/v1
+kind: Workflow
+metadata:
+  name: getTimeAndNotifySlack
+spec:
+  vars:
+    TIMEZONE: "{{ input.TIMEZONE }}"
+    SLACK_WEBHOOK_URL: "{{ input.SLACK_WEBHOOK_URL }}"
+    WORLD_TIME_API_URL: "http://worldtimeapi.org/api/timezone/{{ spec.vars.TIMEZONE }}"
+    INITIAL_TASK: "getTime"
+  timeout: 120
+  initialSettings:
+    start: "{{ spec.vars.INITIAL_TASK }}"
+    state: ready
+  transitions:
+    ready: running
+    running: [completed, failed, terminated]
+  tasks:
+    getTime:
+      inputSchema:
+        type: object
+        properties:
+          WORLD_TIME_API_URL:
+            type: string
+        required:
+          - WORLD_TIME_API_URL
+      steps:
+        getCurrentTime:
+          description: "Get the current time from the World Time API"
+          type: http
+          plugin: "http-handler"
+          method: "GET"
+          url: "{{ spec.vars.WORLD_TIME_API_URL }}"
+          next: notify-slack
+        notifySlack:
+          description: "Send the fetched time to Slack"
+          type: http
+          plugin: "http-handler"
+          method: "POST"
+          url: "{{ spec.vars.SLACK_WEBHOOK_URL }}"
+          data:
+            text: "The current time is {{ tasks.get-time.steps.get-current-time.response }}"
+

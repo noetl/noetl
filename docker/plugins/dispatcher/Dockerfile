@@ -1,20 +1,11 @@
-FROM python:3.11-slim
+FROM local/noetl-plugin-base:latest
 ARG PRJ_PATH
 WORKDIR /usr/noetl
-
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY  ${PRJ_PATH}/noetl/plugin.py \
       ${PRJ_PATH}/noetl/keyval.py \
       ${PRJ_PATH}/noetl/payload.py \
       ${PRJ_PATH}/noetl/natstream.py \
       ${PRJ_PATH}/noetl/dispatcher.py ./
-
-COPY ${PRJ_PATH}/requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
 
 CMD ["python", "./dispatcher.py"]
