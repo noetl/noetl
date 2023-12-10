@@ -1,7 +1,7 @@
 apiVersion: workflow.noetl.io/v1
 kind: Workflow
 metadata:
-  name: getTimeAndNotifySlack
+  name: get-time-and-notify-slack
 spec:
   vars:
     TIMEZONE: "{{ input.TIMEZONE }}"

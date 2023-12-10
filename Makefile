@@ -47,7 +47,7 @@ SHELL_HANDLER_DOCKERFILE=docker/plugins/shell-handler/Dockerfile
 SHELL_HANDLER_VERSION=latest
 SHELL_HANDLER_PLUGIN_TAG=local/$(SHELL_HANDLER_PLUGIN_NAME):$(SHELL_HANDLER_VERSION)
 
-PYTHON := /opt/homebrew/bin/python3.11
+PYTHON := python3.11
 VENV_NAME := .venv
 REQUIREMENTS := requirements.txt
 
@@ -416,7 +416,7 @@ run-current-time-workflow: activate-venv
 	$(PYTHON) noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
 
 world-time-slack: activate-venv
-	$(PYTHON) noetl/cli.py run workflow getTimeAndNotifySlack '{"TIMEZONE":"$(TIMEZONE)","SLACK_WEBHOOK_URL":"$(SLACK_WEBHOOK_URL)"}'
+	$(PYTHON) noetl/cli.py run workflow get-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","SLACK_WEBHOOK_URL":"$(SLACK_WEBHOOK_URL)"}'
 
 
 .PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow world-time-slack
