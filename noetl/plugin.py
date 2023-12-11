@@ -4,11 +4,25 @@ from natstream import NatsStreamReference, NatsPool
 from aioprometheus import Counter
 from aioprometheus.service import Service
 from loguru import logger
-from payload import Payload
+from payload import Payload, PayloadReference
 
 
 class Plugin(NatsPool):
     events_counter: Counter
+
+    async def write_payload(self, payload_orig: Payload, payload_data: dict, subject_prefix: str):
+        payload_reference: PayloadReference = PayloadReference(**payload_orig.get_payload_reference())
+        payload: Payload = Payload.create(
+            payload_data=payload_data,
+            origin=payload_reference.origin,
+            reference=payload_reference.identifier,
+            nats_pool=await self.get_nats_pool()
+        )
+        ack = await payload.command_write(
+            subject=f"{subject_prefix}.{payload.get_subject_ref()}",
+            message=payload.encode()
+        )
+        logger.debug(ack)
 
     async def process_stream(self, msg):
         payload = Payload.decode(msg.data)

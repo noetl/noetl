@@ -406,6 +406,13 @@ register-workflow: activate-venv
 	    $(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
     endif
 
+register-plugin: activate-venv
+    ifeq ($(PLUGIN_NAME),)
+	    @echo "Usage: make register-plugin PLUGIN_NAME=\"http-handler:0_1_0\" IMAGE_URL=\"local/noetl-http-handler:latest\""
+    else
+	    $(PYTHON) noetl/cli.py register plugin  $(PLUGIN_NAME) $(IMAGE_URL)
+    endif
+
 list-workflows: activate-venv
 	$(PYTHON) noetl/cli.py list workflows
 

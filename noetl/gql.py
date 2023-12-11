@@ -285,34 +285,36 @@ class WorkflowQueries:
 @strawberry.type
 class PluginMutations:
     @strawberry.mutation
-    async def register_plugin(self,
-                              plugin_name: str,
-                              image_url: str,
-                              metadata: JSON | None = None,
-                              tokens: str | None = None,
-                              ) -> RegistrationResponse:
-        logger.debug(f"tokens: {tokens}, metadata: {metadata}")
+    async def register_plugin(self, plugin_name: str, image_url: str, metadata: JSON | None = None,
+                              tokens: str | None = None) -> RegistrationResponse:
+
+        logger.debug(f"plugin_name: {plugin_name}, image_url: {image_url}, metadata: {metadata}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
-            logger.error("NatsPool is not initialized")
             raise ValueError("NatsPool is not initialized")
         command_validation_result: InputValidationResult = validate_command(tokens)
         if command_validation_result.function_name == "register_plugin":
             try:
+                event_type = "PluginRegistrationRequested"
+                if plugin_name is None:
+                    raise ValueError("Plugin name is missing.")
+                if image_url is None:
+                    raise ValueError("Plugin image url is missing.")
                 nats_payload = Payload.create(
                     payload_data={"plugin_name": plugin_name, "image_url": image_url, "metadata": metadata},
-                    event_type="PluginRegistrationRequested"
+                    event_type=event_type,
+                    nats_pool = pool
                 )
 
-                ack = await pool.publish(
-                    subject=f"event.dispatcher.{nats_payload.get_value('metadata.identifier')}",
+                ack = await nats_payload.event_write(
+                    subject=f"dispatcher.{nats_payload.get_subject_ref()}",
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    identifier=ReferenceIdentifierType(**nats_payload.get_value("metadata.identifier")),
+                    reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
                     kind="Plugin",
-                    name=plugin_name,
-                    event_type=nats_payload.get_value("event_type"),
+                    name=nats_payload.get_value("plugin_name"),
+                    event_type=nats_payload.get_value("metadata.event_type"),
                     ack_seq=ack.seq,
                     status="PluginRegistrationRequested",
                     message="Plugin registration has been successfully requested"
@@ -326,6 +328,7 @@ class PluginMutations:
         else:
             logger.error(f"Request IS NOT added {tokens}")
             raise ValueError(f"Request IS NOT added {tokens}")
+
 
     @strawberry.mutation
     async def delete_plugin(self, plugin_id: str) -> str:

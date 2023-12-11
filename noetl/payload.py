@@ -37,11 +37,11 @@ class PayloadReference:
     timestamp: str = None
     """The Unix timestamp of the payload creation time."""
 
-    def __init__(self, origin=None, reference=None):
-        self.timestamp = str(int(datetime.now().timestamp() * 1000))
-        self.identifier = str(uuid.uuid4())
-        self.reference = reference if reference is not None else self.identifier
-        self.origin = origin if origin is not None else self.identifier
+    def __init__(self, origin=None, reference=None, timestamp=None, identifier=None):
+        self.timestamp = timestamp if timestamp else str(int(datetime.now().timestamp() * 1000))
+        self.identifier = identifier if identifier else str(uuid.uuid4())
+        self.reference = reference if reference else self.identifier
+        self.origin = origin if origin else self.identifier
 
     def update(self):
         """
