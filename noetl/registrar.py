@@ -7,12 +7,7 @@ from natstream import NatsConfig, NatsStreamReference
 
 class Registrar(Plugin):
 
-    async def workflow_register(self,
-                                payload_data: Payload,
-                                nats_reference: NatsStreamReference
-                                ):
-        payload_reference = payload_data.get_payload_reference()
-        key = payload_data.get_value("metadata.workflow_name")
+    async def workflow_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
         payload_kv_value = Payload.kv(
             payload_data={
                 "value": payload_data.get_value("workflow_base64"),
@@ -20,102 +15,71 @@ class Registrar(Plugin):
             },
             nats_pool=await self.get_nats_pool()
         )
-        revision_number = await self.workflow_put(key=key, value=payload_kv_value.encode())
-        payload: Payload = Payload.create(
+        revision_number = await self.workflow_put(key=payload_data.get_value("metadata.workflow_name"),
+                                                  value=payload_kv_value.encode())
+        await self.write_payload(
+            payload_orig=payload_data,
             payload_data={
                 "revision_number": revision_number,
                 "workflow_base64": payload_data.get_value("workflow_base64"),
-                "metadata": payload_data.get_value("metadata", exclude=list("command_type")) |
+                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
                             {"nats_reference": nats_reference.to_dict(), "event_type": "WorkflowRegistered"}
             },
-            origin=payload_reference.get("origin"),
-            reference=payload_reference.get("identifier"),
-            nats_pool=await self.get_nats_pool()
+            subject_prefix="registrar.workflow"
         )
-        ack = await payload.event_write(
-            subject=f"registrar.{payload.get_subject_ref()}",
-            message=payload.encode()
-        )
-        logger.debug(ack)
 
-    async def plugin_register(
-            self,
-            payload_data: Payload,
-            nats_reference: NatsStreamReference
-    ):
-        payload_reference = payload_data.get_payload_reference()
-        key = payload_data.get_value("plugin_name")
+    async def plugin_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
         payload_kv_value = Payload.kv(
-            {
+            payload_data={
                 "value": {
                     "plugin_name": payload_data.get_value("plugin_name"),
                     "image_url": payload_data.get_value("image_url")
                 },
                 "metadata": payload_data.get_value("metadata") | {"value_type": "dict"}
-            }
+            },
+            nats_pool=await self.get_nats_pool()
         )
-        revision_number = await self.plugin_put(key=key, value=payload_kv_value.encode())
-        payload: Payload = Payload.create(
+        revision_number = await self.plugin_put(key=payload_data.get_value("plugin_name"), value=payload_kv_value.encode())
+        await self.write_payload(
+            payload_orig=payload_data,
             payload_data={
                 "revision_number": revision_number,
                 "plugin_name": payload_data.get_value("plugin_name"),
-                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
-                            {"nats_reference": nats_reference.to_dict(), "event_type": "PluginRegistered"}
+                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) | {"nats_reference": nats_reference.to_dict(), "event_type": "PluginRegistered"}
             },
-            origin=payload_reference.get("origin"),
-            reference=payload_reference.get("identifier"),
-            nats_pool=await self.get_nats_pool()
+            subject_prefix="registrar.plugin"
         )
-        ack = await payload.event_write(
-            subject=f"registrar.{payload.get_subject_ref()}",
-            message=payload.encode()
-        )
-        logger.debug(ack)
 
-    async def run_workflow_register(
-            self,
-            payload_data: Payload,
-            nats_reference: NatsStreamReference
-    ):
-        payload_reference = payload_data.get_payload_reference()
+
+    async def run_workflow_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
         key = payload_data.get_value("workflow_name")
+        payload_reference = payload_data.get_payload_reference()
         workflow_kv_payload = Payload.decode(await self.workflow_get(key))
         workflow_template = workflow_kv_payload.get_value("value", "WORKFLOW NOT FOUND")
+
         if workflow_template == "WORKFLOW NOT FOUND":
-            payload: Payload = Payload.create(
+            await self.write_payload(
+                payload_orig=payload_data,
                 payload_data={
                     "error": f"Workflow template {key} was not found",
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
                                 {"nats_reference": nats_reference.to_dict(),
                                  "event_type": "RunWorkflowRegistrationFailed"}
                 },
-                origin=payload_reference.get("origin"),
-                reference=payload_reference.get("identifier"),
-                nats_pool=await self.get_nats_pool()
+                subject_prefix="dispatcher"
             )
-            ack = await payload.event_write(
-                subject=f"dispatcher.{payload.get_subject_ref()}",
-                message=payload.encode()
-            )
-            logger.debug(ack)
         else:
-            payload: Payload = Payload.create(
+            await self.write_payload(
+                payload_orig=payload_data,
                 payload_data={
                     "workflow_base64": workflow_template,
                     "workflow_input": payload_data.get_value("workflow_input"),
                     "workflow_metadata": workflow_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
-                        {"nats_reference": nats_reference.to_dict(), "event_type": "RunWorkflowRegistered"}
+                                {"nats_reference": nats_reference.to_dict(), "event_type": "RunWorkflowRegistered"}
                 },
-                origin=payload_reference.get("origin"),
-                reference=payload_reference.get("identifier"),
-                nats_pool=await self.get_nats_pool()
+                subject_prefix="dispatcher"
             )
-            ack = await payload.event_write(
-                subject=f"dispatcher.{payload.get_subject_ref()}",
-                message=payload.encode()
-            )
-            logger.debug(ack)
 
     async def switch(self,
                      payload: Payload,
