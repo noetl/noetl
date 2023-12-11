@@ -25,7 +25,7 @@ class Dispatcher(Plugin):
             "plugin_name": payload_data.get_value("plugin_name"),
             "image_url": payload_data.get_value("image_url"),
             "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
-                        {"command_type": "RegisterWorkflow",
+                        {"command_type": "RegisterPlugin",
                          "nats_reference": nats_reference.to_dict(),
                          },
         }
