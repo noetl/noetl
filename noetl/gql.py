@@ -6,7 +6,51 @@ import spacy
 from strawberry.scalars import JSON
 from payload import Payload
 
-nlp = spacy.load("en_core_web_sm")
+
+class Command:
+    class Tokenizer:
+        def __init__(self):
+            self.nlp = spacy.load("en_core_web_sm")
+
+        def get_tokens(self, command_text):
+            doc = self.nlp(command_text.lower())
+            return [token.text for token in doc]
+
+    class Structures:
+        command_structures = {
+            "register_workflow": ["register", "workflow", str],
+            "run_workflow": ["run", "workflow", str],
+            "describe_workflow": ["describe", "workflow", str],
+            "show_workflow": ["show", "workflow", str],
+            "status_workflow": ["status", "workflow", str],
+            "append_data_to_workflow": ["append", "data", "to", "workflow", str],
+            "kill_workflow": ["kill", "workflow", str],
+            "unregister_workflow": ["drop", "workflow", str],
+            "list_workflows": ["list", "workflows"],
+            "list_events": ["list", "events"],
+            "list_commands": ["list", "commands"],
+            "list_plugins": ["list", "plugins"],
+            "delete_events": ["delete", "events"],
+            "delete_commands": ["delete", "commands"],
+            "register_plugin": ["register", "plugin", str],
+            "describe_plugin": ["describe", "plugin", str],
+            "unregister_plugin": ["delete", "plugin", str]
+        }
+
+        @classmethod
+        def match_structure(cls, tokens):
+            match_command = None
+            match_token_count = 0
+            for function_name, structure in cls.command_structures.items():
+                match_length = min(len(tokens), len(structure) - 1)
+                is_valid = all(
+                    t1 == t2 or isinstance(t2, type) and isinstance(t1, t2)
+                    for t1, t2 in zip(tokens[:match_length], structure)
+                )
+                if is_valid and match_length >= match_token_count:
+                    match_command = function_name
+                    match_token_count = match_length
+            return match_command, match_token_count
 
 
 class InputValidationResult(BaseModel):
@@ -22,45 +66,15 @@ class Input(BaseModel):
 
 
 def validate_command(command_text):
-    doc = nlp(command_text.lower())
-    tokens = [token.text for token in doc]
-
+    tokenizer = Command.Tokenizer()
+    tokens = tokenizer.get_tokens(command_text)
     if not tokens:
-        return False, None, None
-
-    match_command = None
-    match_token_count = 0
-    command_structures = {
-        "register_workflow": ["register", "workflow", str],
-        "run_workflow": ["run", "workflow", str],
-        "describe_workflow": ["describe", "workflow", str],
-        "show_workflow": ["show", "workflow", str],
-        "status_workflow": ["status", "workflow", str],
-        "append_data_to_workflow": ["append", "data", "to", "workflow", str],
-        "kill_workflow": ["kill", "workflow", str],
-        "unregister_workflow": ["drop", "workflow", str],
-        "list_workflows": ["list", "workflows"],
-        "list_events": ["list", "events"],
-        "list_commands": ["list", "commands"],
-        "list_plugins": ["list", "plugins"],
-        "delete_events": ["delete", "events"],
-        "delete_commands": ["delete", "commands"],
-        "register_plugin": ["register", "plugin", str],
-        "describe_plugin": ["describe", "plugin", str],
-        "unregister_plugin": ["delete", "plugin", str],
-    }
-
-    for function_name, structure in command_structures.items():
-        match_length = min(len(tokens), len(structure) - 1)
-        is_valid = all(t1 == t2 or isinstance(t2, type) and isinstance(t1, t2)
-                       for t1, t2 in zip(tokens[:match_length], structure))
-        if is_valid and match_length >= match_token_count:
-            match_command = function_name
-            match_token_count = match_length
-
+        return InputValidationResult()
+    match_command, match_token_count = Command.Structures.match_structure(tokens)
     if match_command:
-        return InputValidationResult(is_valid=True, function_name=match_command,
-                                     message=" ".join(tokens[match_token_count:]))
+        return InputValidationResult(
+            is_valid=True, function_name=match_command, message=" ".join(tokens[match_token_count:])
+        )
     else:
         return InputValidationResult()
 
@@ -68,6 +82,7 @@ def validate_command(command_text):
 @strawberry.type
 class ResponseMessage:
     message: JSON
+
 
 @strawberry.type
 class ReferenceIdentifierType:
@@ -94,8 +109,7 @@ class RegistrationResponse:
             "event_type": self.event_type,
             "ack_seq": self.ack_seq,
             "status": self.status,
-            "message": self.message,
-        }
+            "message": self.message}
 
 
 @strawberry.type
@@ -287,8 +301,7 @@ class PluginMutations:
             try:
                 nats_payload = Payload.create(
                     payload_data={"plugin_name": plugin_name, "image_url": image_url, "metadata": metadata},
-                    event_type="PluginRegistrationRequested",
-                    prefix="metadata"
+                    event_type="PluginRegistrationRequested"
                 )
 
                 ack = await pool.publish(

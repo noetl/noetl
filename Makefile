@@ -401,7 +401,7 @@ run-registrar: activate-venv
 #[WORKFLOW COMMANDS]######################################################################
 register-workflow: activate-venv
     ifeq ($(WORKFLOW),)
-	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/get-world-time.yaml"
+	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/fetch-world-time.yaml"
     else
 	    $(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
     endif
@@ -412,11 +412,8 @@ list-workflows: activate-venv
 describe-workflow: activate-venv
 	$(PYTHON) noetl/cli.py describe workflow $(filter-out $@,$(MAKECMDGOALS))
 
-run-current-time-workflow: activate-venv
-	$(PYTHON) noetl/cli.py run workflow get-current-time '{"sdfasdf":"aSDfasdfasd"}'
-
-world-time-slack: activate-venv
-	$(PYTHON) noetl/cli.py run workflow get-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","SLACK_WEBHOOK_URL":"$(SLACK_WEBHOOK_URL)"}'
+fetch-time-and-notify-slack: activate-venv
+	$(PYTHON) noetl/cli.py run workflow fetch-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","NOTIFICATION_CHANNEL":"$(NOTIFICATION_CHANNEL)"}'
 
 
-.PHONY: register-workflow list-workflows describe-workflow run-current-time-workflow world-time-slack
+.PHONY: register-workflow list-workflows describe-workflow fetch-time-and-notify-slack
