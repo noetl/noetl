@@ -265,27 +265,6 @@ deploy-api-local:
 	kubectl apply -f $(K8S_DIR)/noetl/api-local/deployment.yaml
 	kubectl apply -f $(K8S_DIR)/noetl/api-local/service.yaml
 
-#deploy-dispatcher:
-#	@echo "Deploying NoETL Dispatcher service from ghcr.io ..."
-#	kubectl config use-context docker-desktop
-#	kubectl apply -f $(K8S_DIR)/noetl/dispatcher/deployment.yaml
-#
-#deploy-dispatcher-local:
-#	@echo "Deploying NoETL Dispatcher service from local image..."
-#	kubectl config use-context docker-desktop
-#	kubectl apply -f $(K8S_DIR)/noetl/dispatcher-local/deployment.yaml
-
-#deploy-registrar:
-#	@echo "Deploying NoETL Registrar service from ghcr.io ..."
-#	kubectl config use-context docker-desktop
-#	kubectl apply -f $(K8S_DIR)/noetl/registrar/deployment.yaml
-#
-#deploy-registrar-local:
-#	@echo "Deploying NoETL Registrar service from local image..."
-#	kubectl config use-context docker-desktop
-#	kubectl apply -f $(K8S_DIR)/noetl/registrar-local/deployment.yaml
-
-
 deploy-plugins:
 	@echo "Deploying NoETL plugins from ghcr.io ..."
 	kubectl config use-context docker-desktop
@@ -419,8 +398,8 @@ list-workflows: activate-venv
 describe-workflow: activate-venv
 	$(PYTHON) noetl/cli.py describe workflow $(filter-out $@,$(MAKECMDGOALS))
 
-fetch-time-and-notify-slack: activate-venv
+run-workflow-fetch-time-and-notify-slack: activate-venv
 	$(PYTHON) noetl/cli.py run workflow fetch-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","NOTIFICATION_CHANNEL":"$(NOTIFICATION_CHANNEL)"}'
 
 
-.PHONY: register-workflow list-workflows describe-workflow fetch-time-and-notify-slack
+.PHONY: register-workflow list-workflows describe-workflow run-workflow-fetch-time-and-notify-slack
