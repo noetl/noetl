@@ -1,43 +1,40 @@
-apiVersion: workflow.noetl.io/v1
+apiVersion: noetl.io/v1
 kind: Workflow
 metadata:
-  name: get-time-and-notify-slack
+  name: fetch-time-and-notify-slack
 spec:
   vars:
     TIMEZONE: "{{ input.TIMEZONE }}"
-    SLACK_WEBHOOK_URL: "{{ input.SLACK_WEBHOOK_URL }}"
-    WORLD_TIME_API_URL: "http://worldtimeapi.org/api/timezone/{{ spec.vars.TIMEZONE }}"
-    INITIAL_TASK: "getTime"
+    NOTIFICATION_CHANNEL: "{{ input.NOTIFICATION_CHANNEL }}"
+    TIME_API: "http://worldtimeapi.org/api/timezone"
+    FETCH_TIME_TASK: "fetch-time"
+    NOTIFY_TASK: "send-notification"
   timeout: 120
   initialSettings:
-    start: "{{ spec.vars.INITIAL_TASK }}"
+    start: "{{ spec.vars.FETCH_TIME_TASK }}"
     state: ready
   transitions:
     ready: running
-    running: [completed, failed, terminated]
+    running: [ completed, failed, terminated ]
   tasks:
-    getTime:
-      inputSchema:
-        type: object
-        properties:
-          WORLD_TIME_API_URL:
-            type: string
-        required:
-          - WORLD_TIME_API_URL
+    fetch-time:
+      nats:
+        command: "command.fetch-time.{{ metadata.name }}"
+        event: "event.fetch-time.{{ metadata.name }}"
       steps:
-        getCurrentTime:
+        get-current-time:
           description: "Get the current time from the World Time API"
-          type: http
-          plugin: "http-handler"
+          plugin: "http-handler:0_1_0"
           method: "GET"
-          url: "{{ spec.vars.WORLD_TIME_API_URL }}"
-          next: notify-slack
-        notifySlack:
-          description: "Send the fetched time to Slack"
-          type: http
-          plugin: "http-handler"
-          method: "POST"
-          url: "{{ spec.vars.SLACK_WEBHOOK_URL }}"
-          data:
-            text: "The current time is {{ tasks.get-time.steps.get-current-time.response }}"
-
+          url: "{{ spec.vars.TIME_API }}/{{ spec.vars.TIMEZONE }}"
+          next: "{{ spec.vars.NOTIFY_TASK }}"
+    send-notification:
+      nats:
+        command: "command.send-notification.{{ metadata.name }}"
+        event: "event.send-notification.{{ metadata.name }}"
+      description: "Send the fetched time notification"
+      plugin: "http-handler:0_1_0"
+      method: "POST"
+      url: "{{ spec.vars.NOTIFICATION_CHANNEL }}"
+      data:
+        text: "The current time is {{ tasks.fetch-time.steps.get-current-time.response }}"
