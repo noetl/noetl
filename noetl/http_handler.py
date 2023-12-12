@@ -6,7 +6,6 @@ from natstream import NatsConfig, NatsStreamReference
 import aiohttp
 
 
-
 class HttpHandler(Plugin):
     async def http_request(self, payload_data: Payload, nats_reference: NatsStreamReference):
         url = payload_data.get_value("url")
@@ -17,14 +16,14 @@ class HttpHandler(Plugin):
             async with session.request(method, url, data=data) as response:
                 response_data = await response.text()
         response_payload = Payload.create(
-                payload_data={
-                    "response": response_data,
-                    "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
-                            {"command_type": "HttpRequest","nats_reference": nats_reference.to_dict(),}},
-                origin=payload_reference.origin,
-                reference=payload_reference.identifier
+            payload_data={
+                "response": response_data,
+                "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
+                            {"command_type": "HttpRequest", "nats_reference": nats_reference.to_dict(), }},
+            origin=payload_reference.origin,
+            reference=payload_reference.identifier
 
-            )
+        )
 
         await self.write_event(response_payload)
 

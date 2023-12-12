@@ -17,14 +17,39 @@ class TokenCommand(KeyVal):
         self.handler = handler
 
     def execute(self):
-        mutation = {
-            "query": self.create_gql(),
-            "variables": self.get_value("variables", {})
+        if self.handler in ['show_events', 'show_commands']:
+            self.graphql_query()
+        else:
+            mutation = {
+                "query": self.create_gql(),
+                "variables": self.get_value("variables", {})
+            }
+            graphql_request(mutation)
+
+    def graphql_query(self):
+        query_info = {
+            "query": self.create_gql()
         }
-        graphql_request(mutation)
+        response = requests.post(API_URL, json=query_info)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Request failed with status code {response.status_code}")
 
     def create_gql(self):
         match self.handler:
+            case "show_events":
+                return """
+                query {
+                    showEvents
+                }
+                    """
+            case "show_commands":
+                return """
+                query {
+                    showCommands
+                }
+                    """
             case "register_workflow":
                 return """
                         mutation RegisterWorkflow($workflowBase64: String!, $metadata: JSON, $tokens: String) {
@@ -211,6 +236,16 @@ class TokenCommand(KeyVal):
                         tokens="delete commands",
                         handler="delete_commands"
                     )
+                case "show_events":
+                    return cls(
+                        tokens=tokens,
+                        handler=handler,
+                    )
+                case "show_commands":
+                    return cls(
+                        tokens=tokens,
+                        handler=handler,
+                    )
         raise ValueError(f"Unknown command: {tokens}")
 
 
@@ -218,7 +253,7 @@ def graphql_request(mutation):
     try:
         response = requests.post(API_URL, json=mutation)
         response.raise_for_status()
-        print(response.json())
+        print(json.dumps(response.json(), indent=2))
     except requests.exceptions.RequestException as e:
         logger.error(f"API request error: {e}")
         return None

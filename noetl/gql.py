@@ -1,3 +1,7 @@
+import uuid
+
+import asyncio
+
 import strawberry
 from loguru import logger
 from natstream import NatsConnectionPool
@@ -5,6 +9,7 @@ from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
 from payload import Payload
+from nats.aio.errors import ErrTimeout
 
 
 class Command:
@@ -90,6 +95,7 @@ class ReferenceIdentifierType:
     identifier: str
     reference: str
     origin: str
+
 
 @strawberry.type
 class RegistrationResponse:
@@ -303,7 +309,7 @@ class PluginMutations:
                 nats_payload = Payload.create(
                     payload_data={"plugin_name": plugin_name, "image_url": image_url, "metadata": metadata},
                     event_type=event_type,
-                    nats_pool = pool
+                    nats_pool=pool
                 )
 
                 ack = await nats_payload.event_write(
@@ -328,7 +334,6 @@ class PluginMutations:
         else:
             logger.error(f"Request IS NOT added {tokens}")
             raise ValueError(f"Request IS NOT added {tokens}")
-
 
     @strawberry.mutation
     async def delete_plugin(self, plugin_id: str) -> str:
@@ -398,7 +403,56 @@ class Mutations(WorkflowMutations, PluginMutations, EventCommandMutations):
 
 @strawberry.type
 class Queries(WorkflowQueries, PluginQueries):
-    pass
+
+    @strawberry.field
+    async def show_events(self) -> JSON:
+        """
+        Retrieves messages from the Events NATS stream.
+        """
+        logger.debug(f"Self in show_events: {self}")
+        return await read_nats_stream('event')
+
+    @strawberry.field
+    async def show_commands(self) -> JSON:
+        """
+        Retrieves messages from the Commands NATS stream.
+        """
+        logger.debug(f"Self in show_commands: {self}")
+        return await read_nats_stream('command')
+
+
+async def read_nats_stream(stream: str):
+    messages = []
+
+    async def message_handler(msg):
+        msg_decoded = Payload.decode(msg.data)
+        messages.append(msg_decoded)
+
+    nats_pool = NatsConnectionPool.get_instance()
+    logger.debug(f"Pool instance in read_nats_stream: {nats_pool}")
+
+    if nats_pool is None:
+        raise ValueError("NatsPool is not initialized")
+
+    try:
+        async with nats_pool.connection() as js:
+            subject = f'{stream}.>'
+            consumer_name = f"{stream}-consumer-{uuid.uuid4()}"
+
+            _ = await js.subscribe(
+                subject,
+                durable=consumer_name,
+                cb=message_handler,
+            )
+            await asyncio.sleep(1)
+            response_data = {stream: messages}
+            logger.info(response_data)
+            return response_data
+
+    except ErrTimeout:
+        return {stream: 'read_nats_stream Timeout Error'}
+    except Exception as e:
+        return {stream: f"read_nats_stream Error {e}"}
 
 
 schema = strawberry.Schema(query=Queries, mutation=Mutations)
