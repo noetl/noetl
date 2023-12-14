@@ -6,6 +6,7 @@ NoETL is a workflow automation framework designed to simplify the process of def
 
 * <<getting-started,Getting Started>>
 * <<prerequisites,Prerequisites>>
+* <<initial-setup,Initial Setup>>
 * <<installation,Installation>>
 * <<configuration,Configuration>>
 * <<configuration-rules,Configuration Rules>>
@@ -14,18 +15,21 @@ NoETL is a workflow automation framework designed to simplify the process of def
 * <<folder-structure,Folder Structure>>
 * <<license,License>>
 
+[[erlang-design]]
+== Erlang-Inspired Design
+
+For the design principles that inspired the development of NoETL, read link:docs/noetl_erlang_inspired_design.adoc[Erlang-Inspired Design].
+
 Managing and orchestrating complex workflows is challenging, especially when dealing with data processing tasks, dependencies, and error handling. NoETL aims to address these challenges by providing the following benefits:
 
 * *Flexibility*: NoETL allows you to define workflows using configuration files, making it easy to modify, extend, and adapt workflows as needed.
-
 * *Scalability*: As your workflows grow in complexity, NoETL provides a structured way to manage tasks, dependencies, and transitions.
-
 * *Automation*: NoETL automates the execution of tasks, reducing the need for manual intervention and streamlining data processing pipelines.
-
 * *Error Handling*: NoETL includes error handling mechanisms, allowing you to define what happens when a task fails and how to proceed.
 
 == Getting Started
 
+[[prerequisites]]
 === Prerequisites
 
 * Python 3.11 or later
@@ -33,15 +37,33 @@ Managing and orchestrating complex workflows is challenging, especially when dea
 * GitHub CLI tool `brew install gh && brew update && brew upgrade gh` (to login: `gh auth login`)
 * Docker Desktop's Kubernetes cluster, for local development
 
-Enable NGINX Ingress Controller on Docker desktop Kubernetes cluster:
-```
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
-```
-and verify it
-```
-kubectl get pods -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx --watch
-```
+[[initial-setup]]
+=== Initial Setup
 
+The initial setup requires you to run a sequence of commands provided in the project's `Makefile`. Making sure you have make installed in your local environment, run the following commands:
+
+[source,bash]
+----
+make venv
+source .venv/bin/activate
+make requirements
+make activate-help
+make nats-delete-all
+make nats-create-all
+make build-api-base
+make build-cli
+make build-plugin-base
+make build-api
+make build-dispatcher
+make build-registrar
+make build-http-handler
+make create-ns
+make deploy-api-local
+make deploy-plugins-local
+export NOETL_API_URL=http://localhost:30080/noetl
+make register-workflow WORKFLOW=workflows/time/get-world-time.yaml
+kubectl get pods -n noetl
+----
 === Installation
 
 To install NoETL use `pip`:

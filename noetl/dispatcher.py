@@ -4,7 +4,7 @@ from plugin import Plugin, parse_args
 from payload import Payload
 from loguru import logger
 from natstream import NatsConfig, NatsStreamReference
-from playbook import Workflow
+from playbook import Playbook
 
 
 class Dispatcher(Plugin):

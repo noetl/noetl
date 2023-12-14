@@ -27,9 +27,19 @@ spec:
           plugin: "http-handler:0_1_0"
           method: "GET"
           url: "{{ spec.vars.TIME_API }}/{{ spec.vars.TIMEZONE }}"
-          next: "{{ spec.vars.NOTIFY_TASK }}"
+        get-current-date:
+          description: "Get the current date from the World Time API"
+          plugin: "http-handler:0_1_0"
+          method: "GET"
+          url: "{{ spec.vars.TIME_API }}/{{ spec.vars.TIMEZONE }}"
+      switch:
+        - next: [ send-notification ]
+          condition: "{{ $.fetch-time.get-current-time.output.exitCode }} != 0 && {{ $.fetch-time.get-current-date.exitCode }} != 0"
+        - next: [ ]
+          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
     send-notification:
       nats:
+        input:
         command: "command.send-notification.{{ metadata.name }}"
         event: "event.send-notification.{{ metadata.name }}"
       description: "Send the fetched time notification"
