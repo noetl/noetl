@@ -1,9 +1,5 @@
 = NoETL Workflow Execution System Documentation
 
-== Introduction:
-
-This document outlines the brief design and operation details for the NoETL workflow execution system. It provides an overview based on the details provided in the system output and introduces the Erlang-inspired design of the system.
-
 == Architecture Overview:
 
 The NoETL system is a workflow execution engine that caters to automating the execution of tasks as defined by a specific playbook. The system incorporates a publisher-subscriber pattern for transmitting commands and receiving events using NATS messaging system, leveraging an Erlang-inspired, plugin-based architecture.
@@ -28,9 +24,18 @@ NoETL embraces several of Erlang's fundamental concepts in its architecture:
 
 Workflows in NoETL are treated as playbooks – a YAML script that orchestrates the execution of tasks in a pre-defined sequence. Each playbook describes a sequence of tasks, with each task referring to a specific plugin, which gets executed as a step within the task.
 
-== Tasks and Steps:
+[[tasks-and-steps]]
+== Tasks and Steps
 
-Tasks are the primary operational units within a playbook. These tasks contain multiple steps, which invoke the execution of the corresponding plugin module.
+Tasks are the fundamental operational elements within a playbook, and they consist of numerous sequential steps. These tasks contain multiple steps, and each step invokes the execution of the corresponding plugin module.
+
+The design model follows these principles:
+
+* Tasks can be executed in parallel, promoting efficiency in playbook execution.
+* The steps within a task are executed sequentially. Each step in a task must complete before the next one starts.
+* The most atomic operation in NoETL is the 'step.' Each 'step' specifically refers to a plugin module that is executed.
+
+In essence, a playbook is a collection of tasks, and each task is a sequence of steps. This architecture allows for complex workflows to be broken down into manageable, isolated operations which can run concurrently and efficiently.
 
 == Events and Commands:
 
