@@ -1,5 +1,5 @@
 apiVersion: noetl.io/v1
-kind: Workflow
+kind: Playbook
 metadata:
   name: fetch-time-and-notify-slack
 spec:

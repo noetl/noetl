@@ -3,7 +3,7 @@ import asyncio
 from loguru import logger
 from config import Config
 from store import Store
-from workflow import Workflow
+from playbook import Workflow
 
 
 if __name__ == "__main__":

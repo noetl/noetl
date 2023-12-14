@@ -1,5 +1,5 @@
 apiVersion: workflow.noetl.io/v1
-kind: Workflow
+kind: Playbook
 metadata:
   name: get-current-time
 spec:

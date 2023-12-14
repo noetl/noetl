@@ -2,7 +2,7 @@ from natstream import NatsConnectionPool, NatsConfig
 from payload import Payload
 
 
-class Workflow(Payload):
+class Playbook(Payload):
     def __init__(self, payload_data, nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
         super().__init__(payload_data, nats_pool=nats_pool, **kwargs)
         self.workflow_template = None
