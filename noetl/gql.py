@@ -426,7 +426,8 @@ async def read_nats_stream(stream: str):
 
     async def message_handler(msg):
         msg_decoded = Payload.decode(msg.data)
-        messages.append(msg_decoded)
+        if msg_decoded:
+            messages.append({"subject": msg.subject, "data": msg_decoded})
 
     nats_pool = NatsConnectionPool.get_instance()
     logger.debug(f"Pool instance in read_nats_stream: {nats_pool}")
