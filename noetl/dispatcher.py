@@ -60,29 +60,23 @@ class Dispatcher(Plugin):
             payload_data: Payload,
             nats_reference: NatsStreamReference
     ):
-        workflow = Workflow.create(
+        playbook = Playbook.create(
             payload_data=payload_data,
             nats_pool=await self.get_nats_pool()
         )
-        await workflow.transit()
-        # payload_reference = payload_data.get_payload_reference()
-        logger.info(workflow)
-        # payload: Payload = Payload.create(
-        #     payload_data={
-        #         "workflow_name": payload_data.get_value("workflow_name"),
-        #         "workflow_input": payload_data.get_value("workflow_input", {"input": "NO DATA PROVIDED"}),
-        #         "metadata": payload_data.get_value("metadata", exclude=list(["event_type","command_type"])) |
-        #         {"command_type": "RegisterRunWorkflow", "nats_reference": nats_reference.to_dict()},
-        #     },
-        #     origin=payload_reference.get("origin"),
-        #     reference=payload_reference.get("identifier"),
-        #     nats_pool=await self.get_nats_pool()
-        # )
-        # ack = await payload.command_write(
-        #     subject=f"registrar.{payload.get_subject_ref()}",
-        #     message=payload.encode()
-        # )
-        # logger.debug(ack)
+
+        event_type = payload_data.get_value("metadata.event_type")
+
+        if event_type == "WorkflowStarted":
+            logger.info(payload_data)
+        elif event_type == "WorkflowTaskExecuted":
+            logger.info(payload_data)
+        elif event_type == "WorkflowStepExecuted":
+            logger.info(payload_data)
+        elif event_type == "WorkflowCompleted":
+            logger.info(payload_data)
+        elif event_type == "WorkflowFailed":
+            logger.info(payload_data)
 
     async def switch(self,
                      payload: Payload,
