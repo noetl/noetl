@@ -9,5 +9,11 @@ RUN apt-get update && apt-get install -y \
 
 COPY ${PRJ_PATH}/docker/api/requirements.txt .
 
+
+COPY  ${PRJ_PATH}/noetl/config.py \
+      ${PRJ_PATH}/noetl/keyval.py \
+      ${PRJ_PATH}/noetl/natstream.py \
+      ${PRJ_PATH}/noetl/payload.py ./
+
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install spacy && python -m spacy download en_core_web_sm

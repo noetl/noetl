@@ -187,7 +187,11 @@ remove-shell-handler-image:
 
 rebuild-shell-handler: remove-shell-handler-image build-shell-handler
 
-.PHONY:build-shell-handler remove-shell-handler-image rebuild-shell-handler
+.PHONY:build-shell-handler remove-shell-handler-image rebuild-shell-handler build-plugin-images
+
+build-plugin-images: build-dispatcher build-registrar build-http-handler
+
+
 
 
 clean:
@@ -403,3 +407,10 @@ run-workflow-fetch-time-and-notify-slack: activate-venv
 
 
 .PHONY: register-workflow list-workflows describe-workflow run-workflow-fetch-time-and-notify-slack
+
+.PHONY: show-events show-commands
+show-events:
+	$(PYTHON) noetl/cli.py show events
+
+show-commands:
+	$(PYTHON) noetl/cli.py show commands

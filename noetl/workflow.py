@@ -1,4 +1,4 @@
-from noetl.natstream import NatsConnectionPool, NatsConfig
+from natstream import NatsConnectionPool, NatsConfig
 from payload import Payload
 
 
