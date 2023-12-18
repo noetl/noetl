@@ -21,8 +21,8 @@ class PayloadReference:
         where each part represents specific identifiers related to the workflow instance and step.
 
     Examples of NATS Stream Keys:
-        - 'events.dispatcher.12345.abcde' (for an event stream)
-        - 'commands.http-handler.12345.bcdef' (for a command stream)
+        - 'event.dispatcher.12345.abcde' (for an event stream)
+        - 'command.http-handler.12345.bcdef' (for a command stream)
     """
 
     origin: str = None
@@ -81,12 +81,15 @@ class Payload(KeyVal, NatsPool):
         self.set_value("metadata.ref", reference.get_ref())
 
     def get_payload_reference(self):
-        return self.get_value("metadata.ref")
+        return self.get_ref()
 
     def get_subject_ref(self):
-        origin = self.get_value("metadata.ref.origin")
+        origin = self.get_origin_ref()
         identifier = self.get_value("metadata.ref.identifier")
         return f"{origin}.{identifier}"
+
+    def get_origin_ref(self):
+        return self.get_value("metadata.ref.origin")
 
     def get_ref(self):
         return self.get_value("metadata.ref")

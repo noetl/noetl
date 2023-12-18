@@ -44,7 +44,7 @@ class KeyVal(dict):
         except (TypeError, ValueError) as e:
             raise ValueError(f"Error converting to JSON: {e}")
 
-    def base64_path(self, path: str = "workflow_base64"):
+    def base64_path(self, path: str = "payload_base64"):
         base64_value = self.get_value(path)
         if base64_value is None:
             raise ValueError(f"No base64 string found at {path}")
@@ -57,11 +57,14 @@ class KeyVal(dict):
         return base64.b64encode(json_representation)
 
     def yaml_value(self, path: str = "value"):
-        value = self.get_value(path)
+        value = self.get_value(path=path, default="VALUE NOT FOUND")
         if value is None:
             raise ValueError("No value found for key 'value'")
-        value_decoded = yaml.safe_load(base64.b64decode(value.encode()).decode('utf-8'))
-        return value_decoded
+        elif value == "VALUE NOT FOUND":
+            return value
+        else:
+            value_decoded = yaml.safe_load(base64.b64decode(value.encode()).decode('utf-8'))
+            return value_decoded
 
     @classmethod
     def decode(cls, encoded_payload):

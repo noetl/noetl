@@ -11,16 +11,13 @@ spec:
     NOTIFY_TASK: "send-notification"
   timeout: 120
   initialSettings:
-    start: "{{ spec.vars.FETCH_TIME_TASK }}"
+    start: [fetch-time]
     state: ready
   transitions:
     ready: running
     running: [ completed, failed, terminated ]
   tasks:
     fetch-time:
-      nats:
-        command: "command.fetch-time.{{ metadata.name }}"
-        event: "event.fetch-time.{{ metadata.name }}"
       steps:
         get-current-time:
           description: "Get the current time from the World Time API"
@@ -33,15 +30,11 @@ spec:
           method: "GET"
           url: "{{ spec.vars.TIME_API }}/{{ spec.vars.TIMEZONE }}"
       switch:
-        - next: [ send-notification ]
-          condition: "{{ $.fetch-time.get-current-time.output.exitCode }} != 0 && {{ $.fetch-time.get-current-date.exitCode }} != 0"
+        - next: [ send-notification: {input: get-current-time.output.data} ]
+          condition: "{{ $.this.get-current-time.output.exitCode }} != 0"
         - next: [ ]
           condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
     send-notification:
-      nats:
-        input:
-        command: "command.send-notification.{{ metadata.name }}"
-        event: "event.send-notification.{{ metadata.name }}"
       description: "Send the fetched time notification"
       plugin: "http-handler:0_1_0"
       method: "POST"

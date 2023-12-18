@@ -10,7 +10,20 @@ from payload import Payload, PayloadReference
 class Plugin(NatsPool):
     events_counter: Counter
 
-    async def write_payload(self, payload_orig: Payload, payload_data: dict, subject_prefix: str):
+    async def write_command_payload(self,payload_orig: Payload, payload_data: dict, subject_prefix: str):
+        await self.write_payload(
+            payload_orig=payload_orig,
+            payload_data=payload_data,
+            subject_prefix=subject_prefix)
+
+    async def write_event_payload(self,payload_orig: Payload, payload_data: dict, subject_prefix: str):
+        await self.write_payload(
+            payload_orig=payload_orig,
+            payload_data=payload_data,
+            subject_prefix=subject_prefix,
+            event=True)
+
+    async def write_payload(self, payload_orig: Payload, payload_data: dict, subject_prefix: str, event: bool = False):
         payload_reference: PayloadReference = PayloadReference(**payload_orig.get_payload_reference())
         payload: Payload = Payload.create(
             payload_data=payload_data,
@@ -18,10 +31,16 @@ class Plugin(NatsPool):
             reference=payload_reference.identifier,
             nats_pool=await self.get_nats_pool()
         )
-        ack = await payload.command_write(
-            subject=f"{subject_prefix}.{payload.get_subject_ref()}",
-            message=payload.encode()
-        )
+        if event is True:
+            ack = await payload.event_write(
+                subject=f"{subject_prefix}.{payload.get_subject_ref()}",
+                message=payload.encode()
+            )
+        else:
+            ack = await payload.command_write(
+                subject=f"{subject_prefix}.{payload.get_subject_ref()}",
+                message=payload.encode()
+            )
         logger.debug(ack)
 
     async def process_stream(self, msg):

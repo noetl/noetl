@@ -1,31 +1,32 @@
 import asyncio
 from plugin import Plugin, parse_args
 from payload import Payload
+from playbook import Playbook
 from loguru import logger
 from natstream import NatsConfig, NatsStreamReference
 
 
 class Registrar(Plugin):
 
-    async def workflow_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
+    async def playbook_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
         payload_kv_value = Payload.kv(
             payload_data={
-                "value": payload_data.get_value("workflow_base64"),
+                "value": payload_data.get_value("playbook_base64"),
                 "metadata": payload_data.get_value("metadata") | {"value_type": "base64"}
             },
             nats_pool=await self.get_nats_pool()
         )
-        revision_number = await self.workflow_put(key=payload_data.get_value("metadata.workflow_name"),
+        revision_number = await self.playbook_put(key=payload_data.get_value("metadata.playbook_name"),
                                                   value=payload_kv_value.encode())
-        await self.write_payload(
+        await self.write_event_payload(
             payload_orig=payload_data,
             payload_data={
                 "revision_number": revision_number,
-                "workflow_base64": payload_data.get_value("workflow_base64"),
+                "playbook_base64": payload_data.get_value("playbook_base64"),
                 "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
-                            {"nats_reference": nats_reference.to_dict(), "event_type": "WorkflowRegistered"}
+                            {"nats_reference": nats_reference.to_dict(), "event_type": "PlaybookRegistered"}
             },
-            subject_prefix="registrar.workflow"
+            subject_prefix="dispatcher"
         )
 
     async def plugin_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
@@ -39,44 +40,51 @@ class Registrar(Plugin):
             },
             nats_pool=await self.get_nats_pool()
         )
-        revision_number = await self.plugin_put(key=payload_data.get_value("plugin_name"), value=payload_kv_value.encode())
-        await self.write_payload(
+        revision_number = await self.plugin_put(key=payload_data.get_value("plugin_name"),
+                                                value=payload_kv_value.encode())
+        await self.write_event_payload(
             payload_orig=payload_data,
             payload_data={
                 "revision_number": revision_number,
                 "plugin_name": payload_data.get_value("plugin_name"),
-                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) | {"nats_reference": nats_reference.to_dict(), "event_type": "PluginRegistered"}
+                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) | {
+                    "nats_reference": nats_reference.to_dict(), "event_type": "PluginRegistered"}
             },
-            subject_prefix="registrar.plugin"
+            subject_prefix="dispatcher"
         )
 
-
-    async def run_workflow_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
-        key = payload_data.get_value("workflow_name")
+    async def run_playbook_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
+        key = payload_data.get_value("playbook_name")
         payload_reference = payload_data.get_payload_reference()
-        workflow_kv_payload = Payload.decode(await self.workflow_get(key))
-        workflow_template = workflow_kv_payload.get_value("value", "WORKFLOW NOT FOUND")
-
-        if workflow_template == "WORKFLOW NOT FOUND":
-            await self.write_payload(
+        playbook_kv_payload = Payload.decode(await self.playbook_get(key))
+        playbook_template = playbook_kv_payload.yaml_value("value")
+        if playbook_template == "VALUE NOT FOUND":
+            await self.write_event_payload(
                 payload_orig=payload_data,
                 payload_data={
-                    "error": f"Workflow template {key} was not found",
+                    "error": f"Playbook template {key} was not found",
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
                                 {"nats_reference": nats_reference.to_dict(),
-                                 "event_type": "RunWorkflowRegistrationFailed"}
+                                 "event_type": "RunPlaybookRegistrationFailed"}
                 },
                 subject_prefix="dispatcher"
             )
         else:
-            await self.write_payload(
+            playbook = Playbook(
+                playbook_template=playbook_template,
+                playbook_input=payload_data.get_value("playbook_input"),
+                playbook_metadata=playbook_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
+                playbook_id=payload_data.get_origin_ref(),
+                nats_pool=self.nats_pool
+            )
+            payload_subject_reference = await playbook.register()
+            await self.write_event_payload(
                 payload_orig=payload_data,
                 payload_data={
-                    "workflow_base64": workflow_template,
-                    "workflow_input": payload_data.get_value("workflow_input"),
-                    "workflow_metadata": workflow_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
+                    "playbook_reference": payload_subject_reference,
+                    "playbook_metadata": playbook_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
-                                {"nats_reference": nats_reference.to_dict(), "event_type": "RunWorkflowRegistered"}
+                                {"nats_reference": nats_reference.to_dict(), "event_type": "RunPlaybookRegistered"}
                 },
                 subject_prefix="dispatcher"
             )
@@ -86,12 +94,12 @@ class Registrar(Plugin):
                      nats_reference: NatsStreamReference
                      ):
         match payload.get_value("metadata.command_type"):
-            case "RegisterWorkflow":
-                await self.workflow_register(payload_data=payload, nats_reference=nats_reference)
+            case "RegisterPlaybook":
+                await self.playbook_register(payload_data=payload, nats_reference=nats_reference)
             case "RegisterPlugin":
                 await self.plugin_register(payload_data=payload, nats_reference=nats_reference)
-            case "RegisterRunWorkflow":
-                await self.run_workflow_register(payload_data=payload, nats_reference=nats_reference)
+            case "RegisterRunPlaybook":
+                await self.run_playbook_register(payload_data=payload, nats_reference=nats_reference)
 
 
 if __name__ == "__main__":

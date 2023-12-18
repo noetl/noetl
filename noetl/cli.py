@@ -50,10 +50,10 @@ class TokenCommand(KeyVal):
                     showCommands
                 }
                     """
-            case "register_workflow":
+            case "register_playbook":
                 return """
-                        mutation RegisterWorkflow($workflowBase64: String!, $metadata: JSON, $tokens: String) {
-                            registerWorkflow(workflowBase64: $workflowBase64, metadata: $metadata, tokens: $tokens) {
+                        mutation RegisterPlaybook($playbookBase64: String!, $metadata: JSON, $tokens: String) {
+                            registerPlaybook(playbookBase64: $playbookBase64, metadata: $metadata, tokens: $tokens) {
                                 referenceIdentifier {
                                     timestamp
                                     identifier
@@ -86,10 +86,10 @@ class TokenCommand(KeyVal):
                   }
                 }
                 """
-            case "list_workflows":
+            case "list_playbooks":
                 return """
-                query ListWorkflows {
-                    listWorkflows
+                query Listplaybooks {
+                    listplaybooks
                 }
                 """
             case "list_plugins":
@@ -114,10 +114,10 @@ class TokenCommand(KeyVal):
                     }
                 }
                 """
-            case "describe_workflow":
+            case "describe_playbook":
                 return """
-                query DescribeWorkflow($workflowName: String!) {
-                    describeWorkflow(workflowName: $workflowName)
+                query DescribePlaybook($playbookName: String!) {
+                    describePlaybook(playbookName: $playbookName)
                 }
                 """
             case "describe_plugin":
@@ -126,10 +126,10 @@ class TokenCommand(KeyVal):
                     describePlugin(pluginName: $pluginName)
                 }
                 """
-            case "run_workflow":
+            case "run_playbook":
                 return """
-                query RunWorkflow($workflowName: String!, $workflowInput: JSON) {
-                    runWorkflow(workflowName: $workflowName, workflowInput: $workflowInput){
+                query RunPlaybook($playbookName: String!, $playbookInput: JSON) {
+                    runPlaybook(playbookName: $playbookName, playbookInput: $playbookInput){
                     referenceIdentifier {
                         timestamp
                         identifier
@@ -158,13 +158,13 @@ class TokenCommand(KeyVal):
             handler = f"{tokens_list[0]}_{tokens_list[1]}"
             args = tokens_list[2:]
             match handler:
-                case "register_workflow":
+                case "register_playbook":
                     with open(args[0], 'r') as file:
                         return cls(
                             tokens=tokens,
                             handler=handler,
                             variables={
-                                "workflowBase64": cls.base64_str(file.read()),
+                                "playbookBase64": cls.base64_str(file.read()),
                                 "metadata": {"source": "noetl-cli", "handler": handler},
                                 "tokens": tokens
                             }
@@ -180,7 +180,7 @@ class TokenCommand(KeyVal):
                                 "tokens": tokens
                             }
                         )
-                case "list_workflows":
+                case "list_playbooks":
                     return cls(
                         tokens=tokens,
                         handler=handler
@@ -190,31 +190,31 @@ class TokenCommand(KeyVal):
                         tokens=tokens,
                         handler=handler
                     )
-                case "describe_workflow":
+                case "describe_playbook":
                     if len(args) == 1:
                         return cls(
-                            variables={"workflowName": args[0]},
-                            tokens="describe workflow",
-                            handler="describe_workflow"
+                            variables={"playbookName": args[0]},
+                            tokens="describe playbook",
+                            handler="describe_playbook"
                         )
-                case "run_workflow":
+                case "run_playbook":
                     if len(args) >= 2:
                         try:
-                            workflow_input = json.loads(args[1])
-                            workflow_input_json = json.dumps(workflow_input)
+                            playbook_input = json.loads(args[1])
+                            playbook_input_json = json.dumps(playbook_input)
                         except json.JSONDecodeError:
-                            raise ValueError("Invalid JSON for workflowInput")
+                            raise ValueError("Invalid JSON for playbookInput")
 
                         return cls(
                             variables={
-                                "workflowName": args[0],
-                                "workflowInput": workflow_input_json
+                                "playbookName": args[0],
+                                "playbookInput": playbook_input_json
                             },
-                            tokens="run workflow",
-                            handler="run_workflow"
+                            tokens="run playbook",
+                            handler="run_playbook"
                         )
                     else:
-                        raise ValueError("Need workflowName, workflowInput arguments for run workflow")
+                        raise ValueError("Need playbookName, playbookInput arguments to run playbook")
                 case "describe_plugin":
                     if len(args) == 1:
                         return cls(
@@ -272,10 +272,10 @@ def main():
     """
     NoETL command line interface.
     Usage:
-      - To register a workflow: python noetl/cli.py register workflow "<path_to_workflow_yaml>"
+      - To register a playbook: python noetl/cli.py register playbook "<path_to_playbook_yaml>"
       - To register a plugin: python noetl/cli.py register plugin "<plugin_name>" "<image_url>"
       - To exit the CLI: Type 'exit' when prompted for a command.
-    The NoETL CLI supports registering workflows and plugins by sending GraphQL mutations to the NoETL API endpoint.
+    The NoETL CLI supports registering playbooks and plugins by sending GraphQL mutations to the NoETL API endpoint.
     Set the NoETL API endpoint with an environment variable, e.g., NOETL_API_URL="http://localhost:8021/noetl".
     """
     try:

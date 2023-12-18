@@ -23,15 +23,15 @@ class Command:
 
     class Structures:
         command_structures = {
-            "register_workflow": ["register", "workflow", str],
-            "run_workflow": ["run", "workflow", str],
-            "describe_workflow": ["describe", "workflow", str],
+            "register_playbook": ["register", "playbook", str],
+            "run_playbook": ["run", "playbook", str],
+            "describe_playbook": ["describe", "playbook", str],
             "show_workflow": ["show", "workflow", str],
             "status_workflow": ["status", "workflow", str],
             "append_data_to_workflow": ["append", "data", "to", "workflow", str],
             "kill_workflow": ["kill", "workflow", str],
-            "unregister_workflow": ["drop", "workflow", str],
-            "list_workflows": ["list", "workflows"],
+            "unregister_playbook": ["drop", "playbook", str],
+            "list_playbooks": ["list", "playbooks"],
             "list_events": ["list", "events"],
             "list_commands": ["list", "commands"],
             "list_plugins": ["list", "plugins"],
@@ -119,17 +119,17 @@ class RegistrationResponse:
 
 
 @strawberry.type
-class WorkflowMutations:
+class PlaybookMutations:
     """
-    GraphQL Mutations for NoETL Workflows.
+    GraphQL Mutations for NoETL Playbooks.
 
-    registerWorkflow Example:
+    registerPlaybook Example:
     ```
     mutation {
-      registerWorkflow(
-        tokens: "register workflow",
-        metadata: {"source": "noetl-cli", "handler": "register_workflow"},
-        workflow_base64: "Base64 encoded string of workflow template YAML"
+      registerPlaybook(
+        tokens: "register Playbook",
+        metadata: {"source": "noetl-cli", "handler": "register_Playbook"},
+        Playbook_base64: "Base64 encoded string of Playbook template YAML"
       ) {
             referenceIdentifier {
                 timestamp
@@ -148,28 +148,28 @@ class WorkflowMutations:
     """
 
     @strawberry.mutation
-    async def register_workflow(self,
-                                workflow_base64: str,
+    async def register_playbook(self,
+                                playbook_base64: str,
                                 metadata: JSON | None = None,
                                 tokens: str | None = None,
                                 ) -> RegistrationResponse:
-        logger.debug(f"tokens: {tokens}, metadata: {metadata}, workflow_base64: {workflow_base64}")
+        logger.debug(f"tokens: {tokens}, metadata: {metadata}, playbook_base64: {playbook_base64}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
             raise ValueError("NatsPool is not initialized")
         command_validation_result: InputValidationResult = validate_command(tokens)
-        if command_validation_result.function_name == "register_workflow":
+        if command_validation_result.function_name == "register_playbook":
             try:
-                event_type = "WorkflowRegistrationRequested"
-                workflow_name = Payload.base64_yaml(workflow_base64).get("metadata").get("name")
-                if workflow_name is None:
-                    raise ValueError("Workflow name is missing in the YAML.")
+                event_type = "PlaybookRegistrationRequested"
+                playbook_name = Payload.base64_yaml(playbook_base64).get("metadata").get("name")
+                if playbook_name is None:
+                    raise ValueError("playbook name is missing in the YAML.")
                 nats_payload = Payload.create(
                     payload_data={
-                        "workflow_name": workflow_name,
-                        "workflow_base64": workflow_base64,
+                        "playbook_name": playbook_name,
+                        "playbook_base64": playbook_base64,
                         "metadata": metadata | {
-                            "workflow_name": workflow_name,
+                            "playbook_name": playbook_name,
                             "tokens": tokens
                         }
                     },
@@ -182,12 +182,12 @@ class WorkflowMutations:
                 )
                 registration_response = RegistrationResponse(
                     reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
-                    kind="Workflow",
-                    name=nats_payload.get_value("workflow_name"),
+                    kind="Playbook",
+                    name=nats_payload.get_value("playbook_name"),
                     event_type=nats_payload.get_value("metadata.event_type"),
                     ack_seq=ack.seq,
-                    status="WorkflowRegistrationRequested",
-                    message="Workflow registration has been successfully requested"
+                    status="PlaybookRegistrationRequested",
+                    message="Playbook registration has been successfully requested"
                 )
                 logger.info(f"Ack: {registration_response}")
                 return registration_response
@@ -200,67 +200,67 @@ class WorkflowMutations:
             raise ValueError(f"Request IS NOT added {tokens}")
 
     @strawberry.mutation
-    async def delete_workflow(self, workflow_id: str) -> str:
+    async def delete_playbook(self, playbook_id: str) -> str:
         pass
 
 
 @strawberry.type
-class WorkflowQueries:
+class PlaybookQueries:
     @strawberry.field
-    async def list_workflows(self) -> JSON:
+    async def list_playbooks(self) -> JSON:
         """
-        Retrieves list all workflows in the NATS KV store.
+        Retrieves list all playbooks in the NATS KV store.
         """
         pool = NatsConnectionPool.get_instance()
         try:
-            keys = await pool.kv_get_all("workflows")
-            return {"workflows": keys}
+            keys = await pool.kv_get_all("playbooks")
+            return {"playbooks": keys}
         except Exception as e:
-            logger.error(f"Error listing workflows: {e}")
+            logger.error(f"Error listing playbooks: {e}")
             return {"error": str(e)}
 
     @strawberry.field
-    async def describe_workflow(self, workflow_name: str, revision: str = None) -> JSON:
+    async def describe_playbook(self, playbook_name: str, revision: str = None) -> JSON:
         """
-        Retrieves details of a workflow by workflow name.
+        Retrieves details of a playbook by playbook name.
         """
         pool = NatsConnectionPool.get_instance()
         try:
-            if workflow_name:
-                value = await pool.kv_get("workflows", workflow_name)
-                return {"workflow": Payload.decode(value).yaml_value()}
+            if playbook_name:
+                value = await pool.kv_get("playbooks", playbook_name)
+                return {"playbook": Payload.decode(value).yaml_value()}
             else:
-                return {"error": "Workflow name is required"}
+                return {"error": "playbook name is required"}
         except Exception as e:
-            logger.error(f"Error describing workflow {workflow_name}: {e}")
+            logger.error(f"Error describing playbook {playbook_name}: {e}")
             return {"error": str(e)}
 
     @strawberry.field
-    async def run_workflow(
+    async def run_playbook(
             self,
-            workflow_name: str,
+            playbook_name: str,
             metadata: JSON | None = None,
-            workflow_input: JSON = None,
+            playbook_input: JSON = None,
             tokens: str | None = None,
             revision: str = None
     ) -> RegistrationResponse:
         """
-        Requests to execute a workflow by workflow name.
+        Requests to execute a playbook by playbook name.
         """
         pool = NatsConnectionPool.get_instance()
         if pool is None:
             raise ValueError("NatsPool is not initialized")
         try:
-            event_type = "WorkflowExecutionRequested"
+            event_type = "PlaybookExecutionRequested"
             metadata = metadata or {}
             revision = {"revision": revision} or {}
-            workflow_input = {workflow_input: workflow_input} if workflow_input else {}
+            playbook_input = {playbook_input: playbook_input} if playbook_input else {}
             nats_payload = Payload.create(
                 payload_data={
-                    "workflow_name": workflow_name,
-                    "workflow_input": workflow_input,
+                    "playbook_name": playbook_name,
+                    "playbook_input": playbook_input,
                     "metadata": metadata | {
-                        "workflow_name": workflow_name,
+                        "playbook_name": playbook_name,
                         "tokens": tokens
                     }
                 },
@@ -273,12 +273,12 @@ class WorkflowQueries:
             )
             registration_response = RegistrationResponse(
                 reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
-                kind="RunWorkflow",
-                name=nats_payload.get_value("workflow_name"),
+                kind="RunPlaybook",
+                name=nats_payload.get_value("playbook_name"),
                 event_type=nats_payload.get_value("metadata.event_type"),
                 ack_seq=ack.seq,
-                status="WorkflowExecutionRequested",
-                message="Workflow execution has been successfully requested"
+                status="PlaybookExecutionRequested",
+                message="Playbook execution has been successfully requested"
             )
             logger.info(f"Ack: {registration_response}")
             return registration_response
@@ -397,12 +397,12 @@ class EventCommandMutations:
 
 
 @strawberry.type
-class Mutations(WorkflowMutations, PluginMutations, EventCommandMutations):
+class Mutations(PlaybookMutations, PluginMutations, EventCommandMutations):
     pass
 
 
 @strawberry.type
-class Queries(WorkflowQueries, PluginQueries):
+class Queries(PlaybookQueries, PluginQueries):
 
     @strawberry.field
     async def show_events(self) -> JSON:

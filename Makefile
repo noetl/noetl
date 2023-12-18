@@ -102,8 +102,8 @@ install-nats-tools:
 .PHONY: build-registrar remove-registrar-image rebuild-registrar
 .PHONY: build-all rebuild-all clean
 
-build-all: build-cli build-api-base build-api build-dispatcher build-registrar
-rebuild-all: rebuild-cli rebuild-api rebuild-dispatcher rebuild-registrar
+build-all: build-api-base build-api build-dispatcher build-registrar build-http-handler
+rebuild-all: build-api-base build-api-base rebuild-api rebuild-dispatcher rebuild-registrar
 
 build-cli:
 	@echo "Building CLI image..."
@@ -249,8 +249,8 @@ push-registrar: tag-registrar docker-login
 .PHONY: create-ns deploy-all deploy-all-local
 .PHONY: deploy-api deploy-dispatcher deploy-registrar
 
-deploy-all: create-ns deploy-api deploy-dispatcher deploy-registrar
-deploy-all-local: create-ns deploy-api-local deploy-dispatcher-local deploy-registrar-local
+deploy-all: create-ns deploy-api deploy-plugins
+deploy-all-local: create-ns deploy-api-local deploy-plugins-local
 
 create-ns:
 	@echo "Creating NoETL namespace..."
@@ -283,8 +283,8 @@ deploy-plugins-local:
 .PHONY: delete-ns delete-all-deploy delete-all-local-deploy
 .PHONY: delete-api-deploy delete-dispatcher-deploy delete-registrar-deploy
 
-delete-all-deploy: delete-api-deploy delete-dispatcher-deploy delete-registrar-deploy delete-ns
-delete-all-local-deploy: delete-api-local-deploy delete-dispatcher-local-deploy delete-registrar-local-deploy delete-ns
+delete-all-deploy: delete-api-deploy delete-plugins-deploy
+delete-all-local-deploy: delete-api-local-deploy delete-plugins-local-deploy
 
 delete-ns:
 	@echo "Deleting NoETL namespace..."
@@ -312,6 +312,10 @@ delete-plugins-local-deploy:
 	@echo "Deleting NoETL Plugins locally"
 	kubectl config use-context docker-desktop
 	kubectl delete -f $(K8S_DIR)/noetl/plugins-local/deployment.yaml -n noetl
+
+.PHONY: redeploy-plugins-locally
+redeploy-plugins-locally: build-plugin-images delete-plugins-local-deploy deploy-plugins-local
+
 
 #[NATS]#######################################################################
 .PHONY: nats-create-events nats-create-commands nats-create-all
@@ -382,11 +386,11 @@ run-registrar: activate-venv
 .PHONY: run-api run-dispatcher run-registrar
 
 #[WORKFLOW COMMANDS]######################################################################
-register-workflow: activate-venv
+register-playbook: activate-venv
     ifeq ($(WORKFLOW),)
-	    @echo "Usage: make register-workflow WORKFLOW=workflows/time/fetch-world-time.yaml"
+	    @echo "Usage: make register-playbook WORKFLOW=playbooks/time/fetch-world-time.yaml"
     else
-	    $(PYTHON) noetl/cli.py register workflow $(WORKFLOW)
+	    $(PYTHON) noetl/cli.py register playbook $(WORKFLOW)
     endif
 
 register-plugin: activate-venv
@@ -396,17 +400,17 @@ register-plugin: activate-venv
 	    $(PYTHON) noetl/cli.py register plugin  $(PLUGIN_NAME) $(IMAGE_URL)
     endif
 
-list-workflows: activate-venv
-	$(PYTHON) noetl/cli.py list workflows
+list-playbooks: activate-venv
+	$(PYTHON) noetl/cli.py list playbooks
 
-describe-workflow: activate-venv
-	$(PYTHON) noetl/cli.py describe workflow $(filter-out $@,$(MAKECMDGOALS))
+describe-playbook: activate-venv
+	$(PYTHON) noetl/cli.py describe playbook $(filter-out $@,$(MAKECMDGOALS))
 
-run-workflow-fetch-time-and-notify-slack: activate-venv
-	$(PYTHON) noetl/cli.py run workflow fetch-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","NOTIFICATION_CHANNEL":"$(NOTIFICATION_CHANNEL)"}'
+run-playbook-fetch-time-and-notify-slack: activate-venv
+	$(PYTHON) noetl/cli.py run playbook fetch-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","NOTIFICATION_CHANNEL":"$(NOTIFICATION_CHANNEL)"}'
 
 
-.PHONY: register-workflow list-workflows describe-workflow run-workflow-fetch-time-and-notify-slack
+.PHONY: register-playbook list-playbooks describe-playbook run-playbook-fetch-time-and-notify-slack
 
 .PHONY: show-events show-commands
 show-events:

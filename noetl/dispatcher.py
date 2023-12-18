@@ -9,12 +9,12 @@ from playbook import Playbook
 
 class Dispatcher(Plugin):
 
-    async def workflow_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
+    async def playbook_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
         new_payload_data = {
-            "workflow_name": payload_data.get_value("workflow_name"),
-            "workflow_base64": payload_data.get_value("workflow_base64"),
+            "playbook_name": payload_data.get_value("playbook_name"),
+            "playbook_base64": payload_data.get_value("playbook_base64"),
             "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
-                        {"command_type": "RegisterWorkflow",
+                        {"command_type": "RegisterPlaybook",
                          "nats_reference": nats_reference.to_dict(),
                          },
         }
@@ -31,31 +31,38 @@ class Dispatcher(Plugin):
         }
         await self.write_payload(payload_orig=payload_data, payload_data=new_payload_data, subject_prefix="registrar")
 
-    async def run_workflow_register(
+    async def run_playbook_register(
             self,
             payload_data: Payload,
             nats_reference: NatsStreamReference
     ):
 
         payload_reference = payload_data.get_payload_reference()
-        payload: Payload = Payload.create(
-            payload_data={
-                "workflow_name": payload_data.get_value("workflow_name"),
-                "workflow_input": payload_data.get_value("workflow_input", {"input": "NO DATA PROVIDED"}),
-                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
-                            {"command_type": "RegisterRunWorkflow", "nats_reference": nats_reference.to_dict()},
-            },
-            origin=payload_reference.get("origin"),
-            reference=payload_reference.get("identifier"),
-            nats_pool=await self.get_nats_pool()
-        )
-        ack = await payload.command_write(
-            subject=f"registrar.{payload.get_subject_ref()}",
-            message=payload.encode()
-        )
-        logger.debug(ack)
+        # payload: Payload = Payload.create(
+        #     payload_data={
+        #         "playbook_name": payload_data.get_value("playbook_name"),
+        #         "playbook_input": payload_data.get_value("playbook_input", {"input": "NO DATA PROVIDED"}),
+        #         "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
+        #                     {"command_type": "RegisterRunPlaybook", "nats_reference": nats_reference.to_dict()},
+        #     },
+        #     origin=payload_reference.get("origin"),
+        #     reference=payload_reference.get("identifier"),
+        #     nats_pool=await self.get_nats_pool()
+        # )
 
-    async def generate_workflow_command(
+        new_payload_data = {
+            "playbook_name": payload_data.get_value("playbook_name"),
+            "playbook_input": payload_data.get_value("playbook_input", {"input": "NO DATA PROVIDED"}),
+            "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
+                        {"command_type": "RegisterRunPlaybook", "nats_reference": nats_reference.to_dict()},
+        }
+        await self.write_payload(payload_orig=payload_data, payload_data=new_payload_data, subject_prefix="registrar")
+        # ack = await payload.command_write(
+        #     subject=f"registrar.{payload.get_subject_ref()}",
+        #     message=payload.encode()
+        # )
+
+    async def generate_playbook_command(
             self,
             payload_data: Payload,
             nats_reference: NatsStreamReference
@@ -67,15 +74,15 @@ class Dispatcher(Plugin):
 
         event_type = payload_data.get_value("metadata.event_type")
 
-        if event_type == "WorkflowStarted":
+        if event_type == "PlaybookStarted":
             logger.info(payload_data)
-        elif event_type == "WorkflowTaskExecuted":
+        elif event_type == "PlaybookTaskExecuted":
             logger.info(payload_data)
-        elif event_type == "WorkflowStepExecuted":
+        elif event_type == "PlaybookStepExecuted":
             logger.info(payload_data)
-        elif event_type == "WorkflowCompleted":
+        elif event_type == "PlaybookCompleted":
             logger.info(payload_data)
-        elif event_type == "WorkflowFailed":
+        elif event_type == "playbookFailed":
             logger.info(payload_data)
 
     async def switch(self,
@@ -84,14 +91,14 @@ class Dispatcher(Plugin):
                      ):
 
         match payload.get_value("metadata.event_type"):
-            case "WorkflowRegistrationRequested":
-                await self.workflow_register(payload_data=payload, nats_reference=nats_reference)
+            case "PlaybookRegistrationRequested":
+                await self.playbook_register(payload_data=payload, nats_reference=nats_reference)
             case "PluginRegistrationRequested":
                 await self.plugin_register(payload_data=payload, nats_reference=nats_reference)
-            case "WorkflowExecutionRequested":
-                await self.run_workflow_register(payload_data=payload, nats_reference=nats_reference)
-            case "RunWorkflowRegistered":
-                await self.generate_workflow_command(payload_data=payload, nats_reference=nats_reference)
+            case "PlaybookExecutionRequested":
+                await self.run_playbook_register(payload_data=payload, nats_reference=nats_reference)
+            case "RunPlaybookRegistered":
+                await self.generate_playbook_command(payload_data=payload, nats_reference=nats_reference)
 
 
 if __name__ == "__main__":

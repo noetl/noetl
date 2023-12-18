@@ -235,20 +235,20 @@ class NatsPool:
     async def event_write(self, subject: str, message: bytes):
         return await self.nats_write(f"event.{subject}", message)
 
-    async def workflow_bucket_create(self):
-        await self.nats_pool.bucket_create(bucket_name="workflows")
+    async def playbook_bucket_create(self):
+        await self.nats_pool.bucket_create(bucket_name="playbooks")
 
-    async def workflow_bucket_delete(self):
-        await self.nats_pool.bucket_delete(bucket_name="workflows")
+    async def playbook_bucket_delete(self):
+        await self.nats_pool.bucket_delete(bucket_name="playbooks")
 
-    async def workflow_put(self, key: str, value: bytes):
-        return await self.nats_pool.kv_put(bucket_name="workflows", key=key, value=value)
+    async def playbook_put(self, key: str, value: bytes):
+        return await self.nats_pool.kv_put(bucket_name="playbooks", key=key, value=value)
 
-    async def workflow_get(self, key: str):
-        return await self.nats_pool.kv_get(bucket_name="workflows", key=key)
+    async def playbook_get(self, key: str):
+        return await self.nats_pool.kv_get(bucket_name="playbooks", key=key)
 
-    async def workflow_delete(self, key: str):
-        await self.nats_pool.kv_delete(bucket_name="workflows", key=key)
+    async def playbook_delete(self, key: str):
+        await self.nats_pool.kv_delete(bucket_name="playbooks", key=key)
 
     async def plugin_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="plugins")
