@@ -1,5 +1,4 @@
 import asyncio
-import sys
 from plugin import Plugin, parse_args
 from payload import Payload
 from loguru import logger

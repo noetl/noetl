@@ -4,8 +4,14 @@ import json
 
 
 class KeyVal(dict):
-    def get_keys(self) -> list:
-        return list(self.keys())
+    def get_keys(self, path=None) -> list:
+        paths = []
+        base = self.get_value(path) if path else self
+        if isinstance(base, dict):
+            for k in base.keys():
+                key_path = f"{path}.{k}" if path else k
+                paths.append(key_path)
+        return paths
 
     def get_value(self, path: str = None, default: any = None, exclude: list[str] = None):
         if path is None:
@@ -23,6 +29,10 @@ class KeyVal(dict):
             return value
         except Exception as e:
             raise ValueError(f"Error getting value for '{path}': {e}")
+
+    def get_keyval(self, path: str = None, default: any = None, exclude: list[str] = None):
+        value = self.get_value(path, default, exclude)
+        return KeyVal(value) if isinstance(value, dict) else value
 
     def set_value(self, path: str, value):
         if path is None:

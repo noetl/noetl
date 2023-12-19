@@ -1,4 +1,4 @@
-from keyval import KeyVal
+import uuid
 from natstream import NatsConnectionPool, NatsConfig
 from payload import Payload
 
@@ -12,20 +12,29 @@ class Playbook(Payload):
             playbook_metadata: dict | None = None,
             nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
         super().__init__(
-            playbook_template=playbook_template,
-            playbook_id=playbook_id,
-            playbook_input=playbook_input,
-            playbook_metadata=playbook_metadata,
-            nats_pool=nats_pool, **kwargs)
+            nats_pool=nats_pool,
+            **playbook_template,
+            **kwargs)
+        self.set_value("spec.id", playbook_id)
+        self.set_value("spec.input", playbook_input)
+        self.set_value("spec.kv.metadata", playbook_metadata)
+        self.add_execution_tree()
+
+    def add_execution_tree(self):
+        tasks = self.get_keys(path="spec.tasks")
+        for task_path in tasks:
+            task_id = str(uuid.uuid4())
+            self.set_value(f"{task_path}.id", task_id)
+
+            steps = self.get_keys(path=f"{task_path}.steps")
+            for step_path in steps:
+                step_id = str(uuid.uuid4())
+                self.set_value(f"{step_path}.id", step_id)
 
     async def register(self):
-        playbook_data = KeyVal(self.get_value("playbook_template"))
-        playbook_data.set_value("spec.id", self.get_value("playbook_id"))
-        playbook_data.set_value("spec.input", self.get_value("playbook_input"))
-        playbook_data.set_value("spec.kv.metadata", self.get_value("playbook_metadata"))
-        subject = f"playbook.{self.get_value('playbook_id')}"
+        subject = f"playbook.{self.get_value('spec.id')}.blueprint"
         await self.event_write(
-            message=playbook_data.encode(),
+            message=self.encode(),
             subject=subject
         )
         return subject
