@@ -4,23 +4,23 @@ from payload import Payload
 
 
 class Playbook(Payload):
-    def __init__(
-            self,
-            playbook_template: dict,
-            playbook_id: str,
-            playbook_input: dict | None = None,
-            playbook_metadata: dict | None = None,
-            nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
-        super().__init__(
-            nats_pool=nats_pool,
-            **playbook_template,
-            **kwargs)
-        self.set_value("spec.id", playbook_id)
-        self.set_value("spec.input", playbook_input)
-        self.set_value("spec.kv.metadata", playbook_metadata)
-        self.add_execution_tree()
+    def __init__(self,
+                 playbook_template: dict | None = None,
+                 playbook_id: str | None = None,
+                 playbook_input: dict | None = None,
+                 playbook_metadata: dict | None = None,
+                 nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
+        if playbook_template:
+            kwargs = kwargs | playbook_template
+        super().__init__(nats_pool=nats_pool, **kwargs)
+        if playbook_id:
+            self.set_value("spec.id", playbook_id)
+        if playbook_input:
+            self.set_value("spec.input", playbook_input)
+        if playbook_metadata:
+            self.set_value("spec.kv.metadata", playbook_metadata)
 
-    def add_execution_tree(self):
+    def execution_tree(self):
         tasks = self.get_keys(path="spec.tasks")
         for task_path in tasks:
             task_id = str(uuid.uuid4())
@@ -37,7 +37,11 @@ class Playbook(Payload):
             message=self.encode(),
             subject=subject
         )
-        return subject
+        return f"event.{subject}"
 
     async def generate_command(self):
         pass
+
+    @classmethod
+    def unmarshal(cls, binary_data: bytes, nats_pool: NatsConnectionPool | NatsConfig = None):
+        return cls(nats_pool=nats_pool, **cls.decode(binary_data))

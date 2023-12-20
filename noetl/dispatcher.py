@@ -37,17 +37,6 @@ class Dispatcher(Plugin):
     ):
 
         payload_reference = payload_data.get_payload_reference()
-        # payload: Payload = Payload.create(
-        #     payload_data={
-        #         "playbook_name": payload_data.get_value("playbook_name"),
-        #         "playbook_input": payload_data.get_value("playbook_input", {"input": "NO DATA PROVIDED"}),
-        #         "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
-        #                     {"command_type": "RegisterRunPlaybook", "nats_reference": nats_reference.to_dict()},
-        #     },
-        #     origin=payload_reference.get("origin"),
-        #     reference=payload_reference.get("identifier"),
-        #     nats_pool=await self.get_nats_pool()
-        # )
 
         new_payload_data = {
             "playbook_name": payload_data.get_value("playbook_name"),
@@ -56,33 +45,30 @@ class Dispatcher(Plugin):
                         {"command_type": "RegisterRunPlaybook", "nats_reference": nats_reference.to_dict()},
         }
         await self.write_payload(payload_orig=payload_data, payload_data=new_payload_data, subject_prefix="registrar")
-        # ack = await payload.command_write(
-        #     subject=f"registrar.{payload.get_subject_ref()}",
-        #     message=payload.encode()
-        # )
 
-    async def generate_playbook_command(
+    async def process_playbook(
             self,
             payload_data: Payload,
             nats_reference: NatsStreamReference
     ):
-        playbook = Playbook.create(
-            payload_data=payload_data,
-            nats_pool=await self.get_nats_pool()
-        )
+        logger.info(nats_reference)
+        playbook_reference = payload_data.get_value("playbook_reference")
+        nats_msg_data = await self.nats_read_subject(playbook_reference)
+        playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data,nats_pool=self.nats_pool)
 
-        event_type = payload_data.get_value("metadata.event_type")
+        logger.debug(playbook_blueprint)
 
-        if event_type == "PlaybookStarted":
-            logger.info(payload_data)
-        elif event_type == "PlaybookTaskExecuted":
-            logger.info(payload_data)
-        elif event_type == "PlaybookStepExecuted":
-            logger.info(payload_data)
-        elif event_type == "PlaybookCompleted":
-            logger.info(payload_data)
-        elif event_type == "playbookFailed":
-            logger.info(payload_data)
+        match payload_data.get_value("metadata.event_type"):
+            case "PlaybookStarted":
+                logger.info(playbook_blueprint)
+            case "PlaybookTaskExecuted":
+                logger.info(playbook_blueprint)
+            case  "PlaybookStepExecuted":
+                logger.info(playbook_blueprint)
+            case  "PlaybookCompleted":
+                logger.info(playbook_blueprint)
+            case  "playbookFailed":
+                logger.info(playbook_blueprint)
 
     async def switch(self,
                      payload: Payload,
@@ -97,7 +83,7 @@ class Dispatcher(Plugin):
             case "PlaybookExecutionRequested":
                 await self.run_playbook_register(payload_data=payload, nats_reference=nats_reference)
             case "RunPlaybookRegistered":
-                await self.generate_playbook_command(payload_data=payload, nats_reference=nats_reference)
+                await self.process_playbook(payload_data=payload, nats_reference=nats_reference)
 
 
 if __name__ == "__main__":

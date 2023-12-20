@@ -77,11 +77,11 @@ class Registrar(Plugin):
                 playbook_id=payload_data.get_origin_ref(),
                 nats_pool=self.nats_pool
             )
-            payload_subject_reference = await playbook.register()
+            playbook_reference = await playbook.register()
             await self.write_event_payload(
                 payload_orig=payload_data,
                 payload_data={
-                    "playbook_reference": payload_subject_reference,
+                    "playbook_reference": playbook_reference,
                     "playbook_metadata": playbook_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
                                 {"nats_reference": nats_reference.to_dict(), "event_type": "RunPlaybookRegistered"}

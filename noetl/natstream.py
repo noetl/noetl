@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import asyncio
 import nats
 from nats.js.api import StreamConfig
@@ -218,6 +220,30 @@ class NatsPool:
             raise ValueError("NatsPool is not initialized")
         else:
             return self.nats_pool
+
+    async def nats_read_subject(self, subject: str):
+        msg_data = None
+        if self.nats_pool is None:
+            await self.get_nats_pool()
+
+        async def message_handler(msg):
+            nonlocal msg_data
+            msg_data = msg.data
+
+        try:
+            async with self.nats_pool.connection() as js:
+                _ = await js.subscribe(
+                    subject=f"{subject}",
+                    durable=str(uuid4()),
+                    cb=message_handler,
+                )
+                await asyncio.sleep(0.01)
+            return msg_data
+
+        except ErrTimeout:
+            logger.error(f"NATS subject {subject} read timeout error.")
+        except Exception as e:
+            logger.info(f"NATS subject {subject} read error {e}.")
 
     async def nats_read(self, subject: str, cb):
         async with self.nats_pool.connection() as nc:

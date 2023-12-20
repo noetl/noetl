@@ -11,7 +11,7 @@ spec:
     NOTIFY_TASK: "send-notification"
   timeout: 120
   initialSettings:
-    start: [fetch-time]
+    start: [fetch-time:{input: 1}, fetch-time:{input: 2}]
     state: ready
   transitions:
     ready: running
