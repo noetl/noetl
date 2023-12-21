@@ -4,6 +4,6 @@ metadata:
   name: commands
 spec:
   name: commands
-  subjects: ["command.>"]
+  subjects: ["noetl.command.>"]
   storage: file
   maxAge: 10h

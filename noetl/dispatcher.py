@@ -9,7 +9,7 @@ from playbook import Playbook
 class Dispatcher(Plugin):
 
     async def playbook_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
-        new_payload_data = {
+        command_payload_data = {
             "playbook_name": payload_data.get_value("playbook_name"),
             "playbook_base64": payload_data.get_value("playbook_base64"),
             "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
@@ -17,10 +17,10 @@ class Dispatcher(Plugin):
                          "nats_reference": nats_reference.to_dict(),
                          },
         }
-        await self.write_payload(payload_orig=payload_data, payload_data=new_payload_data, subject_prefix="registrar")
+        await self.write_payload(payload_orig=payload_data, payload_data=command_payload_data, subject="registrar")
 
     async def plugin_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
-        new_payload_data = {
+        command_payload_data = {
             "plugin_name": payload_data.get_value("plugin_name"),
             "image_url": payload_data.get_value("image_url"),
             "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
@@ -28,7 +28,7 @@ class Dispatcher(Plugin):
                          "nats_reference": nats_reference.to_dict(),
                          },
         }
-        await self.write_payload(payload_orig=payload_data, payload_data=new_payload_data, subject_prefix="registrar")
+        await self.write_payload(payload_orig=payload_data, payload_data=command_payload_data, subject="registrar")
 
     async def run_playbook_register(
             self,
@@ -44,7 +44,7 @@ class Dispatcher(Plugin):
             "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
                         {"command_type": "RegisterRunPlaybook", "nats_reference": nats_reference.to_dict()},
         }
-        await self.write_payload(payload_orig=payload_data, payload_data=new_payload_data, subject_prefix="registrar")
+        await self.write_payload(payload_orig=payload_data, payload_data=new_payload_data, subject="registrar")
 
     async def process_playbook(
             self,
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     ))
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(dispatcher_plugin.run(args=args, subject_prefix="event.dispatcher"))
+        loop.run_until_complete(dispatcher_plugin.run(args=args, plugin_name="dispatcher", stream="events"))
     except KeyboardInterrupt:
         pass
     except Exception as e:

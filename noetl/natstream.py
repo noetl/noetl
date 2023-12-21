@@ -1,5 +1,4 @@
 from uuid import uuid4
-
 import asyncio
 import nats
 from nats.js.api import StreamConfig
@@ -103,9 +102,9 @@ class NatsConnectionPool:
     def connection(self):
         return self._ConnectionContextManager(self)
 
-    async def publish(self, subject, message):
+    async def publish(self, subject, message, stream):
         async with self.connection() as js:
-            ack = await js.publish(f"{subject}", message)
+            ack = await js.publish(subject=f"{subject}", payload=message, stream=stream)
         return ack
 
     async def truncate_stream(self, stream_name):
@@ -128,27 +127,27 @@ class NatsConnectionPool:
         logger.info("NATS connections in the pool closed.")
 
     async def bucket_create(self, bucket_name: str):
-        async with self.connection() as nc:
+        async with self.connection() as js:
             try:
-                bucket = await nc.create_key_value(bucket=bucket_name)
+                bucket = await js.create_key_value(bucket=bucket_name)
                 logger.info(f"Bucket {bucket_name} created.")
                 return bucket
             except Exception as e:
                 print(f"Bucket create error: {e}")
 
     async def bucket_delete(self, bucket_name: str):
-        async with self.connection() as nc:
+        async with self.connection() as js:
             try:
-                bucket = await nc.create_key_value(bucket_name)
+                bucket = await js.create_key_value(bucket_name)
                 await bucket.delete(bucket_name)
                 logger.info(f"Bucket {bucket_name} deleted.")
             except Exception as e:
                 print(f"Bucket delete error: {e}")
 
     async def kv_put(self, bucket_name: str, key: str, value: bytes):
-        async with self.connection() as nc:
+        async with self.connection() as js:
             try:
-                kv = await nc.create_key_value(bucket=bucket_name)
+                kv = await js.create_key_value(bucket=bucket_name)
                 revision_number = await kv.put(key, value)
                 entry = await kv.get(key)
                 logger.debug(f"KeyValue: bucket={bucket_name}, key={entry.key}, revision_number={revision_number}")
@@ -157,27 +156,27 @@ class NatsConnectionPool:
                 logger.error(f"Bucket {bucket_name} failed to add kv {key}. Error: {e}")
 
     async def kv_get(self, bucket_name, key: str):
-        async with self.connection() as nc:
+        async with self.connection() as js:
             try:
-                kv = await nc.create_key_value(bucket=bucket_name)
+                kv = await js.create_key_value(bucket=bucket_name)
                 entry = await kv.get(key)
                 return entry.value
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
 
     async def kv_get_all(self, bucket_name):
-        async with self.connection() as nc:
+        async with self.connection() as js:
             try:
-                kv = await nc.create_key_value(bucket=bucket_name)
+                kv = await js.create_key_value(bucket=bucket_name)
                 keys = await kv.keys()
                 return keys
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get keys. Error: {e}")
 
     async def kv_delete(self, bucket_name, key: str):
-        async with self.connection() as nc:
+        async with self.connection() as js:
             try:
-                kv = await nc.create_key_value(bucket=bucket_name)
+                kv = await js.create_key_value(bucket=bucket_name)
                 await kv.delete(key)
                 logger.debug(f"Bucket {bucket_name} record {key} deleted")
             except Exception as e:
@@ -221,6 +220,15 @@ class NatsPool:
         else:
             return self.nats_pool
 
+    async def get_msg(self, stream, sequence):
+        async with self.nats_pool.connection() as js:
+            try:
+                msg = await js.jetstream().get_msg(stream, sequence)
+                return msg
+            except Exception as e:
+                logger.error(f"JetStream get message error for stream {stream} sequence {sequence}: {e}")
+                raise
+
     async def nats_read_subject(self, subject: str):
         msg_data = None
         if self.nats_pool is None:
@@ -245,21 +253,27 @@ class NatsPool:
         except Exception as e:
             logger.info(f"NATS subject {subject} read error {e}.")
 
-    async def nats_read(self, subject: str, cb):
-        async with self.nats_pool.connection() as nc:
-            await nc.subscribe(subject, cb=cb)
+    async def nats_read(self, subject: str, stream: str, cb):
+        async with self.nats_pool.connection() as js:
+            await js.subscribe(subject=subject, stream=stream, cb=cb)
             while True:
                 await asyncio.sleep(1)
 
-    async def nats_write(self, subject: str, message: bytes):
-        async with self.nats_pool.connection() as nc:
-            return await nc.publish(subject, message)
+    async def nats_write(self, subject: str, stream: str, payload: bytes):
+        async with self.nats_pool.connection() as js:
+            return await js.publish(subject=subject, stream=stream, payload=payload)
+
+    async def command_read(self, subject: str, cb):
+        return await self.nats_read(subject=f"noetl.command.{subject}", stream="commands", cb=cb)
+
+    async def event_read(self, subject: str, cb):
+        return await self.nats_read(subject=f"noetl.event.{subject}", stream="events", cb=cb)
 
     async def command_write(self, subject: str, message: bytes):
-        return await self.nats_write(f"command.{subject}", message)
+        return await self.nats_write(subject=f"noetl.command.{subject}", stream="commands", payload=message)
 
     async def event_write(self, subject: str, message: bytes):
-        return await self.nats_write(f"event.{subject}", message)
+        return await self.nats_write(subject=f"noetl.event.{subject}", stream="events", payload=message)
 
     async def playbook_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="playbooks")

@@ -8,11 +8,11 @@ The NoETL system is a workflow execution engine that caters to automating the ex
 
 NoETL embraces several of Erlang's fundamental concepts in its architecture:
 
-* Everything is a Plugin: In NoETL, functional units are treated as plugins, analogous to how every operation is encapsulated within a process in Erlang. Each plugin corresponds to a Docker image that can be executed as a service or a job within a Kubernetes environment. The term 'plugin' in NoETL playbooks serves as an alias to these Docker images.
+* Everything is a Plugin: In NoETL, functional units are treated as plugins, analogous to how every operation is encapsulated within a process in Erlang. Each plugin corresponds to a Docker image that can be executed as a service or a job within a Kubernetes environment. The term 'plugin' in NoETL playbooks serves as an alias to these Docker image.
 
 * Strong Isolation of Plugins: Each plugin in NoETL operates independently and isolated from others, similar to Erlang's process isolation.
 
-* Lightweight Plugin Management: NoETL allows for the dynamic and efficient creation and destruction of plugins, permitting a scalable system architecture.
+* Lightweight Plugin Management: NoETL allows for the dynamic and efficient creation and destruction of plugin instances, permitting a scalable system architecture.
 
 * Message Passing as Core Interaction: Communication between plugins in NoETL is achieved through message passing via NATS streams, ensuring accurate and directed messaging.
 

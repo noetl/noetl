@@ -10,20 +10,20 @@ from payload import Payload, PayloadReference
 class Plugin(NatsPool):
     events_counter: Counter
 
-    async def write_command_payload(self,payload_orig: Payload, payload_data: dict, subject_prefix: str):
+    async def write_command_payload(self,payload_orig: Payload, payload_data: dict, subject: str):
         await self.write_payload(
             payload_orig=payload_orig,
             payload_data=payload_data,
-            subject_prefix=subject_prefix)
+            subject=subject)
 
-    async def write_event_payload(self,payload_orig: Payload, payload_data: dict, subject_prefix: str):
+    async def write_event_payload(self,payload_orig: Payload, payload_data: dict, subject: str):
         await self.write_payload(
             payload_orig=payload_orig,
             payload_data=payload_data,
-            subject_prefix=subject_prefix,
+            subject=subject,
             event=True)
 
-    async def write_payload(self, payload_orig: Payload, payload_data: dict, subject_prefix: str, event: bool = False):
+    async def write_payload(self, payload_orig: Payload, payload_data: dict, subject: str, event: bool = False):
         payload_reference: PayloadReference = PayloadReference(**payload_orig.get_payload_reference())
         payload: Payload = Payload.create(
             payload_data=payload_data,
@@ -33,12 +33,12 @@ class Plugin(NatsPool):
         )
         if event is True:
             ack = await payload.event_write(
-                subject=f"{subject_prefix}.{payload.get_subject_ref()}",
+                subject=f"{subject}.{payload.get_origin_ref()}",
                 message=payload.encode()
             )
         else:
             ack = await payload.command_write(
-                subject=f"{subject_prefix}.{payload.get_subject_ref()}",
+                subject=f"{subject}.{payload.get_origin_ref()}",
                 message=payload.encode()
             )
         logger.debug(ack)
@@ -59,11 +59,13 @@ class Plugin(NatsPool):
                      ):
         raise NotImplementedError("Plugin subclass must implement switch method")
 
-    async def run(self, args, subject_prefix):
+    async def run(self, args, plugin_name, stream="commands"):
         service = Service()
         await service.start(addr=args.prom_host, port=args.prom_port)
         logger.info(f"Serving prometheus metrics on: {service.metrics_url}")
-        _ = await self.nats_read(f"{subject_prefix}.>", self.process_stream)
+        subject_prefix = "noetl.command" if stream == "commands" else "noetl.event"
+        logger.info(f"{stream} -> {subject_prefix}.{plugin_name}.> ")
+        _ = await self.nats_read(f"{subject_prefix}.{plugin_name}.>", stream=stream, cb=self.process_stream)
 
     async def shutdown(self):
         if self.nats_pool:

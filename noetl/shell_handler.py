@@ -56,7 +56,7 @@ if __name__ == "__main__":
     ))
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(shell_handler_plugin.run(args=args, subject_prefix="command.shell-handler"))
+        loop.run_until_complete(shell_handler_plugin.run(args=args, subject_prefix="shell-handler"))
     except KeyboardInterrupt:
         sys.exit()
     except Exception as e:

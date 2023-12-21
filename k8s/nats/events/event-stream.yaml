@@ -4,6 +4,6 @@ metadata:
   name: events
 spec:
   name: events
-  subjects: ["event.>"]
+  subjects: ["noetl.event.>"]
   storage: file
   maxAge: 10h

@@ -51,7 +51,7 @@ if __name__ == "__main__":
     ))
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(http_handler_plugin.run(args=args, subject_prefix="command.http-handler:0_1_0"))
+        loop.run_until_complete(http_handler_plugin.run(args=args, plugin_name="http-handler:0_1_0"))
     except KeyboardInterrupt:
         pass
     except Exception as e:

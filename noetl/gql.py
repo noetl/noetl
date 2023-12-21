@@ -177,7 +177,7 @@ class PlaybookMutations:
                     nats_pool=pool
                 )
                 ack = await nats_payload.event_write(
-                    subject=f"dispatcher.{nats_payload.get_subject_ref()}",
+                    subject=f"dispatcher.{nats_payload.get_origin_ref()}",
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
@@ -268,7 +268,7 @@ class PlaybookQueries:
                 nats_pool=pool
             )
             ack = await nats_payload.event_write(
-                subject=f"dispatcher.{nats_payload.get_subject_ref()}",
+                subject=f"dispatcher.{nats_payload.get_origin_ref()}",
                 message=nats_payload.encode()
             )
             registration_response = RegistrationResponse(
@@ -313,7 +313,7 @@ class PluginMutations:
                 )
 
                 ack = await nats_payload.event_write(
-                    subject=f"dispatcher.{nats_payload.get_subject_ref()}",
+                    subject=f"dispatcher.{nats_payload.get_origin_ref()}",
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
@@ -410,7 +410,7 @@ class Queries(PlaybookQueries, PluginQueries):
         Retrieves messages from the Events NATS stream.
         """
         logger.debug(f"Self in show_events: {self}")
-        return await read_nats_stream('event')
+        return await read_nats_stream(stream="events", subject="noetl.event")
 
     @strawberry.field
     async def show_commands(self) -> JSON:
@@ -418,10 +418,10 @@ class Queries(PlaybookQueries, PluginQueries):
         Retrieves messages from the Commands NATS stream.
         """
         logger.debug(f"Self in show_commands: {self}")
-        return await read_nats_stream('command')
+        return await read_nats_stream(stream="commands", subject="noetl.command")
 
 
-async def read_nats_stream(stream: str):
+async def read_nats_stream(stream: str, subject:str):
     messages = []
 
     async def message_handler(msg):
@@ -437,13 +437,12 @@ async def read_nats_stream(stream: str):
 
     try:
         async with nats_pool.connection() as js:
-            subject = f'{stream}.>'
             consumer_name = f"{stream}-consumer-{uuid.uuid4()}"
-
             _ = await js.subscribe(
-                subject,
+                subject=f"{subject}.>",
                 durable=consumer_name,
                 cb=message_handler,
+                stream=stream
             )
             await asyncio.sleep(1)
             response_data = {stream: messages}

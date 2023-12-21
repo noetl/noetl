@@ -26,7 +26,7 @@ class Registrar(Plugin):
                 "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
                             {"nats_reference": nats_reference.to_dict(), "event_type": "PlaybookRegistered"}
             },
-            subject_prefix="dispatcher"
+            subject="dispatcher"
         )
 
     async def plugin_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
@@ -50,7 +50,7 @@ class Registrar(Plugin):
                 "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) | {
                     "nats_reference": nats_reference.to_dict(), "event_type": "PluginRegistered"}
             },
-            subject_prefix="dispatcher"
+            subject="dispatcher"
         )
 
     async def run_playbook_register(self, payload_data: Payload, nats_reference: NatsStreamReference):
@@ -67,7 +67,7 @@ class Registrar(Plugin):
                                 {"nats_reference": nats_reference.to_dict(),
                                  "event_type": "RunPlaybookRegistrationFailed"}
                 },
-                subject_prefix="dispatcher"
+                subject="dispatcher"
             )
         else:
             playbook = Playbook(
@@ -86,7 +86,7 @@ class Registrar(Plugin):
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
                                 {"nats_reference": nats_reference.to_dict(), "event_type": "RunPlaybookRegistered"}
                 },
-                subject_prefix="dispatcher"
+                subject="dispatcher"
             )
 
     async def switch(self,
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     ))
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(registrar_plugin.run(args=args, subject_prefix="command.registrar"))
+        loop.run_until_complete(registrar_plugin.run(args=args, plugin_name="registrar"))
     except KeyboardInterrupt:
         pass
     except Exception as e:

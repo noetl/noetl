@@ -30,10 +30,12 @@ spec:
           method: "GET"
           url: "{{ spec.vars.TIME_API }}/{{ spec.vars.TIMEZONE }}"
       switch:
-        - next: [ send-notification: {input: get-current-time.output.data} ]
-          condition: "{{ $.this.get-current-time.output.exitCode }} != 0"
-        - next: [ ]
-          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
+        - condition: "{{ get-current-time.output.exitCode }} != 0"
+          next:
+            - task: send-notification
+              parameters:
+                get-current-time-ref: "{{ get-current-time.ref }}"
+        - condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
     send-notification:
       description: "Send the fetched time notification"
       plugin: "http-handler:0_1_0"
