@@ -51,12 +51,10 @@ make activate-help
 make nats-delete-all
 make nats-create-all
 make build-api-base
-make build-cli
 make build-plugin-base
 make build-api
-make build-dispatcher
-make build-registrar
-make build-http-handler
+make build-plugin-images
+make build-cli
 make create-ns
 make deploy-api-local
 make deploy-plugins-local
