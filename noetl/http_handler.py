@@ -1,13 +1,13 @@
 import asyncio
-from plugin import Plugin, parse_args
-from payload import Payload, PayloadReference
-from loguru import logger
-from natstream import NatsConfig, NatsStreamReference
+from plugin import Plugin, Payload, PayloadReference, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
 import aiohttp
 
 
 class HttpHandler(Plugin):
-    async def http_request(self, payload_data: Payload, nats_reference: NatsStreamReference):
+    async def http_request(self,
+                           payload_data: Payload,
+                           nats_reference: NatsStreamReference,
+                           args: Namespace):
         url = payload_data.get_value("url")
         method = payload_data.get_value("method")
         data = payload_data.get_value("data")
@@ -15,34 +15,45 @@ class HttpHandler(Plugin):
         async with aiohttp.ClientSession() as session:
             async with session.request(method, url, data=data) as response:
                 response_data = await response.text()
-        response_payload = Payload.create(
+
+        await self.publish_event(
+            payload_orig=payload_data,
             payload_data={
-                "response": response_data,
-                "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
-                            {"command_type": "HttpRequest", "nats_reference": nats_reference.to_dict(), }},
-            origin=payload_reference.origin,
-            reference=payload_reference.identifier
+                 "response": response_data,
+                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
+                            {"nats_reference": nats_reference.to_dict(), "event_type": "HTTPRequestEstebleshed"}
+            },
+            subject_prefix=f"{args.nats_command_prefix}.dispatcher",
+            stream=args.nats_subscription_stream)
 
-        )
-
-        await self.write_event(response_payload)
-
-    async def write_event(self, response_payload):
-        return await self.event_write(subject=f"http-handler:0_1_0.output.{response_payload.get_subject_ref()}",
-                                      message=response_payload.encode())
-
-    async def switch(self, payload: Payload, nats_reference: NatsStreamReference):
-        if payload.get_value("command_type") == "HttpRequest":
-            await self.http_request(payload, nats_reference)
+    async def switch(self,
+                     payload: Payload,
+                     nats_reference: NatsStreamReference,
+                     args: Namespace
+                     ):
+        match payload.get_value("metadata.event_type"):
+            case "HttpRequest":
+                await self.http_request(
+                    payload_data=payload,
+                    nats_reference=nats_reference,
+                    args=args)
 
 
 if __name__ == "__main__":
     args = parse_args(
-        description="NoETL HttpHandler Plugin",
+        description="NoETL HTTPHandler Plugin",
         default_nats_url="nats://localhost:32222",
         default_nats_pool_size=10,
+        default_plugin_name="http-handler:0_1_0",
+        default_nats_subscription_subject="noetl.event.http-handler:0_1_0.>",
+        default_nats_subscription_stream="noetl",
+        default_nats_subscription_queue="noetl-http-handler-0-1-0",
+        default_nats_command_prefix="noetl.command",
+        default_nats_command_stream="noetl",
+        default_nats_event_prefix="noetl.event",
+        default_nats_event_stream="noetl",
         default_prom_host="localhost",
-        default_prom_port=9092
+        default_prom_port=9093
     )
     http_handler_plugin = HttpHandler()
     http_handler_plugin.initialize_nats_pool(NatsConfig(
@@ -51,7 +62,7 @@ if __name__ == "__main__":
     ))
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(http_handler_plugin.run(args=args, plugin_name="http-handler:0_1_0"))
+        loop.run_until_complete(http_handler_plugin.run(args=args))
     except KeyboardInterrupt:
         pass
     except Exception as e:

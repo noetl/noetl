@@ -1,10 +1,13 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from keyval import KeyVal
 from natstream import NatsPool, NatsConnectionPool, NatsConfig
 
-
+class PayloadType(Enum):
+    EVENT = "event"
+    COMMAND = "command"
 @dataclass
 class PayloadReference:
     """

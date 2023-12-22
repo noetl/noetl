@@ -21,6 +21,8 @@ class NatsStreamReference:
     nats_msg_subject: str | None = None
     nats_msg_metadata: Msg.Metadata | None = None
     nats_msg_headers: dict | None = None
+    nats_msg_reply: Msg.reply = None
+
 
     def to_dict(self):
         data = asdict(self)
@@ -253,9 +255,9 @@ class NatsPool:
         except Exception as e:
             logger.info(f"NATS subject {subject} read error {e}.")
 
-    async def nats_read(self, subject: str, stream: str, cb):
+    async def nats_read(self, subject: str, stream: str, queue: str, cb):
         async with self.nats_pool.connection() as js:
-            await js.subscribe(subject=subject, stream=stream, cb=cb)
+            await js.subscribe(subject=subject, stream=stream, cb=cb, queue=queue)
             while True:
                 await asyncio.sleep(1)
 
@@ -263,17 +265,17 @@ class NatsPool:
         async with self.nats_pool.connection() as js:
             return await js.publish(subject=subject, stream=stream, payload=payload)
 
-    async def command_read(self, subject: str, cb):
-        return await self.nats_read(subject=f"noetl.command.{subject}", stream="commands", cb=cb)
+    async def command_read(self, subject: str, stream: str, cb):
+        return await self.nats_read(subject=subject, stream=stream, cb=cb)
 
-    async def event_read(self, subject: str, cb):
-        return await self.nats_read(subject=f"noetl.event.{subject}", stream="events", cb=cb)
+    async def event_read(self, subject: str, stream: str, cb):
+        return await self.nats_read(subject=subject, stream=stream, cb=cb)
 
-    async def command_write(self, subject: str, message: bytes):
-        return await self.nats_write(subject=f"noetl.command.{subject}", stream="commands", payload=message)
+    async def command_write(self, subject: str, stream: str, message: bytes):
+        return await self.nats_write(subject=subject, stream=stream, payload=message)
 
-    async def event_write(self, subject: str, message: bytes):
-        return await self.nats_write(subject=f"noetl.event.{subject}", stream="events", payload=message)
+    async def event_write(self, subject: str, stream: str, message: bytes):
+        return await self.nats_write(subject=subject, stream=stream, payload=message)
 
     async def playbook_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name="playbooks")
@@ -307,7 +309,7 @@ class NatsPool:
 
 
 if __name__ == "__main__":
-    nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32645", nats_pool_size=10)
+    nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32222", nats_pool_size=10)
     nats_pool = NatsConnectionPool(config=nats_config)
 
 

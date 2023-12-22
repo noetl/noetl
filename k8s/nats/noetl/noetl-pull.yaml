@@ -1,11 +1,11 @@
 apiVersion: jetstream.nats.io/v1beta2
 kind: Consumer
 metadata:
-  name: events
+  name: noetl
 spec:
-  streamName: events
-  durableName: events-pull
+  streamName: noetl
+  durableName: noetl-pull
   deliverPolicy: all
-  filterSubject: "event.>"
+  filterSubject: "noetl.>"
   maxDeliver: 20
   ackPolicy: explicit

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Header, Response
+from fastapi import FastAPI, HTTPException, Request, Header, Response, Depends
 from strawberry.fastapi import GraphQLRouter
 from config import AppConfig
 from typing import List
@@ -6,6 +6,8 @@ from loguru import logger
 from natstream import NatsConnectionPool
 from aioprometheus import render, Counter, Registry, REGISTRY
 from gql import schema
+
+
 
 app = FastAPI()
 REGISTRY.clear()
@@ -18,9 +20,17 @@ app.registry.register(app.api_requests_counter)
 app.registry.register(app.api_health_check_counter)
 app.registry.register(app.api_events_counter)
 app.registry.register(app.api_errors_counter)
-graphql_router = GraphQLRouter(schema=schema)
-app.include_router(graphql_router, prefix="/noetl")
 
+def config_context_dependency() -> AppConfig:
+    return AppConfig.app_args()
+
+async def get_context(
+    config_context=Depends(config_context_dependency),
+):
+    return config_context
+
+graphql_router = GraphQLRouter(schema=schema, context_getter=get_context)
+app.include_router(graphql_router, prefix="/noetl")
 
 @app.get("/")
 async def get_root():

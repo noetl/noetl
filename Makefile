@@ -318,41 +318,22 @@ redeploy-plugins-locally: build-plugin-images delete-plugins-local-deploy deploy
 
 
 #[NATS]#######################################################################
-.PHONY: nats-create-events nats-create-commands nats-create-all
+.PHONY: nats-create-noetl nats-delete-noetl nats-reset-all
 
-
-nats-create-all: nats-create-events nats-create-commands
-
-
-nats-create-events:
-	@echo "Creating NATS events"
+nats-create-noetl:
+	@echo "Creating NATS noetl stream"
 	kubectl config use-context docker-desktop
-	kubectl apply -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
+	kubectl apply -f $(K8S_DIR)/nats/noetl/noetl-stream.yaml -n nats
 
-nats-create-commands:
-	@echo "Creating NATS commands"
+
+nats-delete-noetl:
+	@echo "Deleting NATS noetl stream"
 	kubectl config use-context docker-desktop
-	kubectl apply -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
+	kubectl delete -f $(K8S_DIR)/nats/noetl/noetl-stream.yaml -n nats
 
 
-.PHONY: nats-delete-events nats-delete-commands nats-delete-all
-
-
-nats-delete-all: nats-delete-events nats-delete-commands
-
-nats-delete-events:
-	@echo "Deleting NATS events"
-	kubectl config use-context docker-desktop
-	kubectl delete -f $(K8S_DIR)/nats/events/event-stream.yaml -n nats
-
-nats-delete-commands:
-	@echo "Deleting NATS commands"
-	kubectl config use-context docker-desktop
-	kubectl delete -f $(K8S_DIR)/nats/commands/command-stream.yaml -n nats
-
-
-nats-reset-all: nats-delete-all nats-create-all
-	@echo "Reset all NATS streams in Kubernetes"
+nats-reset-all: nats-delete-noetl nats-create-noetl
+	@echo "Reset all NATS noetl stream in Kubernetes"
 
 
 .PHONY: nats-purge-commands nats-purge-events nats-purge-all nats-stream-ls

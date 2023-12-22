@@ -1,9 +1,9 @@
 apiVersion: jetstream.nats.io/v1beta2
 kind: Stream
 metadata:
-  name: commands
+  name: noetl
 spec:
-  name: commands
-  subjects: ["noetl.command.>"]
+  name: noetl
+  subjects: ["noetl.command.>", "noetl.event.>"]
   storage: file
   maxAge: 10h

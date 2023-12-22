@@ -1,15 +1,13 @@
 import uuid
-
 import asyncio
-
 import strawberry
 from loguru import logger
-from natstream import NatsConnectionPool
+from natstream import NatsConnectionPool, ErrTimeout
 from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
+from strawberry.types import Info
 from payload import Payload
-from nats.aio.errors import ErrTimeout
 
 
 class Command:
@@ -150,6 +148,7 @@ class PlaybookMutations:
     @strawberry.mutation
     async def register_playbook(self,
                                 playbook_base64: str,
+                                info: Info,
                                 metadata: JSON | None = None,
                                 tokens: str | None = None,
                                 ) -> RegistrationResponse:
@@ -177,7 +176,8 @@ class PlaybookMutations:
                     nats_pool=pool
                 )
                 ack = await nats_payload.event_write(
-                    subject=f"dispatcher.{nats_payload.get_origin_ref()}",
+                    subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+                    stream=info.context.nats_event_stream,
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
@@ -239,6 +239,7 @@ class PlaybookQueries:
     async def run_playbook(
             self,
             playbook_name: str,
+            info: Info,
             metadata: JSON | None = None,
             playbook_input: JSON = None,
             tokens: str | None = None,
@@ -268,7 +269,8 @@ class PlaybookQueries:
                 nats_pool=pool
             )
             ack = await nats_payload.event_write(
-                subject=f"dispatcher.{nats_payload.get_origin_ref()}",
+                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+                stream=info.context.nats_event_stream,
                 message=nats_payload.encode()
             )
             registration_response = RegistrationResponse(
@@ -291,7 +293,11 @@ class PlaybookQueries:
 @strawberry.type
 class PluginMutations:
     @strawberry.mutation
-    async def register_plugin(self, plugin_name: str, image_url: str, metadata: JSON | None = None,
+    async def register_plugin(self,
+                              plugin_name: str,
+                              info: Info,
+                              image_url: str,
+                              metadata: JSON | None = None,
                               tokens: str | None = None) -> RegistrationResponse:
 
         logger.debug(f"plugin_name: {plugin_name}, image_url: {image_url}, metadata: {metadata}")
@@ -313,7 +319,8 @@ class PluginMutations:
                 )
 
                 ack = await nats_payload.event_write(
-                    subject=f"dispatcher.{nats_payload.get_origin_ref()}",
+                    subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+                    stream=info.context.nats_event_stream,
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
@@ -373,31 +380,11 @@ class PluginQueries:
             return {"error": str(e)}
 
 
-@strawberry.type
-class EventCommandMutations:
-    @strawberry.mutation
-    async def delete_events(self) -> ResponseMessage:
-        try:
-            pool = NatsConnectionPool.get_instance()
-            await pool.truncate_stream("events")
-            return ResponseMessage(message="Events deleted successfully.")
-        except Exception as e:
-            logger.error(f"Failed to delete events: {str(e)}")
-            return ResponseMessage(message=f"Error: {str(e)}")
 
-    @strawberry.mutation
-    async def delete_commands(self) -> ResponseMessage:
-        try:
-            pool = NatsConnectionPool.get_instance()
-            await pool.truncate_stream("commands")
-            return ResponseMessage(message="Commands deleted successfully.")
-        except Exception as e:
-            logger.error(f"Failed to delete commands: {str(e)}")
-            return ResponseMessage(message=f"Error: {str(e)}")
 
 
 @strawberry.type
-class Mutations(PlaybookMutations, PluginMutations, EventCommandMutations):
+class Mutations(PlaybookMutations, PluginMutations):
     pass
 
 
@@ -405,20 +392,25 @@ class Mutations(PlaybookMutations, PluginMutations, EventCommandMutations):
 class Queries(PlaybookQueries, PluginQueries):
 
     @strawberry.field
-    async def show_events(self) -> JSON:
+    async def show_events(self, info: Info) -> JSON:
         """
         Retrieves messages from the Events NATS stream.
         """
         logger.debug(f"Self in show_events: {self}")
-        return await read_nats_stream(stream="events", subject="noetl.event")
+        stream = info.context.nats_event_stream,
+        return await read_nats_stream(
+            stream=info.context.nats_event_stream,
+            subject=f"{info.context.nats_event_prefix}.>")
 
     @strawberry.field
-    async def show_commands(self) -> JSON:
+    async def show_commands(self, info: Info) -> JSON:
         """
         Retrieves messages from the Commands NATS stream.
         """
         logger.debug(f"Self in show_commands: {self}")
-        return await read_nats_stream(stream="commands", subject="noetl.command")
+        return await read_nats_stream(
+            stream=info.context.nats_command_stream,
+            subject=f"{info.context.nats_command_prefix}.>")
 
 
 async def read_nats_stream(stream: str, subject:str):
@@ -439,7 +431,7 @@ async def read_nats_stream(stream: str, subject:str):
         async with nats_pool.connection() as js:
             consumer_name = f"{stream}-consumer-{uuid.uuid4()}"
             _ = await js.subscribe(
-                subject=f"{subject}.>",
+                subject=subject,
                 durable=consumer_name,
                 cb=message_handler,
                 stream=stream
