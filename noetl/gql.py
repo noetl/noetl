@@ -2,12 +2,11 @@ import uuid
 import asyncio
 import strawberry
 from loguru import logger
-from natstream import NatsConnectionPool, ErrTimeout
 from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
 from strawberry.types import Info
-from payload import Payload
+from payload import Payload, NatsConnectionPool, ErrTimeout, PubAck
 
 
 class Command:
@@ -88,30 +87,33 @@ class ResponseMessage:
 
 
 @strawberry.type
-class ReferenceIdentifierType:
+class Reference:
     timestamp: str
     identifier: str
     reference: str
     origin: str
+    subject: str
+    stream: str
+    seq: str
+    domain: str | None = None
+    duplicate: str | None = None
 
 
 @strawberry.type
 class RegistrationResponse:
-    reference_identifier: ReferenceIdentifierType | None = None
+    reference: Reference | None = None
     kind: str | None = None
     name: str | None = None
     event_type: str | None = None
-    ack_seq: str | None = None
     status: str | None = None
     message: str | None = None
 
     def to_dict(self):
         return {
-            "reference_identifier": self.reference_identifier,
+            "reference": self.reference,
             "kind": self.kind,
             "name": self.name,
             "event_type": self.event_type,
-            "ack_seq": self.ack_seq,
             "status": self.status,
             "message": self.message}
 
@@ -129,15 +131,19 @@ class PlaybookMutations:
         metadata: {"source": "noetl-cli", "handler": "register_Playbook"},
         Playbook_base64: "Base64 encoded string of Playbook template YAML"
       ) {
-            referenceIdentifier {
+            reference {
                 timestamp
                 identifier
                 reference
                 origin
+                subject
+                stream
+                seq
+                domain
+                duplicate
             }
             name
             eventType
-            ackSeq
             status
             message
       }
@@ -175,17 +181,17 @@ class PlaybookMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-                ack = await nats_payload.event_write(
-                    subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+                subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
+                ack: PubAck = await nats_payload.event_write(
+                    subject=subject,
                     stream=info.context.nats_event_stream,
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
+                    reference=Reference(**nats_payload.get_ref() | {"subject": subject} | ack.as_dict()),
                     kind="Playbook",
                     name=nats_payload.get_value("playbook_name"),
                     event_type=nats_payload.get_value("metadata.event_type"),
-                    ack_seq=ack.seq,
                     status="PlaybookRegistrationRequested",
                     message="Playbook registration has been successfully requested"
                 )
@@ -268,17 +274,17 @@ class PlaybookQueries:
                 event_type=event_type,
                 nats_pool=pool
             )
-            ack = await nats_payload.event_write(
-                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+            subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+            ack: PubAck = await nats_payload.event_write(
+                subject=subject,
                 stream=info.context.nats_event_stream,
                 message=nats_payload.encode()
             )
             registration_response = RegistrationResponse(
-                reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
+                reference=Reference(**nats_payload.get_ref() | {"subject": subject} | ack.as_dict()),
                 kind="RunPlaybook",
                 name=nats_payload.get_value("playbook_name"),
                 event_type=nats_payload.get_value("metadata.event_type"),
-                ack_seq=ack.seq,
                 status="PlaybookExecutionRequested",
                 message="Playbook execution has been successfully requested"
             )
@@ -317,18 +323,17 @@ class PluginMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-
-                ack = await nats_payload.event_write(
-                    subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+                subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
+                ack: PubAck = await nats_payload.event_write(
+                    subject=subject,
                     stream=info.context.nats_event_stream,
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    reference_identifier=ReferenceIdentifierType(**nats_payload.get_ref()),
+                    reference=Reference(**nats_payload.get_ref() | {"subject": subject} | ack.as_dict()),
                     kind="Plugin",
                     name=nats_payload.get_value("plugin_name"),
                     event_type=nats_payload.get_value("metadata.event_type"),
-                    ack_seq=ack.seq,
                     status="PluginRegistrationRequested",
                     message="Plugin registration has been successfully requested"
                 )
@@ -380,9 +385,6 @@ class PluginQueries:
             return {"error": str(e)}
 
 
-
-
-
 @strawberry.type
 class Mutations(PlaybookMutations, PluginMutations):
     pass
@@ -413,7 +415,7 @@ class Queries(PlaybookQueries, PluginQueries):
             subject=f"{info.context.nats_command_prefix}.>")
 
 
-async def read_nats_stream(stream: str, subject:str):
+async def read_nats_stream(stream: str, subject: str):
     messages = []
 
     async def message_handler(msg):

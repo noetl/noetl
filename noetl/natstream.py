@@ -1,7 +1,7 @@
 from uuid import uuid4
 import asyncio
 import nats
-from nats.js.api import StreamConfig
+from nats.js.api import StreamConfig, PubAck
 from nats.aio.msg import Msg
 from dataclasses import dataclass, asdict
 import json
@@ -104,9 +104,9 @@ class NatsConnectionPool:
     def connection(self):
         return self._ConnectionContextManager(self)
 
-    async def publish(self, subject, message, stream):
+    async def publish(self, subject, message, stream) -> PubAck:
         async with self.connection() as js:
-            ack = await js.publish(subject=f"{subject}", payload=message, stream=stream)
+            ack: PubAck = await js.publish(subject=f"{subject}", payload=message, stream=stream)
         return ack
 
     async def truncate_stream(self, stream_name):
@@ -315,7 +315,7 @@ if __name__ == "__main__":
 
     async def test():
         async def func(js):
-            ack = await js.publish('test.greeting', b'Hello JS!')
+            ack: PubAck = await js.publish('test.greeting', b'Hello JS!')
             logger.info(f'Ack: stream={ack.stream}, sequence={ack.seq}')
 
         return await nats_pool.execute(func)

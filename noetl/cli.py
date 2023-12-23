@@ -54,15 +54,19 @@ class TokenCommand(KeyVal):
                 return """
                         mutation RegisterPlaybook($playbookBase64: String!, $metadata: JSON, $tokens: String) {
                             registerPlaybook(playbookBase64: $playbookBase64, metadata: $metadata, tokens: $tokens) {
-                                referenceIdentifier {
+                                reference {
                                     timestamp
                                     identifier
                                     reference
                                     origin
+                                    subject
+                                    stream
+                                    seq
+                                    domain
+                                    duplicate
                                 }
                                 name
                                 eventType
-                                ackSeq
                                 status
                                 message
                             }
@@ -72,15 +76,19 @@ class TokenCommand(KeyVal):
                 return """
                 mutation RegisterPlugin($pluginName: String!, $imageUrl: String!, $metadata: JSON, $tokens: String) {
                   registerPlugin(pluginName: $pluginName, imageUrl: $imageUrl, metadata: $metadata, tokens: $tokens) {
-                    referenceIdentifier {
+                    reference {
                         timestamp
                         identifier
                         reference
                         origin
+                        subject
+                        stream
+                        seq
+                        domain
+                        duplicate
                     }
                     name
                     eventType
-                    ackSeq
                     status
                     message
                   }
@@ -130,15 +138,19 @@ class TokenCommand(KeyVal):
                 return """
                 query RunPlaybook($playbookName: String!, $playbookInput: JSON) {
                     runPlaybook(playbookName: $playbookName, playbookInput: $playbookInput){
-                    referenceIdentifier {
+                    reference {
                         timestamp
                         identifier
                         reference
                         origin
+                        subject
+                        stream
+                        seq
+                        domain
+                        duplicate
                     }
                     name
                     eventType
-                    ackSeq
                     status
                     message
                   }

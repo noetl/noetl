@@ -33,7 +33,7 @@ spec:
         - condition: "{{ get-current-time.output.exitCode }} != 0"
           next:
             - task: send-notification
-              parameters:
+              args:
                 get-current-time-ref: "{{ get-current-time.ref }}"
         - condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
     send-notification:

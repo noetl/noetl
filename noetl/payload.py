@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from keyval import KeyVal
-from natstream import NatsPool, NatsConnectionPool, NatsConfig
+from natstream import NatsPool, NatsConnectionPool, NatsConfig, ErrTimeout, PubAck
 
 class PayloadType(Enum):
     EVENT = "event"

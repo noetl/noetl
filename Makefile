@@ -318,7 +318,7 @@ redeploy-plugins-locally: build-plugin-images delete-plugins-local-deploy deploy
 
 
 #[NATS]#######################################################################
-.PHONY: nats-create-noetl nats-delete-noetl nats-reset-all
+.PHONY: nats-create-noetl nats-delete-noetl nats-reset-noetl nats-purge-noetl nats-stream-ls
 
 nats-create-noetl:
 	@echo "Creating NATS noetl stream"
@@ -332,39 +332,16 @@ nats-delete-noetl:
 	kubectl delete -f $(K8S_DIR)/nats/noetl/noetl-stream.yaml -n nats
 
 
-nats-reset-all: nats-delete-noetl nats-create-noetl
-	@echo "Reset all NATS noetl stream in Kubernetes"
+nats-reset-noetl: nats-delete-noetl nats-create-noetl
+	@echo "Reset NATS noetl stream in Kubernetes"
 
-
-.PHONY: nats-purge-commands nats-purge-events nats-purge-all nats-stream-ls
-
-nats-purge-commands:
-	@echo "Purging NATS commands streams"
-	@nats stream purge commands --force -s $(NATS_URL)
-
-nats-purge-events:
-	@echo "Purging NATS events streams"
-	@nats stream purge events --force -s $(NATS_URL)
-
-
-nats-purge-all: nats-purge-commands nats-purge-events nats-stream-ls
-	@echo "Purged NATS events and commands streams"
+nats-purge-noetl:
+	@echo "Purged NATS noetl stream"
+	@nats stream purge noetl --force -s $(NATS_URL)
+	@make nats-stream-ls
 
 nats-stream-ls:
 	@nats stream ls -s $(NATS_URL)
-
-.PHONY: purge-commands purge-events purge-all stream-ls
-
-run-api: activate-venv
-	bin/api.sh
-
-run-dispatcher: activate-venv
-	bin/dispatcher.sh
-
-run-registrar: activate-venv
-	bin/registrar.sh
-
-.PHONY: run-api run-dispatcher run-registrar
 
 #[WORKFLOW COMMANDS]######################################################################
 register-playbook: activate-venv
