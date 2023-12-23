@@ -28,6 +28,9 @@ class PayloadReference:
         - 'command.http-handler.12345.bcdef' (for a command stream)
     """
 
+    subject: str = None
+    """The NATS subject name of workflow event source container."""
+
     origin: str = None
     """The origin identifier of the root event in the workflow sequence."""
 
@@ -40,11 +43,12 @@ class PayloadReference:
     timestamp: str = None
     """The Unix timestamp of the payload creation time."""
 
-    def __init__(self, origin=None, reference=None, timestamp=None, identifier=None):
+    def __init__(self, subject=None, origin=None, reference=None, timestamp=None, identifier=None):
         self.timestamp = timestamp if timestamp else str(int(datetime.now().timestamp() * 1000))
         self.identifier = identifier if identifier else str(uuid.uuid4())
         self.reference = reference if reference else self.identifier
         self.origin = origin if origin else self.identifier
+        self.subject = subject if subject else self.subject
 
     def update(self):
         """
@@ -54,6 +58,7 @@ class PayloadReference:
             PayloadReference: A new instance with updated timestamp, identifier, and reference.
         """
         return PayloadReference(
+            subject=self.subject,
             origin=self.origin,
             reference=self.identifier
         )
@@ -69,7 +74,8 @@ class PayloadReference:
             "timestamp": self.timestamp,
             "identifier": self.identifier,
             "reference": self.reference,
-            "origin": self.origin
+            "origin": self.origin,
+            "subject": self.subject
         }
 
 
@@ -107,12 +113,13 @@ class Payload(KeyVal, NatsPool):
     def create(cls,
                payload_data,
                nats_pool: NatsConnectionPool | NatsConfig = None,
+               subject=None,
                origin=None,
                reference=None,
                event_type=None,
                command_type=None
                ):
-        payload_reference = PayloadReference(origin=origin, reference=reference)
+        payload_reference = PayloadReference(subject=subject, origin=origin, reference=reference)
         payload = cls(payload_data, nats_pool=nats_pool)
         payload.set_ref(reference=payload_reference)
         if event_type:

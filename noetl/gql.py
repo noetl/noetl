@@ -181,7 +181,8 @@ class PlaybookMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-                subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
+                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
+                nats_payload.set_value("metadata.ref.subject", subject)
                 ack: PubAck = await nats_payload.event_write(
                     subject=subject,
                     stream=info.context.nats_event_stream,
@@ -274,7 +275,8 @@ class PlaybookQueries:
                 event_type=event_type,
                 nats_pool=pool
             )
-            subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}",
+            subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
+            nats_payload.set_value("metadata.ref.subject", subject)
             ack: PubAck = await nats_payload.event_write(
                 subject=subject,
                 stream=info.context.nats_event_stream,
@@ -323,7 +325,8 @@ class PluginMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-                subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
+                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
+                nats_payload.set_value("metadata.ref.subject", subject)
                 ack: PubAck = await nats_payload.event_write(
                     subject=subject,
                     stream=info.context.nats_event_stream,
