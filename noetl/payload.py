@@ -1,107 +1,116 @@
 import uuid
-from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from keyval import KeyVal
 from natstream import NatsPool, NatsConnectionPool, NatsConfig, ErrTimeout, PubAck
 
+
 class PayloadType(Enum):
-    EVENT = "event"
-    COMMAND = "command"
-@dataclass
-class PayloadReference:
     """
-    The reference structure for payload identifiers in a workflow.
+    Enum class representing payload type.
 
     Attributes:
-        origin: The ID of the first event in the workflow, the root or starting point.
-        reference: The ID of the predecessor event.
-        identifier: The unique ID of the current event or workflow instance.
-        timestamp: The Unix timestamp of the payload creation time.
-
-    NATS Stream Key Format:
-        The format for NATS streams is '<stream name>.<plugin name>.<origin>.<identifier>',
-        where each part represents specific identifiers related to the workflow instance and step.
-
-    Examples of NATS Stream Keys:
-        - 'event.dispatcher.12345.abcde' (for an event stream)
-        - 'command.http-handler.12345.bcdef' (for a command stream)
+        EVENT (str): Payload type for events.
+        COMMAND (str): Payload type for commands.
     """
+    EVENT = "event"
+    COMMAND = "command"
 
-    subject: str = None
-    """The NATS subject name of workflow event source container."""
 
-    origin: str = None
-    """The origin identifier of the root event in the workflow sequence."""
+class PayloadIdentifier:
+    def __init__(self,
+                 timestamp=None,
+                 current_id=None,
+                 origin_id=None,
+                 previous_id=None):
+        self.timestamp: str = timestamp if timestamp else str(int(datetime.now().timestamp() * 1000))
+        self.current_id: str = current_id if current_id else str(uuid.uuid4())
+        self.previous_id: str = previous_id if previous_id else self.current_id
+        self.origin_id: str = origin_id if origin_id else self.current_id
 
-    reference: str = None
-    """The reference identifier of the immediate predecessor event."""
-
-    identifier: str = None
-    """The unique identifier of the current event or instance."""
-
-    timestamp: str = None
-    """The Unix timestamp of the payload creation time."""
-
-    def __init__(self, subject=None, origin=None, reference=None, timestamp=None, identifier=None):
-        self.timestamp = timestamp if timestamp else str(int(datetime.now().timestamp() * 1000))
-        self.identifier = identifier if identifier else str(uuid.uuid4())
-        self.reference = reference if reference else self.identifier
-        self.origin = origin if origin else self.identifier
-        self.subject = subject if subject else self.subject
-
-    def update(self):
-        """
-        Creates a new PayloadReference instance with updated values.
-
-        Returns:
-            PayloadReference: A new instance with updated timestamp, identifier, and reference.
-        """
-        return PayloadReference(
-            subject=self.subject,
-            origin=self.origin,
-            reference=self.identifier
-        )
-
-    def get_ref(self):
-        """
-        Returns the reference structure.
-
-        Returns:
-            dict: timestamp, identifier, reference, and origin.
-        """
+    def get_identifier(self):
         return {
             "timestamp": self.timestamp,
-            "identifier": self.identifier,
-            "reference": self.reference,
-            "origin": self.origin,
-            "subject": self.subject
+            "current_id": self.current_id,
+            "previous_id": self.previous_id,
+            "origin_id": self.origin_id
+        }
+
+    def get_api_identifier(self) -> str:
+        return f"{self.origin_id}.{self.previous_id}.{self.current_id}"
+
+
+class PayloadReference:
+
+    def __init__(self,
+                 subject: str = None,
+                 previous_id: str = None,
+                 origin_id: str = None,
+                 stream: str = None,
+                 seq: str = None,
+                 playbook: dict = None,
+                 task: dict = None,
+                 step: dict = None):
+        identifier = PayloadIdentifier(previous_id=previous_id,
+                                            origin_id=origin_id) if previous_id else PayloadIdentifier()
+        self.subject = subject,
+        self.identifier: PayloadIdentifier =identifier
+        self.stream = stream,
+        self.seq = seq,
+        self.playbook = playbook,
+        self.task = task,
+        self.step = step
+
+    def get_reference(self):
+        return {
+            "identifier": self.identifier.get_identifier(),
+            "subject": self.subject,
+            "stream": self.stream,
+            "seq": self.seq,
+            "playbook": self.playbook,
+            "task": self.task,
+            "step": self.step
+        }
+
+    def get_api_reference(self):
+        return {
+            "identifier": self.identifier.get_api_identifier(),
+            "subject": self.subject,
+            "stream": self.stream,
+            "seq": self.seq,
+            "playbook": self.playbook,
+            "task": self.task,
+            "step": self.step
         }
 
 
 class Payload(KeyVal, NatsPool):
+    """A class representing a payload.
+
+    The Payload class is used for handling payloads. It inherits from the KeyVal and NatsPool classes.
+
+    Args:
+        *args: Variable length argument list.
+        nats_pool (NatsConnectionPool | NatsConfig, optional): An instance of NatsConnectionPool or NatsConfig class.
+        **kwargs: Arbitrary keyword arguments.
+    """
 
     def __init__(self, *args, nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
         super().__init__(*args, **kwargs)
         if nats_pool:
             self.initialize_nats_pool(nats_pool)
 
-    def set_ref(self, reference: PayloadReference):
-        self.set_value("metadata.ref", reference.get_ref())
+    def set_reference(self, reference: PayloadReference):
+        self.set_value("metadata.reference", reference.get_reference())
 
-    def get_payload_reference(self):
-        return self.get_ref()
+    def get_subject(self):
+        return self.get_value("metadata.reference.subject")
 
-    def get_subject_ref(self):
-        origin = self.get_origin_ref()
-        identifier = self.get_value("metadata.ref.identifier")
-        return f"{origin}.{identifier}"
+    def get_origin_id(self):
+        return self.get_value("metadata.reference.identifier.origin_id")
 
-    def get_origin_ref(self):
-        return self.get_value("metadata.ref.origin")
-
-    def get_ref(self):
-        return self.get_value("metadata.ref")
+    def get_reference(self):
+        return self.get_value("metadata.reference")
 
     def set_event_type(self, event_type):
         self.set_value("metadata.event_type", event_type)
@@ -114,14 +123,14 @@ class Payload(KeyVal, NatsPool):
                payload_data,
                nats_pool: NatsConnectionPool | NatsConfig = None,
                subject=None,
-               origin=None,
-               reference=None,
+               origin_id=None,
+               current_id=None,
                event_type=None,
                command_type=None
                ):
-        payload_reference = PayloadReference(subject=subject, origin=origin, reference=reference)
+        payload_reference = PayloadReference(subject=subject, origin_id=origin_id, previous_id=current_id)
         payload = cls(payload_data, nats_pool=nats_pool)
-        payload.set_ref(reference=payload_reference)
+        payload.set_reference(reference=payload_reference)
         if event_type:
             payload.set_event_type(event_type)
         if command_type:

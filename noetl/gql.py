@@ -86,22 +86,25 @@ class ResponseMessage:
     message: JSON
 
 
-@strawberry.type
-class Reference:
-    timestamp: str
-    identifier: str
-    reference: str
-    origin: str
-    subject: str
-    stream: str
-    seq: str
-    domain: str | None = None
-    duplicate: str | None = None
+# @strawberry.type
+# class Reference:
+#     timestamp: str
+#     identifier: str
+#     reference: str
+#     origin: str
+#     subject: str
+#     stream: str
+#     seq: str
+#     playbook: str | None = None
+#     task: str | None = None
+#     step: str | None = None
+#     domain: str | None = None
+#     duplicate: str | None = None
 
 
 @strawberry.type
 class RegistrationResponse:
-    reference: Reference | None = None
+    reference: JSON | None = None
     kind: str | None = None
     name: str | None = None
     event_type: str | None = None
@@ -131,17 +134,7 @@ class PlaybookMutations:
         metadata: {"source": "noetl-cli", "handler": "register_Playbook"},
         Playbook_base64: "Base64 encoded string of Playbook template YAML"
       ) {
-            reference {
-                timestamp
-                identifier
-                reference
-                origin
-                subject
-                stream
-                seq
-                domain
-                duplicate
-            }
+            reference
             name
             eventType
             status
@@ -181,15 +174,15 @@ class PlaybookMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
-                nats_payload.set_value("metadata.ref.subject", subject)
+                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_id()}"
+                nats_payload.set_value("metadata.reference.subject", subject)
                 ack: PubAck = await nats_payload.event_write(
                     subject=subject,
                     stream=info.context.nats_event_stream,
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    reference=Reference(**nats_payload.get_ref() | {"subject": subject} | ack.as_dict()),
+                    reference=nats_payload.get_reference() | {"subject": subject} | ack.as_dict(),
                     kind="Playbook",
                     name=nats_payload.get_value("playbook_name"),
                     event_type=nats_payload.get_value("metadata.event_type"),
@@ -275,15 +268,15 @@ class PlaybookQueries:
                 event_type=event_type,
                 nats_pool=pool
             )
-            subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
-            nats_payload.set_value("metadata.ref.subject", subject)
+            subject = f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_id()}"
+            nats_payload.set_value("metadata.reference.subject", subject)
             ack: PubAck = await nats_payload.event_write(
                 subject=subject,
                 stream=info.context.nats_event_stream,
                 message=nats_payload.encode()
             )
             registration_response = RegistrationResponse(
-                reference=Reference(**nats_payload.get_ref() | {"subject": subject} | ack.as_dict()),
+                reference=nats_payload.get_reference() | {"subject": subject} | ack.as_dict(),
                 kind="RunPlaybook",
                 name=nats_payload.get_value("playbook_name"),
                 event_type=nats_payload.get_value("metadata.event_type"),
@@ -325,15 +318,15 @@ class PluginMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_ref()}"
-                nats_payload.set_value("metadata.ref.subject", subject)
+                subject=f"{info.context.nats_event_prefix}.dispatcher.{nats_payload.get_origin_id()}"
+                nats_payload.set_value("metadata.reference.subject", subject)
                 ack: PubAck = await nats_payload.event_write(
                     subject=subject,
                     stream=info.context.nats_event_stream,
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    reference=Reference(**nats_payload.get_ref() | {"subject": subject} | ack.as_dict()),
+                    reference=nats_payload.get_reference() | {"subject": subject} | ack.as_dict(),
                     kind="Plugin",
                     name=nats_payload.get_value("plugin_name"),
                     event_type=nats_payload.get_value("metadata.event_type"),

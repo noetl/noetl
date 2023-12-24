@@ -82,7 +82,7 @@ class Registrar(Plugin):
                 playbook_template=playbook_template,
                 playbook_input=payload_data.get_value("playbook_input"),
                 playbook_metadata=playbook_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
-                playbook_id=payload_data.get_origin_ref(),
+                playbook_id=payload_data.get_origin(),
                 nats_pool=self.nats_pool
             )
             playbook_reference = await playbook.register()

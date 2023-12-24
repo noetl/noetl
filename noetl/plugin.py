@@ -41,7 +41,7 @@ class Plugin(NatsPool):
                             subject_prefix: str,
                             stream: str,
                             payload_type: PayloadType):
-        payload_reference: PayloadReference = PayloadReference(**payload_orig.get_payload_reference())
+        payload_reference: PayloadReference = PayloadReference(**payload_orig.get_ref())
         payload: Payload = Payload.create(
             payload_data=payload_data,
             origin=payload_reference.origin,
@@ -50,13 +50,13 @@ class Plugin(NatsPool):
         match payload_type:
             case PayloadType.EVENT:
                 ack = await payload.event_write(
-                    subject=f"{subject_prefix}.{payload.get_origin_ref()}",
+                    subject=payload.get_subject(),
                     stream=stream,
                     message=payload.encode()
                 )
             case PayloadType.COMMAND:
                 ack = await payload.command_write(
-                    subject=f"{subject_prefix}.{payload.get_origin_ref()}",
+                    subject=payload.get_subject(),
                     stream=stream,
                     message=payload.encode()
                 )
