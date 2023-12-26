@@ -1,5 +1,5 @@
 import asyncio
-from plugin import Plugin, Payload, PayloadReference, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
+from plugin import Plugin, Payload, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
 import aiohttp
 
 
@@ -11,7 +11,6 @@ class HttpHandler(Plugin):
         url = payload_data.get_value("url")
         method = payload_data.get_value("method")
         data = payload_data.get_value("data")
-        payload_reference: PayloadReference = PayloadReference(**payload_data.get_payload_reference())
         async with aiohttp.ClientSession() as session:
             async with session.request(method, url, data=data) as response:
                 response_data = await response.text()

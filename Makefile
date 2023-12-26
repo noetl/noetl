@@ -130,7 +130,9 @@ remove-base-images:
 
 build-base-images:  build-api-base build-plugin-base
 
-.PHONY: build-api-base build-plugin-base remove-base-images build-base-images
+.PHONY: build-api-base build-plugin-base remove-base-images build-base-images build-all
+
+build-all: build-api-base build-api build-plugin-base build-plugin-images
 
 build-api:
 	@echo "Building API image..."

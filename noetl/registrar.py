@@ -27,7 +27,7 @@ class Registrar(Plugin):
                 "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
                             {"nats_reference": nats_reference.to_dict(), "event_type": "PlaybookRegistered"}
             },
-            subject_prefix=f"{args.nats_command_prefix}.dispatcher",
+            subject_prefix=f"{args.nats_eevent_prefix}.dispatcher",
             stream=args.nats_subscription_stream)
 
 
@@ -55,7 +55,7 @@ class Registrar(Plugin):
                 "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) | {
                     "nats_reference": nats_reference.to_dict(), "event_type": "PluginRegistered"}
             },
-            subject_prefix=f"{args.nats_command_prefix}.dispatcher",
+            subject_prefix=f"{args.nats_event_prefix}.dispatcher",
             stream=args.nats_subscription_stream)
 
     async def run_playbook_register(self,
@@ -82,7 +82,7 @@ class Registrar(Plugin):
                 playbook_template=playbook_template,
                 playbook_input=payload_data.get_value("playbook_input"),
                 playbook_metadata=playbook_kv_payload.get_value("metadata", "METADATA NOT FOUND"),
-                playbook_id=payload_data.get_origin(),
+                playbook_id=payload_data.get_origin_id(),
                 nats_pool=self.nats_pool
             )
             playbook_reference = await playbook.register()
@@ -94,7 +94,7 @@ class Registrar(Plugin):
                     "metadata": payload_data.get_value("metadata", exclude=list(["command_type", "event_type"])) |
                                 {"nats_reference": nats_reference.to_dict(), "event_type": "RunPlaybookRegistered"}
                 },
-                subject_prefix=f"{args.nats_command_prefix}.dispatcher",
+                subject_prefix=f"{args.nats_event_prefix}.dispatcher",
                 stream=args.nats_subscription_stream)
 
     async def switch(self,

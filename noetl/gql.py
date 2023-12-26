@@ -182,7 +182,7 @@ class PlaybookMutations:
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
-                    reference=nats_payload.get_reference() | {"subject": subject} | ack.as_dict(),
+                    reference=nats_payload.get_api_reference() | ack.as_dict(),
                     kind="Playbook",
                     name=nats_payload.get_value("playbook_name"),
                     event_type=nats_payload.get_value("metadata.event_type"),
@@ -276,7 +276,7 @@ class PlaybookQueries:
                 message=nats_payload.encode()
             )
             registration_response = RegistrationResponse(
-                reference=nats_payload.get_reference() | {"subject": subject} | ack.as_dict(),
+                reference = nats_payload.get_api_reference() | ack.as_dict(),
                 kind="RunPlaybook",
                 name=nats_payload.get_value("playbook_name"),
                 event_type=nats_payload.get_value("metadata.event_type"),
@@ -325,8 +325,9 @@ class PluginMutations:
                     stream=info.context.nats_event_stream,
                     message=nats_payload.encode()
                 )
+                reference = nats_payload.get_api_reference() | ack.as_dict(),
                 registration_response = RegistrationResponse(
-                    reference=nats_payload.get_reference() | {"subject": subject} | ack.as_dict(),
+                    reference=reference,
                     kind="Plugin",
                     name=nats_payload.get_value("plugin_name"),
                     event_type=nats_payload.get_value("metadata.event_type"),

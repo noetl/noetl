@@ -1,14 +1,13 @@
-from uuid import uuid4
 import asyncio
 import nats
 from nats.js.api import StreamConfig, PubAck
 from nats.aio.msg import Msg
+from nats.aio.errors import ErrTimeout
 from dataclasses import dataclass, asdict
 import json
-from nats.aio.errors import ErrTimeout
 from loguru import logger
 from datetime import datetime
-
+from uuid import uuid4
 
 @dataclass
 class NatsConfig:
@@ -22,7 +21,6 @@ class NatsStreamReference:
     nats_msg_metadata: Msg.Metadata | None = None
     nats_msg_headers: dict | None = None
     nats_msg_reply: Msg.reply = None
-
 
     def to_dict(self):
         data = asdict(self)

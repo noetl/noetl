@@ -45,12 +45,14 @@ class Dispatcher(Plugin):
                                     payload_data: Payload,
                                     nats_reference: NatsStreamReference,
                                     args: Namespace):
-        payload_reference = payload_data.get_payload_reference()
+        payload_reference = payload_data.get_reference()
         command_payload_data = {
             "playbook_name": payload_data.get_value("playbook_name"),
             "playbook_input": payload_data.get_value("playbook_input", {"input": "NO DATA PROVIDED"}),
             "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
-                        {"command_type": "RegisterRunPlaybook", "nats_reference": nats_reference.to_dict()},
+                        {"command_type": "RegisterRunPlaybook",
+                         "nats_reference": nats_reference.to_dict(),
+                         "payload_reference": payload_reference},
         }
         await self.publish_command(
             payload_orig=payload_data,
@@ -65,7 +67,7 @@ class Dispatcher(Plugin):
         logger.info(nats_reference)
         playbook_reference = payload_data.get_value("playbook_reference")
         nats_msg_data = await self.nats_read_subject(playbook_reference)
-        playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data,nats_pool=self.nats_pool)
+        playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data, nats_pool=self.nats_pool)
 
         logger.debug(playbook_blueprint)
 
