@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from keyval import KeyVal
+from appkey import AppKey, Metadata, Reference, EventType, CommandType
 from natstream import NatsPool, NatsConnectionPool, NatsConfig, ErrTimeout, PubAck
 
 
@@ -13,8 +14,8 @@ class PayloadType(Enum):
         EVENT (str): Payload type for events.
         COMMAND (str): Payload type for commands.
     """
-    EVENT = "event"
-    COMMAND = "command"
+    EVENT = AppKey.EVENT
+    COMMAND = AppKey.COMMAND
 
 
 class Payload(KeyVal, NatsPool):
@@ -36,81 +37,78 @@ class Payload(KeyVal, NatsPool):
     def set_reference(self, timestamp=None, subject=None, origin_id=None, previous_id=None,
                       stream=None, seq=None, context=None):
         if subject:
-            self.set_value("metadata.reference.subject", subject)
-        self.set_value("metadata.reference.timestamp",
-                       timestamp if timestamp else str(int(datetime.now().timestamp() * 1000)))
-        self.set_value("metadata.reference.current_id",str(uuid.uuid4()))
-        self.set_value("metadata.reference.previous_id",
-                       previous_id if previous_id else self.get_value("metadata.reference.current_id"))
-        self.set_value("metadata.reference.origin_id",
-                       origin_id if origin_id else self.get_value("metadata.reference.current_id"))
+            self.set_value(Reference.SUBJECT, subject)
+        self.set_value(Reference.TIMESTAMP, timestamp if timestamp else str(int(datetime.now().timestamp() * 1000)))
+        self.set_value(Reference.CURRENT_ID,str(uuid.uuid4()))
+        self.set_value(Reference.PREVIOUS_ID, previous_id if previous_id else self.get_value(Reference.CURRENT_ID))
+        self.set_value(Reference.ORIGIN_ID, origin_id if origin_id else self.get_value(Reference.CURRENT_ID))
         if stream:
-            self.set_value("metadata.reference.stream", stream)
+            self.set_value(Reference.STREAM, stream)
         if seq:
-            self.set_value("metadata.reference.seq", seq)
+            self.set_value(Reference.SEQ, seq)
         if context:
-            self.set_value("metadata.reference.context", context)
+            self.set_value(Reference.CONTEXT, context)
 
     def get_reference(self):
-        return self.get_keyval("metadata.reference")
+        return self.get_keyval(Metadata.REFERENCE)
 
     def get_payload_reference(self):
         return self.get_identifier() | {
-            "subject": self.get_subject(),
-            "stream": self.get_stream(),
-            "seq": self.get_seq(),
-            "context": self.get_context()
+            AppKey.SUBJECT: self.get_subject(),
+            AppKey.STREAM: self.get_stream(),
+            AppKey.SEQ: self.get_seq(),
+            AppKey.CONTEXT: self.get_context()
         }
 
     def get_identifier(self):
         return {
-            "timestamp": self.get_timestamp(),
-            "current_id": self.get_current_id(),
-            "previous_id": self.get_previous_id(),
-            "origin_id": self.get_origin_id()
+            AppKey.TIMESTAMP: self.get_timestamp(),
+            AppKey.CURRENT_ID: self.get_current_id(),
+            AppKey.PREVIOUS_ID: self.get_previous_id(),
+            AppKey.ORIGIN_ID: self.get_origin_id()
         }
 
     def get_api_identifier(self) -> str:
         return f"{self.get_origin_id()}.{self.get_previous_id()}.{self.get_current_id()}"
 
     def get_subject(self):
-        return self.get_value("metadata.reference.subject")
+        return self.get_value(Reference.SUBJECT)
 
     def get_current_id(self) -> str:
-        return self.get_value("metadata.reference.current_id")
+        return self.get_value(Reference.CURRENT_ID)
 
     def get_origin_id(self) -> str:
-        return self.get_value("metadata.reference.origin_id")
+        return self.get_value(Reference.ORIGIN_ID)
 
     def get_previous_id(self) -> str:
-        return self.get_value("metadata.reference.previous_id")
+        return self.get_value(Reference.PREVIOUS_ID)
 
     def get_timestamp(self) -> str:
-        return self.get_value("metadata.reference.timestamp")
+        return self.get_value(Reference.TIMESTAMP)
 
     def get_stream(self) -> str:
-        return self.get_value("metadata.reference.stream")
+        return self.get_value(Reference.STREAM)
 
     def get_seq(self) -> str:
-        return self.get_value("metadata.reference.seq")
+        return self.get_value(Reference.SEQ)
 
     def get_context(self) -> str:
-        return self.get_value("metadata.reference.context", "default")
+        return self.get_value(Reference.CONTEXT, AppKey.DEFAULT)
 
     def get_api_reference(self):
         return {
-            "identifier": self.get_api_identifier(),
-            "subject": self.get_subject(),
-            "stream": self.get_stream(),
-            "seq": self.get_seq(),
-            "context": self.get_context()
+            AppKey.IDENTIFIER: self.get_api_identifier(),
+            AppKey.SUBJECT: self.get_subject(),
+            AppKey.STREAM: self.get_stream(),
+            AppKey.SEQ: self.get_seq(),
+            AppKey.CONTEXT: self.get_context()
         }
 
     def set_event_type(self, event_type):
-        self.set_value("metadata.event_type", event_type)
+        self.set_value(Metadata.EVENT_TYPE, event_type)
 
     def set_command_type(self, command_type):
-        self.set_value("metadata.command_type", command_type)
+        self.set_value(Metadata.COMMAND_TYPE, command_type)
 
     @classmethod
     def create(cls,

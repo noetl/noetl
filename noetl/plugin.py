@@ -5,7 +5,7 @@ from natstream import NatsStreamReference, NatsPool, NatsConfig, Msg
 from aioprometheus import Counter
 from aioprometheus.service import Service
 from loguru import logger
-from payload import Payload, PayloadType
+from payload import Payload, PayloadType, AppKey
 
 
 class Plugin(NatsPool):

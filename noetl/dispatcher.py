@@ -1,5 +1,6 @@
 import asyncio
-from plugin import Plugin, Payload, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
+from plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
+from payload import Payload, AppKey, CommandType, Metadata
 from playbook import Playbook
 
 
@@ -10,17 +11,17 @@ class Dispatcher(Plugin):
                                 nats_reference: NatsStreamReference,
                                 args: Namespace):
         command_payload_data = {
-            "playbook_name": payload_data.get_value("playbook_name"),
-            "playbook_base64": payload_data.get_value("playbook_base64"),
-            "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
-                        {"command_type": "RegisterPlaybook",
-                         "nats_reference": nats_reference.to_dict(),
+            AppKey.PLUGIN_NAME: payload_data.get_value(AppKey.PLAYBOOK_NAME),
+            AppKey.PLAYBOOK_BASE64: payload_data.get_value(AppKey.PLAYBOOK_BASE64),
+            AppKey.METADATA: payload_data.get_value(AppKey.METADATA, exclude=[AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE]) |
+                        {AppKey.COMMAND_TYPE: CommandType.REGISTER_PLAYBOOK,
+                         AppKey.NATS_REFERENCE: nats_reference.to_dict(),
                          },
         }
         await self.publish_command(
             payload_orig=payload_data,
             payload_data=command_payload_data,
-            subject_prefix=f"{args.nats_command_prefix}.registrar",
+            subject_prefix=f"{args.nats_command_prefix}.{AppKey.REGISTRAR}",
             stream=args.nats_subscription_stream)
 
     async def plugin_register(self,
@@ -28,17 +29,17 @@ class Dispatcher(Plugin):
                               nats_reference: NatsStreamReference,
                               args: Namespace):
         command_payload_data = {
-            "plugin_name": payload_data.get_value("plugin_name"),
-            "image_url": payload_data.get_value("image_url"),
-            "metadata": payload_data.get_value("metadata", exclude=["event_type", "command_type"]) |
-                        {"command_type": "RegisterPlugin",
-                         "nats_reference": nats_reference.to_dict(),
+            AppKey.PLUGIN_NAME: payload_data.get_value(AppKey.PLUGIN_NAME),
+            AppKey.IMAGE_URL: payload_data.get_value(AppKey.IMAGE_URL),
+            AppKey.METADATA: payload_data.get_value(AppKey.METADATA, exclude=[AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE]) |
+                        {AppKey.COMMAND_TYPE: CommandType.REGISTER_PLUGIN,
+                         AppKey.NATS_REFERENCE: nats_reference.to_dict(),
                          },
         }
         await self.publish_command(
             payload_orig=payload_data,
             payload_data=command_payload_data,
-            subject_prefix=f"{args.nats_command_prefix}.registrar",
+            subject_prefix=f"{args.nats_command_prefix}.{AppKey.REGISTRAR}",
             stream=args.nats_subscription_stream)
 
     async def run_playbook_register(self,
@@ -47,17 +48,17 @@ class Dispatcher(Plugin):
                                     args: Namespace):
         payload_reference = payload_data.get_reference()
         command_payload_data = {
-            "playbook_name": payload_data.get_value("playbook_name"),
-            "playbook_input": payload_data.get_value("playbook_input", {"input": "NO DATA PROVIDED"}),
-            "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
-                        {"command_type": "RegisterRunPlaybook",
-                         "nats_reference": nats_reference.to_dict(),
-                         "payload_reference": payload_reference},
+            AppKey.PLAYBOOK_NAME: payload_data.get_value(AppKey.PLAYBOOK_NAME),
+            AppKey.PLAYBOOK_INPUT: payload_data.get_value(AppKey.PLAYBOOK_INPUT, {AppKey.INPUT: AppKey.NO_DATA_PROVIDED}),
+            AppKey.METADATA: payload_data.get_value(AppKey.METADATA, exclude=list([AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE])) |
+                        {AppKey.COMMAND_TYPE: CommandType.REGISTER_RUN_PLAYBOOK,
+                         AppKey.NATS_REFERENCE: nats_reference.to_dict(),
+                         AppKey.PAYLOAD_REFERENCE: payload_reference},
         }
         await self.publish_command(
             payload_orig=payload_data,
             payload_data=command_payload_data,
-            subject_prefix=f"{args.nats_command_prefix}.registrar",
+            subject_prefix=f"{args.nats_command_prefix}.{AppKey.REGISTRAR}",
             stream=args.nats_subscription_stream)
 
     async def process_playbook(self,
@@ -65,13 +66,13 @@ class Dispatcher(Plugin):
                                nats_reference: NatsStreamReference,
                                args: Namespace):
         logger.info(nats_reference)
-        playbook_reference = payload_data.get_value("playbook_reference")
+        playbook_reference = payload_data.get_value(AppKey.PLAYBOOK_REFERENCE)
         nats_msg_data = await self.nats_read_subject(playbook_reference)
         playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data, nats_pool=self.nats_pool)
 
         logger.debug(playbook_blueprint)
 
-        match payload_data.get_value("metadata.event_type"):
+        match payload_data.get_value(Metadata.EVENT_TYPE):
             case "PlaybookStarted":
                 logger.info(playbook_blueprint)
             case "PlaybookTaskExecuted":
@@ -89,7 +90,7 @@ class Dispatcher(Plugin):
                      args: Namespace
                      ):
 
-        match payload.get_value("metadata.event_type"):
+        match payload.get_value(Metadata.EVENT_TYPE):
             case "PlaybookRegistrationRequested":
                 await self.playbook_register(
                     payload_data=payload,

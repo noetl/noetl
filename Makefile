@@ -102,8 +102,7 @@ install-nats-tools:
 .PHONY: build-registrar remove-registrar-image rebuild-registrar
 .PHONY: build-all rebuild-all clean
 
-build-all: build-api-base build-api build-dispatcher build-registrar build-http-handler
-rebuild-all: build-api-base build-api-base rebuild-api rebuild-dispatcher rebuild-registrar
+build-all: build-api-base build-api build-plugin-base build-plugin-images
 
 build-cli:
 	@echo "Building CLI image..."
@@ -346,12 +345,6 @@ nats-stream-ls:
 	@nats stream ls -s $(NATS_URL)
 
 #[WORKFLOW COMMANDS]######################################################################
-register-playbook: activate-venv
-    ifeq ($(WORKFLOW),)
-	    @echo "Usage: make register-playbook WORKFLOW=playbooks/time/fetch-world-time.yaml"
-    else
-	    $(PYTHON) noetl/cli.py register playbook $(WORKFLOW)
-    endif
 
 register-plugin: activate-venv
     ifeq ($(PLUGIN_NAME),)
@@ -360,17 +353,32 @@ register-plugin: activate-venv
 	    $(PYTHON) noetl/cli.py register plugin  $(PLUGIN_NAME) $(IMAGE_URL)
     endif
 
+list-plugins: activate-venv
+	$(PYTHON) noetl/cli.py list plugins
+
+describe-plugin: activate-venv
+	$(PYTHON) noetl/cli.py describe plugin $(filter-out $@,$(MAKECMDGOALS))
+
+register-playbook: activate-venv
+    ifeq ($(WORKFLOW),)
+	    @echo "Usage: make register-playbook WORKFLOW=playbooks/time/fetch-world-time.yaml"
+    else
+	    $(PYTHON) noetl/cli.py register playbook $(WORKFLOW)
+    endif
+
 list-playbooks: activate-venv
 	$(PYTHON) noetl/cli.py list playbooks
 
-describe-playbook: activate-venv
+%:
+	@:
+describe-playbook: activate-venv %
 	$(PYTHON) noetl/cli.py describe playbook $(filter-out $@,$(MAKECMDGOALS))
 
 run-playbook-fetch-time-and-notify-slack: activate-venv
 	$(PYTHON) noetl/cli.py run playbook fetch-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","NOTIFICATION_CHANNEL":"$(NOTIFICATION_CHANNEL)"}'
 
 
-.PHONY: register-playbook list-playbooks describe-playbook run-playbook-fetch-time-and-notify-slack
+.PHONY: register-playbook list-playbooks list-plugins describe-playbook describe-plugin run-playbook-fetch-time-and-notify-slack
 
 .PHONY: show-events show-commands
 show-events:

@@ -2,6 +2,7 @@ import sys
 import requests
 import os
 import json
+import yaml
 from loguru import logger
 from keyval import KeyVal
 
@@ -76,8 +77,8 @@ class TokenCommand(KeyVal):
                 """
             case "list_playbooks":
                 return """
-                query Listplaybooks {
-                    listplaybooks
+                query ListPlaybooks {
+                    listPlaybooks
                 }
                 """
             case "list_plugins":
@@ -146,7 +147,7 @@ class TokenCommand(KeyVal):
                             tokens=tokens,
                             handler=handler,
                             variables={
-                                "playbookBase64": cls.base64_str(file.read()),
+                                "playbookBase64": cls.str_base64(file.read()),
                                 "metadata": {"source": "noetl-cli", "handler": handler},
                                 "tokens": tokens
                             }
@@ -235,7 +236,14 @@ def graphql_request(mutation):
     try:
         response = requests.post(API_URL, json=mutation)
         response.raise_for_status()
-        print(json.dumps(response.json(), indent=2))
+        if response.ok:
+            if "describePlaybook" in  response.json().get('data', {}):
+                response_keyval = KeyVal( response.json())
+                print(response_keyval.base64_value("data.describePlaybook.playbook.value"))
+            else:
+                print(json.dumps(response.json(), indent=2))
+        else:
+            print(response)
     except requests.exceptions.RequestException as e:
         logger.error(f"API request error: {e}")
         return None

@@ -12,6 +12,7 @@ COPY ${PRJ_PATH}/docker/plugins/requirements.txt .
 COPY  ${PRJ_PATH}/noetl/plugin.py \
       ${PRJ_PATH}/noetl/keyval.py \
       ${PRJ_PATH}/noetl/payload.py \
+      ${PRJ_PATH}/noetl/appkey.py \
       ${PRJ_PATH}/noetl/natstream.py ./
 
 RUN pip install --no-cache-dir -r requirements.txt

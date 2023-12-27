@@ -31,10 +31,11 @@ class Playbook(Payload):
                 step_id = str(uuid.uuid4())
                 self.set_value(f"{step_path}.id", step_id)
 
-    async def register(self):
-        subject = f"playbook.{self.get_value('spec.id')}.blueprint"
+    async def register(self,subject: str, stream: str):
+        #subject = f"playbook.{self.get_value('spec.id')}"
         await self.event_write(
             message=self.encode(),
+            stream=stream,
             subject=subject
         )
         return f"event.{subject}"
