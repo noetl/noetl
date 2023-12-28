@@ -1,6 +1,6 @@
 import asyncio
 import nats
-from nats.js.api import StreamConfig, PubAck
+from nats.js.api import StreamConfig, PubAck, RawStreamMsg
 from nats.aio.msg import Msg
 from nats.aio.errors import ErrTimeout
 from dataclasses import dataclass, asdict
@@ -223,7 +223,7 @@ class NatsPool:
     async def get_msg(self, stream, sequence):
         async with self.nats_pool.connection() as js:
             try:
-                msg = await js.jetstream().get_msg(stream, sequence)
+                msg = await js.get_msg(stream, int(sequence))
                 return msg
             except Exception as e:
                 logger.error(f"JetStream get message error for stream {stream} sequence {sequence}: {e}")

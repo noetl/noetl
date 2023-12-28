@@ -41,13 +41,13 @@ class TokenCommand(KeyVal):
         match self.handler:
             case "show_events":
                 return """
-                query {
+                query showEvents{
                     showEvents
                 }
                     """
             case "show_commands":
                 return """
-                query {
+                query showCommands{
                     showCommands
                 }
                     """
@@ -65,15 +65,15 @@ class TokenCommand(KeyVal):
                         """
             case "register_plugin":
                 return """
-                mutation RegisterPlugin($pluginName: String!, $imageUrl: String!, $metadata: JSON, $tokens: String) {
-                  registerPlugin(pluginName: $pluginName, imageUrl: $imageUrl, metadata: $metadata, tokens: $tokens) {
-                    reference 
-                    name
-                    eventType
-                    status
-                    message
-                  }
-                }
+                        mutation RegisterPlugin($registrationInput: PluginRegistrationInput!) {
+                          registerPlugin(registrationInput: $registrationInput) {
+                            reference 
+                            name
+                            eventType
+                            status
+                            message
+                          }
+                        }
                 """
             case "list_playbooks":
                 return """
@@ -105,20 +105,20 @@ class TokenCommand(KeyVal):
                 """
             case "describe_playbook":
                 return """
-                query DescribePlaybook($playbookName: String!) {
-                    describePlaybook(playbookName: $playbookName)
+                query DescribePlaybook($playbookInput: DescribePlaybookInput!) {
+                  describePlaybook(playbookInput: $playbookInput)
                 }
                 """
             case "describe_plugin":
                 return """
-                query DescribePlugin($pluginName: String!) {
-                    describePlugin(pluginName: $pluginName)
+                query DescribePlugin($pluginInput: DescribePluginInput!) {
+                  describePlugin(pluginInput: $pluginInput)
                 }
                 """
             case "run_playbook":
                 return """
-                query RunPlaybook($playbookName: String!, $playbookInput: JSON) {
-                    runPlaybook(playbookName: $playbookName, playbookInput: $playbookInput){
+                query RunPlaybook($runPlaybookInput: RunPlaybookInput!) {
+                  runPlaybook(runPlaybookInput: $runPlaybookInput) {
                     reference
                     name
                     eventType
@@ -157,10 +157,12 @@ class TokenCommand(KeyVal):
                         return cls(
                             tokens=tokens,
                             handler=handler,
-                            variables={
-                                "pluginName": args[0], "imageUrl": args[1],
-                                "metadata": {"source": "noetl-cli", "handler": handler},
-                                "tokens": tokens
+                            variables={"registrationInput":
+                                {
+                                    "pluginName": args[0], "imageUrl": args[1],
+                                    "metadata": {"source": "noetl-cli", "handler": handler},
+                                    "tokens": tokens
+                                }
                             }
                         )
                 case "list_playbooks":
@@ -176,7 +178,7 @@ class TokenCommand(KeyVal):
                 case "describe_playbook":
                     if len(args) == 1:
                         return cls(
-                            variables={"playbookName": args[0]},
+                            variables={"playbookInput": {"playbookName": args[0]}},
                             tokens="describe playbook",
                             handler="describe_playbook"
                         )
@@ -189,10 +191,11 @@ class TokenCommand(KeyVal):
                             raise ValueError("Invalid JSON for playbookInput")
 
                         return cls(
-                            variables={
-                                "playbookName": args[0],
-                                "playbookInput": playbook_input_json
-                            },
+                            variables={"runPlaybookInput":
+                                           {"playbookName": args[0],
+                                            "input": playbook_input_json
+                                            }
+                                       },
                             tokens="run playbook",
                             handler="run_playbook"
                         )
@@ -201,7 +204,7 @@ class TokenCommand(KeyVal):
                 case "describe_plugin":
                     if len(args) == 1:
                         return cls(
-                            variables={"pluginName": args[0]},
+                            variables={"pluginInput": {"pluginName": args[0]}},
                             tokens="describe plugin",
                             handler="describe_plugin"
                         )
@@ -237,8 +240,8 @@ def graphql_request(mutation):
         response = requests.post(API_URL, json=mutation)
         response.raise_for_status()
         if response.ok:
-            if "describePlaybook" in  response.json().get('data', {}):
-                response_keyval = KeyVal( response.json())
+            if "describePlaybook" in response.json().get('data', {}):
+                response_keyval = KeyVal(response.json())
                 print(response_keyval.base64_value("data.describePlaybook.playbook.value"))
             else:
                 print(json.dumps(response.json(), indent=2))

@@ -52,6 +52,8 @@ class AppKey:
 class Metadata:
     METADATA = AppKey.METADATA
     REFERENCE = f"{METADATA}.{AppKey.REFERENCE}"
+    REVISION_NUMBER = f"{METADATA}.{AppKey.REVISION_NUMBER}"
+    TOKENS = f"{METADATA}.{AppKey.TOKENS}"
     PLAYBOOK_NAME = f"{METADATA}.{AppKey.PLAYBOOK_NAME}"
     EVENT_TYPE = f"{METADATA}.{AppKey.EVENT_TYPE}"
     COMMAND_TYPE = f"{METADATA}.{AppKey.COMMAND_TYPE}"
@@ -90,3 +92,11 @@ class CommandType:
     REGISTER_PLAYBOOK = "RegisterPlaybook"
     REGISTER_PLUGIN = "RegisterPlugin"
     REGISTER_RUN_PLAYBOOK = "RegisterRunPlaybook"
+
+
+class Spec:
+    SPEC_ID = "spec.id"
+    SPEC_REFERENCE = "spec.reference"
+    SPEC_REFERENCE_SEQ = "spec.reference.seq"
+    SPEC_REFERENCE_STREAM = "spec.reference.stream"
+    SPEC_INPUT = "spec.input"

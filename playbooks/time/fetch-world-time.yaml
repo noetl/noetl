@@ -10,6 +10,7 @@ spec:
     FETCH_TIME_TASK: "fetch-time"
     NOTIFY_TASK: "send-notification"
   timeout: 120
+  input: {}
   initialSettings:
     start: [fetch-time:{input: 1}, fetch-time:{input: 2}]
     state: ready

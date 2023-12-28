@@ -1,0 +1,44 @@
+query showEvents {
+  showEvents
+}
+
+query showCommands {
+  showCommands
+}
+
+mutation RegisterPlugin($registrationInput: PluginRegistrationInput!) {
+  registerPlugin(registrationInput: $registrationInput) {
+    reference
+    name
+    eventType
+    status
+    message
+  }
+}
+
+query DescribePlugin($pluginInput: DescribePluginInput!) {
+  describePlugin(pluginInput: $pluginInput)
+}
+
+query ListPlugins {
+  listPlugins
+}
+
+query ListPlaybooks {
+  listPlaybooks
+}
+
+query DescribePlaybook($playbookInput: DescribePlaybookInput!) {
+  describePlaybook(playbookInput: $playbookInput)
+}
+
+
+query RunPlaybook($runPlaybookInput: RunPlaybookInput!) {
+  runPlaybook(runPlaybookInput: $runPlaybookInput) {
+    reference
+    name
+    eventType
+    status
+    message
+  }
+}

@@ -1,6 +1,6 @@
 import asyncio
 from plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
-from payload import Payload, AppKey, CommandType, Metadata
+from payload import Payload, AppKey, CommandType, Metadata, RawStreamMsg
 from playbook import Playbook
 
 
@@ -49,7 +49,7 @@ class Dispatcher(Plugin):
         payload_reference = payload_data.get_reference()
         command_payload_data = {
             AppKey.PLAYBOOK_NAME: payload_data.get_value(AppKey.PLAYBOOK_NAME),
-            AppKey.PLAYBOOK_INPUT: payload_data.get_value(AppKey.PLAYBOOK_INPUT, {AppKey.INPUT: AppKey.NO_DATA_PROVIDED}),
+            AppKey.PLAYBOOK_INPUT: payload_data.get_value(path=AppKey.PLAYBOOK_INPUT, default={AppKey.INPUT: AppKey.NO_DATA_PROVIDED}),
             AppKey.METADATA: payload_data.get_value(AppKey.METADATA, exclude=list([AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE])) |
                         {AppKey.COMMAND_TYPE: CommandType.REGISTER_RUN_PLAYBOOK,
                          AppKey.NATS_REFERENCE: nats_reference.to_dict(),
@@ -66,10 +66,10 @@ class Dispatcher(Plugin):
                                nats_reference: NatsStreamReference,
                                args: Namespace):
         logger.info(nats_reference)
-        playbook_reference = payload_data.get_value(AppKey.PLAYBOOK_REFERENCE)
-        nats_msg_data = await self.nats_read_subject(playbook_reference)
-        playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data, nats_pool=self.nats_pool)
-
+        playbook_reference = payload_data.get_keyval(path=AppKey.PLAYBOOK_REFERENCE)
+        nats_msg_data: RawStreamMsg = await self.get_msg(stream=playbook_reference.get_value("stream"), sequence=playbook_reference.get_value("seq"))
+        logger.debug(nats_msg_data.as_dict())
+        playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data.data, nats_pool=self.nats_pool)
         logger.debug(playbook_blueprint)
 
         match payload_data.get_value(Metadata.EVENT_TYPE):

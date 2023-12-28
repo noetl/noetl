@@ -319,7 +319,7 @@ redeploy-plugins-locally: build-plugin-images delete-plugins-local-deploy deploy
 
 
 #[NATS]#######################################################################
-.PHONY: nats-create-noetl nats-delete-noetl nats-reset-noetl nats-purge-noetl nats-stream-ls
+.PHONY: nats-create-noetl nats-delete-noetl nats-reset-noetl purge-noetl stream-ls
 
 nats-create-noetl:
 	@echo "Creating NATS noetl stream"
@@ -336,12 +336,12 @@ nats-delete-noetl:
 nats-reset-noetl: nats-delete-noetl nats-create-noetl
 	@echo "Reset NATS noetl stream in Kubernetes"
 
-nats-purge-noetl:
+purge-noetl:
 	@echo "Purged NATS noetl stream"
 	@nats stream purge noetl --force -s $(NATS_URL)
-	@make nats-stream-ls
+	@make stream-ls
 
-nats-stream-ls:
+stream-ls:
 	@nats stream ls -s $(NATS_URL)
 
 #[WORKFLOW COMMANDS]######################################################################

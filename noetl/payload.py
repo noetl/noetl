@@ -2,8 +2,8 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from keyval import KeyVal
-from appkey import AppKey, Metadata, Reference, EventType, CommandType
-from natstream import NatsPool, NatsConnectionPool, NatsConfig, ErrTimeout, PubAck
+from appkey import AppKey, Metadata, Reference, EventType, CommandType, Spec
+from natstream import NatsPool, NatsConnectionPool, NatsConfig, ErrTimeout, PubAck, RawStreamMsg
 
 
 class PayloadType(Enum):
