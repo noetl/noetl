@@ -21,33 +21,38 @@ class PayloadType(Enum):
 class Payload(KeyVal, NatsPool):
     """A class representing a payload.
 
-    The Payload class is used for handling payloads. It inherits from the KeyVal and NatsPool classes.
+    The Payload class is used for handling payloads and inherits from the KeyVal and NatsPool classes.
 
     Args:
-        *args: Variable length argument list.
+        *args: List of Arguments.
         nats_pool (NatsConnectionPool | NatsConfig, optional): An instance of NatsConnectionPool or NatsConfig class.
         **kwargs: Arbitrary keyword arguments.
     """
 
-    def __init__(self, *args, nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
+    def __init__(self,
+                 *args,
+                 nats_pool: NatsConnectionPool | NatsConfig = None,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         if nats_pool:
             self.initialize_nats_pool(nats_pool)
 
-    def set_reference(self, timestamp=None, subject=None, origin_id=None, previous_id=None,
-                      stream=None, seq=None, context=None):
-        if subject:
-            self.set_value(Reference.SUBJECT, subject)
-        self.set_value(Reference.TIMESTAMP, timestamp if timestamp else str(int(datetime.now().timestamp() * 1000)))
-        self.set_value(Reference.CURRENT_ID,str(uuid.uuid4()))
-        self.set_value(Reference.PREVIOUS_ID, previous_id if previous_id else self.get_value(Reference.CURRENT_ID))
-        self.set_value(Reference.ORIGIN_ID, origin_id if origin_id else self.get_value(Reference.CURRENT_ID))
-        if stream:
-            self.set_value(Reference.STREAM, stream)
-        if seq:
-            self.set_value(Reference.SEQ, seq)
-        if context:
-            self.set_value(Reference.CONTEXT, context)
+    def set_reference(self,
+                      timestamp=None,
+                      subject=None,
+                      origin_id=None,
+                      previous_id=None,
+                      stream=None,
+                      seq=None,
+                      context=None):
+        self.set_subject(subject)
+        self.set_timestamp(timestamp)
+        self.set_current_id()
+        self.set_previous_id(previous_id)
+        self.set_origin_id(origin_id)
+        self.set_stream(stream)
+        self.set_seq(seq)
+        self.set_context(context)
 
     def get_reference(self):
         return self.get_keyval(Metadata.REFERENCE)
@@ -109,6 +114,34 @@ class Payload(KeyVal, NatsPool):
 
     def set_command_type(self, command_type):
         self.set_value(Metadata.COMMAND_TYPE, command_type)
+
+    def set_subject(self, subject: str = None):
+        if subject:
+            self.set_value(Reference.SUBJECT, subject)
+
+    def set_timestamp(self, timestamp: str = None):
+        self.set_value(Reference.TIMESTAMP, timestamp if timestamp else str(int(datetime.now().timestamp() * 1000)))
+
+    def set_current_id(self):
+        self.set_value(Reference.CURRENT_ID, str(uuid.uuid4()))
+
+    def set_previous_id(self, previous_id: str = None):
+        self.set_value(Reference.PREVIOUS_ID, previous_id if previous_id else self.get_current_id())
+
+    def set_origin_id(self, origin_id: str = None):
+        self.set_value(Reference.ORIGIN_ID, origin_id if origin_id else self.get_current_id())
+
+    def set_stream(self, stream=None):
+        if stream:
+            self.set_value(Reference.STREAM, stream)
+
+    def set_seq(self, seq: str | int = None):
+        if seq:
+            self.set_value(Reference.SEQ, seq)
+
+    def set_context(self, context: str | dict = None):
+        if context:
+            self.set_value(Reference.CONTEXT, context)
 
     @classmethod
     def create(cls,

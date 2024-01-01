@@ -66,7 +66,7 @@ class AppConfig(BaseContext):
         parser.add_argument("--nats_pool_size", type=int, default=int(os.getenv("NATS_POOL_SIZE", 10)),
                             help="NATS max pool size (default: 10)")
         parser.add_argument("--nats_subscription_subject",
-                            default=os.getenv('NATS_SUBSCRIPTION_SUBJECT', "noetl.>"),
+                            default=os.getenv('NATS_SUBSCRIPTION_SUBJECT', "noetl"),
                             help="NATS subject for subscription")
         parser.add_argument("--nats_subscription_stream",
                             default=os.getenv('NATS_SUBSCRIPTION_STREAM', "noetl"),

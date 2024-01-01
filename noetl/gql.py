@@ -86,22 +86,6 @@ class ResponseMessage:
     message: JSON
 
 
-# @strawberry.type
-# class Reference:
-#     timestamp: str
-#     identifier: str
-#     reference: str
-#     origin: str
-#     subject: str
-#     stream: str
-#     seq: str
-#     playbook: str | None = None
-#     task: str | None = None
-#     step: str | None = None
-#     domain: str | None = None
-#     duplicate: str | None = None
-
-
 @strawberry.type
 class RegistrationResponse:
     reference: JSON | None = None
@@ -125,23 +109,6 @@ class RegistrationResponse:
 class PlaybookMutations:
     """
     GraphQL Mutations for NoETL Playbooks.
-
-    registerPlaybook Example:
-    ```
-    mutation {
-      registerPlaybook(
-        tokens: "register Playbook",
-        metadata: {"source": "noetl-cli", "handler": "register_Playbook"},
-        Playbook_base64: "Base64 encoded string of Playbook template YAML"
-      ) {
-            reference
-            name
-            eventType
-            status
-            message
-      }
-    }
-    ```
     """
 
     @strawberry.mutation
@@ -151,7 +118,8 @@ class PlaybookMutations:
                                 metadata: JSON | None = strawberry.UNSET,
                                 tokens: str | None = strawberry.UNSET,
                                 ) -> RegistrationResponse:
-        logger.debug(f"{AppKey.TOKENS}: {tokens}, {AppKey.METADATA}: {metadata}, {AppKey.PLAYBOOK_BASE64}: {playbook_base64}")
+        logger.debug(
+            f"{AppKey.TOKENS}: {tokens}, {AppKey.METADATA}: {metadata}, {AppKey.PLAYBOOK_BASE64}: {playbook_base64}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
             raise ValueError("NatsPool is not initialized")
@@ -174,7 +142,7 @@ class PlaybookMutations:
                     event_type=event_type,
                     nats_pool=pool
                 )
-                subject=f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"
+                subject = f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"
                 nats_payload.set_value(Reference.SUBJECT, subject)
                 ack: PubAck = await nats_payload.event_write(
                     subject=subject,
@@ -219,7 +187,6 @@ class PlaybookQueries:
             logger.error(f"Error listing playbooks: {e}")
             return {"error": str(e)}
 
-
     @strawberry.input(
         name="DescribePlaybookInput",
         description="Describes playbook by name and optionally by revision")
@@ -230,7 +197,7 @@ class PlaybookQueries:
         tokens: str | None = strawberry.UNSET
 
     @strawberry.field
-    async def describe_playbook(self, playbook_input: DescribePlaybook)  -> JSON:
+    async def describe_playbook(self, playbook_input: DescribePlaybook) -> JSON:
         """
         Retrieves details of a playbook by playbook name.
         """
@@ -294,7 +261,7 @@ class PlaybookQueries:
                 message=nats_payload.encode()
             )
             registration_response = RegistrationResponse(
-                reference = nats_payload.get_api_reference() | ack.as_dict(),
+                reference=nats_payload.get_api_reference() | ack.as_dict(),
                 kind="Playbook",
                 name=nats_payload.get_value(AppKey.PLAYBOOK_NAME),
                 event_type=nats_payload.get_value(Metadata.EVENT_TYPE),
@@ -311,7 +278,6 @@ class PlaybookQueries:
 
 @strawberry.type
 class PluginMutations:
-
     @strawberry.input(
         name="PluginRegistrationInput",
         description="Register plugin by name and image reference parameters")
@@ -348,11 +314,12 @@ class PluginMutations:
                     nats_pool=pool
                 )
                 if registration_input.metadata is not strawberry.UNSET:
-                    nats_payload.set_value(AppKey.METADATA, nats_payload.get_value(AppKey.METADATA) | registration_input.metadata)
+                    nats_payload.set_value(AppKey.METADATA,
+                                           nats_payload.get_value(AppKey.METADATA) | registration_input.metadata)
                 if registration_input.tokens is not strawberry.UNSET:
                     nats_payload.set_value(Metadata.TOKENS, registration_input.tokens)
 
-                subject=f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"
+                subject = f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"
                 nats_payload.set_value(Reference.SUBJECT, subject)
                 ack: PubAck = await nats_payload.event_write(
                     subject=subject,
@@ -405,6 +372,7 @@ class PluginQueries:
     class DescribePlugin:
         plugin_name: str
         revision: str | None = strawberry.UNSET
+
     @strawberry.field
     async def describe_plugin(self, plugin_input: DescribePlugin) -> JSON:
         """
@@ -430,29 +398,58 @@ class Mutations(PlaybookMutations, PluginMutations):
 @strawberry.type
 class Queries(PlaybookQueries, PluginQueries):
 
-    @strawberry.field
-    async def show_events(self, info: Info) -> JSON:
-        """
-        Retrieves messages from the Events NATS stream.
-        """
-        logger.debug(f"Self in show_events: {self}")
-        stream = info.context.nats_event_stream,
-        return await read_nats_stream(
-            stream=info.context.nats_event_stream,
-            subject=f"{info.context.nats_event_prefix}.>")
+    @strawberry.input(
+        name="Instance",
+        description="Shows events and commands, optionally by ID")
+    class Instance:
+        id: str | None = strawberry.UNSET
+
+        def get_subject(self, subject_prefix: str, hierarchy_level: int = 1):
+            if self.id not in [None, strawberry.UNSET, ""]:
+                subject= f"{'.'.join([subject_prefix] + ['*'] * hierarchy_level + [self.id])}"
+            else:
+                subject=f"{subject_prefix}.>"
+            logger.debug(subject)
+            return subject
 
     @strawberry.field
-    async def show_commands(self, info: Info) -> JSON:
+    async def show_events(self, instance: Instance, info: Info) -> JSON:
         """
-        Retrieves messages from the Commands NATS stream.
+        Retrieves Events from NATS stream.
         """
-        logger.debug(f"Self in show_commands: {self}")
+        logger.debug(f"Info in show_events: {info}")
+
         return await read_nats_stream(
-            stream=info.context.nats_command_stream,
-            subject=f"{info.context.nats_command_prefix}.>")
+            stream=info.context.nats_event_stream,
+            subject=instance.get_subject(subject_prefix=info.context.nats_event_prefix))
+
+    @strawberry.field
+    async def show_commands(self, instance: Instance, info: Info) -> JSON:
+        """
+        Retrieves Commands from NATS stream.
+        """
+        logger.debug(f"Info in show_commands: {info}")
+        return await read_nats_stream(
+            stream=info.context.nats_event_stream,
+            subject=instance.get_subject(subject_prefix=info.context.nats_command_prefix))
+
+    @strawberry.field
+    async def show_all(self, instance: Instance, info: Info) -> JSON:
+        """
+        Retrieves Commands from NATS stream.
+        """
+        subject_prefix = info.context.nats_subscription_subject
+        stream=info.context.nats_subscription_stream
+        logger.debug(f"Show All subject_prefix: {subject_prefix}, stream: {stream} Info: {info}")
+        return await read_nats_stream(
+            stream=stream,
+            subject=instance.get_subject(subject_prefix=subject_prefix, hierarchy_level=2))
 
 
 async def read_nats_stream(stream: str, subject: str):
+    """
+    Retrieves Messages from NATS subject's stream.
+    """
     messages = []
 
     async def message_handler(msg):
@@ -477,7 +474,7 @@ async def read_nats_stream(stream: str, subject: str):
             )
             await asyncio.sleep(1)
             response_data = {stream: messages}
-            logger.info(response_data)
+            logger.debug(response_data)
             return response_data
 
     except ErrTimeout:

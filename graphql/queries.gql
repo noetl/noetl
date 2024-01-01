@@ -1,9 +1,13 @@
-query showEvents {
-  showEvents
+query ShowEvents($instance: Instance!) {
+  showEvents(instance: $instance)
 }
 
-query showCommands {
-  showCommands
+query ShowCommands($instance: Instance!) {
+  showCommands(instance: $instance)
+}
+
+query ShowAll($instance: Instance!) {
+  showAll(instance: $instance)
 }
 
 mutation RegisterPlugin($registrationInput: PluginRegistrationInput!) {
