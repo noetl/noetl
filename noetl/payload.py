@@ -37,23 +37,9 @@ class Payload(KeyVal, NatsPool):
         if nats_pool:
             self.initialize_nats_pool(nats_pool)
 
-    def set_reference(self,
-                      timestamp=None,
-                      subject=None,
-                      origin_id=None,
-                      previous_id=None,
-                      stream=None,
-                      seq=None,
-                      context=None):
-        self.set_subject(subject)
-        self.set_timestamp(timestamp)
-        self.set_current_id()
-        self.set_previous_id(previous_id)
-        self.set_origin_id(origin_id)
-        self.set_stream(stream)
-        self.set_seq(seq)
-        self.set_context(context)
-
+    def set_nats_pool(self, nats_pool: NatsConnectionPool | NatsConfig):
+        if nats_pool:
+            self.initialize_nats_pool(nats_pool)
     def get_reference(self):
         return self.get_keyval(Metadata.REFERENCE)
 
@@ -109,11 +95,27 @@ class Payload(KeyVal, NatsPool):
             AppKey.CONTEXT: self.get_context()
         }
 
-    def set_event_type(self, event_type):
-        self.set_value(Metadata.EVENT_TYPE, event_type)
+    def set_reference(self,
+                      timestamp=None,
+                      subject=None,
+                      origin_id=None,
+                      previous_id=None,
+                      stream=None,
+                      seq=None,
+                      context=None):
+        self.set_subject(subject)
+        self.set_timestamp(timestamp)
+        self.set_current_id()
+        self.set_previous_id(previous_id)
+        self.set_origin_id(origin_id)
+        self.set_stream(stream)
+        self.set_seq(seq)
+        self.set_context(context)
 
-    def set_command_type(self, command_type):
-        self.set_value(Metadata.COMMAND_TYPE, command_type)
+    def update_reference(self):
+        self.set_previous_id()
+        self.set_current_id()
+        self.get_timestamp()
 
     def set_subject(self, subject: str = None):
         if subject:
@@ -143,6 +145,54 @@ class Payload(KeyVal, NatsPool):
         if context:
             self.set_value(Reference.CONTEXT, context)
 
+    def set_metadata(self, metadata: dict, exclude: list[str] = None):
+        metadata = self.get_value(AppKey.METADATA, exclude=exclude) | metadata
+        self.set_value(AppKey.METADATA, metadata)
+
+    def set_event_type(self, event_type):
+        self.set_metadata(metadata={AppKey.EVENT_TYPE: event_type}, exclude=[AppKey.COMMAND_TYPE, AppKey.EVENT_TYPE])
+
+    def set_command_type(self, command_type):
+        self.set_metadata(metadata={AppKey.COMMAND_TYPE: command_type},
+                          exclude=[AppKey.COMMAND_TYPE, AppKey.EVENT_TYPE])
+
+    async def snapshot_playbook(self, nats_reference: dict):
+        playbook_name = self.get_value(AppKey.PLAYBOOK_NAME, default=AppKey.VALUE_NOT_FOUND)
+        if playbook_name not in [AppKey.VALUE_NOT_FOUND, None]:
+            kv_payload = Payload.decode(await self.playbook_get(playbook_name))
+            playbook_template = kv_payload.yaml_value(AppKey.VALUE)
+            if playbook_template == AppKey.VALUE_NOT_FOUND:
+                self.set_value(AppKey.ERROR, f"Playbook template {playbook_name} was not found")
+                self.set_event_type(event_type=EventType.PLAYBOOK_EXECUTION_REQUEST_FAILED)
+            else:
+                self.set_value(AppKey.BLUEPRINT, playbook_template)
+                self.set_value(AppKey.BLUEPRINT_SPEC_INPUT, self.get_value(AppKey.PLAYBOOK_INPUT))
+                self.set_value(AppKey.BLUEPRINT_NATS_KV_METADATA, kv_payload.get_value(AppKey.METADATA,
+                                                                                  default=AppKey.METADATA_NOT_FOUND))
+                self.set_metadata({AppKey.NATS_REFERENCE: nats_reference})
+                self.set_event_type(event_type=EventType.PLAYBOOK_EXECUTION_REGISTERED)
+        self.update_reference()
+
+    async def plugin_bucket_create(self):
+        await self.nats_pool.bucket_create(bucket_name=AppKey.PLUGINS)
+
+    async def plugin_bucket_delete(self):
+        await self.nats_pool.bucket_delete(bucket_name=AppKey.PLUGINS)
+
+    async def plugin_put(self, key: str = None, value: bytes = None):
+        revision = 0
+        plugin_name = key or self.get_value(AppKey.PLUGIN_NAME)
+        plugin_url = value or self.get_value(AppKey.IMAGE_URL).encode()
+        if plugin_name and plugin_url:
+            revision = await self.nats_pool.kv_put(bucket_name=AppKey.PLUGINS, key=plugin_name, value=plugin_url)
+        self.set_event_type(event_type=EventType.PLUGIN_REGISTERED)
+        self.set_value(AppKey.REVISION_NUMBER, revision)
+
+    async def plugin_get(self, key: str):
+        return await self.nats_pool.kv_get(bucket_name=AppKey.PLUGINS, key=key)
+
+    async def plugin_delete(self, key: str):
+        await self.nats_pool.kv_delete(bucket_name=AppKey.PLUGINS, key=key)
     @classmethod
     def create(cls,
                payload_data,

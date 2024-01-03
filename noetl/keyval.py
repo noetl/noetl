@@ -67,9 +67,9 @@ class KeyVal(dict):
             raise TypeError(f"Expected string at '{path}', got {type(base64_value).__name__}")
         return KeyVal.str_base64(base64_value)
 
-    def encode(self):
-        json_representation = self.to_json()
-        return base64.b64encode(json_representation)
+    def encode(self, keys=None):
+        return base64.b64encode(
+            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self}).encode(AppKey.UTF_8))
 
     def base64_value(self, path: str = AppKey.VALUE):
         value = self.get_value(path=path, default=AppKey.VALUE_NOT_FOUND)
@@ -81,9 +81,7 @@ class KeyVal(dict):
 
     def yaml_value(self, path: str = AppKey.VALUE):
         value = self.get_value(path=path, default=AppKey.VALUE_NOT_FOUND)
-        if value is None or value == AppKey.VALUE_NOT_FOUND:
-            raise ValueError(f"No value found for key {path}")
-        elif isinstance(value, str):
+        if isinstance(value, str) and value not in [AppKey.VALUE_NOT_FOUND, None]:
             return self.base64_yaml(value)
         return value
 

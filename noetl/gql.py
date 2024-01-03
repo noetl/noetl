@@ -100,7 +100,7 @@ class RegistrationResponse:
             "reference": self.reference,
             "kind": self.kind,
             "name": self.name,
-            "event_type": self.event_type,
+            "eventType": self.event_type,
             "status": self.status,
             "message": self.message}
 
@@ -236,21 +236,19 @@ class PlaybookQueries:
             raise ValueError("NatsPool is not initialized")
         try:
             event_type = EventType.PLAYBOOK_EXECUTION_REQUESTED
-            metadata = run_playbook_input.metadata if run_playbook_input.metadata is not strawberry.UNSET else {}
-            revision = {AppKey.REVISION_NUMBER: run_playbook_input.revision} or {}
             nats_payload = Payload.create(
                 payload_data={AppKey.PLAYBOOK_NAME: run_playbook_input.playbook_name},
                 event_type=event_type,
                 nats_pool=pool
             )
-            if run_playbook_input.input is not strawberry.UNSET:
+            if run_playbook_input.input not in [strawberry.UNSET, None]:
                 nats_payload.set_value(AppKey.PLAYBOOK_INPUT, run_playbook_input.input)
-            if run_playbook_input.metadata is not strawberry.UNSET:
+            if run_playbook_input.metadata not in [strawberry.UNSET, None]:
                 nats_payload.set_value(AppKey.METADATA,
-                                       nats_payload.get_value(AppKey.METADATA) | run_playbook_input.metadata)
-            if run_playbook_input.tokens is not strawberry.UNSET:
+                                       nats_payload.get_value(AppKey.METADATA) |  run_playbook_input.metadata)
+            if run_playbook_input.tokens not in [strawberry.UNSET, None]:
                 nats_payload.set_value(Metadata.TOKENS, run_playbook_input.tokens)
-            if run_playbook_input.revision is not strawberry.UNSET:
+            if run_playbook_input.revision not in [strawberry.UNSET, None]:
                 nats_payload.set_value(Metadata.REVISION_NUMBER, run_playbook_input.revision)
 
             subject = f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"

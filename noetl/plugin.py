@@ -67,6 +67,7 @@ class Plugin(NatsPool):
                              args: Namespace,
                              msg: Msg):
         payload = Payload.decode(msg.data)
+        payload.set_nats_pool(nats_pool=self.nats_pool)
         nats_reference = NatsStreamReference(
             nats_msg_metadata=msg.metadata,
             nats_msg_subject=msg.subject,

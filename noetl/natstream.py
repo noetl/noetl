@@ -223,7 +223,7 @@ class NatsPool:
     async def get_msg(self, stream, sequence):
         async with self.nats_pool.connection() as js:
             try:
-                msg = await js.get_msg(stream, int(sequence))
+                msg = await js.get_msg(stream, sequence)
                 return msg
             except Exception as e:
                 logger.error(f"JetStream get message error for stream {stream} sequence {sequence}: {e}")
@@ -290,20 +290,7 @@ class NatsPool:
     async def playbook_delete(self, key: str):
         await self.nats_pool.kv_delete(bucket_name="playbooks", key=key)
 
-    async def plugin_bucket_create(self):
-        await self.nats_pool.bucket_create(bucket_name="plugins")
 
-    async def plugin_bucket_delete(self):
-        await self.nats_pool.bucket_delete(bucket_name="plugins")
-
-    async def plugin_put(self, key: str, value: bytes):
-        return await self.nats_pool.kv_put(bucket_name="plugins", key=key, value=value)
-
-    async def plugin_get(self, key: str):
-        return await self.nats_pool.kv_get(bucket_name="plugins", key=key)
-
-    async def plugin_delete(self, key: str):
-        await self.nats_pool.kv_delete(bucket_name="plugins", key=key)
 
 
 if __name__ == "__main__":
