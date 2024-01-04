@@ -68,19 +68,19 @@ class Plugin(NatsPool):
                              msg: Msg):
         payload = Payload.decode(msg.data)
         payload.set_nats_pool(nats_pool=self.nats_pool)
-        nats_reference = NatsStreamReference(
+        payload.info = vars(args)
+        payload.nats_reference = NatsStreamReference(
             nats_msg_metadata=msg.metadata,
             nats_msg_subject=msg.subject,
             nats_msg_headers=msg.headers,
             nats_msg_reply=msg.reply
         )
-        logger.debug(f"payload: {payload}, nats_reference: {nats_reference}")
-        _ = await self.switch(payload=payload, nats_reference=nats_reference, args=args)
+        logger.debug(f"payload: {payload}")
+        _ = await self.switch(payload=payload) #, nats_reference=nats_reference, args=args)
 
-    async def switch(self,
-                     payload: Payload,
-                     nats_reference: NatsStreamReference,
-                     args: Namespace):
+    async def switch(self, payload: Payload):
+                     # nats_reference: NatsStreamReference,
+                     # args: Namespace):
         raise NotImplementedError("Plugin subclass must implement switch method")
 
     async def run(self, args):

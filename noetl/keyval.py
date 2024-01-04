@@ -1,13 +1,23 @@
 import base64
 import yaml
 import json
-from appkey import AppKey, Metadata, Reference, EventType, CommandType
-
+from appkey import AppKey
+from argparse import Namespace
 
 
 class KeyVal(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._info: any = None
+
+    @property
+    def info(self):
+        return self._info
+
+    @info.setter
+    def info(self, value: any):
+        self._info = value
+
 
     def get_keys(self, path=None) -> list:
         paths = []
@@ -19,18 +29,32 @@ class KeyVal(dict):
         return paths
 
     def get_value(self, path: str = None, default: any = None, exclude: list[str] = None):
+        exclude = exclude if exclude else []
+
+        def to_dict(obj):
+            if isinstance(obj, dict):
+                return {k: to_dict(v) for k, v in obj.items() if k not in exclude}
+            elif isinstance(obj, list):
+                return [to_dict(v) for v in obj]
+            else:
+                return obj
+
         if path is None:
-            return self
+            value = to_dict(self)
+            return value
+
         try:
             value = self
             for key in path.split("."):
-                if not isinstance(value, dict):
-                    raise TypeError(f"Value for '{key}' is not a dict.")
-                value = value.get(key)
+                if isinstance(value, dict):
+                    value = value.get(key)
+                elif hasattr(value, key):
+                    value = getattr(value, key)
+                else:
+                    raise TypeError(f"Value for '{key}' is not a dict or does not have attribute '{key}'")
+                value = to_dict(value)
                 if value is None:
                     return default
-            if exclude and isinstance(value, dict):
-                return {key: val for key, val in value.items() if key not in exclude}
             return value
         except Exception as e:
             raise ValueError(f"Error getting value for '{path}': {e}")
@@ -55,7 +79,7 @@ class KeyVal(dict):
 
     def to_json(self):
         try:
-            return json.dumps(self).encode(AppKey.UTF_8)
+            return json.dumps(self.get_value()).encode(AppKey.UTF_8)
         except (TypeError, ValueError) as e:
             raise ValueError(f"Error converting to JSON: {e}")
 
@@ -69,7 +93,7 @@ class KeyVal(dict):
 
     def encode(self, keys=None):
         return base64.b64encode(
-            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self}).encode(AppKey.UTF_8))
+            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self.get_value()}).encode(AppKey.UTF_8))
 
     def base64_value(self, path: str = AppKey.VALUE):
         value = self.get_value(path=path, default=AppKey.VALUE_NOT_FOUND)
@@ -86,7 +110,7 @@ class KeyVal(dict):
         return value
 
     def yaml_value_dump(self, path: str = AppKey.VALUE):
-        return self.yaml_dump(self.yaml_value(path = path))
+        return self.yaml_dump(self.yaml_value(path=path))
 
     @classmethod
     def decode(cls, encoded_payload):

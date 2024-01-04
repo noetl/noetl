@@ -242,7 +242,7 @@ def graphql_request(mutation):
         if response.ok:
             if "describePlaybook" in response.json().get('data', {}):
                 response_keyval = KeyVal(response.json())
-                print(response_keyval.base64_value("data.describePlaybook.playbook.value"))
+                print(response_keyval.base64_value("data.describePlaybook.playbook.playbookBase64"))
             else:
                 print(json.dumps(response.json(), indent=2))
         else:

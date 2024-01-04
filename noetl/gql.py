@@ -8,6 +8,22 @@ from strawberry.scalars import JSON
 from strawberry.types import Info
 from payload import Payload, NatsConnectionPool, ErrTimeout, PubAck, AppKey, Metadata, Reference, EventType, CommandType
 
+METADATA=AppKey.METADATA
+PLAYBOOK_NAME=AppKey.PLAYBOOK_NAME
+PLUGIN_NAME=AppKey.PLUGIN_NAME
+IMAGE_URL=AppKey.IMAGE_URL
+PLAYBOOK_BASE64=AppKey.PLAYBOOK_BASE64
+NAME=AppKey.NAME
+PLAYBOOK_INPUT=AppKey.PLAYBOOK_INPUT
+TOKENS=AppKey.TOKENS
+DISPATCHER=AppKey.DISPATCHER
+REVISION_NUMBER=AppKey.REVISION_NUMBER
+
+# events
+
+PLAYBOOK_EXECUTION_REQUESTED=EventType.PLAYBOOK_EXECUTION_REQUESTED
+PLAYBOOK_REGISTRATION_REQUESTED=EventType.PLAYBOOK_REGISTRATION_REQUESTED
+PLUGIN_REGISTRATION_REQUESTED=EventType.PLUGIN_REGISTRATION_REQUESTED
 
 class Command:
     class Tokenizer:
@@ -118,41 +134,35 @@ class PlaybookMutations:
                                 metadata: JSON | None = strawberry.UNSET,
                                 tokens: str | None = strawberry.UNSET,
                                 ) -> RegistrationResponse:
-        logger.debug(
-            f"{AppKey.TOKENS}: {tokens}, {AppKey.METADATA}: {metadata}, {AppKey.PLAYBOOK_BASE64}: {playbook_base64}")
+        logger.debug(f"{TOKENS}: {tokens}, {METADATA}: {metadata}, {PLAYBOOK_BASE64}: {playbook_base64}")
         pool = NatsConnectionPool.get_instance()
         if pool is None:
             raise ValueError("NatsPool is not initialized")
         command_validation_result: InputValidationResult = validate_command(tokens)
         if command_validation_result.function_name == "register_playbook":
             try:
-                event_type = EventType.PLAYBOOK_REGISTRATION_REQUESTED
-                playbook_name = Payload.base64_yaml(playbook_base64).get(AppKey.METADATA).get(AppKey.NAME)
+                nats_payload = Payload(nats_pool=pool)
+                nats_payload.info = vars(info.context)
+                playbook_name = Payload.base64_yaml(playbook_base64).get(METADATA).get(NAME)
                 if playbook_name is None:
                     raise ValueError("playbook name is missing in the YAML.")
-                nats_payload = Payload.create(
-                    payload_data={
-                        AppKey.PLAYBOOK_NAME: playbook_name,
-                        AppKey.PLAYBOOK_BASE64: playbook_base64,
-                        AppKey.METADATA: metadata | {
-                            AppKey.PLAYBOOK_NAME: playbook_name,
-                            AppKey.TOKENS: tokens
-                        }
-                    },
-                    event_type=event_type,
-                    nats_pool=pool
-                )
-                subject = f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"
-                nats_payload.set_value(Reference.SUBJECT, subject)
+                nats_payload.set_value(PLAYBOOK_NAME, playbook_name)
+                nats_payload.set_value(PLAYBOOK_BASE64, playbook_base64)
+                nats_payload.set_metadata(metadata=metadata)
+                nats_payload.add_metadata(PLAYBOOK_NAME, playbook_name)
+                nats_payload.add_metadata(TOKENS, tokens)
+                nats_payload.set_event_type(PLAYBOOK_REGISTRATION_REQUESTED)
+
                 ack: PubAck = await nats_payload.event_write(
-                    subject=subject,
+                    subject_prefix=info.context.nats_event_prefix,
                     stream=info.context.nats_event_stream,
+                    plugin=DISPATCHER,
                     message=nats_payload.encode()
                 )
                 registration_response = RegistrationResponse(
                     reference=nats_payload.get_api_reference() | ack.as_dict(),
                     kind="Playbook",
-                    name=nats_payload.get_value(AppKey.PLAYBOOK_NAME),
+                    name=nats_payload.get_value(PLAYBOOK_NAME),
                     event_type=nats_payload.get_value(Metadata.EVENT_TYPE),
                     status="PlaybookRegistrationRequested",
                     message="Playbook registration has been successfully requested"
@@ -204,8 +214,8 @@ class PlaybookQueries:
         pool = NatsConnectionPool.get_instance()
         try:
             if playbook_input.playbook_name:
-                value = await pool.kv_get(AppKey.PLAYBOOKS, playbook_input.playbook_name)
-                return {AppKey.PLAYBOOK: Payload.decode(value)}
+                kv_payload = await pool.kv_get(AppKey.PLAYBOOKS, playbook_input.playbook_name)
+                return {AppKey.PLAYBOOK: Payload.decode(kv_payload)}
             else:
                 return {"error": "playbook name is required"}
         except Exception as e:
@@ -235,31 +245,31 @@ class PlaybookQueries:
         if pool is None:
             raise ValueError("NatsPool is not initialized")
         try:
-            event_type = EventType.PLAYBOOK_EXECUTION_REQUESTED
+
             nats_payload = Payload.create(
                 payload_data={AppKey.PLAYBOOK_NAME: run_playbook_input.playbook_name},
-                event_type=event_type,
+                event_type=PLAYBOOK_EXECUTION_REQUESTED,
                 nats_pool=pool
             )
             if run_playbook_input.input not in [strawberry.UNSET, None]:
                 nats_payload.set_value(AppKey.PLAYBOOK_INPUT, run_playbook_input.input)
             if run_playbook_input.metadata not in [strawberry.UNSET, None]:
-                nats_payload.set_value(AppKey.METADATA,
-                                       nats_payload.get_value(AppKey.METADATA) |  run_playbook_input.metadata)
+                nats_payload.set_mtadata(metadata=run_playbook_input.metadata)
             if run_playbook_input.tokens not in [strawberry.UNSET, None]:
-                nats_payload.set_value(Metadata.TOKENS, run_playbook_input.tokens)
+                nats_payload.add_metadata(TOKENS, run_playbook_input.tokens)
             if run_playbook_input.revision not in [strawberry.UNSET, None]:
-                nats_payload.set_value(Metadata.REVISION_NUMBER, run_playbook_input.revision)
+                nats_payload.add_metadata(REVISION_NUMBER, run_playbook_input.revision)
 
-            subject = f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"
-            nats_payload.set_value(Reference.SUBJECT, subject)
             ack: PubAck = await nats_payload.event_write(
-                subject=subject,
+                subject_prefix=info.context.nats_event_prefix,
                 stream=info.context.nats_event_stream,
+                plugin=DISPATCHER,
                 message=nats_payload.encode()
             )
+
+            reference = nats_payload.get_api_reference() | ack.as_dict(),
             registration_response = RegistrationResponse(
-                reference=nats_payload.get_api_reference() | ack.as_dict(),
+                reference=reference,
                 kind="Playbook",
                 name=nats_payload.get_value(AppKey.PLAYBOOK_NAME),
                 event_type=nats_payload.get_value(Metadata.EVENT_TYPE),
@@ -272,6 +282,7 @@ class PlaybookQueries:
         except Exception as e:
             logger.error(f"Request failed due to error: {str(e)}")
             raise ValueError(f"Request failed due to error: {str(e)}")
+
 
 
 @strawberry.type
@@ -290,41 +301,45 @@ class PluginMutations:
                               registration_input: PluginRegistrationInput,
                               info: Info) -> RegistrationResponse:
 
-        logger.debug(f"{AppKey.PLUGIN_NAME}: {registration_input.plugin_name}, "
-                     f"{AppKey.IMAGE_URL}: {registration_input.image_url}, {AppKey.METADATA}: {registration_input.metadata}")
+        logger.debug(f"{PLUGIN_NAME}: {registration_input.plugin_name}, "
+                     f"{IMAGE_URL}: {registration_input.image_url}, "
+                     f"{METADATA}: {registration_input.metadata}")
+
         pool = NatsConnectionPool.get_instance()
+
         if pool is None:
             raise ValueError("NatsPool is not initialized")
+
         command_validation_result: InputValidationResult = validate_command(registration_input.tokens)
+
         if command_validation_result.function_name == "register_plugin":
             try:
-                event_type = EventType.PLUGIN_REGISTRATION_REQUESTED
+                nats_payload = Payload(nats_pool=pool)
+                nats_payload.info = vars(info.context)
+
                 if registration_input.plugin_name is None:
                     raise ValueError("Plugin name is missing.")
+                nats_payload.set_value(PLUGIN_NAME, registration_input.plugin_name)
+
                 if registration_input.image_url is None:
                     raise ValueError("Plugin image url is missing.")
-                nats_payload = Payload.create(
-                    payload_data={
-                        AppKey.PLUGIN_NAME: registration_input.plugin_name,
-                        AppKey.IMAGE_URL: registration_input.image_url,
-                    },
-                    event_type=event_type,
-                    nats_pool=pool
-                )
-                if registration_input.metadata is not strawberry.UNSET:
-                    nats_payload.set_value(AppKey.METADATA,
-                                           nats_payload.get_value(AppKey.METADATA) | registration_input.metadata)
-                if registration_input.tokens is not strawberry.UNSET:
-                    nats_payload.set_value(Metadata.TOKENS, registration_input.tokens)
+                nats_payload.set_value(IMAGE_URL, registration_input.image_url)
 
-                subject = f"{info.context.nats_event_prefix}.{AppKey.DISPATCHER}.{nats_payload.get_origin_id()}"
-                nats_payload.set_value(Reference.SUBJECT, subject)
+                if registration_input.metadata is not strawberry.UNSET:
+                    nats_payload.set_metadata(metadata=registration_input.metadata)
+
+                if registration_input.tokens is not strawberry.UNSET:
+                    nats_payload.add_metadata(Metadata.TOKENS, registration_input.tokens)
+
                 ack: PubAck = await nats_payload.event_write(
-                    subject=subject,
+                    event_type=PLUGIN_REGISTRATION_REQUESTED,
+                    subject_prefix=info.context.nats_event_prefix,
                     stream=info.context.nats_event_stream,
+                    plugin=DISPATCHER,
                     message=nats_payload.encode()
                 )
                 reference = nats_payload.get_api_reference() | ack.as_dict(),
+
                 registration_response = RegistrationResponse(
                     reference=reference,
                     kind="Plugin",
@@ -333,6 +348,7 @@ class PluginMutations:
                     status="PluginRegistrationRequested",
                     message="Plugin registration has been successfully requested"
                 )
+
                 logger.info(f"Ack: {registration_response}")
                 return registration_response
 
@@ -377,10 +393,13 @@ class PluginQueries:
         Retrieves details of a plugin by plugin name.
         """
         pool = NatsConnectionPool.get_instance()
+
+        if pool is None:
+            raise ValueError("NatsPool is not initialized")
         try:
             if plugin_input.plugin_name:
-                value = await pool.kv_get(AppKey.PLUGINS, plugin_input.plugin_name)
-                return {AppKey.PLUGIN: Payload.decode(value)}
+                kv_payload = await pool.kv_get(AppKey.PLUGINS, plugin_input.plugin_name)
+                return {AppKey.PLUGIN: kv_payload.decode()}
             else:
                 return {"error": "Plugin name is required"}
         except Exception as e:

@@ -3,85 +3,44 @@ from plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStream
 from payload import Payload, PubAck, AppKey, CommandType, Metadata, EventType
 from playbook import Playbook
 
+DISPATCHER = AppKey.DISPATCHER
+PLAYBOOK_REGISTERED = EventType.PLAYBOOK_REGISTERED
+PLAYBOOK_EXECUTION_REGISTERED=EventType.PLAYBOOK_EXECUTION_REGISTERED
+PLUGIN_REGISTERED = EventType.PLUGIN_REGISTERED
+REVISION_NUMBER = AppKey.REVISION_NUMBER
+PLAYBOOK_NAME = AppKey.PLAYBOOK_NAME
+METADATA = AppKey.METADATA
+PLUGIN_NAME = AppKey.PLUGIN_NAME
+IMAGE_URL = AppKey.IMAGE_URL
+
 
 class Registrar(Plugin):
 
-    async def playbook_register(self,
-                                payload_data: Payload,
-                                nats_reference: NatsStreamReference,
-                                args: Namespace):
-        payload_kv_value = Payload.kv(
-            payload_data={
-                AppKey.VALUE: payload_data.get_value(AppKey.PLAYBOOK_BASE64),
-                AppKey.METADATA: payload_data.get_value(AppKey.METADATA) | {AppKey.VALUE_TYPE: AppKey.BASE64}
-            },
-            nats_pool=await self.get_nats_pool()
-        )
-        revision_number = await self.playbook_put(key=payload_data.get_value(Metadata.PLAYBOOK_NAME),
-                                                  value=payload_kv_value.encode())
-        await self.publish_event(
-            payload_orig=payload_data,
-            payload_data={
-                AppKey.REVISION_NUMBER: revision_number,
-                AppKey.PLAYBOOK_BASE64: payload_data.get_value(AppKey.PLAYBOOK_BASE64),
-                AppKey.METADATA: payload_data.get_value(AppKey.METADATA,
-                                                        exclude=list([AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE])) |
-                                 {AppKey.NATS_REFERENCE: nats_reference.to_dict(),
-                                  AppKey.EVENT_TYPE: EventType.PLAYBOOK_REGISTERED}
-            },
-            subject_prefix=f"{args.nats_event_prefix}.{AppKey.DISPATCHER}",
-            stream=args.nats_subscription_stream)
+    async def playbook_register(self, payload: Payload):
+        await payload.playbook_put()
+        message = payload.encode(keys=[REVISION_NUMBER, PLAYBOOK_NAME, METADATA])
+        _ = await payload.event_write(event_type=PLAYBOOK_REGISTERED, plugin=DISPATCHER, message=message)
 
-    async def plugin_register(self,
-                              payload_data: Payload,
-                              nats_reference: NatsStreamReference,
-                              args: Namespace):
-        await payload_data.plugin_put()
-        payload_data.update_reference()
-        payload_data.set_metadata(metadata={AppKey.NATS_REFERENCE: nats_reference.to_dict()})
-        ack = await payload_data.event_write(
-            subject=f"{args.nats_event_prefix}.{AppKey.DISPATCHER}.{payload_data.get_origin_id()}",
-            stream=args.nats_subscription_stream,
-            message=payload_data.encode(keys=[AppKey.REVISION_NUMBER ,AppKey.PLUGIN_NAME, AppKey.IMAGE_URL, AppKey.METADATA ])
-        )
+    async def plugin_register(self, payload: Payload):
+        await payload.plugin_put()
+        message = payload.encode(keys=[REVISION_NUMBER, PLUGIN_NAME, IMAGE_URL, METADATA])
+        _ = await payload.event_write(event_type=PLUGIN_REGISTERED, plugin=DISPATCHER, message=message)
 
-        logger.debug(ack)
+    async def register_playbook_execution_request(self, payload: Payload):
+        await payload.snapshot_playbook()
+        _ = await payload.event_write(event_type=PLAYBOOK_EXECUTION_REGISTERED, plugin=DISPATCHER)
 
-    async def register_playbook_execution_request(self,
-                                    payload_data: Payload,
-                                    nats_reference: NatsStreamReference,
-                                    args: Namespace):
-
-        await payload_data.snapshot_playbook(nats_reference=nats_reference.to_dict())
-
-        ack = await payload_data.event_write(
-            subject=f"{args.nats_event_prefix}.{AppKey.DISPATCHER}.{payload_data.get_origin_id()}",
-            stream=args.nats_subscription_stream,
-            message=payload_data.encode()
-        )
-
-        logger.debug(ack)
-
-    async def switch(self,
-                     payload: Payload,
-                     nats_reference: NatsStreamReference,
-                     args: Namespace):
+    async def switch(self, payload: Payload):
         match payload.get_value(Metadata.COMMAND_TYPE):
+
             case CommandType.REGISTER_PLAYBOOK:
-                await self.playbook_register(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.playbook_register(payload=payload)
+
             case CommandType.REGISTER_PLUGIN:
-                await self.plugin_register(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.plugin_register(payload=payload)
+
             case CommandType.REGISTER_PLAYBOOK_EXECUTION:
-                await self.register_playbook_execution_request(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.register_playbook_execution_request(payload=payload)
 
 
 if __name__ == "__main__":

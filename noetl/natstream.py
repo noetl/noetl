@@ -22,6 +22,9 @@ class NatsStreamReference:
     nats_msg_headers: dict | None = None
     nats_msg_reply: Msg.reply = None
 
+    @property
+    def __dict__(self):
+        return self.to_dict()
     def to_dict(self):
         data = asdict(self)
 
@@ -263,32 +266,9 @@ class NatsPool:
         async with self.nats_pool.connection() as js:
             return await js.publish(subject=subject, stream=stream, payload=payload)
 
-    async def command_read(self, subject: str, stream: str, cb):
-        return await self.nats_read(subject=subject, stream=stream, cb=cb)
 
-    async def event_read(self, subject: str, stream: str, cb):
-        return await self.nats_read(subject=subject, stream=stream, cb=cb)
 
-    async def command_write(self, subject: str, stream: str, message: bytes):
-        return await self.nats_write(subject=subject, stream=stream, payload=message)
 
-    async def event_write(self, subject: str, stream: str, message: bytes):
-        return await self.nats_write(subject=subject, stream=stream, payload=message)
-
-    async def playbook_bucket_create(self):
-        await self.nats_pool.bucket_create(bucket_name="playbooks")
-
-    async def playbook_bucket_delete(self):
-        await self.nats_pool.bucket_delete(bucket_name="playbooks")
-
-    async def playbook_put(self, key: str, value: bytes):
-        return await self.nats_pool.kv_put(bucket_name="playbooks", key=key, value=value)
-
-    async def playbook_get(self, key: str):
-        return await self.nats_pool.kv_get(bucket_name="playbooks", key=key)
-
-    async def playbook_delete(self, key: str):
-        await self.nats_pool.kv_delete(bucket_name="playbooks", key=key)
 
 
 

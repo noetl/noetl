@@ -1,120 +1,62 @@
 import asyncio
-from plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
+from plugin import Plugin, parse_args, logger, NatsConfig
 from payload import Payload, AppKey, CommandType, Metadata, RawStreamMsg
 from playbook import Playbook
+
+REGISTER_PLAYBOOK = CommandType.REGISTER_PLAYBOOK
+REGISTER_PLUGIN = CommandType.REGISTER_PLUGIN
+REGISTER_PLAYBOOK_EXECUTION = CommandType.REGISTER_PLAYBOOK_EXECUTION
+REGISTRAR = AppKey.REGISTRAR
 
 
 class Dispatcher(Plugin):
 
-    async def register_playbook(self,
-                                payload_data: Payload,
-                                nats_reference: NatsStreamReference,
-                                args: Namespace):
-        command_payload_data = {
-            AppKey.PLUGIN_NAME: payload_data.get_value(AppKey.PLAYBOOK_NAME),
-            AppKey.PLAYBOOK_BASE64: payload_data.get_value(AppKey.PLAYBOOK_BASE64),
-            AppKey.METADATA: payload_data.get_value(AppKey.METADATA, exclude=[AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE]) |
-                        {AppKey.COMMAND_TYPE: CommandType.REGISTER_PLAYBOOK,
-                         AppKey.NATS_REFERENCE: nats_reference.to_dict(),
-                         },
-        }
-        await self.publish_command(
-            payload_orig=payload_data,
-            payload_data=command_payload_data,
-            subject_prefix=f"{args.nats_command_prefix}.{AppKey.REGISTRAR}",
-            stream=args.nats_subscription_stream)
+    async def register_playbook(self, payload: Payload):
+        _ = await payload.command_write(command_type=REGISTER_PLAYBOOK, plugin=AppKey.REGISTRAR)
 
-    async def register_plugin(self,
-                              payload_data: Payload,
-                              nats_reference: NatsStreamReference,
-                              args: Namespace):
-        command_payload_data = {
-            AppKey.PLUGIN_NAME: payload_data.get_value(AppKey.PLUGIN_NAME),
-            AppKey.IMAGE_URL: payload_data.get_value(AppKey.IMAGE_URL),
-            AppKey.METADATA: payload_data.get_value(AppKey.METADATA, exclude=[AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE]) |
-                        {AppKey.COMMAND_TYPE: CommandType.REGISTER_PLUGIN,
-                         AppKey.NATS_REFERENCE: nats_reference.to_dict(),
-                         },
-        }
-        await self.publish_command(
-            payload_orig=payload_data,
-            payload_data=command_payload_data,
-            subject_prefix=f"{args.nats_command_prefix}.{AppKey.REGISTRAR}",
-            stream=args.nats_subscription_stream)
+    async def register_plugin(self, payload: Payload):
+        _ = await payload.command_write(command_type=REGISTER_PLUGIN, plugin=AppKey.REGISTRAR)
 
-    async def register_playbook_execution_request(self,
-                                    payload_data: Payload,
-                                    nats_reference: NatsStreamReference,
-                                    args: Namespace):
-        payload_reference = payload_data.get_reference()
-        command_payload_data = {
-            AppKey.PLAYBOOK_NAME: payload_data.get_value(AppKey.PLAYBOOK_NAME),
-            AppKey.PLAYBOOK_INPUT: payload_data.get_value(path=AppKey.PLAYBOOK_INPUT, default={AppKey.INPUT: AppKey.NO_DATA_PROVIDED}),
-            AppKey.METADATA: payload_data.get_value(AppKey.METADATA, exclude=list([AppKey.EVENT_TYPE, AppKey.COMMAND_TYPE])) |
-                        {AppKey.COMMAND_TYPE: CommandType.REGISTER_PLAYBOOK_EXECUTION,
-                         AppKey.NATS_REFERENCE: nats_reference.to_dict(),
-                         AppKey.PAYLOAD_REFERENCE: payload_reference},
-        }
-        await self.publish_command(
-            payload_orig=payload_data,
-            payload_data=command_payload_data,
-            subject_prefix=f"{args.nats_command_prefix}.{AppKey.REGISTRAR}",
-            stream=args.nats_subscription_stream)
+    async def register_playbook_execution_request(self, payload: Payload):
+        _ = await payload.command_write(command_type=REGISTER_PLAYBOOK_EXECUTION, plugin=AppKey.REGISTRAR)
 
-    async def emit_playbook_command(self,
-                               payload_data: Payload,
-                               nats_reference: NatsStreamReference,
-                               args: Namespace):
-        logger.info(nats_reference)
-        payload_data.set_metadata(metadata={AppKey.PAYLOAD_REFERENCE: nats_reference.to_dict() })
-        logger.debug(payload_data.get_value(AppKey.METADATA))
-        stream=payload_data.get_value("metadata.payloadReference.nats_msg_metadata.stream")
-        seq=payload_data.get_value("metadata.payloadReference.nats_msg_metadata.sequence.stream")
+    async def emit_playbook_command(self, payload: Payload):
+        logger.info(payload.nats_reference)
+        payload.add_metadata(key=AppKey.PAYLOAD_REFERENCE, value=payload.nats_reference.to_dict())
+        logger.debug(payload.get_value(AppKey.METADATA))
+        stream = payload.get_value("metadata.payloadReference.nats_msg_metadata.stream")
+        seq = payload.get_value("metadata.payloadReference.nats_msg_metadata.sequence.stream")
         logger.debug(f"stream: {stream}, seq: {seq}")
         nats_msg_data: RawStreamMsg = await self.get_msg(stream=stream, sequence=seq)
-        # logger.debug(nats_msg_data.as_dict())
         playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data.data, nats_pool=self.nats_pool)
         logger.debug(playbook_blueprint)
 
-        match payload_data.get_value(Metadata.EVENT_TYPE):
+        match payload.get_value(Metadata.EVENT_TYPE):
             case "PlaybookStarted":
                 logger.info(playbook_blueprint)
             case "PlaybookTaskExecuted":
                 logger.info(playbook_blueprint)
-            case  "PlaybookStepExecuted":
+            case "PlaybookStepExecuted":
                 logger.info(playbook_blueprint)
-            case  "PlaybookCompleted":
+            case "PlaybookCompleted":
                 logger.info(playbook_blueprint)
-            case  "playbookFailed":
+            case "playbookFailed":
                 logger.info(playbook_blueprint)
 
-    async def switch(self,
-                     payload: Payload,
-                     nats_reference: NatsStreamReference,
-                     args: Namespace
-                     ):
+    async def switch(self, payload: Payload):
 
         match payload.get_value(Metadata.EVENT_TYPE):
             case "PlaybookRegistrationRequested":
-                await self.register_playbook(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.register_playbook(payload=payload)
+
             case "PluginRegistrationRequested":
-                await self.register_plugin(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.register_plugin(payload=payload)
+
             case "PlaybookExecutionRequested":
-                await self.register_playbook_execution_request(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.register_playbook_execution_request(payload=payload)
+
             case "PlaybookExecutionRegistered":
-                await self.emit_playbook_command(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.emit_playbook_command(payload=payload)
 
 
 if __name__ == "__main__":
@@ -136,9 +78,9 @@ if __name__ == "__main__":
     dispatcher_plugin = Dispatcher()
     dispatcher_plugin.initialize_nats_pool(
         NatsConfig(
-        nats_url=args.nats_url,
-        nats_pool_size=args.nats_pool_size
-    ))
+            nats_url=args.nats_url,
+            nats_pool_size=args.nats_pool_size
+        ))
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(dispatcher_plugin.run(args=args))
