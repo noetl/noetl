@@ -4,38 +4,25 @@ import aiohttp
 
 
 class HttpHandler(Plugin):
-    async def http_request(self,
-                           payload_data: Payload,
-                           nats_reference: NatsStreamReference,
-                           args: Namespace):
-        url = payload_data.get_value("url")
-        method = payload_data.get_value("method")
-        data = payload_data.get_value("data")
+    async def http_request(self, payload: Payload):
+        url = payload.get_value("url")
+        method = payload.get_value("method")
+        data = payload.get_value("data")
         async with aiohttp.ClientSession() as session:
             async with session.request(method, url, data=data) as response:
                 response_data = await response.text()
 
         await self.publish_event(
-            payload_orig=payload_data,
+            payload_orig=payload,
             payload_data={
-                 "response": response_data,
-                "metadata": payload_data.get_value("metadata", exclude=list(["event_type", "command_type"])) |
-                            {"nats_reference": nats_reference.to_dict(), "event_type": "HTTPRequestEstebleshed"}
-            },
+                 "response": response_data},
             subject_prefix=f"{args.nats_command_prefix}.dispatcher",
             stream=args.nats_subscription_stream)
 
-    async def switch(self,
-                     payload: Payload,
-                     nats_reference: NatsStreamReference,
-                     args: Namespace
-                     ):
+    async def switch(self, payload: Payload):
         match payload.get_value("metadata.event_type"):
             case "HttpRequest":
-                await self.http_request(
-                    payload_data=payload,
-                    nats_reference=nats_reference,
-                    args=args)
+                await self.http_request(payload=payload)
 
 
 if __name__ == "__main__":

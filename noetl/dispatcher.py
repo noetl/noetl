@@ -1,29 +1,40 @@
 import asyncio
 from plugin import Plugin, parse_args, logger, NatsConfig
-from payload import Payload, AppKey, CommandType, Metadata, RawStreamMsg
+from payload import Payload, AppConst, RawStreamMsg
 from playbook import Playbook
 
-REGISTER_PLAYBOOK = CommandType.REGISTER_PLAYBOOK
-REGISTER_PLUGIN = CommandType.REGISTER_PLUGIN
-REGISTER_PLAYBOOK_EXECUTION = CommandType.REGISTER_PLAYBOOK_EXECUTION
-REGISTRAR = AppKey.REGISTRAR
+METADATA_EVENT_TYPE=AppConst.METADATA_EVENT_TYPE
+# events
+EVENT_PLAYBOOK_EXECUTION_REQUEST_FAILED = AppConst.EVENT_PLAYBOOK_EXECUTION_REQUEST_FAILED
+EVENT_PLAYBOOK_REGISTRATION_REQUESTED =  AppConst.EVENT_PLUGIN_REGISTRATION_REQUESTED
+EVENT_PLAYBOOK_EXECUTION_REQUESTED = AppConst.EVENT_PLAYBOOK_EXECUTION_REQUESTED
+EVENT_PLUGIN_REGISTRATION_REQUESTED = AppConst.EVENT_PLUGIN_REGISTRATION_REQUESTED
+EVENT_PLAYBOOK_REGISTERED = AppConst.EVENT_PLAYBOOK_REGISTERED
+EVENT_PLUGIN_REGISTERED = AppConst.EVENT_PLUGIN_REGISTERED
+
+
+# commands
+COMMAND_REGISTER_PLAYBOOK = AppConst.COMMAND_REGISTER_PLAYBOOK
+COMMAND_REGISTER_PLUGIN = AppConst.COMMAND_REGISTER_PLUGIN
+COMMAND_REGISTER_PLAYBOOK_EXECUTION = AppConst.COMMAND_REGISTER_PLAYBOOK_EXECUTION
+REGISTRAR = AppConst.REGISTRAR
 
 
 class Dispatcher(Plugin):
 
     async def register_playbook(self, payload: Payload):
-        _ = await payload.command_write(command_type=REGISTER_PLAYBOOK, plugin=AppKey.REGISTRAR)
+        _ = await payload.command_write(command_type=COMMAND_REGISTER_PLAYBOOK, plugin=AppConst.REGISTRAR)
 
     async def register_plugin(self, payload: Payload):
-        _ = await payload.command_write(command_type=REGISTER_PLUGIN, plugin=AppKey.REGISTRAR)
+        _ = await payload.command_write(command_type=COMMAND_REGISTER_PLUGIN, plugin=AppConst.REGISTRAR)
 
     async def register_playbook_execution_request(self, payload: Payload):
-        _ = await payload.command_write(command_type=REGISTER_PLAYBOOK_EXECUTION, plugin=AppKey.REGISTRAR)
+        _ = await payload.command_write(command_type=COMMAND_REGISTER_PLAYBOOK_EXECUTION, plugin=AppConst.REGISTRAR)
 
     async def emit_playbook_command(self, payload: Payload):
         logger.info(payload.nats_reference)
-        payload.add_metadata(key=AppKey.PAYLOAD_REFERENCE, value=payload.nats_reference.to_dict())
-        logger.debug(payload.get_value(AppKey.METADATA))
+        payload.add_metadata_value(key=AppConst.PAYLOAD_REFERENCE, value=payload.nats_reference.to_dict())
+        logger.debug(payload.get_value(AppConst.METADATA))
         stream = payload.get_value("metadata.payloadReference.nats_msg_metadata.stream")
         seq = payload.get_value("metadata.payloadReference.nats_msg_metadata.sequence.stream")
         logger.debug(f"stream: {stream}, seq: {seq}")
@@ -31,7 +42,7 @@ class Dispatcher(Plugin):
         playbook_blueprint = Playbook.unmarshal(binary_data=nats_msg_data.data, nats_pool=self.nats_pool)
         logger.debug(playbook_blueprint)
 
-        match payload.get_value(Metadata.EVENT_TYPE):
+        match payload.get_value(METADATA_EVENT_TYPE):
             case "PlaybookStarted":
                 logger.info(playbook_blueprint)
             case "PlaybookTaskExecuted":
@@ -45,7 +56,7 @@ class Dispatcher(Plugin):
 
     async def switch(self, payload: Payload):
 
-        match payload.get_value(Metadata.EVENT_TYPE):
+        match payload.get_value(METADATA_EVENT_TYPE):
             case "PlaybookRegistrationRequested":
                 await self.register_playbook(payload=payload)
 

@@ -9,6 +9,7 @@ from loguru import logger
 from datetime import datetime
 from uuid import uuid4
 
+
 @dataclass
 class NatsConfig:
     nats_url: str
@@ -25,6 +26,7 @@ class NatsStreamReference:
     @property
     def __dict__(self):
         return self.to_dict()
+
     def to_dict(self):
         data = asdict(self)
 
@@ -52,14 +54,12 @@ class NatsConnectionPool:
             cls._instance = super(NatsConnectionPool, cls).__new__(cls)
             cls._instance.config = config
             cls._instance.pool = asyncio.Queue()
-        else:
-            raise Exception("NatsConnectionPool is a singleton")
         return cls._instance
 
     @classmethod
-    def get_instance(cls):
+    def get_instance(cls, config: NatsConfig | None = None):
         if cls._instance is None:
-            raise Exception("NatsConnectionPool instance was not initialized.")
+            cls._instance = cls(config)
         return cls._instance
 
     async def get(self):
@@ -265,12 +265,6 @@ class NatsPool:
     async def nats_write(self, subject: str, stream: str, payload: bytes):
         async with self.nats_pool.connection() as js:
             return await js.publish(subject=subject, stream=stream, payload=payload)
-
-
-
-
-
-
 
 
 if __name__ == "__main__":

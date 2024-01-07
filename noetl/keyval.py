@@ -1,8 +1,7 @@
 import base64
 import yaml
 import json
-from appkey import AppKey
-from argparse import Namespace
+from const import AppConst
 
 
 class KeyVal(dict):
@@ -79,11 +78,11 @@ class KeyVal(dict):
 
     def to_json(self):
         try:
-            return json.dumps(self.get_value()).encode(AppKey.UTF_8)
+            return json.dumps(self.get_value()).encode(AppConst.UTF_8)
         except (TypeError, ValueError) as e:
             raise ValueError(f"Error converting to JSON: {e}")
 
-    def base64_path(self, path: str = AppKey.PAYLOAD_BASE64):
+    def base64_path(self, path: str = AppConst.PAYLOAD_BASE64):
         base64_value = self.get_value(path)
         if base64_value is None:
             raise ValueError(f"No base64 string found at {path}")
@@ -93,29 +92,29 @@ class KeyVal(dict):
 
     def encode(self, keys=None):
         return base64.b64encode(
-            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self.get_value()}).encode(AppKey.UTF_8))
+            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self.get_value()}).encode(AppConst.UTF_8))
 
-    def base64_value(self, path: str = AppKey.VALUE):
-        value = self.get_value(path=path, default=AppKey.VALUE_NOT_FOUND)
-        if value is None or value == AppKey.VALUE_NOT_FOUND:
+    def base64_value(self, path: str = AppConst.VALUE):
+        value = self.get_value(path=path, default=AppConst.VALUE_NOT_FOUND)
+        if value is None or value == AppConst.VALUE_NOT_FOUND:
             raise ValueError(f"No value found for key {path}")
         elif isinstance(value, str):
             return self.base64_str(value)
         return value
 
-    def yaml_value(self, path: str = AppKey.VALUE):
-        value = self.get_value(path=path, default=AppKey.VALUE_NOT_FOUND)
-        if isinstance(value, str) and value not in [AppKey.VALUE_NOT_FOUND, None]:
+    def yaml_value(self, path: str = AppConst.VALUE):
+        value = self.get_value(path=path, default=AppConst.VALUE_NOT_FOUND)
+        if isinstance(value, str) and value not in [AppConst.VALUE_NOT_FOUND, None]:
             return self.base64_yaml(value)
         return value
 
-    def yaml_value_dump(self, path: str = AppKey.VALUE):
+    def yaml_value_dump(self, path: str = AppConst.VALUE):
         return self.yaml_dump(self.yaml_value(path=path))
 
     @classmethod
     def decode(cls, encoded_payload):
         try:
-            return cls(json.loads(base64.b64decode(encoded_payload).decode(AppKey.UTF_8)))
+            return cls(json.loads(base64.b64decode(encoded_payload).decode(AppConst.UTF_8)))
         except Exception as e:
             raise ValueError(f"Error decoding payload: {e}")
 
@@ -125,16 +124,16 @@ class KeyVal(dict):
 
     @staticmethod
     def str_base64(source: str):
-        return base64.b64encode(source.encode()).decode(AppKey.UTF_8)
+        return base64.b64encode(source.encode()).decode(AppConst.UTF_8)
 
     @staticmethod
     def base64_str(source: str):
-        return base64.b64decode(source.encode()).decode(AppKey.UTF_8)
+        return base64.b64decode(source.encode()).decode(AppConst.UTF_8)
 
     @staticmethod
     def base64_yaml(source: str):
         try:
-            return yaml.safe_load(base64.b64decode(source.encode()).decode(AppKey.UTF_8))
+            return yaml.safe_load(base64.b64decode(source.encode()).decode(AppConst.UTF_8))
         except yaml.YAMLError as e:
             raise ValueError(f"Error decoding YAML from base64: {e}")
 

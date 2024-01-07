@@ -1,45 +1,53 @@
 import asyncio
 from plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
-from payload import Payload, PubAck, AppKey, CommandType, Metadata, EventType
+from payload import Payload, PubAck, AppConst
 from playbook import Playbook
 
-DISPATCHER = AppKey.DISPATCHER
-PLAYBOOK_REGISTERED = EventType.PLAYBOOK_REGISTERED
-PLAYBOOK_EXECUTION_REGISTERED=EventType.PLAYBOOK_EXECUTION_REGISTERED
-PLUGIN_REGISTERED = EventType.PLUGIN_REGISTERED
-REVISION_NUMBER = AppKey.REVISION_NUMBER
-PLAYBOOK_NAME = AppKey.PLAYBOOK_NAME
-METADATA = AppKey.METADATA
-PLUGIN_NAME = AppKey.PLUGIN_NAME
-IMAGE_URL = AppKey.IMAGE_URL
+DISPATCHER = AppConst.DISPATCHER
 
+REVISION_NUMBER = AppConst.REVISION_NUMBER
+PLAYBOOK_NAME = AppConst.PLAYBOOK_NAME
+METADATA = AppConst.METADATA
+PLUGIN_NAME = AppConst.PLUGIN_NAME
+IMAGE_URL = AppConst.IMAGE_URL
+METADATA_COMMAND_TYPE=AppConst.METADATA_COMMAND_TYPE
+# events
+EVENT_PLAYBOOK_REGISTERED = AppConst.EVENT_PLAYBOOK_REGISTERED
+EVENT_PLAYBOOK_EXECUTION_REGISTERED=AppConst.EVENT_PLAYBOOK_EXECUTION_REGISTERED
+EVENT_PLUGIN_REGISTERED = AppConst.EVENT_PLUGIN_REGISTERED
+
+# commands
+
+COMMAND_REGISTER_PLAYBOOK=AppConst.COMMAND_REGISTER_PLAYBOOK
+COMMAND_REGISTER_PLUGIN=AppConst.COMMAND_REGISTER_PLUGIN
+COMMAND_REGISTER_PLAYBOOK_EXECUTION=AppConst.COMMAND_REGISTER_PLAYBOOK_EXECUTION
 
 class Registrar(Plugin):
 
     async def playbook_register(self, payload: Payload):
         await payload.playbook_put()
         message = payload.encode(keys=[REVISION_NUMBER, PLAYBOOK_NAME, METADATA])
-        _ = await payload.event_write(event_type=PLAYBOOK_REGISTERED, plugin=DISPATCHER, message=message)
+        _ = await payload.event_write(event_type=EVENT_PLAYBOOK_REGISTERED, plugin=DISPATCHER, message=message)
 
     async def plugin_register(self, payload: Payload):
         await payload.plugin_put()
         message = payload.encode(keys=[REVISION_NUMBER, PLUGIN_NAME, IMAGE_URL, METADATA])
-        _ = await payload.event_write(event_type=PLUGIN_REGISTERED, plugin=DISPATCHER, message=message)
+        _ = await payload.event_write(event_type=EVENT_PLUGIN_REGISTERED, plugin=DISPATCHER, message=message)
 
     async def register_playbook_execution_request(self, payload: Payload):
         await payload.snapshot_playbook()
-        _ = await payload.event_write(event_type=PLAYBOOK_EXECUTION_REGISTERED, plugin=DISPATCHER)
+        _ = await payload.event_write(event_type=EVENT_PLAYBOOK_EXECUTION_REGISTERED, plugin=DISPATCHER)
 
     async def switch(self, payload: Payload):
-        match payload.get_value(Metadata.COMMAND_TYPE):
+        match payload.get_value(METADATA_COMMAND_TYPE):
 
-            case CommandType.REGISTER_PLAYBOOK:
+            case "RegisterPlaybook":
                 await self.playbook_register(payload=payload)
 
-            case CommandType.REGISTER_PLUGIN:
+            case  "RegisterPlugin":
                 await self.plugin_register(payload=payload)
 
-            case CommandType.REGISTER_PLAYBOOK_EXECUTION:
+            case"RegisterPlaybookExecution":
                 await self.register_playbook_execution_request(payload=payload)
 
 
