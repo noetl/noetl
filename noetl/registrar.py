@@ -1,38 +1,37 @@
 import asyncio
 from plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
 from payload import Payload, PubAck, AppConst
-from playbook import Playbook
 
 DISPATCHER = AppConst.DISPATCHER
-
 REVISION_NUMBER = AppConst.REVISION_NUMBER
 PLAYBOOK_NAME = AppConst.PLAYBOOK_NAME
 METADATA = AppConst.METADATA
 PLUGIN_NAME = AppConst.PLUGIN_NAME
 IMAGE_URL = AppConst.IMAGE_URL
-METADATA_COMMAND_TYPE=AppConst.METADATA_COMMAND_TYPE
+METADATA_COMMAND_TYPE = AppConst.METADATA_COMMAND_TYPE
 # events
 EVENT_PLAYBOOK_REGISTERED = AppConst.EVENT_PLAYBOOK_REGISTERED
-EVENT_PLAYBOOK_EXECUTION_REGISTERED=AppConst.EVENT_PLAYBOOK_EXECUTION_REGISTERED
+EVENT_PLAYBOOK_EXECUTION_REGISTERED = AppConst.EVENT_PLAYBOOK_EXECUTION_REGISTERED
 EVENT_PLUGIN_REGISTERED = AppConst.EVENT_PLUGIN_REGISTERED
 
 # commands
 
-COMMAND_REGISTER_PLAYBOOK=AppConst.COMMAND_REGISTER_PLAYBOOK
-COMMAND_REGISTER_PLUGIN=AppConst.COMMAND_REGISTER_PLUGIN
-COMMAND_REGISTER_PLAYBOOK_EXECUTION=AppConst.COMMAND_REGISTER_PLAYBOOK_EXECUTION
+COMMAND_REGISTER_PLAYBOOK = AppConst.COMMAND_REGISTER_PLAYBOOK
+COMMAND_REGISTER_PLUGIN = AppConst.COMMAND_REGISTER_PLUGIN
+COMMAND_REGISTER_PLAYBOOK_EXECUTION = AppConst.COMMAND_REGISTER_PLAYBOOK_EXECUTION
+
 
 class Registrar(Plugin):
 
     async def playbook_register(self, payload: Payload):
         await payload.playbook_put()
-        message = payload.encode(keys=[REVISION_NUMBER, PLAYBOOK_NAME, METADATA])
-        _ = await payload.event_write(event_type=EVENT_PLAYBOOK_REGISTERED, plugin=DISPATCHER, message=message)
+        message = payload.filter(keys=[REVISION_NUMBER, PLAYBOOK_NAME, METADATA])
+        _ = await payload.event_write(event_type=EVENT_PLAYBOOK_REGISTERED, plugin=DISPATCHER)
 
     async def plugin_register(self, payload: Payload):
         await payload.plugin_put()
-        message = payload.encode(keys=[REVISION_NUMBER, PLUGIN_NAME, IMAGE_URL, METADATA])
-        _ = await payload.event_write(event_type=EVENT_PLUGIN_REGISTERED, plugin=DISPATCHER, message=message)
+        message = payload.filter(keys=[REVISION_NUMBER, PLUGIN_NAME, IMAGE_URL, METADATA])
+        _ = await payload.event_write(event_type=EVENT_PLUGIN_REGISTERED, plugin=DISPATCHER)
 
     async def register_playbook_execution_request(self, payload: Payload):
         await payload.snapshot_playbook()
@@ -44,10 +43,10 @@ class Registrar(Plugin):
             case "RegisterPlaybook":
                 await self.playbook_register(payload=payload)
 
-            case  "RegisterPlugin":
+            case "RegisterPlugin":
                 await self.plugin_register(payload=payload)
 
-            case"RegisterPlaybookExecution":
+            case "RegisterPlaybookExecution":
                 await self.register_playbook_execution_request(payload=payload)
 
 

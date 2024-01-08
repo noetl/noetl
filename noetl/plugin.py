@@ -5,64 +5,11 @@ from natstream import NatsStreamReference, NatsPool, NatsConfig, Msg
 from aioprometheus import Counter
 from aioprometheus.service import Service
 from loguru import logger
-from payload import Payload, PayloadType, AppConst
+from payload import Payload
 
 
 class Plugin(NatsPool):
     events_counter: Counter
-
-    async def publish_command(self,
-                              payload_orig: Payload,
-                              payload_data: dict,
-                              subject_prefix: str,
-                              stream: str):
-        await self.write_payload(
-            payload_orig=payload_orig,
-            payload_data=payload_data,
-            subject_prefix=subject_prefix,
-            stream=stream,
-            payload_type=PayloadType.COMMAND)
-
-    async def publish_event(self,
-                            payload_orig: Payload,
-                            payload_data: dict,
-                            subject_prefix: str,
-                            stream: str):
-        await self.write_payload(
-            payload_orig=payload_orig,
-            payload_data=payload_data,
-            subject_prefix=subject_prefix,
-            stream=stream,
-            payload_type=PayloadType.EVENT)
-
-    async def write_payload(self,
-                            payload_orig: Payload,
-                            payload_data: dict,
-                            subject_prefix: str,
-                            stream: str,
-                            payload_type: PayloadType):
-        payload: Payload = Payload.create(
-            payload_data=payload_data,
-            origin_id=payload_orig.get_origin_id(),
-            current_id=payload_orig.get_current_id(),
-            nats_pool=await self.get_nats_pool())
-        match payload_type:
-            case PayloadType.EVENT:
-                ack = await payload.event_write(
-                    subject=f"{subject_prefix}.{payload.get_origin_id()}",
-                    stream=stream,
-                    message=payload.encode()
-                )
-            case PayloadType.COMMAND:
-                ack = await payload.command_write(
-                    subject=f"{subject_prefix}.{payload.get_origin_id()}",
-                    stream=stream,
-                    message=payload.encode()
-                )
-            case _:
-                ack = None
-        logger.debug(ack)
-
     async def process_stream(self,
                              args: Namespace,
                              msg: Msg):
@@ -76,11 +23,9 @@ class Plugin(NatsPool):
             nats_msg_reply=msg.reply
         )
         logger.debug(f"payload: {payload}")
-        _ = await self.switch(payload=payload) #, nats_reference=nats_reference, args=args)
+        _ = await self.switch(payload=payload)
 
     async def switch(self, payload: Payload):
-                     # nats_reference: NatsStreamReference,
-                     # args: Namespace):
         raise NotImplementedError("Plugin subclass must implement switch method")
 
     async def run(self, args):

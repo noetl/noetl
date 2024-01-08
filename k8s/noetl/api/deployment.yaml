@@ -24,7 +24,7 @@ spec:
         - name: MAX_REQUESTS
           value: "1000"
         - name: MAX_CONCURRENCY
-          value: "200"
+          value: "500"
         - name: ENV
           value: "local"
         - name: LOG_LEVEL

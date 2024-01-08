@@ -12,12 +12,12 @@ class HttpHandler(Plugin):
             async with session.request(method, url, data=data) as response:
                 response_data = await response.text()
 
-        await self.publish_event(
-            payload_orig=payload,
-            payload_data={
-                 "response": response_data},
-            subject_prefix=f"{args.nats_command_prefix}.dispatcher",
-            stream=args.nats_subscription_stream)
+        # await self.publish_event(
+        #     payload_orig=payload,
+        #     payload_data={
+        #          "response": response_data},
+        #     subject_prefix=f"{args.nats_command_prefix}.dispatcher",
+        #     stream=args.nats_subscription_stream)
 
     async def switch(self, payload: Payload):
         match payload.get_value("metadata.event_type"):

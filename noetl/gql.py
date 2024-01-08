@@ -156,20 +156,18 @@ class PlaybookMutations:
                 nats_payload.set_metadata(metadata=metadata)
                 nats_payload.add_metadata_value(PLAYBOOK_NAME, playbook_name)
                 nats_payload.add_metadata_value(TOKENS, tokens)
-                nats_payload.set_event_type(EVENT_PLAYBOOK_REGISTRATION_REQUESTED)
-                nats_payload.set_reference()
 
                 ack: PubAck = await nats_payload.event_write(
                     subject_prefix=info.context.nats_event_prefix,
                     stream=info.context.nats_event_stream,
                     plugin=DISPATCHER,
-                    message=nats_payload.encode()
+                    event_type=EVENT_PLAYBOOK_REGISTRATION_REQUESTED
                 )
                 registration_response = RegistrationResponse(
                     reference=nats_payload.get_api_reference() | ack.as_dict(),
                     kind="Playbook",
                     name=nats_payload.get_value(PLAYBOOK_NAME),
-                    event_type=nats_payload.get_value(METADATA_EVENT_TYPE),
+                    event_type=EVENT_PLAYBOOK_REGISTRATION_REQUESTED,
                     status="PlaybookRegistrationRequested",
                     message="Playbook registration has been successfully requested"
                 )
@@ -251,18 +249,19 @@ class PlaybookQueries:
         if pool is None:
             raise ValueError("NatsPool is not initialized")
         try:
+            nats_payload = Payload(nats_pool=pool)
+            nats_payload.info = vars(info.context)
 
-            nats_payload = Payload.create(
-                payload_data={PLAYBOOK_NAME: run_playbook_input.playbook_name},
-                event_type=EVENT_PLAYBOOK_EXECUTION_REQUESTED,
-                nats_pool=pool
-            )
+            if run_playbook_input.playbook_name in [strawberry.UNSET, None]:
+                raise ValueError("playbook name is missing.")
+            else:
+                nats_payload.set_value(PLAYBOOK_NAME,run_playbook_input.playbook_name)
 
             if run_playbook_input.input not in [strawberry.UNSET, None]:
                 nats_payload.set_value(PLAYBOOK_INPUT, run_playbook_input.input)
 
             if run_playbook_input.metadata not in [strawberry.UNSET, None]:
-                nats_payload.set_mtadata(metadata=run_playbook_input.metadata)
+                nats_payload.set_metadata(metadata=run_playbook_input.metadata)
 
             if run_playbook_input.tokens not in [strawberry.UNSET, None]:
                 nats_payload.add_metadata_value(TOKENS, run_playbook_input.tokens)
@@ -274,7 +273,7 @@ class PlaybookQueries:
                 subject_prefix=info.context.nats_event_prefix,
                 stream=info.context.nats_event_stream,
                 plugin=DISPATCHER,
-                message=nats_payload.encode()
+                event_type=EVENT_PLAYBOOK_EXECUTION_REQUESTED
             )
 
             reference = nats_payload.get_api_reference() | ack.as_dict(),
@@ -282,7 +281,7 @@ class PlaybookQueries:
                 reference=reference,
                 kind="Playbook",
                 name=nats_payload.get_value(PLAYBOOK_NAME),
-                event_type=nats_payload.get_value(EVENT_TYPE),
+                event_type=EVENT_PLAYBOOK_EXECUTION_REQUESTED,
                 status="PlaybookExecutionRequested",
                 message="Playbook execution has been successfully requested"
             )
@@ -326,26 +325,25 @@ class PluginMutations:
                 nats_payload = Payload(nats_pool=pool)
                 nats_payload.info = vars(info.context)
 
-                if registration_input.plugin_name is None:
+                if registration_input.plugin_name in [None, strawberry.UNSET]:
                     raise ValueError("Plugin name is missing.")
                 nats_payload.set_value(PLUGIN_NAME, registration_input.plugin_name)
 
-                if registration_input.image_url is None:
+                if registration_input.image_url in [None, strawberry.UNSET]:
                     raise ValueError("Plugin image url is missing.")
                 nats_payload.set_value(IMAGE_URL, registration_input.image_url)
 
-                if registration_input.metadata is not strawberry.UNSET:
+                if registration_input.metadata not in [None, strawberry.UNSET]:
                     nats_payload.set_metadata(metadata=registration_input.metadata)
 
-                if registration_input.tokens is not strawberry.UNSET:
+                if registration_input.tokens not in [None, strawberry.UNSET]:
                     nats_payload.add_metadata_value(TOKENS, registration_input.tokens)
 
                 ack: PubAck = await nats_payload.event_write(
                     event_type=EVENT_PLUGIN_REGISTRATION_REQUESTED,
                     subject_prefix=info.context.nats_event_prefix,
                     stream=info.context.nats_event_stream,
-                    plugin=DISPATCHER,
-                    message=nats_payload.encode()
+                    plugin=DISPATCHER
                 )
                 reference = nats_payload.get_api_reference() | ack.as_dict(),
 

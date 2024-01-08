@@ -33,9 +33,11 @@ METADATA_REFERENCE_STREAM=AppConst.METADATA_REFERENCE_STREAM
 METADATA_REFERENCE_TIMESTAMP=AppConst.METADATA_REFERENCE_TIMESTAMP
 NATS_REFERENCE=AppConst.NATS_REFERENCE
 
-# Event command
+
 EVENT_TYPE=AppConst.EVENT_TYPE
 COMMAND_TYPE=AppConst.COMMAND_TYPE
+METADATA_EVENT_TYPE=AppConst.METADATA_EVENT_TYPE
+METADATA_COMMAND_TYPE=AppConst.METADATA_COMMAND_TYPE
 
 # Events
 EVENT_PLUGIN_REGISTERED = AppConst.EVENT_PLUGIN_REGISTERED
@@ -60,11 +62,22 @@ class Payload(KeyVal, NatsPool):
     Inherits the KeyVal and NatsPool classes.
     """
 
-    def __init__(self, *args, nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.nats_reference: NatsStreamReference | None = None
+    def __init__(self,
+                 nats_pool: NatsConnectionPool | NatsConfig | None = None,
+                 payload_data: str | dict | list | None = None,
+                 event_type: str | None = None,
+                 command_type: str | None = None,
+                 *args,
+                 **kwargs):
+
+        super().__init__(payload_data, *args, **kwargs) if payload_data else super().__init__(self,*args, **kwargs)
         if nats_pool:
             self.initialize_nats_pool(nats_pool)
+        self.nats_reference: NatsStreamReference | None = None
+        if event_type:
+            self.set_event_type(event_type)
+        elif command_type:
+            self.set_command_type(command_type)
 
     @property
     def nats_reference(self):
@@ -151,9 +164,9 @@ class Payload(KeyVal, NatsPool):
         self.set_context(context)
 
     def update_reference(self):
-        self.set_previous_id()
+        self.set_previous_id(previous_id=self.get_current_id())
         self.set_current_id()
-        self.get_timestamp()
+        self.set_timestamp()
 
     def set_subject(self, subject: str = None):
         if subject:
@@ -183,20 +196,23 @@ class Payload(KeyVal, NatsPool):
         if context:
             self.set_value(METADATA_REFERENCE_CONTEXT, context)
 
-    def set_metadata(self, metadata: dict, exclude: list[str] = None):
+    def set_metadata(self, metadata: dict = None, exclude: list[str] = None):
         metadata_orig = self.get_value(METADATA, exclude=exclude)
-        if metadata_orig:
+        if metadata_orig and metadata:
             metadata |= metadata_orig
         self.set_value(METADATA, metadata)
 
-    def add_metadata_value(self, key: str, value: any):
-        self.set_value(f"{METADATA}.{key}", value)
+    def add_metadata_value(self, key: str = None, value: any = None):
+        if key and value:
+            self.set_value(f"{METADATA}.{key}", value)
 
-    def set_event_type(self, event_type):
-        self.set_metadata(metadata={EVENT_TYPE: event_type}, exclude=[COMMAND_TYPE, EVENT_TYPE])
+    def set_event_type(self, event_type: str = None):
+        if event_type:
+            self.set_metadata(metadata={EVENT_TYPE: event_type}, exclude=[COMMAND_TYPE, EVENT_TYPE])
 
-    def set_command_type(self, command_type):
-        self.set_metadata(metadata={COMMAND_TYPE: command_type}, exclude=[COMMAND_TYPE, EVENT_TYPE])
+    def set_command_type(self, command_type: str = None):
+        if command_type:
+            self.set_metadata(metadata={COMMAND_TYPE: command_type}, exclude=[COMMAND_TYPE, EVENT_TYPE])
 
     def set_nats_reference(self):
         self.set_metadata(metadata=self.nats_reference.to_dict(), exclude=NATS_REFERENCE)
@@ -224,12 +240,17 @@ class Payload(KeyVal, NatsPool):
                             subject_prefix: str = None,
                             stream: str = None,
                             plugin: str = None):
-        nats_prefix = subject_prefix or "noetl"
-        if event_type and subject_prefix is None and self.info:
-            nats_prefix = self.info.get("nats_event_prefix")
+        if subject_prefix:
+            nats_prefix = subject_prefix
+        elif self.info:
+            prefix_key = "nats_event_prefix" if event_type else "nats_command_prefix"
+            nats_prefix = self.info.get(prefix_key, "noetl")
+        else:
+            nats_prefix = "noetl"
+
+        if event_type:
             self.set_event_type(event_type)
-        elif command_type and subject_prefix is None and self.info:
-            nats_prefix = self.info.get("nats_command_prefix")
+        elif command_type:
             self.set_command_type(command_type)
 
         reference = self.get_reference()
@@ -337,28 +358,3 @@ class Payload(KeyVal, NatsPool):
 
     async def plugin_delete(self, key: str):
         await self.nats_pool.kv_delete(bucket_name=PLUGINS, key=key)
-
-    @classmethod
-    def create(cls,
-               payload_data,
-               nats_pool: NatsConnectionPool | NatsConfig = None,
-               subject=None,
-               origin_id=None,
-               current_id=None,
-               event_type=None,
-               command_type=None
-               ):
-        payload = cls(payload_data, nats_pool=nats_pool)
-        payload.set_reference(
-            subject=subject,
-            origin_id=origin_id,
-            previous_id=current_id)
-        if event_type:
-            payload.set_event_type(event_type)
-        if command_type:
-            payload.set_command_type(command_type)
-        return payload
-
-    @classmethod
-    def kv(cls, payload_data, nats_pool: NatsConnectionPool | NatsConfig = None):
-        return cls(payload_data, nats_pool=nats_pool)

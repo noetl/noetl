@@ -17,7 +17,6 @@ class KeyVal(dict):
     def info(self, value: any):
         self._info = value
 
-
     def get_keys(self, path=None) -> list:
         paths = []
         base = self.get_value(path) if path else self
@@ -72,9 +71,19 @@ class KeyVal(dict):
                 if key not in target or not isinstance(target[key], dict):
                     target[key] = {}
                 target = target[key]
-            target[keys[-1]] = value
+
+            if isinstance(value, dict) and isinstance(target.get(keys[-1]), dict):
+                target[keys[-1]].update(value)
+            else:
+                target[keys[-1]] = value
         except Exception as e:
             raise ValueError(f"Error setting value for '{path}': {e}")
+
+    def filter(self, keys: list = None):
+        if keys:
+            filtered_keys = set(self.keys()) - set(keys)
+            for key in filtered_keys:
+                del self[key]
 
     def to_json(self):
         try:
@@ -92,7 +101,8 @@ class KeyVal(dict):
 
     def encode(self, keys=None):
         return base64.b64encode(
-            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self.get_value()}).encode(AppConst.UTF_8))
+            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self.get_value()}).encode(
+                AppConst.UTF_8))
 
     def base64_value(self, path: str = AppConst.VALUE):
         value = self.get_value(path=path, default=AppConst.VALUE_NOT_FOUND)
@@ -114,7 +124,9 @@ class KeyVal(dict):
     @classmethod
     def decode(cls, encoded_payload):
         try:
-            return cls(json.loads(base64.b64decode(encoded_payload).decode(AppConst.UTF_8)))
+            payload_data = json.loads(base64.b64decode(encoded_payload).decode(AppConst.UTF_8))
+            return cls(**payload_data)
+            # return cls(json.loads(base64.b64decode(encoded_payload).decode(AppConst.UTF_8)))
         except Exception as e:
             raise ValueError(f"Error decoding payload: {e}")
 
