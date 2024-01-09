@@ -386,3 +386,10 @@ show-events:
 
 show-commands:
 	$(PYTHON) noetl/cli.py show commands
+
+
+#[KUBECTL COMMANDS]######################################################################
+
+.PHONY: logs
+logs:
+	kubectl logs -f -l 'app in (noetl-api, noetl-dispatcher, noetl-http-handler, noetl-registrar)'

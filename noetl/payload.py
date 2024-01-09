@@ -206,13 +206,19 @@ class Payload(KeyVal, NatsPool):
         if key and value:
             self.set_value(f"{METADATA}.{key}", value)
 
+    def delete_metadata_keys(self, keys: list):
+        for key in keys:
+            self.delete_value(path=f"{METADATA}.{key}")
+
     def set_event_type(self, event_type: str = None):
         if event_type:
-            self.set_metadata(metadata={EVENT_TYPE: event_type}, exclude=[COMMAND_TYPE, EVENT_TYPE])
+            self.delete_metadata_keys(keys=list([EVENT_TYPE, COMMAND_TYPE]))
+            self.add_metadata_value(EVENT_TYPE, event_type)
 
     def set_command_type(self, command_type: str = None):
         if command_type:
-            self.set_metadata(metadata={COMMAND_TYPE: command_type}, exclude=[COMMAND_TYPE, EVENT_TYPE])
+            self.delete_metadata_keys(keys=list([EVENT_TYPE, COMMAND_TYPE]))
+            self.add_metadata_value(COMMAND_TYPE, command_type)
 
     def set_nats_reference(self):
         self.set_metadata(metadata=self.nats_reference.to_dict(), exclude=NATS_REFERENCE)
@@ -343,9 +349,9 @@ class Payload(KeyVal, NatsPool):
     async def plugin_put(self, key: str = None, value: bytes = None):
         revision = 0
         plugin_name = key or self.get_value(PLUGIN_NAME)
-        plugin_url = value or self.get_value(IMAGE_URL).encode()
-        if plugin_name and plugin_url:
-            revision = await self.nats_pool.kv_put(bucket_name=PLUGINS, key=plugin_name, value=plugin_url)
+        plugin = value or self.encode(keys=[PLUGIN_NAME, IMAGE_URL, METADATA])
+        if plugin_name and plugin:
+            revision = await self.nats_pool.kv_put(bucket_name=PLUGINS, key=plugin_name, value=plugin)
         self.set_event_type(event_type=EVENT_PLUGIN_REGISTERED)
         self.set_value(REVISION_NUMBER, revision)
 

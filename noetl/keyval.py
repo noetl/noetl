@@ -79,11 +79,27 @@ class KeyVal(dict):
         except Exception as e:
             raise ValueError(f"Error setting value for '{path}': {e}")
 
-    def filter(self, keys: list = None):
+    def delete_value(self, path: str):
+        keys = path.split('.')
+        current_key = keys.pop()
+        current_dict = self
+        for key in keys:
+            if key in current_dict:
+                current_dict = current_dict[key]
+            else:
+                return
+        if current_key in current_dict:
+            del current_dict[current_key]
+
+    def delete_keys(self, keys=None):
         if keys:
-            filtered_keys = set(self.keys()) - set(keys)
-            for key in filtered_keys:
-                del self[key]
+            candidates = [k for k in self.get_keys() if k in keys]
+            for key in candidates:
+                self.delete_value(key)
+
+    def retain_keys(self, keys=None):
+        if keys:
+            self.delete_keys(keys=[k for k in self.get_keys() if k not in keys])
 
     def to_json(self):
         try:

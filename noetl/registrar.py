@@ -25,12 +25,12 @@ class Registrar(Plugin):
 
     async def playbook_register(self, payload: Payload):
         await payload.playbook_put()
-        message = payload.filter(keys=[REVISION_NUMBER, PLAYBOOK_NAME, METADATA])
+        payload.retain_keys(keys=[REVISION_NUMBER, PLAYBOOK_NAME, METADATA])
         _ = await payload.event_write(event_type=EVENT_PLAYBOOK_REGISTERED, plugin=DISPATCHER)
 
     async def plugin_register(self, payload: Payload):
         await payload.plugin_put()
-        message = payload.filter(keys=[REVISION_NUMBER, PLUGIN_NAME, IMAGE_URL, METADATA])
+        payload.retain_keys(keys=[REVISION_NUMBER, PLUGIN_NAME, IMAGE_URL, METADATA])
         _ = await payload.event_write(event_type=EVENT_PLUGIN_REGISTERED, plugin=DISPATCHER)
 
     async def register_playbook_execution_request(self, payload: Payload):
