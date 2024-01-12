@@ -1,0 +1,107 @@
+{
+	"info": {
+		"_postman_id": "33c2fe73-ce35-4e3d-bc4c-6a07c44c9c28",
+		"name": "NoETL",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "9253994"
+	},
+	"item": [
+		{
+			"name": "ShowEvents",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "ShowAll",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "ShowCommands",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "RegisterPlugin",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "DescribePlugin",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "graphql",
+					"graphql": {
+						"query": "query DescribePlugin($pluginInput: DescribePluginInput!) {\n  describePlugin(pluginInput: $pluginInput)\n}",
+						"variables": "{\n    \"pluginInput\": {\n    \"pluginName\": \"http-handler:0_1_0\"\n  }\n}"
+					}
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "ListPlugins",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "ListPlaybooks",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "DescribePlaybook",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "graphql",
+					"graphql": {
+						"query": "query DescribePlaybook($playbookInput: DescribePlaybookInput!) {\n  describePlaybook(playbookInput: $playbookInput)\n}",
+						"variables": "{\n    \"playbookInput\": {\n    \"playbookName\": \"fetch-time-and-notify-slack\"\n    }\n}"
+					}
+				},
+				"url": {
+					"raw": "http://localhost:30080/noetl",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "30080",
+					"path": [
+						"noetl"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "RunPlaybook",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		}
+	]
+}

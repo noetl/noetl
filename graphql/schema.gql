@@ -1,0 +1,69 @@
+schema {
+    query: Queries
+    mutation: Mutations
+}
+
+type Mutations {
+    deletePlaybook(playbookId: String!): String!
+    deletePlugin(pluginId: String!): String!
+    registerPlaybook(metadata: JSON, playbookBase64: String!, tokens: String): RegistrationResponse!
+    registerPlugin(registrationInput: PluginRegistrationInput!): RegistrationResponse!
+}
+
+type Queries {
+    describePlaybook(playbookInput: DescribePlaybookInput!): JSON!
+    describePlugin(pluginInput: DescribePluginInput!): JSON!
+    listPlaybooks: JSON!
+    listPlugins: JSON!
+    runPlaybook(runPlaybookInput: RunPlaybookInput!): RegistrationResponse!
+    showAll(instance: Instance!): JSON!
+    showCommands(instance: Instance!): JSON!
+    showEvents(instance: Instance!): JSON!
+}
+
+type RegistrationResponse {
+    eventType: String
+    kind: String
+    message: String
+    name: String
+    reference: JSON
+    status: String
+}
+
+scalar JSON
+
+"Describes playbook by name and optionally by revision"
+input DescribePlaybookInput {
+    metadata: JSON
+    playbookName: String!
+    revision: String
+    tokens: String
+}
+
+"Describes plugin by name and optionally by revision"
+input DescribePluginInput {
+    pluginName: String!
+    revision: String
+}
+
+"Shows events and commands, optionally by ID"
+input Instance {
+    id: String
+}
+
+"Register plugin by name and image reference parameters"
+input PluginRegistrationInput {
+    imageUrl: String!
+    metadata: JSON
+    pluginName: String!
+    tokens: String
+}
+
+"Runs playbook by name with optional input parameters"
+input RunPlaybookInput {
+    input: JSON
+    metadata: JSON
+    playbookName: String!
+    revision: String
+    tokens: String
+}

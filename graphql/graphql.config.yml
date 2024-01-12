@@ -1,0 +1,14 @@
+{
+  "name": "NoETL",
+  "schema":"http://localhost:30080/noetl",
+  "extensions": {
+    "endpoints": {
+      "Default GraphQL Endpoint": {
+        "url": "http://localhost:30080/noetl",
+        "headers": {
+          "user-agent": "JS GraphQL"
+        }
+      }
+    }
+  }
+}

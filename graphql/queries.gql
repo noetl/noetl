@@ -6,9 +6,11 @@ query ShowCommands($instance: Instance!) {
   showCommands(instance: $instance)
 }
 
+
 query ShowAll($instance: Instance!) {
   showAll(instance: $instance)
 }
+
 
 mutation RegisterPlugin($registrationInput: PluginRegistrationInput!) {
   registerPlugin(registrationInput: $registrationInput) {
