@@ -18,7 +18,6 @@ setup(
     install_requires=[
         "asyncio==3.4.3",
         "loguru==0.7.2",
-        "aiofiles==0.23.2.1",
         "aiohttp==3.9.1",
         "pyyaml==6.0",
         "requests>=2.31.0",
