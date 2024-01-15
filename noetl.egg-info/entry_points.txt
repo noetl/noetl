@@ -1,2 +1,0 @@
-[console_scripts]
-noetl = noetl.cli:main
