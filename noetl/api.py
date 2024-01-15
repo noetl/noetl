@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException, Request, Header, Response, Depends
 from strawberry.fastapi import GraphQLRouter
-from config import AppConfig
+from api_config import AppConfig
 from typing import List
 from loguru import logger
 from natstream import NatsConnectionPool
 from aioprometheus import render, Counter, Registry, REGISTRY
-from gql import schema
+from api_resolvers import schema
 
 
 

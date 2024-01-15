@@ -98,11 +98,9 @@ install-nats-tools:
 #[BUILD]#######################################################################
 .PHONY: build-cli remove-cli-image rebuild-cli
 .PHONY: build-api-base build-api remove-api-image rebuild-api
-.PHONY: build-dispatcher remove-dispatcher-image rebuild-dispatcher
+.PHONY: build-plugin-base build-dispatcher remove-dispatcher-image rebuild-dispatcher
 .PHONY: build-registrar remove-registrar-image rebuild-registrar
-.PHONY: build-all rebuild-all clean
-
-build-all: build-api-base build-api build-plugin-base build-plugin-images
+.PHONY: build-all build-base-images rebuild-all remove-base-images clean
 
 build-cli:
 	@echo "Building CLI image..."
@@ -129,7 +127,6 @@ remove-base-images:
 
 build-base-images:  build-api-base build-plugin-base
 
-.PHONY: build-api-base build-plugin-base remove-base-images build-base-images build-all
 
 build-all: build-api-base build-api build-plugin-base build-plugin-images
 

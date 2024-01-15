@@ -10,8 +10,7 @@ RUN apt-get update && apt-get install -y \
 COPY ${PRJ_PATH}/docker/api/requirements.txt .
 
 
-COPY  ${PRJ_PATH}/noetl/config.py \
-      ${PRJ_PATH}/noetl/keyval.py \
+COPY  ${PRJ_PATH}/noetl/keyval.py \
       ${PRJ_PATH}/noetl/natstream.py \
       ${PRJ_PATH}/noetl/const.py \
       ${PRJ_PATH}/noetl/payload.py ./
