@@ -19,14 +19,14 @@ setup(
         "asyncio==3.4.3",
         "loguru==0.7.2",
         "aiofiles==23.2.1",
-        "aiohttp==3.8.6",
+        "aiohttp==3.9.1",
         "pyyaml==6.0",
         "requests>=2.31.0",
         "spacy==3.6.1",
         "psutil==5.9.5",
         "fastapi==0.103.1",
         "uvicorn==0.23.2",
-        "nats-py==2.4.0",
+        "nats-py==2.6.0",
         "strawberry-graphql==0.211.1"
         "aioprometheus[aiohttp,binary]==23.3.0"
 
