@@ -11,7 +11,7 @@ class CustomInstallCommand(InstallCommand):
 
 setup(
     name="noetl",
-    version="0.1.1",
+    version="0.1.2",
     author="NoETL Team",
     description="NoETL: A Python package for managing workflows",
     packages=find_packages(),
