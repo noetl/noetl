@@ -1,11 +1,10 @@
 import os
 from argparse import Namespace, ArgumentParser
 from functools import partial
-from natstream import NatsStreamReference, NatsPool, NatsConfig, Msg
+from noetl.natstream import NatsStreamReference, NatsPool, NatsConfig, Msg
 from aioprometheus import Counter
 from aioprometheus.service import Service
-from loguru import logger
-from payload import Payload
+from noetl.payload import Payload, logger
 
 
 class Plugin(NatsPool):

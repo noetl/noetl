@@ -3,6 +3,6 @@ ARG PRJ_PATH
 WORKDIR /usr/noetl
 
 COPY ${PRJ_PATH}/noetl/playbook.py \
-     ${PRJ_PATH}/noetl/registrar.py ./
+     ${PRJ_PATH}/noetl/registrar.py ./noetl/
 
-CMD ["python", "./registrar.py"]
+CMD ["python", "/usr/noetl/noetl/registrar.py"]

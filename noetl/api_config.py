@@ -1,7 +1,7 @@
 import argparse
 import sys
 from loguru import logger
-from natstream import NatsConfig
+from noetl.natstream import NatsConfig
 from dataclasses import dataclass
 import os
 from strawberry.fastapi import BaseContext

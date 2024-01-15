@@ -1,6 +1,6 @@
 import asyncio
-from plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
-from payload import Payload, PubAck, AppConst
+from noetl.plugin import Plugin, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
+from noetl.payload import Payload, PubAck, AppConst
 
 DISPATCHER = AppConst.DISPATCHER
 REVISION_NUMBER = AppConst.REVISION_NUMBER

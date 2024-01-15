@@ -1,6 +1,6 @@
 import uuid
-from natstream import NatsConnectionPool, NatsConfig
-from payload import Payload, AppConst,  RawStreamMsg
+from noetl.natstream import NatsConnectionPool, NatsConfig
+from noetl.payload import Payload, AppConst,  RawStreamMsg
 
 
 class Playbook(Payload):

@@ -1,5 +1,5 @@
 import asyncio
-from plugin import Plugin, Payload, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
+from noetl.plugin import Plugin, Payload, parse_args, Namespace, logger, NatsConfig, NatsStreamReference
 import aiohttp
 
 

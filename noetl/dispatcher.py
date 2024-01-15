@@ -1,7 +1,7 @@
 import asyncio
-from plugin import Plugin, parse_args, logger, NatsConfig
-from payload import Payload, AppConst, RawStreamMsg
-from playbook import Playbook
+from noetl.plugin import Plugin, parse_args, logger, NatsConfig
+from noetl.payload import Payload, AppConst, RawStreamMsg
+from noetl.playbook import Playbook
 
 METADATA_EVENT_TYPE=AppConst.METADATA_EVENT_TYPE
 # events

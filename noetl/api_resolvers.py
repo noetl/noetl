@@ -6,7 +6,7 @@ from pydantic import BaseModel
 import spacy
 from strawberry.scalars import JSON
 from strawberry.types import Info
-from payload import Payload, NatsConnectionPool, ErrTimeout, PubAck, AppConst
+from noetl.payload import Payload, NatsConnectionPool, ErrTimeout, PubAck, AppConst
 
 METADATA = AppConst.METADATA
 PLAYBOOK_NAME = AppConst.PLAYBOOK_NAME

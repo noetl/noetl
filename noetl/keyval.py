@@ -1,7 +1,7 @@
 import base64
 import yaml
 import json
-from const import AppConst
+from noetl.const import AppConst
 
 
 class KeyVal(dict):

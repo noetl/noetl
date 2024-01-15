@@ -4,7 +4,7 @@ import os
 import json
 import yaml
 from loguru import logger
-from keyval import KeyVal
+from noetl.keyval import KeyVal
 
 CWD = os.getcwd()
 CSD = os.path.dirname(os.path.abspath(__file__))
