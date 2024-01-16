@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException, Request, Header, Response, Depends
 from strawberry.fastapi import GraphQLRouter
-from noetl.api_config import AppConfig
+from noetl.api.config import AppConfig
 from typing import List
 from loguru import logger
 from noetl.natstream import NatsConnectionPool
 from aioprometheus import render, Counter, Registry, REGISTRY
-from noetl.api_resolvers import schema
+from noetl.api.resolvers import schema
 
 
 
@@ -98,7 +98,7 @@ def main(config):
     try:
         config.set_log_level()
         logger.info(f"NoETL API starting with {config}.")
-        uvicorn.run("api:app",
+        uvicorn.run("app:app",
                     host=config.host,
                     port=config.port,
                     reload=config.reload,

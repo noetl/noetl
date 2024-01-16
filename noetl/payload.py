@@ -147,21 +147,23 @@ class Payload(KeyVal, NatsPool):
         }
 
     def set_reference(self,
+                      reference: dict = None,
                       timestamp=None,
                       subject=None,
+                      current_id=None,
                       origin_id=None,
                       previous_id=None,
                       stream=None,
                       seq=None,
                       context=None):
-        self.set_subject(subject)
-        self.set_timestamp(timestamp)
-        self.set_current_id()
-        self.set_previous_id(previous_id)
-        self.set_origin_id(origin_id)
-        self.set_stream(stream)
-        self.set_seq(seq)
-        self.set_context(context)
+        self.set_subject(reference.get("subject", subject))
+        self.set_timestamp(reference.get("timestamp", timestamp))
+        self.set_current_id(reference.get("current_id", current_id))
+        self.set_previous_id(reference.get("previous_id", previous_id))
+        self.set_origin_id(reference.get("origin_id", origin_id))
+        self.set_stream(reference.get("stream", stream))
+        self.set_seq(reference.get("seq", seq))
+        self.set_context(reference.get("context", context))
 
     def update_reference(self):
         self.set_previous_id(previous_id=self.get_current_id())
@@ -175,8 +177,8 @@ class Payload(KeyVal, NatsPool):
     def set_timestamp(self, timestamp: str = None):
         self.set_value(METADATA_REFERENCE_TIMESTAMP, timestamp or str(int(datetime.now().timestamp() * 1000)))
 
-    def set_current_id(self):
-        self.set_value(METADATA_REFERENCE_CURRENT_ID, str(uuid.uuid4()))
+    def set_current_id(self, current_id: str = None):
+        self.set_value(METADATA_REFERENCE_CURRENT_ID, current_id or str(uuid.uuid4()))
 
     def set_previous_id(self, previous_id: str = None):
         self.set_value(METADATA_REFERENCE_PREVIOUS_ID, previous_id or self.get_current_id())
@@ -245,7 +247,8 @@ class Payload(KeyVal, NatsPool):
                             subject: str = None,
                             subject_prefix: str = None,
                             stream: str = None,
-                            plugin: str = None):
+                            plugin: str = None,
+                            reference: dict = None):
         if subject_prefix:
             nats_prefix = subject_prefix
         elif self.info:
@@ -259,7 +262,7 @@ class Payload(KeyVal, NatsPool):
         elif command_type:
             self.set_command_type(command_type)
 
-        reference = self.get_reference()
+        reference = reference or self.get_reference()
 
         if reference not in [VALUE_NOT_FOUND]:
             self.update_reference()
@@ -289,14 +292,16 @@ class Payload(KeyVal, NatsPool):
                             subject: str = None,
                             subject_prefix: str = None,
                             stream: str = None,
-                            plugin: str = None):
+                            plugin: str = None,
+                            reference: dict = None):
 
         return await self.payload_write(command_type=command_type,
                                         message=message,
                                         subject=subject,
                                         subject_prefix=subject_prefix,
                                         stream=stream,
-                                        plugin=plugin)
+                                        plugin=plugin,
+                                        reference=reference)
 
     async def event_write(self,
                           event_type: str = None,
@@ -304,14 +309,16 @@ class Payload(KeyVal, NatsPool):
                           subject: str = None,
                           subject_prefix: str = None,
                           stream: str = None,
-                          plugin: str = None):
+                          plugin: str = None,
+                          reference: dict = None):
 
         return await self.payload_write(event_type=event_type,
                                         message=message,
                                         subject=subject,
                                         subject_prefix=subject_prefix,
                                         stream=stream,
-                                        plugin=plugin)
+                                        plugin=plugin,
+                                        reference=reference)
 
     async def playbook_bucket_create(self):
         await self.nats_pool.bucket_create(bucket_name=PLAYBOOKS)
