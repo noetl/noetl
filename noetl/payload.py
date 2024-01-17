@@ -156,6 +156,8 @@ class Payload(KeyVal, NatsPool):
                       stream=None,
                       seq=None,
                       context=None):
+        if not isinstance(reference, dict):
+            reference = {}
         self.set_subject(reference.get("subject", subject))
         self.set_timestamp(reference.get("timestamp", timestamp))
         self.set_current_id(reference.get("current_id", current_id))

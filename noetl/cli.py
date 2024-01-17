@@ -2,7 +2,6 @@ import sys
 import requests
 import os
 import json
-import yaml
 from loguru import logger
 from noetl.keyval import KeyVal
 
