@@ -397,5 +397,5 @@ logs:
 
 pip-upload:
 	rm -rf dist/*
-	python3 setup.py sdist bdist_wheel
-	python3 -m twine upload dist/*
+	$(PYTHON) setup.py sdist bdist_wheel
+	$(PYTHON) -m twine upload dist/*
