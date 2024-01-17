@@ -26,21 +26,7 @@ class HttpHandler(Plugin):
 
 
 if __name__ == "__main__":
-    # args = parse_args(
-    #     description="NoETL HTTPHandler Plugin",
-    #     default_nats_url="nats://localhost:32222",
-    #     default_nats_pool_size=10,
-    #     default_plugin_name="http-handler:0_1_0",
-    #     default_nats_subscription_subject="noetl.event.http-handler:0_1_0.>",
-    #     default_nats_subscription_stream="noetl",
-    #     default_nats_subscription_queue="noetl-http-handler-0-1-0",
-    #     default_nats_command_prefix="noetl.command",
-    #     default_nats_command_stream="noetl",
-    #     default_nats_event_prefix="noetl.event",
-    #     default_nats_event_stream="noetl",
-    #     default_prom_host="localhost",
-    #     default_prom_port=9093
-    # )
+
     args = parse_args(
         description="NoETL HTTPHandler Plugin",
         nats_url=("NATS_URL", "nats://localhost:32222", "NATS server URL"),

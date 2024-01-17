@@ -71,21 +71,7 @@ class Dispatcher(Plugin):
 
 
 if __name__ == "__main__":
-    # args = parse_args(
-    #     description="NoETL Dispatcher Plugin",
-    #     default_nats_url="nats://localhost:32222",
-    #     default_nats_pool_size=10,
-    #     default_plugin_name="dispatcher",
-    #     default_nats_subscription_subject="noetl.event.dispatcher.>",
-    #     default_nats_subscription_stream="noetl",
-    #     default_nats_subscription_queue="noetl-dispatcher",
-    #     default_nats_command_prefix="noetl.command",
-    #     default_nats_command_stream="noetl",
-    #     default_nats_event_prefix="noetl.event",
-    #     default_nats_event_stream="noetl",
-    #     default_prom_host="localhost",
-    #     default_prom_port=9092
-    # )
+
     args = parse_args(
         description="NoETL Dispatcher Plugin",
         nats_url=("NATS_URL", "nats://localhost:32222", "NATS server URL"),
@@ -101,6 +87,7 @@ if __name__ == "__main__":
         prom_host=("PROM_HOST", "localhost", "Prometheus host"),
         prom_port=("PROM_PORT", 9092, "Prometheus port")
     )
+
     dispatcher_plugin = Dispatcher()
     dispatcher_plugin.initialize_nats_pool(
         NatsConfig(
