@@ -390,3 +390,12 @@ show-commands:
 .PHONY: logs
 logs:
 	kubectl logs -f -l 'app in (noetl-api, noetl-dispatcher, noetl-http-handler, noetl-registrar)'
+
+
+#[PIP UPLOAD]############################################################################
+.PHONY: pip-upload
+
+pip-upload:
+	rm -rf dist/*
+	python3 setup.py sdist bdist_wheel
+	python3 -m twine upload dist/*
