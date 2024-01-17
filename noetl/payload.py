@@ -364,6 +364,14 @@ class Payload(KeyVal, NatsPool):
         self.set_event_type(event_type=EVENT_PLUGIN_REGISTERED)
         self.set_value(REVISION_NUMBER, revision)
 
+    async def kv_put_encoded(self, bucket_name: str,  key: str, value: bytes = None):
+        revision = await self.nats_pool.kv_put(bucket_name=bucket_name, key=key, value=value or self.encode())
+        self.set_value(REVISION_NUMBER, revision)
+
+    async def kv_get_decoded(self, bucket_name: str,  key: str, revision = None):
+        kv = await self.nats_pool.kv_get(bucket_name=bucket_name, key=key)
+        return self.decode(kv)
+
     async def plugin_get(self, key: str):
         return await self.nats_pool.kv_get(bucket_name=PLUGINS, key=key)
 

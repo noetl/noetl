@@ -26,20 +26,35 @@ class HttpHandler(Plugin):
 
 
 if __name__ == "__main__":
+    # args = parse_args(
+    #     description="NoETL HTTPHandler Plugin",
+    #     default_nats_url="nats://localhost:32222",
+    #     default_nats_pool_size=10,
+    #     default_plugin_name="http-handler:0_1_0",
+    #     default_nats_subscription_subject="noetl.event.http-handler:0_1_0.>",
+    #     default_nats_subscription_stream="noetl",
+    #     default_nats_subscription_queue="noetl-http-handler-0-1-0",
+    #     default_nats_command_prefix="noetl.command",
+    #     default_nats_command_stream="noetl",
+    #     default_nats_event_prefix="noetl.event",
+    #     default_nats_event_stream="noetl",
+    #     default_prom_host="localhost",
+    #     default_prom_port=9093
+    # )
     args = parse_args(
         description="NoETL HTTPHandler Plugin",
-        default_nats_url="nats://localhost:32222",
-        default_nats_pool_size=10,
-        default_plugin_name="http-handler:0_1_0",
-        default_nats_subscription_subject="noetl.event.http-handler:0_1_0.>",
-        default_nats_subscription_stream="noetl",
-        default_nats_subscription_queue="noetl-http-handler-0-1-0",
-        default_nats_command_prefix="noetl.command",
-        default_nats_command_stream="noetl",
-        default_nats_event_prefix="noetl.event",
-        default_nats_event_stream="noetl",
-        default_prom_host="localhost",
-        default_prom_port=9093
+        nats_url=("NATS_URL", "nats://localhost:32222", "NATS server URL"),
+        nats_pool_size=("NATS_POLL_SIZE", 10, "NATS pool size"),
+        plugin_name=("PLUGIN_NAME", "http-handler:0_1_0", "Plugin name"),
+        nats_subscription_subject=("NATS_SUBSCRIPTION_SUBJECT", "noetl.event.http-handler:0_1_0.>", "NATS subject for subscription"),
+        nats_subscription_stream=("NATS_SUBSCRIPTION_STREAM", "noetl", "NATS subscription stream"),
+        nats_subscription_queue=("NATS_SUBSCRIPTION_QUEUE", "noetl-http-handler-0-1-0", "NATS JetStream subscription group queue"),
+        nats_command_prefix=("NATS_COMMAND_PREFIX", "noetl.command", "NATS subject prefix for commands"),
+        nats_command_stream=("NATS_COMMAND_STREAM", "noetl", "NATS JetStream name for commands"),
+        nats_event_prefix=("NATS_EVENT_PREFIX", "noetl.event", "NATS subject prefix for events"),
+        nats_event_stream=("NATS_EVENT_STREAM", "noetl", "NATS JetStream name for events"),
+        prom_host=("PROM_HOST", "localhost", "Prometheus host"),
+        prom_port=("PROM_PORT", 9093, "Prometheus port")
     )
     http_handler_plugin = HttpHandler()
     http_handler_plugin.initialize_nats_pool(NatsConfig(

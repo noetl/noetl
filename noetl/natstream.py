@@ -8,6 +8,7 @@ import json
 from loguru import logger
 from datetime import datetime
 from uuid import uuid4
+from nats import errors
 
 
 @dataclass
@@ -232,24 +233,31 @@ class NatsPool:
                 logger.error(f"JetStream get message error for stream {stream} sequence {sequence}: {e}")
                 raise
 
-    async def nats_read_subject(self, subject: str):
-        msg_data = None
+    async def get_consumers_info(self, stream):
+        async with self.nats_pool.connection() as js:
+            try:
+                info = await js.consumers_info(stream)
+                return info
+            except Exception as e:
+                logger.error(f"JetStream get consumer info error for stream {stream}: {e}")
+                raise
+
+    async def nats_subject_fetch(self, subject: str, batch=1, timeout=5):
+        messages = []
+
         if self.nats_pool is None:
             await self.get_nats_pool()
 
-        async def message_handler(msg):
-            nonlocal msg_data
-            msg_data = msg.data
-
         try:
             async with self.nats_pool.connection() as js:
-                _ = await js.subscribe(
-                    subject=f"{subject}",
-                    durable=str(uuid4()),
-                    cb=message_handler,
+                sub = await js.pull_subscribe(
+                    subject=subject,
+                    durable=str(uuid4())
                 )
-                await asyncio.sleep(0.01)
-            return msg_data
+                messages += [msg.data for msg in await sub.fetch(batch=batch, timeout=timeout)]
+                await sub.unsubscribe()
+
+            return messages
 
         except ErrTimeout:
             logger.error(f"NATS subject {subject} read timeout error.")
@@ -268,21 +276,22 @@ class NatsPool:
 
 
 if __name__ == "__main__":
-    nats_config: NatsConfig = NatsConfig(nats_url="nats://localhost:32222", nats_pool_size=10)
-    nats_pool = NatsConnectionPool(config=nats_config)
+    nats_pool = NatsPool(
+        NatsConfig(nats_url="nats://localhost:32222", nats_pool_size=10)
+    )
 
 
     async def test():
-        async def func(js):
-            ack: PubAck = await js.publish('test.greeting', b'Hello JS!')
-            logger.info(f'Ack: stream={ack.stream}, sequence={ack.seq}')
+        ack = await nats_pool.nats_write("noetl.command.test", "noetl", b'Hello JS!2')
+        print(ack)
 
-        return await nats_pool.execute(func)
+        msgs = await nats_pool.nats_subject_fetch("noetl.command.test", batch=100, timeout=1)
+        print(msgs)
 
 
     async def _main():
-        result = await test()
-        print(result)
+        await test()
+        nats_pool = NatsConnectionPool.get_instance()
         await nats_pool.close_pool()
 
 
