@@ -1,3 +1,0 @@
-DISPATCHER
-
-Dispatcher should listen all events in the NATS STREAMS "events" and generate COMMANDS using if then else flow control.
