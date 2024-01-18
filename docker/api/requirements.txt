@@ -1,9 +1,0 @@
-asyncio==3.4.3
-loguru==0.7.2
-pyyaml==6.0
-spacy==3.6.1
-fastapi==0.103.1
-uvicorn==0.23.2
-nats-py==2.6.0
-strawberry-graphql==0.211.1
-aioprometheus==23.3.0

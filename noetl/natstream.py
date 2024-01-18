@@ -167,6 +167,7 @@ class NatsConnectionPool:
                 return entry.value
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
+            return None
 
     async def kv_get_all(self, bucket_name):
         async with self.connection() as js:
@@ -176,6 +177,7 @@ class NatsConnectionPool:
                 return keys
             except Exception as e:
                 logger.error(f"Bucket {bucket_name} failed to get keys. Error: {e}")
+            return
 
     async def kv_delete(self, bucket_name, key: str):
         async with self.connection() as js:
