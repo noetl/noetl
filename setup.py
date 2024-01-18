@@ -16,7 +16,7 @@ def read_readme():
 
 setup(
     name="noetl",
-    version="0.1.8",
+    version="0.1.9",
     author="NoETL Team",
     description="NoETL: A Python package for managing workflows",
     long_description=read_readme(),
