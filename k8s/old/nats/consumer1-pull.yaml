@@ -1,0 +1,11 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Consumer
+metadata:
+  name: hermione-pull
+spec:
+  streamName: hogwarts
+  durableName: hermione-pull
+  deliverPolicy: all
+  filterSubject: "magic.*"
+  maxDeliver: 20
+  ackPolicy: explicit

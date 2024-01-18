@@ -1,0 +1,11 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Consumer
+metadata:
+  name: noetl
+spec:
+  streamName: noetl
+  durableName: noetl-pull
+  deliverPolicy: all
+  filterSubject: "noetl.>"
+  maxDeliver: 20
+  ackPolicy: explicit

@@ -1,0 +1,32 @@
+############################################################
+# NATS config
+############################################################
+config:
+  cluster:
+    enabled: true
+    port: 6222
+    # must be 2 or higher when jetstream is enabled
+    replicas: 2
+  jetstream:
+    enabled: true
+    fileStore:
+      enabled: true
+      dir: /data
+  nats:
+    port: 4222
+  monitor:
+    enabled: true
+    port: 8222
+
+############################################################
+# service
+############################################################
+service:
+  merge:
+    spec:
+      type: NodePort      
+  ports:
+    nats:
+      enabled: true
+    monitor:
+      enabled: true

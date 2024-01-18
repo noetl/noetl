@@ -1,0 +1,46 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: fetch-time-and-notify-slack
+spec:
+  vars:
+    TIMEZONE: "{{ input.TIMEZONE }}"
+    NOTIFICATION_CHANNEL: "{{ input.NOTIFICATION_CHANNEL }}"
+    TIME_API: "http://worldtimeapi.org/api/timezone"
+    FETCH_TIME_TASK: "fetch-time"
+    NOTIFY_TASK: "send-notification"
+  timeout: 120
+  input: {}
+  initialSettings:
+    start: [fetch-time:{input: 1}, fetch-time:{input: 2}]
+    state: ready
+  transitions:
+    ready: running
+    running: [ completed, failed, terminated ]
+  tasks:
+    fetch-time:
+      steps:
+        get-current-time:
+          description: "Get the current time from the World Time API"
+          plugin: "http-handler:0_1_0"
+          method: "GET"
+          url: "{{ spec.vars.TIME_API }}/{{ spec.vars.TIMEZONE }}"
+        get-current-date:
+          description: "Get the current date from the World Time API"
+          plugin: "http-handler:0_1_0"
+          method: "GET"
+          url: "{{ spec.vars.TIME_API }}/{{ spec.vars.TIMEZONE }}"
+      switch:
+        - condition: "{{ get-current-time.output.exitCode }} != 0"
+          next:
+            - task: send-notification
+              args:
+                get-current-time-ref: "{{ get-current-time.ref }}"
+        - condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
+    send-notification:
+      description: "Send the fetched time notification"
+      plugin: "http-handler:0_1_0"
+      method: "POST"
+      url: "{{ spec.vars.NOTIFICATION_CHANNEL }}"
+      data:
+        text: "The current time is {{ tasks.fetch-time.steps.get-current-time.response }}"

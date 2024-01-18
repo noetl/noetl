@@ -1,0 +1,57 @@
+apiVersion: workflow.noetl.io/v1
+kind: Playbook
+metadata:
+  name: get-current-time
+spec:
+  vars:
+    NTP_SRV_POOL: time.google.com
+    GOOGLE_URL: "http://google.com"
+    INITIAL_TASK: "start"
+  timeout: 60
+  # schedule: "*/5 * * * *"
+  initialSettings:
+    start: "{{ spec.vars.INITIAL_TASK }}"
+    state: ready
+  transitions:
+    ready: running
+    running: [completed, failed, terminated]
+  tasks:
+    start:
+      inputSchema:
+        type: object
+        properties:
+          NTP_SRV_POOL:
+            type: string
+          GOOGLE_URL:
+            type: string
+        required:
+          - NTP_SRV_POOL
+          - GOOGLE_URL
+      outputSchema:
+        type: object
+        properties:
+          time:
+            type: string
+        required:
+          - time
+      steps:
+        get-time-ntp:
+          description: "Get time from time.google.com" # ntpdate -q time.google.com | grep date | sed 's/ ntpdate.*//'
+          plugin: "http-requests:1.1.1"
+          command: "ntpdate"
+          args:
+            - "-q"
+            - "{{ spec.vars.NTP_SRV_POOL }}"
+            - " | grep date "
+            - " | sed 's/ ntpdate.*//' "
+          exitCode: 0
+        get-time-url:
+          description: "Get time from url http://google.com" # curl -s --head http://google.com | grep ^Date: | sed 's/Date: //g'
+          type: shell
+          command: "curl"
+          args:
+            - "-s"
+            - "--head {{ spec.vars.GOOGLE_URL }}"
+            - " | grep ^Date:"
+            - " | sed 's/Date: //g'"
+          exitCode: 0

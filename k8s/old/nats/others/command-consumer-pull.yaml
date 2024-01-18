@@ -1,0 +1,12 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Consumer
+metadata:
+  name: command-pull-consumer
+  namespace: nats
+spec:
+  streamName: command
+  durableName: command-pull-consumer
+  deliverPolicy: all
+  filterSubject: commands.received
+  maxDeliver: 20
+  ackPolicy: explicit

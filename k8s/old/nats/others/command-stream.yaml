@@ -1,0 +1,13 @@
+---
+apiVersion: jetstream.nats.io/v1beta2
+kind: Stream
+metadata:
+  name: command
+  namespace: nats
+spec:
+  name: command
+  subjects: ["command","command.*"]
+  storage: file
+  maxAge: 72h
+  maxMsgs: 1000000
+---

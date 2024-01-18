@@ -1,16 +1,20 @@
 from setuptools import setup, find_packages
+from setuptools.command.install import install as InstallCommand
+
+def read_requirements():
+    with open('requirements.txt', 'r') as f:
+        return f.read().splitlines()
 
 setup(
     name="noetl",
-    version="0.1.0",
-    author="Alexey Kuksin",
-    description="NoETL Python package",
+    version="0.1.7",
+    author="NoETL Team",
+    description="NoETL: A Python package for managing workflows",
     packages=find_packages(),
-    install_requires=[
-        "asyncio==3.4.3",
-        "loguru==0.7.2",
-        "aiofiles==23.2.1",
-        "pyyaml==6.0",
-        "requests==2.28.2"
-    ],
+    install_requires=read_requirements(),
+    entry_points={
+        "console_scripts": [
+            "noetl = noetl.cli:main",
+        ],
+    },
 )

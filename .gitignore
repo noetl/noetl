@@ -11,3 +11,6 @@ target
 *.log
 clusterManagement/out
 clusterManagement/clients
+build/
+dist/
+*.egg-info/
