@@ -369,8 +369,13 @@ class Payload(KeyVal, NatsPool):
         self.set_value(REVISION_NUMBER, revision)
 
     async def kv_get_decoded(self, bucket_name: str,  key: str, revision = None):
-        kv = await self.nats_pool.kv_get(bucket_name=bucket_name, key=key)
-        return self.decode(kv)
+        try:
+            kv = await self.nats_pool.kv_get(bucket_name=bucket_name, key=key)
+            if kv:
+                return self.decode(kv)
+        except Exception as e:
+            logger.error(e)
+        return None
 
     async def plugin_get(self, key: str):
         return await self.nats_pool.kv_get(bucket_name=PLUGINS, key=key)
