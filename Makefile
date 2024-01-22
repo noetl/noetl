@@ -123,6 +123,12 @@ purge-noetl:
 stream-ls:
 	@nats stream ls -s $(NATS_URL)
 
+nats_account_info:
+	@nats account info -s $(NATS_URL)
+
+nats_kv_ls:
+	@nats kv ls -s $(NATS_URL)
+
 #[WORKFLOW COMMANDS]######################################################################
 
 register-plugin: activate-venv
