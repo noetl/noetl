@@ -101,9 +101,15 @@ class KeyVal(dict):
         if keys:
             self.delete_keys(keys=[k for k in self.get_keys() if k not in keys])
 
-    def to_json(self, indent=None):
+    def to_json(self):
         try:
-            return json.dumps(self.get_value(),indent=indent).encode(AppConst.UTF_8)
+            return json.dumps(self.get_value()).encode(AppConst.UTF_8)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Error converting to JSON: {e}")
+
+    def as_json(self, path: str = None, ident: int = None):
+        try:
+            return json.dumps(self.get_value(path=path), ident=ident)
         except (TypeError, ValueError) as e:
             raise ValueError(f"Error converting to JSON: {e}")
 
