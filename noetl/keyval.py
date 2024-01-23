@@ -101,9 +101,9 @@ class KeyVal(dict):
         if keys:
             self.delete_keys(keys=[k for k in self.get_keys() if k not in keys])
 
-    def to_json(self):
+    def to_json(self, indent=None):
         try:
-            return json.dumps(self.get_value()).encode(AppConst.UTF_8)
+            return json.dumps(self.get_value(),indent=indent).encode(AppConst.UTF_8)
         except (TypeError, ValueError) as e:
             raise ValueError(f"Error converting to JSON: {e}")
 
@@ -142,7 +142,6 @@ class KeyVal(dict):
         try:
             payload_data = json.loads(base64.b64decode(encoded_payload).decode(AppConst.UTF_8))
             return cls(**payload_data)
-            # return cls(json.loads(base64.b64decode(encoded_payload).decode(AppConst.UTF_8)))
         except Exception as e:
             raise ValueError(f"Error decoding payload: {e}")
 

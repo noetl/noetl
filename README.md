@@ -1,6 +1,6 @@
 # NoETL Workflow Execution System Documentation
 
-NoETL is a workflow automation framework designed to simplify the process of defining, managing, and executing complex workflows. It is especially well-suited for orchestrating data processing pipelines and task automation.
+NoETL ("Not Only ETL") is a workflow automation library and framework to simplify the process of defining, managing, and executing complex workflows. Particularly well-suited for orchestrating data processing pipelines, it extends beyond just ETL tasks and is designed for task automation in distributed runtime environments.
 
 ## Introduction
 
@@ -11,7 +11,7 @@ The actual runtime applications are located in other repositories:
 - [Plugins](https://github.com/noetl/noetl-plugins)
 - [NATS Kubernetes dependencies](https://github.com/noetl/k8s)
 
-The NoETL system is a workflow execution engine designed to automate the execution of tasks defined in a playbook or just deployed as a services. It employs a publisher-subscriber pattern for command transmission and event reception using the NATS messaging system. Inspired by Erlang's architecture, NoETL leverages a plugin-based approach, enabling a scalable, resilient, and efficient execution environment.
+The NoETL system is a workflow execution engine designed to automate the execution of tasks defined in a playbook or just deployed as services. It employs a publisher-subscriber pattern for `command` transmission and `event` reception using the NATS messaging system. Inspired by Erlang's architecture, NoETL leverages a plugin-based approach, enabling a scalable, resilient, and efficient execution environment.
 
 ## Architecture Overview
 
@@ -30,7 +30,7 @@ NoETL's architecture draws heavily from several key concepts of Erlang:
 
 ## Workflow
 
-In NoETL, workflows are defined as playbooks – YAML scripts that orchestrate the execution of tasks in a predefined sequence. Each playbook describes a series of steps within tasks, where each step corresponding to a specific plugin.
+In NoETL, workflows are defined as playbooks – YAML scripts that orchestrate the execution of tasks in a predefined sequence. Each playbook describes a series of steps within tasks, where each step corresponds to a specific plugin.
 
 ## Tasks and Steps
 
@@ -44,7 +44,7 @@ Tasks are the primary operational elements within a playbook, consisting of mult
 
 Events and commands drive the operation of NoETL:
 
-- **Commands:** Trigger the execution of step in the task.
+- **Commands:** Trigger the execution of a step in the task.
 - **Events:** Published upon step and task completion, signaling its end.
 
 This model maintains a decoupled and fault-tolerant playbook execution.
@@ -53,22 +53,20 @@ This model maintains a decoupled and fault-tolerant playbook execution.
 
 Subjects in NoETL provide contextual information:
 
-- **Command Subjects:** `command.<plugin_name>.<workflow_id>.<step_id>`
-- **Event Subjects:** `event.<plugin_name>.<workflow_id>.<step_id>`
+- **Command Subjects:** `command.<plugin_name>.<workflow_instance_id>`
+- **Event Subjects:** `event.<plugin_name>.<workflow_instance_id>`
+ 
+**N.B.** Error handling is a part of event subjects.
 
 ## Mini-Plugin Architecture
 
-NoETL includes several service plugins:
+NoETL includes several core service plugins:
 
-- **Command API Plugin:** Manages playbook, plugin, and command reception and registration.
-- **Event API Plugin:** Tracks events and manages event data.
-- **Dispatcher API Plugin:** Responsible for dispatch actions, task queue management, and command execution.
+- **NoETL GraphQL API Plugin:** Provides an interface for querying and interacting with NoETL using GraphQL.
+- **Dispatcher Plugin:** Responsible for dispatch actions, steps' output, task queue management, and creating commands for other plugins to be executed.
+- **Registrar Plugin:**  Manages playbook, plugin, and command reception and registration.
 
-These plugins communicate using NATS messaging, driven by YAML playbooks specifying task sequences. The Kubernetes environment serves as the execution platform for these plugins.
-
-## Conclusion
-
-NoETL's architecture, embodying scalability, robustness, and fault-tolerance, is key to a reliable workflow execution system. Its distributed nature, combined with the efficiency of the plugin system and the resilience of its components, makes NoETL a great solution for complex workflow automation.
+Plugins communicate using NATS messaging, driven by YAML playbooks specifying task sequences. The Kubernetes environment serves as the execution platform.
 
 ### Prerequisites
 
@@ -82,3 +80,4 @@ To install NoETL use `pip`:
 
 ```bash
 pip install noetl
+```
