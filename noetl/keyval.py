@@ -64,6 +64,10 @@ class KeyVal(dict):
     def set_value(self, path: str, value):
         if path is None:
             raise TypeError("Path cannot be None")
+
+        if not value:
+            raise ValueError("Value cannot be None or empty")
+
         try:
             keys = path.split(".")
             target = self
@@ -107,11 +111,14 @@ class KeyVal(dict):
         except (TypeError, ValueError) as e:
             raise ValueError(f"Error converting to JSON: {e}")
 
-    def as_json(self, path: str = None, ident: int = None):
+    def as_json(self, path: str = None, indent: any = None):
         try:
-            return json.dumps(self.get_value(path=path), ident=ident)
+            value = self.get_value(path=path)
+            if value is None:
+                raise ValueError("Invalid path.")
+            return json.dumps(value, indent=indent)
         except (TypeError, ValueError) as e:
-            raise ValueError(f"Error converting to JSON: {e}")
+            raise ValueError(f"Converting error: {e}")
 
     def base64_path(self, path: str = AppConst.PAYLOAD_BASE64):
         base64_value = self.get_value(path)

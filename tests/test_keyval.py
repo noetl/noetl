@@ -1,5 +1,5 @@
 import unittest
-from keyval import KeyVal
+from noetl.keyval import KeyVal
 import base64
 import json
 
@@ -19,10 +19,15 @@ class TestKeyVal(unittest.TestCase):
 
     def test_set_value(self):
         kv = KeyVal()
+        self.assertIsNone(kv.get_value("a.b.c"), None)
         kv.set_value("a.b.c", 10)
         self.assertEqual(kv.get_value("a.b.c"), 10)
+
+        kv = KeyVal()
         with self.assertRaises(TypeError):
             kv.set_value(None, 10)
+
+        kv = KeyVal()
         with self.assertRaises(ValueError):
             kv.set_value("a.b", [])
 
@@ -68,6 +73,24 @@ class TestKeyVal(unittest.TestCase):
         self.assertEqual(kv, {"a": 1})
         with self.assertRaises(ValueError):
             KeyVal.from_json("invalid json")
+
+    def test_as_json(self):
+        kv = KeyVal({'a': 1, 'b': 2})
+
+        self.assertEqual(kv.as_json(path='a'), '1')
+        self.assertEqual(kv.as_json(path='b'), '2')
+
+        self.assertEqual(kv.as_json(path='a', indent=2), '1')
+        self.assertEqual(kv.as_json(path='b', indent=2), '2')
+
+        self.assertEqual(kv.as_json(indent=2), '{\n  "a": 1,\n  "b": 2\n}')
+
+        with self.assertRaises(ValueError):
+            kv.as_json(path='c')
+
+        kv2 = KeyVal({'a': KeyVal})
+        with self.assertRaises(ValueError):
+            kv2.as_json(path='a')
 
 if __name__ == '__main__':
     unittest.main()
