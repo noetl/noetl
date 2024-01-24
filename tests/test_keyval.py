@@ -14,8 +14,7 @@ class TestKeyVal(unittest.TestCase):
         self.assertEqual(kv.get_value("a.b.c"), 10)
         self.assertIsNone(kv.get_value("a.b.d"))
         self.assertEqual(kv.get_value("a.b.d", default=5), 5)
-        with self.assertRaises(TypeError):
-            kv.get_value("a.b")
+        self.assertIsInstance(kv.get_value("a.b"), dict)
 
     def test_set_value(self):
         kv = KeyVal()

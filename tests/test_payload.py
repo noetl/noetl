@@ -12,7 +12,7 @@ class TestPayload(unittest.TestCase):
 
     def test_update_status_with_state(self):
         self.payload.set_status(state='COMPLETED')
-        self.assertEqual(self.payload.get_value('status.state'), ExecutionState['COMPLETED'])
+        self.assertEqual(self.payload.get_value('status.state'), ExecutionState['COMPLETED'].value)
 
     def test_update_status_with_invalid_state(self):
         with self.assertRaises(ValueError):
@@ -21,7 +21,7 @@ class TestPayload(unittest.TestCase):
     def test_update_status_with_dict_invalid_sate(self):
         self.payload.set_status(status={'test_status': 'ACTIVE'}, state='COMPLETED')
         self.assertEqual(self.payload.get_value('status.test_status'), 'ACTIVE')
-        self.assertEqual(self.payload.get_value('status.state'), ExecutionState['COMPLETED'])
+        self.assertEqual(self.payload.get_value('status.state'), ExecutionState['COMPLETED'].value)
 
 if __name__ == "__main__":
     unittest.main()

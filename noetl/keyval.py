@@ -4,6 +4,11 @@ import json
 from noetl.const import AppConst
 
 
+class SafeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        return None
+
+
 class KeyVal(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -129,9 +134,9 @@ class KeyVal(dict):
         return KeyVal.str_base64(base64_value)
 
     def encode(self, keys=None):
-        return base64.b64encode(
-            json.dumps(self if keys is None else {key: self[key] for key in keys if key in self.get_value()}).encode(
-                AppConst.UTF_8))
+        return base64.b64encode(json.dumps(
+            self if keys is None else {key: self[key] for key in keys if key in self.get_value()}, cls=SafeEncoder
+        ).encode(AppConst.UTF_8))
 
     def base64_value(self, path: str = AppConst.VALUE):
         value = self.get_value(path=path, default=AppConst.VALUE_NOT_FOUND)

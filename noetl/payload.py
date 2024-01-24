@@ -227,7 +227,7 @@ class Payload(KeyVal, NatsPool):
                 execution_state = ExecutionState[state.upper()]
             except KeyError:
                 raise ValueError(f"Invalid state: {state}")
-            self.set_value("status.state", execution_state)
+            self.set_value("status.state", execution_state.value)
 
     def set_metadata(self, metadata: dict = None, exclude: list[str] = None):
         metadata_orig = self.get_value(METADATA, exclude=exclude)
