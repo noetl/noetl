@@ -1,49 +1,40 @@
-import uuid
-from noetl.natstream import NatsConnectionPool, NatsConfig
-from noetl.payload import Payload, AppConst,  RawStreamMsg
+import yaml
+from noetl.payload import Payload, AppConst
 
 
-class Playbook(Payload):
-    def __init__(self,
-                 playbook_template: dict | None = None,
-                 playbook_id: str | None = None,
-                 playbook_input: dict | None = None,
-                 playbook_metadata: dict | None = None,
-                 nats_pool: NatsConnectionPool | NatsConfig = None, **kwargs):
-        if playbook_template:
-            kwargs = kwargs | playbook_template
-        super().__init__(nats_pool=nats_pool, **kwargs)
-        if playbook_id:
-            self.set_value("spec.reference.origin_id", playbook_id)
-        if playbook_input:
-            self.set_value("spec.input", playbook_input)
-        if playbook_metadata:
-            self.set_value("metadata.nats.kv.metadata", playbook_metadata)
+class Playbook:
+    METADATA_EVENT_TYPE = AppConst.METADATA_EVENT_TYPE
+    METADATA_COMMAND_TYPE = AppConst.METADATA_COMMAND_TYPE
 
-    # def execution_tree(self):
-    #     tasks = self.get_keys(path="spec.tasks")
-    #     for task_path in tasks:
-    #         task_id = str(uuid.uuid4())
-    #         self.set_value(f"{task_path}.id", task_id)
-    #
-    #         steps = self.get_keys(path=f"{task_path}.steps")
-    #         for step_path in steps:
-    #             step_id = str(uuid.uuid4())
-    #             self.set_value(f"{step_path}.id", step_id)
+    def __init__(self, payload: Payload):
+        self.payload = payload
+        self.template = None
+        self.transitions = None
 
-    async def register(self,subject: str, stream: str):
-        #subject = f"playbook.{self.get_value('spec.id')}"
-        ack = await self.event_write(
-            message=self.encode(),
-            stream=stream,
-            subject=subject
-        )
-        return ack
+    async def load_template(self):
+        playbook_path = self.payload.get_value("playbook.path")
+        playbook_bucket = self.payload.get_value("playbook.bucket")
+        kv_playbook = await self.payload.kv_get_decoded(playbook_bucket, playbook_path)
+        if kv_playbook:
+            self.template = kv_playbook
 
-    async def generate_command(self):
-        pass
+    def set_transitions(self):
+        self.transitions = self.template.get_value("spec.transitions", {})
 
+    def validate_transition(self, current_state, next_state):
+        states = self.transitions.get(current_state)
 
-    @classmethod
-    def unmarshal(cls, binary_data: bytes, nats_pool: NatsConnectionPool | NatsConfig = None):
-        return cls(nats_pool=nats_pool, **cls.decode(binary_data))
+        if states is None:
+            raise ValueError(f"No transitions defined for the state: {current_state}")
+
+        elif isinstance(states, list):
+            if next_state not in states:
+                raise ValueError(f"Transition to '{next_state}' from '{current_state}' is not allowed.")
+        elif next_state != states:
+            raise ValueError(f"Transition to '{next_state}' from '{current_state}' is not allowed.")
+
+        return True
+
+    def transition(self, current_state, next_state):
+        if self.validate_transition(current_state, next_state):
+            self.payload.set_status(state=next_state)

@@ -3,7 +3,8 @@ from datetime import datetime
 from enum import Enum
 from noetl.keyval import KeyVal
 from noetl.const import AppConst
-from noetl.natstream import NatsPool, NatsConnectionPool, NatsConfig, NatsStreamReference, ErrTimeout, PubAck, RawStreamMsg, \
+from noetl.natstream import NatsPool, NatsConnectionPool, NatsConfig, NatsStreamReference, ErrTimeout, PubAck, \
+    RawStreamMsg, \
     logger
 
 PLAYBOOKS = AppConst.PLAYBOOKS
@@ -23,21 +24,20 @@ PLAYBOOK_INPUT = AppConst.PLAYBOOK_INPUT
 METADATA = AppConst.METADATA
 METADATA_REFERENCE = AppConst.METADATA_REFERENCE
 METADATA_NOT_FOUND = AppConst.METADATA_NOT_FOUND
-METADATA_REFERENCE_SUBJECT=AppConst.METADATA_REFERENCE_SUBJECT
-METADATA_REFERENCE_CONTEXT=AppConst.METADATA_REFERENCE_CONTEXT
-METADATA_REFERENCE_CURRENT_ID=AppConst.METADATA_REFERENCE_CURRENT_ID
-METADATA_REFERENCE_ORIGIN_ID=AppConst.METADATA_REFERENCE_ORIGIN_ID
-METADATA_REFERENCE_PREVIOUS_ID=AppConst.METADATA_REFERENCE_PREVIOUS_ID
-METADATA_REFERENCE_SEQ=AppConst.METADATA_REFERENCE_SEQ
-METADATA_REFERENCE_STREAM=AppConst.METADATA_REFERENCE_STREAM
-METADATA_REFERENCE_TIMESTAMP=AppConst.METADATA_REFERENCE_TIMESTAMP
-NATS_REFERENCE=AppConst.NATS_REFERENCE
+METADATA_REFERENCE_SUBJECT = AppConst.METADATA_REFERENCE_SUBJECT
+METADATA_REFERENCE_CONTEXT = AppConst.METADATA_REFERENCE_CONTEXT
+METADATA_REFERENCE_CURRENT_ID = AppConst.METADATA_REFERENCE_CURRENT_ID
+METADATA_REFERENCE_ORIGIN_ID = AppConst.METADATA_REFERENCE_ORIGIN_ID
+METADATA_REFERENCE_PREVIOUS_ID = AppConst.METADATA_REFERENCE_PREVIOUS_ID
+METADATA_REFERENCE_SEQ = AppConst.METADATA_REFERENCE_SEQ
+METADATA_REFERENCE_STREAM = AppConst.METADATA_REFERENCE_STREAM
+METADATA_REFERENCE_TIMESTAMP = AppConst.METADATA_REFERENCE_TIMESTAMP
+NATS_REFERENCE = AppConst.NATS_REFERENCE
 
-
-EVENT_TYPE=AppConst.EVENT_TYPE
-COMMAND_TYPE=AppConst.COMMAND_TYPE
-METADATA_EVENT_TYPE=AppConst.METADATA_EVENT_TYPE
-METADATA_COMMAND_TYPE=AppConst.METADATA_COMMAND_TYPE
+EVENT_TYPE = AppConst.EVENT_TYPE
+COMMAND_TYPE = AppConst.COMMAND_TYPE
+METADATA_EVENT_TYPE = AppConst.METADATA_EVENT_TYPE
+METADATA_COMMAND_TYPE = AppConst.METADATA_COMMAND_TYPE
 
 # Events
 EVENT_PLUGIN_REGISTERED = AppConst.EVENT_PLUGIN_REGISTERED
@@ -57,8 +57,17 @@ class PayloadType(Enum):
     COMMAND = AppConst.COMMAND
 
 
+class ExecutionState(Enum):
+    INITIALIZED = "INITIALIZED"
+    RUNNING = "RUNNING"
+    SUSPENDED = "SUSPENDED"
+    TERMINATED = "TERMINATED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
 class Payload(KeyVal, NatsPool):
-    """The Payload class is used to handle payloads.
+    """The Payload class is used to handle workflows payloads.
     Inherits the KeyVal and NatsPool classes.
     """
 
@@ -70,7 +79,7 @@ class Payload(KeyVal, NatsPool):
                  *args,
                  **kwargs):
 
-        super().__init__(payload_data, *args, **kwargs) if payload_data else super().__init__(self,*args, **kwargs)
+        super().__init__(payload_data, *args, **kwargs) if payload_data else super().__init__(self, *args, **kwargs)
         if nats_pool:
             self.initialize_nats_pool(nats_pool)
         self.nats_reference: NatsStreamReference | None = None
@@ -78,6 +87,7 @@ class Payload(KeyVal, NatsPool):
             self.set_event_type(event_type)
         elif command_type:
             self.set_command_type(command_type)
+
 
     @property
     def nats_reference(self):
@@ -87,9 +97,19 @@ class Payload(KeyVal, NatsPool):
     def nats_reference(self, nats_stream_reference: NatsStreamReference):
         self._nats_reference: NatsStreamReference = nats_stream_reference
 
+    @classmethod
+    def unmarshal(cls, binary_data: bytes, nats_pool: NatsConnectionPool | NatsConfig = None):
+        return cls(nats_pool=nats_pool, **cls.decode(binary_data))
+
     def set_nats_pool(self, nats_pool: NatsConnectionPool | NatsConfig):
         if nats_pool:
             self.initialize_nats_pool(nats_pool)
+
+    def get_status(self):
+        return self.get_value("status")
+
+    def get_state(self):
+        return self.get_value("status.state")
 
     def get_reference(self):
         return self.get_value(METADATA_REFERENCE, default=VALUE_NOT_FOUND)
@@ -199,6 +219,20 @@ class Payload(KeyVal, NatsPool):
     def set_context(self, context: str | dict = None):
         if context:
             self.set_value(METADATA_REFERENCE_CONTEXT, context)
+
+    def set_status(self, status: dict = None, state: str = None, exclude: list[str] = None):
+        if status:
+            status_orig = self.get_value("status", exclude=exclude)
+            if status_orig:
+                status |= status_orig
+            self.set_value("status", status)
+
+        if state:
+            try:
+                execution_state = ExecutionState[state.upper()]
+            except KeyError:
+                raise ValueError(f"Invalid state: {state}")
+            self.set_value("status.state", execution_state.value)
 
     def set_metadata(self, metadata: dict = None, exclude: list[str] = None):
         metadata_orig = self.get_value(METADATA, exclude=exclude)
@@ -345,7 +379,6 @@ class Payload(KeyVal, NatsPool):
         kv_payload_decoded = Payload.decode(kv_payload)
         return kv_payload_decoded.yaml_value(PLAYBOOK_BASE64)
 
-
     async def playbook_delete(self, key: str):
         await self.nats_pool.kv_delete(bucket_name=PLAYBOOKS, key=key)
 
@@ -364,11 +397,11 @@ class Payload(KeyVal, NatsPool):
         self.set_event_type(event_type=EVENT_PLUGIN_REGISTERED)
         self.set_value(REVISION_NUMBER, revision)
 
-    async def kv_put_encoded(self, bucket_name: str,  key: str, value: bytes = None):
+    async def kv_put_encoded(self, bucket_name: str, key: str, value: bytes = None):
         revision = await self.nats_pool.kv_put(bucket_name=bucket_name, key=key, value=value or self.encode())
         self.set_value(REVISION_NUMBER, revision)
 
-    async def kv_get_decoded(self, bucket_name: str,  key: str, revision = None):
+    async def kv_get_decoded(self, bucket_name: str, key: str, revision=None):
         try:
             kv = await self.nats_pool.kv_get(bucket_name=bucket_name, key=key)
             if kv:
