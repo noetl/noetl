@@ -67,7 +67,7 @@ class ExecutionState(Enum):
 
 
 class Payload(KeyVal, NatsPool):
-    """The Payload class is used to handle payloads.
+    """The Payload class is used to handle workflows payloads.
     Inherits the KeyVal and NatsPool classes.
     """
 
@@ -88,6 +88,7 @@ class Payload(KeyVal, NatsPool):
         elif command_type:
             self.set_command_type(command_type)
 
+
     @property
     def nats_reference(self):
         return self._nats_reference
@@ -95,6 +96,10 @@ class Payload(KeyVal, NatsPool):
     @nats_reference.setter
     def nats_reference(self, nats_stream_reference: NatsStreamReference):
         self._nats_reference: NatsStreamReference = nats_stream_reference
+
+    @classmethod
+    def unmarshal(cls, binary_data: bytes, nats_pool: NatsConnectionPool | NatsConfig = None):
+        return cls(nats_pool=nats_pool, **cls.decode(binary_data))
 
     def set_nats_pool(self, nats_pool: NatsConnectionPool | NatsConfig):
         if nats_pool:

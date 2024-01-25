@@ -1,7 +1,7 @@
 apiVersion: workflow.noetl.io/v1
-kind: Playbook
+type: Playbook
 metadata:
-  name: create-gcp-artifact-repository
+  playbookName: create-gcp-artifact-repository
 spec:
   vars:
     GCP_PROJECT_ID: test
@@ -14,58 +14,57 @@ spec:
     start: "{{ spec.vars.INITIAL_TASK }}"
     state: ready
   transitions:
-    ready: running
-    running: [completed, failed, terminated]
-  tasks:
-    start:
-      switch:
-        - next: [ create-repository ]
-          condition: "{{ $.tasks.check-repository.steps.check-repo-exists.exitCode }} != 0"
-        - next: [ ]
-          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
-
-    check-repository:
-      steps:
-        check-repo-exists:
-          description: Check if the repository exists
-          type: shell
-          command: "gcloud"
-          args:
-            - "artifacts"
-            - "repositories"
-            - "describe"
-            - "{{ spec.vars.REPOSITORY_NAME }}"
-            - "--location={{ spec.vars.GCP_REGION }}"
-            - "--project={{ spec.vars.GCP_PROJECT_ID }} "
-          exitCode: 0
-        check-repo-exists-2:
-          description: Check if the repository exists
-          type: shell
-          command: "gcloud"
-          args:
-            - "artifacts"
-            - "repositories"
-            - "describe"
-            - "{{ spec.vars.REPOSITORY_NAME }}"
-            - "--location={{ spec.vars.GCP_REGION }}"
-            - "--project={{ spec.vars.GCP_PROJECT_ID }} {{ $.tasks.check-repository.steps.check-repo-exists.exitCode }}"
-          exitCode: 0
-      switch:
-        - next: [create-repository]
-          condition: "{{ $.tasks.check-repository.steps.check-repo-exists.exitCode }} != 0"
-        - next: []
-          condition: "{{ data.tasks.check-repository.steps.check-repo-exists.exitCode }} == 0"
-    create-repository:
-      steps:
-        create-repo:
-          description: Create the repository
-          type: shell
-          command: "gcloud"
-          args:
-            - "artifacts"
-            - "repositories"
-            - "create"
-            - "{{ vars.REPOSITORY_NAME }}"
-            - "--repository-format=docker"
-            - "--location={{ vars.GCP_REGION }}"
-            - "--project={{ vars.GCP_PROJECT_ID }}"
+    INITIALIZED: [RUNNING, FAILED, TERMINATED]
+    RUNNING: [SUSPENDED, COMPLETED, TERMINATED, FAILED]
+    SUSPENDED: [RUNNING, TERMINATED, FAILED]
+    COMPLETED: [INITIALIZED]
+    FAILED: [INITIALIZED]
+    TERMINATED: [INITIALIZED]
+tasks:
+  - taskName: start
+    switch:
+      - nextTask: [ check-repository ]
+        condition: "{{ $.tasks.check-repository.steps.check-repo-exists.exitCode }} != 0"
+  - taskName: check-repository
+    steps:
+      - stepName: check-if-repository-exists
+        description: Check if the repository exists
+        type: shell
+        command: "gcloud"
+        args:
+          - "artifacts"
+          - "repositories"
+          - "describe"
+          - "{{ spec.vars.REPOSITORY_NAME }}"
+          - "--location={{ $.spec.vars.GCP_REGION }}"
+          - "--project={{ $.spec.vars.GCP_PROJECT_ID }} "
+        exitCode: 0
+      - stepName: check-if-repository-exists-2
+        description: Check if another the repository exists
+        type: shell
+        command: "gcloud"
+        args:
+          - "artifacts"
+          - "repositories"
+          - "describe"
+          - "{{ spec.vars.REPOSITORY_NAME }}"
+          - "--location={{ $.spec.vars.GCP_REGION }}"
+          - "--project={{ $.spec.vars.GCP_PROJECT_ID }} {{ $.tasks.check-repository.check-if-repository-exists.exitCode }}"
+        exitCode: 0
+    switch:
+      - nextTask: [create-repository]
+        condition: "{{ $.tasks.check-repository.exitCode }} != 0"
+  - taskName: create-repository
+    steps:
+      - stepName: create-repository
+        description: Create the repository
+        type: shell
+        command: "gcloud"
+        args:
+          - "artifacts"
+          - "repositories"
+          - "create"
+          - "{{ vars.REPOSITORY_NAME }}"
+          - "--repository-format=docker"
+          - "--location={{ vars.GCP_REGION }}"
+          - "--project={{ vars.GCP_PROJECT_ID }}"
