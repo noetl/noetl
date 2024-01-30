@@ -66,6 +66,10 @@ class KeyVal(dict):
         value = self.get_value(path, default, exclude)
         return KeyVal(value) if isinstance(value, dict) else value
 
+    def add(self, path: str, value: str):
+        self.set_value(path, value)
+        return self
+
     def set_value(self, path: str, value):
         if path is None:
             raise TypeError("Path cannot be None")
