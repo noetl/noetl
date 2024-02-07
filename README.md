@@ -58,7 +58,7 @@ Subjects in NoETL provide contextual information:
  
 **N.B.** Error handling is a part of event subjects.
 
-## Mini-Plugin Architecture
+## Microservice-Plugin Architecture
 
 NoETL includes several core service plugins:
 
