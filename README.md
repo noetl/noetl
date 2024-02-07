@@ -21,7 +21,7 @@ At its core, NoETL is built around a publisher-subscriber model that utilizes th
 
 NoETL's architecture draws heavily from several key concepts of Erlang:
 
-- **Everything as a Plugin:** All functional units in NoETL are treated as plugins, similar to Erlang's process encapsulation. These plugins are Docker images that can be executed as services or jobs within a Kubernetes environment. In playbooks, the term 'plugin' refers to these Docker images.
+- **Everything as a Plugin:** All functional units in NoETL are treated as plugins, similar to Erlang's process encapsulation. These plugins are Docker images that can be executed as services or jobs within a Kubernetes environment. In playbooks, the term 'plugin' refers to an alias to Docker images.
 - **Strong Isolation:** Each plugin operates independently and in isolation, akin to Erlang's process isolation.
 - **Lightweight Plugin Management:** Dynamic and efficient creation and destruction of plugin instances are central to NoETL, enabling a scalable architecture.
 - **Message Passing Interaction:** Plugins communicate through message passing via NATS streams, ensuring targeted and accurate messaging.
@@ -30,7 +30,7 @@ NoETL's architecture draws heavily from several key concepts of Erlang:
 
 ## Workflow
 
-In NoETL, workflows are defined as playbooks – YAML scripts that orchestrate the execution of tasks in a predefined sequence. Each playbook describes a series of steps within tasks, where each step corresponds to a specific plugin.
+In NoETL, workflows are defined as playbooks – YAMLs declarations to direct the execution of tasks. Each playbook describes a series of steps within tasks, where each step corresponds to a specific plugin implementation.
 
 ## Tasks and Steps
 
@@ -53,8 +53,8 @@ This model maintains a decoupled and fault-tolerant playbook execution.
 
 Subjects in NoETL provide contextual information:
 
-- **Command Subjects:** `command.<plugin_name>.<workflow_instance_id>`
-- **Event Subjects:** `event.<plugin_name>.<workflow_instance_id>`
+- **Command Subjects:** `command.<plugin_service_name>.<workflow_instance_id>`
+- **Event Subjects:** `event.<plugin_service_name>.<workflow_instance_id>`
  
 **N.B.** Error handling is a part of event subjects.
 
@@ -62,11 +62,11 @@ Subjects in NoETL provide contextual information:
 
 NoETL includes several core service plugins:
 
-- **NoETL GraphQL API Plugin:** Provides an interface for querying and interacting with NoETL using GraphQL.
-- **Dispatcher Plugin:** Responsible for dispatch actions, steps' output, task queue management, and creating commands for other plugins to be executed.
-- **Registrar Plugin:**  Manages playbook, plugin, and command reception and registration.
+- **NoETL GraphQL API plugin service:** Provides an interface for querying and interacting with NoETL using GraphQL.
+- **Dispatcher plugin service:** Responsible for dispatch actions, steps' output, task queue management, and creating commands for the next steps to be executed by actual plugins.
+- **Registrar plugin service:**  Manages playbook, plugin, and command reception and registration.
 
-Plugins communicate using NATS messaging, driven by YAML playbooks specifying task sequences. The Kubernetes environment serves as the execution platform.
+Plugins communicate using NATS messaging, driven by YAML playbooks specifying task sequences. The Kubernetes environment serves as the execution platform.  
 
 ### Prerequisites
 
