@@ -1,5 +1,15 @@
 # NoETL Workflow Execution System Documentation
 
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+noetl  # should invoke your CLI
+
+uv publish --username YOUR_USERNAME
+
+
+
+
 NoETL ("Not Only ETL") is a workflow automation library and framework to simplify the process of defining, managing, and executing complex workflows. Particularly well-suited for orchestrating data processing pipelines, it extends beyond just ETL tasks and is designed for task automation in distributed runtime environments.
 
 ## Introduction

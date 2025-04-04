@@ -9,27 +9,154 @@ K8S_DIR=k8s
 
 NATS_URL=nats://localhost:32222
 
-PYTHON := python3.11
-VENV_NAME := .venv
-REQUIREMENTS := requirements.txt
+#PYTHON := python3.12
+#VENV_NAME := .venv
+#REQUIREMENTS := requirements.txt
+######################################
+#PYTHON_VERSION = 3.12
+export PATH := $(HOME)/.local/bin:$(PATH)
+UV := $(shell command -v uv 2> /dev/null)
+
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help:
+	@echo "Project Management:"
+	@echo "  install-uv     Install uv package manager"
+	@echo "  venv           Create Python $(PYTHON_VERSION) virtual environment"
+	@echo "  install        Install dependencies from pyproject.toml"
+	@echo "  reset          Full environment reset (clean + install)"
+	@echo "\nDevelopment:"
+	@echo "  run            Start FastAPI server"
+	@echo "  test           Run tests with verbose output"
+	@echo "  format         Format code with black/isort"
+	@echo "  lint           Run flake8 linting"
+
+#   export PAT=<YOUR_PERSONAL_ACCESS_TOKEN>
+#   export GIT_USER=<YOUR_GITHUB_USERNAME>
+#   make docker-login PAT=<git_pat_token> GIT_USER=<git_username>
+#   PAT := <PERSONAL_ACCESS_TOKEN>
+#   GIT_USER := <GITHUB_USERNAME>
+
+#docker-login:
+#	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
+
+.PHONY: install-uv
+install-uv:
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "Installing uv..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		echo "uv installed to $$HOME/.local/bin"; \
+	}
+
+.PHONY: venv
+venv: install-uv
+	@echo "Creating Python $(PYTHON_VERSION) virtual environment"
+	@uv venv .venv --python $(PYTHON_VERSION)
+	@echo "Virtual environment created at .venv"
+
+.PHONY: install
+install:
+	@echo "Installing project dependencies"
+	@. .venv/bin/activate && uv pip install -r pyproject.toml
+	@echo "\nPython environment is ready"
+
+.PHONY: install-noetl
+install-noetl:
+	@if [ -n "$(UV)" ]; then \
+		echo "Installing noetl"; \
+		uv pip install --force-reinstall .; \
+	else \
+		echo "Installing noetl using pipx"; \
+		command -v pipx >/dev/null 2>&1 || { \
+			echo "Installing pipx..."; \
+			pip install --user pipx; \
+			pipx ensurepath; \
+		}; \
+		pipx install .; \
+	fi
+	@echo "noetl has been installed."
+
+.PHONY: run
+run:
+	@. .venv/bin/activate && uvicorn tradetrend.main:app --host 0.0.0.0 --port 8000 --reload
+
+.PHONY: test
+test:
+	@. .venv/bin/activate && pytest -vvv tests -s
+
+.PHONY: format
+format:
+	@. .venv/bin/activate && black . && isort .
+
+.PHONY: lint
+lint:
+	@. .venv/bin/activate && flake8 app/
+
+.PHONY: reset
+reset:
+	@rm -rf .venv
+	@$(MAKE) install
+
+.PHONY: clean
+clean:
+	@find . -type d -name "__pycache__" -exec rm -rf {} +
+	@find . -type d -name ".pytest_cache" -exec rm -rf {} +
+	@find . -type d -name ".mypy_cache" -exec rm -rf {} +
+	@echo "Cleaned build artifacts"
 
 
-.PHONY: venv requirements activate
+
+
+######################################
+
+# Set Python environment and UV virtualenv
+.PHONY: venv install run test build publish clean
+
+VENV = .venv
+PYTHON = $(VENV)/bin/python
+UV = uv
 
 venv:
-	@echo "Creating Python virtual environment..."
-	$(PYTHON) -m venv $(VENV_NAME)
-	@. $(VENV_NAME)/bin/activate; \
-	pip3 install --upgrade pip; \
-	deactivate
-	@echo "Virtual environment created."
+	$(UV) venv
+	. $(VENV)/bin/activate
 
-requirements:
-	@echo "Installing python requirements..."
-	@. $(VENV_NAME)/bin/activate; \
-	pip3 install -r $(REQUIREMENTS); \
-	$(PYTHON) -m spacy download en_core_web_sm; \
-	echo "Requirements installed."
+install:
+	$(UV) pip install -e ".[dev]"
+
+run:
+	$(VENV)/bin/noetl
+
+test:
+	$(VENV)/bin/pytest -v --cov=noetl tests/
+
+build:
+	$(UV) build
+
+publish:
+	$(UV) publish --username $(PYPI_USER)
+
+clean:
+	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv
+
+
+######################################
+#.PHONY: venv requirements activate
+#
+#venv:
+#	@echo "Creating Python virtual environment..."
+#	$(PYTHON) -m venv $(VENV_NAME)
+#	@. $(VENV_NAME)/bin/activate; \
+#	pip3 install --upgrade pip; \
+#	deactivate
+#	@echo "Virtual environment created."
+#
+#requirements:
+#	@echo "Installing python requirements..."
+#	@. $(VENV_NAME)/bin/activate; \
+#	pip3 install -r $(REQUIREMENTS); \
+#	$(PYTHON) -m spacy download en_core_web_sm; \
+#	echo "Requirements installed."
 
 activate-venv:
 	@. $(VENV_NAME)/bin/activate;
@@ -71,7 +198,7 @@ remove-cli-image:
 rebuild-cli: remove-cli-image build-cli
 
 
-clean:
+clean-docker:
 	docker rmi $$(docker images -f "dangling=true" -q)
 
 

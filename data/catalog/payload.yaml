@@ -1,0 +1,4 @@
+test_public_api:
+  config: "data/catalog/playbooks/test_public_api.yaml"
+  system:
+      dataPath: data
