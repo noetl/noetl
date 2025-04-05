@@ -1,4 +1,16 @@
-test_public_api:
-  config: "data/catalog/playbooks/test_public_api.yaml"
-  system:
+apiVersion: noetl.io/v1
+kind: PayloadSet
+id: /catalog/payloads/default
+
+targets:
+  test_public_api:
+    playbookId: /catalog/playbooks/test_public_api
+    environment:
       dataPath: data
+      playbookPath: data/catalog/playbooks/test_public_api.yaml
+    variables:
+      log_enabled: true
+      retry: 2
+    steps:
+      - step: public_api_test
+        tasks: [test_posts, test_comments]

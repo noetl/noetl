@@ -1,27 +1,27 @@
-workflow: data/catalog/playbooks/test_public_api.yaml
-system:
+apiVersion: noetl.io/v1
+kind: Playbook
+name: test_public_api
+id: /catalog/playbooks/test_public_api
+
+environment:
     dataPath: data
-    outputPath: "{{ system.dataPath }}/output/"
-    templatePath: "{{ system.dataPath }}/catalog/templates/default.tpl"
-    workflowPath: "{{ system.dataPath }}/catalog/playbooks/test_public_api.yaml"
-    executionPath: "{{ system.dataPath }}/executions/job_{{ jobId }}.json"
+    outputPath: "{{ environment.dataPath }}/output/"
+    templatePath: "{{ environment.dataPath }}/catalog/templates/default.tpl"
+    playbookPath: "{{ environment.dataPath }}/catalog/playbooks/test_public_api.yaml"
+    executionPath: "{{ environment.dataPath }}/executions/job_{{ jobId }}.json"
     storageType: json  # Options: 'json' or 'sqlite'
-    sqlitePath: "{{ system.dataPath }}/state/noetl.db"  # Used when storage_type is 'sqlite'
-    logPath: "{{ system.dataPath }}/logs/noetl_{{ jobId }}.log"
+    sqlitePath: "{{ environment.dataPath }}/state/noetl.db"  # Used when storage_type is 'sqlite'
+    logPath: "{{ environment.dataPath }}/logs/noetl_{{ jobId }}.log"
     logLevel: DEBUG
     logFormat: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 variables:
-  baseUrl: "https://jsonplaceholder.typicode.com"  # Base URL for the API
-  log_enabled: true
-  retry: 0  # Retry for failed HTTP calls
+  baseUrl: "https://jsonplaceholder.typicode.com"  
+  retry: 0
 
 steps:
   - step: public_api_test
-    tasks:
-      - test_posts
-      - test_users
-      - test_comments
+    tasks: [test_posts, test_users]
 
 tasks:
   - task: test_posts

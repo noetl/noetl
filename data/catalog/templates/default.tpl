@@ -1,6 +1,9 @@
 {
-  "config": {{ config }},
-  "system": {{ system | default({}) | tojson }},
+  "apiVersion": "noetl.io/v1",
+  "kind": "Template",
+  "id": "/catalog/templates/default",
+"playbookId": {{ playbookId }},
+  "environment": {{ environment | default({}) | tojson }},
   "variables": {{ variables | default({}) | tojson }},
   "steps": [
     {% for step in steps %}
