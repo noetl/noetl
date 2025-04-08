@@ -13,17 +13,18 @@ services:
       POSTGRES_USER: noetl
       POSTGRES_PASSWORD: noetl
       POSTGRES_SCHEMA: public
-      POSTGRES_DB: noetldb
+      POSTGRES_DB: noetl
       PGDATA: /var/lib/postgresql/data/pgdata
     command: >
       postgres
+      -c port=5434
       -c config_file=/etc/postgresql/postgresql.conf
     volumes:
       - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./data/noetldb/init_noetldb.sh:/docker-entrypoint-initdb.d/init_noetldb.sh
-      - ./data/noetldb/noetldb_ddl.sql:/noetldb_ddl.sql
+      - ./data/noetl_postgres_db/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
+      - ./data/noetl_postgres_db/noetl_schema_ddl.sql:/noetl_schema_ddl.sql
     ports:
-      - "5432:5434"
+      - "5434:5434"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U noetl -d noetldb -p 5434"]
       interval: 5s
@@ -52,7 +53,7 @@ services:
       - ./pyproject.toml:/opt/noetl/pyproject.toml
       - ./noetl/:/usr/noetl/
       - ./data/catalog/:/usr/data/catalog
-      - ./data/noetldb/log:/var/lib/postgresql/log
+      - ./data/noetl_postgres_db/log:/var/lib/postgresql/log
       - ./secrets/application_default_credentials.json:/secrets/application_default_credentials.json
     environment:
       TZ: America/Chicago
@@ -60,7 +61,7 @@ services:
       PYTHONPATH: "/app"
       NOETL_DATA_DIR: "/usr/data/"
       POSTGRES_USER: noetl
-      POSTGRES_DB: noetldb
+      POSTGRES_DB: noetl
       POSTGRES_PASSWORD: noetl
       POSTGRES_HOST: noetldb
       POSTGRES_PORT: 5434

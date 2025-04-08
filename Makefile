@@ -49,7 +49,7 @@ clean:
 	docker system prune -af --volumes
 
 
-.PHONY: create-venv install-dev run test build publish clean
+.PHONY: create-venv install-dev run test build-uv publish clean
 PYPI_USER = noetl
 VENV = .venv
 PYTHON = $(VENV)/bin/python
@@ -80,11 +80,11 @@ run:
 test:
 	$(VENV)/bin/pytest -v --cov=noetl tests/
 
-build:
+build-uv:
 	$(UV) build
 
 publish:
 	$(UV) publish --username $(PYPI_USER)
 
-clean:
+clean-dist:
 	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv

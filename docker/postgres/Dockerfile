@@ -12,8 +12,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-ENV TZ=America/Chicago
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-COPY ./docker/postgres/postgresql.conf /etc/postgresql/postgresql.conf
-COPY ./data/noetldb/init_noetldb.sh /docker-entrypoint-initdb.d/init_noetldb.sh
-COPY ./data/noetldb/noetldb_ddl.sql /noetldb_ddl.sql
+#ENV TZ=America/Chicago
+#RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+#COPY ./docker/postgres/postgresql.conf /etc/postgresql/postgresql.conf
+#COPY ./data/noetldb/init_noetldb.sh /docker-entrypoint-initdb.d/init_noetldb.sh
+#COPY ./data/noetldb/noetldb_ddl.sql /noetl_schema_ddl.sql
