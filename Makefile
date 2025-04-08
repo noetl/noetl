@@ -47,3 +47,44 @@ logs:
 .PHONY: clean
 clean:
 	docker system prune -af --volumes
+
+
+.PHONY: create-venv install-dev run test build publish clean
+PYPI_USER = noetl
+VENV = .venv
+PYTHON = $(VENV)/bin/python
+UV = uv
+
+.PHONY: install-uv
+install-uv:
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "Installing uv..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		echo "uv installed to $$HOME/.local/bin"; \
+	}
+
+create-venv:
+	$(UV) venv
+	. $(VENV)/bin/activate
+
+install-dev:
+	$(UV) pip install -e ".[dev]"
+
+install:
+	$(UV) pip install -e .
+
+
+run:
+	$(VENV)/bin/noetl
+
+test:
+	$(VENV)/bin/pytest -v --cov=noetl tests/
+
+build:
+	$(UV) build
+
+publish:
+	$(UV) publish --username $(PYPI_USER)
+
+clean:
+	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv
