@@ -1,0 +1,14 @@
+id,name,age,meta_data,description
+1,Alice,30,"{""key_1"": ""value_1"", ""key_2"": 123}","Line 1
+Line 2
+Line 3"
+2,Bob,25,"{""key_1"": ""value_2"", ""key_2"": 456}","This is a
+multiline description
+for Bob."
+3,Charlie,40,"{""key_1"": ""value_3"", ""key_3"": ""extra_key""}","Description
+with only two lines."
+4,Daisy,35,"{""key_4"": ""value_4"", ""nested_key"": {""inner_key"": ""value""}}","Another
+example
+of multiline text."
+5,Eva,,,"NULL JSON
+and AGE values."

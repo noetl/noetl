@@ -1,0 +1,74 @@
+networks:
+  noetl_dev:
+    name: noetl_dev
+
+volumes:
+  noetl-db-data:
+
+services:
+  noetldb:
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    container_name: noetldb
+    environment:
+      TZ: America/Chicago
+      POSTGRES_USER: noetl
+      POSTGRES_DB: noetldb
+      POSTGRES_PASSWORD: noetl
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+    volumes:
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./data/noetldb/init_noetldb.sh:/docker-entrypoint-initdb.d/init_noetldb.sh
+      - ./data/noetldb/noetldb_ddl.sql:/noetldb_ddl.sql
+      - noetl-db-data:/var/lib/postgresql/data
+    ports:
+      - "5544:5434"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noetl -d noetldb -p 5434"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+    networks:
+      - noetl_dev
+
+  noetlapi:
+    build:
+      context: .
+      dockerfile: docker/noetl/Dockerfile
+    container_name: noetlapi
+    depends_on:
+      noetldb:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./pyproject.toml:/opt/noetl/pyproject.toml
+      - ./noetl/:/usr/noetl/
+      - ./data/catalog/:/usr/data/catalog
+      - ./data/noetldb/log:/var/lib/postgresql/log
+      - ./secrets/application_default_credentials.json:/secrets/application_default_credentials.json
+    environment:
+      TZ: America/Chicago
+      LOG_LEVEL: INFO
+      PYTHONPATH: "/app"
+      NOETL_DATA_DIR: "/usr/data/"
+      POSTGRES_USER: noetl
+      POSTGRES_DB: noetldb
+      POSTGRES_PASSWORD: noetl
+      POSTGRES_HOST: noetldb
+      POSTGRES_PORT: 5434
+      POSTGRES_SCHEMA: public
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/application_default_credentials.json
+    networks:
+      - noetl_dev
+    command: uv run uvicorn noetl.main:app --host 0.0.0.0 --port 8001 --reload
