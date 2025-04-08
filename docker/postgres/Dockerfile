@@ -2,7 +2,7 @@ FROM postgres:17.4
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        postgresql-plpython3-14 \
+        postgresql-plpython3-17 \
         python3-pip \
         python3-setuptools \
         python3-dev \

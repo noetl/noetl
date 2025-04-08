@@ -10,10 +10,9 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 CREATE EXTENSION IF NOT EXISTS plpython3u WITH SCHEMA pg_catalog;
-COMMENT ON EXTENSION plpython3u IS 'PL/Python3U untrusted procedural language';
 
 -- Table to test data loading/exporting
-CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.test_data_table (
+CREATE TABLE IF NOT EXISTS :"SCHEMA_NAME".test_data_table (
     id SERIAL PRIMARY KEY,                    -- Auto-incrementing primary key
     name TEXT NOT NULL,                       -- Text data
     age INTEGER,                              -- Integer for numerical data
@@ -23,11 +22,11 @@ CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.test_data_table (
     description TEXT                          -- Text field to test large multi-line data
 );
 
-COMMENT ON TABLE ${SCHEMA_NAME}.test_data_table IS 'Table for testing data loading and exporting with multiline support.';
-COMMENT ON COLUMN ${SCHEMA_NAME}.test_data_table.meta_data IS 'Contains JSONB data for structured information.';
-COMMENT ON COLUMN ${SCHEMA_NAME}.test_data_table.description IS 'Contains large multiline text data for validation purposes.';
+COMMENT ON TABLE :"SCHEMA_NAME".test_data_table IS 'Table for testing data loading and exporting with multiline support.';
+COMMENT ON COLUMN :"SCHEMA_NAME".test_data_table.meta_data IS 'Contains JSONB data for structured information.';
+COMMENT ON COLUMN :"SCHEMA_NAME".test_data_table.description IS 'Contains large multiline text data for validation purposes.';
 
-INSERT INTO ${POSTGRES_SCHEMA}.test_data_table (name, age, meta_data, description)
+INSERT INTO :"SCHEMA_NAME".test_data_table (name, age, meta_data, description)
 VALUES
 ('Alice', 30, '{"key_1": "value_1", "key_2": 123}'::jsonb, 'Line 1\nLine 2\nLine 3'),
 ('Bob', 25, '{"key_1": "value_2", "key_2": 456}'::jsonb, 'This is a\nmultiline description\nfor Bob.'),
