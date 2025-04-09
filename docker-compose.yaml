@@ -26,7 +26,7 @@ services:
     ports:
       - "5434:5434"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noetl -d noetldb -p 5434"]
+      test: ["CMD-SHELL", "pg_isready -U noetl -d noetl -p 5434"]
       interval: 5s
       timeout: 5s
       retries: 3
