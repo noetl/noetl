@@ -13,10 +13,13 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 WORKDIR /opt/noetl
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/opt/noetl:$PYTHONPATH:/root/.local/lib/python3.12/site-packages"
 ENV UV_PYTHON_PROJECT=/opt/noetl
-ENV PYTHONPATH="$UV_PYTHON_PROJECT:$PYTHONPATH:/root/.local/lib/python3.12/site-packages/root/.local/bin:${PATH}"
+ENV PATH="/root/.local/bin:$PATH"
 COPY pyproject.toml ./
 COPY noetl ./noetl
-RUN uv lock && uv sync --frozen --no-cache && pip install --no-cache-dir uvicorn[standard]
+RUN pip install --upgrade pip \
+ && pip install . \
+ && pip install "uvicorn[standard]"
 EXPOSE 8080
-CMD python -m uvicorn --factory noetl.server.app:create_app --host 0.0.0.0 --port 8080
+CMD ["bash", "-c", "uv run uvicorn --factory noetl.server.app:create_app --host 0.0.0.0 --port 8080 --reload"]

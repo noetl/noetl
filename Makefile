@@ -14,9 +14,6 @@ UV = uv
 #   PAT := <PERSONAL_ACCESS_TOKEN>
 #   GIT_USER := <GITHUB_USERNAME>
 
-
-
-
 .PHONY: help
 help:
 	@echo "Commands:"
@@ -99,6 +96,8 @@ publish:
 clean-dist:
 	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv
 
+
+
 #[NATS]#################################################################################################################
 
 .PHONY: install-nats-tools nats-create-noetl nats-delete-noetl nats-reset-noetl purge-noetl stream-ls
@@ -136,3 +135,12 @@ nats_account_info:
 
 nats_kv_ls:
 	@nats kv ls -s $(NATS_URL)
+
+
+#[GCP]##################################################################################################################
+.PHONY: gcp-credentials
+gcp-credentials:
+	@mkdir -p ./secrets
+	@gcloud auth application-default login
+	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
+	@echo "Credentials copied to ./secrets/application_default_credentials.json"

@@ -46,10 +46,6 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./pyproject.toml:/opt/noetl/pyproject.toml
-      - ./noetl/:/usr/noetl/
-      - ./data/catalog/:/usr/data/catalog
-      - ./data/noetl_postgres_db/log:/var/lib/postgresql/log
       - ./secrets/application_default_credentials.json:/secrets/application_default_credentials.json
     environment:
       TZ: America/Chicago
@@ -65,14 +61,3 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/application_default_credentials.json
     networks:
       - noetl-network
-    command:
-      - python
-      - -m
-      - uvicorn
-      - --factory
-      - noetl.server.app:create_app
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8080"
-      - --reload
