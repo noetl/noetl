@@ -1,7 +1,7 @@
-from noetl.context import Context
-from noetl.state import State
-from noetl.action import Action
-from noetl.logger import setup_logger
+from noetl.dsl.context import Context
+from noetl.runtime.state import State
+from noetl.dsl.action import Action
+from noetl.shared import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

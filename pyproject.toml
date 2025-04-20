@@ -1,9 +1,9 @@
 [project]
 name = "noetl"
-version = "0.2.0"
-description = "No-code Extract Transform Load framework"
+version = "0.0.2"
+description = "notOnlyNoCodeExtractTransformLoad framework"
 authors = [
-    { name = "NoETL enthusiasts", email = "182583029+kadyapam@users.noreply.github.com" }
+    { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" }
 ]
 dependencies = [
     "fastapi>=0.115.6",
@@ -25,7 +25,9 @@ dependencies = [
     "selenium>=4.12.0",
     "pycryptodome>=3.21",
     "urllib3>=2.3",
-    "Authlib>=1.5.1"
+    "nats-py>=2.10.0",
+    "Authlib>=1.5.1",
+    "typer>=0.15.2"
 ]
 
 [project.optional-dependencies]

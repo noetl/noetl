@@ -7,9 +7,9 @@ import random
 import string
 from typing import Dict, Any
 from jinja2 import Template
-from noetl.interp import resolve_system_paths
-from noetl.scope import Scope
-from noetl.logger import setup_logger
+from noetl.runtime.interp import resolve_system_paths
+from noetl.runtime.scope import Scope
+from noetl.shared import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -92,7 +92,7 @@ class Context(dict):
     def new_step_context(self, step_config: dict) -> "Context":
         step_name = step_config.get("step")
         if not step_name:
-            raise ValueError(f"Missing 'step' key in step configuration: {step_config}")
+            raise ValueError(f"Missing step key in step configuration: {step_config}")
 
         if not isinstance(step_config, dict):
             raise ValueError(f"Invalid step configuration (not a dict): {step_config}")
@@ -142,7 +142,7 @@ class Context(dict):
     def new_action_context(self, action_config: dict, action_id: str) -> "Context":
         if not isinstance(action_config, dict):
             raise ValueError(
-                f"Expected 'action_config' type of dict, but got {type(action_config)}: {action_config}"
+                f"Expected action_config type of dict but got {type(action_config)}: {action_config}"
             )
         loop_config = action_config.get("loop", {})
         action_config["loop"] = loop_config

@@ -1,13 +1,41 @@
+import logging
+import os
+from datetime import datetime
 import base64
 import yaml
 import json
-from noetl.const import AppConst
+from noetl.config.const import AppConst
+
+def get_duration_seconds(start_date, end_date) -> int | None:
+    return int((start_date - end_date).total_seconds())
+
+def get_log_level() -> int:
+    log_level: int = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    return log_level
+
+def get_log_level_name() -> str:
+    return logging.getLevelName(get_log_level())
+
+def is_on(value: str) -> bool:
+    return str(value).lower() in ("true", "1", "yes", "on", "y", "t")
+
+def make_serializable(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Exception):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: make_serializable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [make_serializable(v) for v in value]
+    if hasattr(value, "__dict__"):
+        return {k: make_serializable(v) for k, v in value.__dict__.items()}
+    return value
 
 
 class SafeEncoder(json.JSONEncoder):
     def default(self, obj):
         return None
-
 
 class KeyVal(dict):
     def __init__(self, *args, **kwargs):
@@ -54,7 +82,7 @@ class KeyVal(dict):
                 elif hasattr(value, key):
                     value = getattr(value, key)
                 else:
-                    raise TypeError(f"Value for '{key}' is not a dict or does not have attribute '{key}'")
+                    raise TypeError(f"Value for '{key}' is not a dict or does not have attribute '{key}'.")
                 value = to_dict(value)
                 if value is None:
                     return default
@@ -72,10 +100,10 @@ class KeyVal(dict):
 
     def set_value(self, path: str, value):
         if path is None:
-            raise TypeError("Path cannot be None")
+            raise TypeError("Path cannot be None.")
 
         if not value:
-            raise ValueError("Value cannot be None or empty")
+            raise ValueError("Value cannot be None or empty.")
 
         try:
             keys = path.split(".")
@@ -90,7 +118,7 @@ class KeyVal(dict):
             else:
                 target[keys[-1]] = value
         except Exception as e:
-            raise ValueError(f"Error setting value for '{path}': {e}")
+            raise ValueError(f"Error setting value for '{path}': {e}.")
 
     def delete_value(self, path: str):
         keys = path.split('.')
@@ -118,7 +146,7 @@ class KeyVal(dict):
         try:
             return json.dumps(self.get_value()).encode(AppConst.UTF_8)
         except (TypeError, ValueError) as e:
-            raise ValueError(f"Error converting to JSON: {e}")
+            raise ValueError(f"Error converting to json: {e}")
 
     def as_json(self, path: str = None, indent: any = None):
         try:
@@ -132,9 +160,9 @@ class KeyVal(dict):
     def base64_path(self, path: str = AppConst.PAYLOAD_BASE64):
         base64_value = self.get_value(path)
         if base64_value is None:
-            raise ValueError(f"No base64 string found at {path}")
+            raise ValueError(f"base64 string not found at {path}")
         if not isinstance(base64_value, str):
-            raise TypeError(f"Expected string at '{path}', got {type(base64_value).__name__}")
+            raise TypeError(f"Expected string at '{path}' but got {type(base64_value).__name__}")
         return KeyVal.str_base64(base64_value)
 
     def encode(self, keys=None):
@@ -145,7 +173,7 @@ class KeyVal(dict):
     def base64_value(self, path: str = AppConst.VALUE):
         value = self.get_value(path=path, default=AppConst.VALUE_NOT_FOUND)
         if value is None or value == AppConst.VALUE_NOT_FOUND:
-            raise ValueError(f"No value found for key {path}")
+            raise ValueError(f"Value not found for key {path}")
         elif isinstance(value, str):
             return self.base64_str(value)
         return value
@@ -192,4 +220,4 @@ class KeyVal(dict):
             data = json.loads(json_value)
             return cls(data)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Error loading from JSON: {e}")
+            raise ValueError(f"Error loading from json: {e}")

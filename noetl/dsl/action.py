@@ -1,8 +1,8 @@
 import asyncio
 import httpx
 import json
-from noetl.interp import render_template
-from noetl.logger import setup_logger
+from noetl.runtime.interp import render_template
+from noetl.shared import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 def get_retries(context):

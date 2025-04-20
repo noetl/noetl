@@ -1,7 +1,7 @@
-from noetl.task import Task
-from noetl.interp import replace_placeholders
-from noetl.logger import setup_logger
-from noetl.context import Context
+from noetl.dsl.task import Task
+from noetl.runtime.interp import replace_placeholders
+from noetl.shared import setup_logger
+from noetl.dsl.context import Context
 
 logger = setup_logger(__name__, include_location=True)
 

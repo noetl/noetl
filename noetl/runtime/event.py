@@ -1,4 +1,4 @@
-from noetl.storage import StorageInterface
+from noetl.runtime.storage import StorageInterface
 
 class Event:
     def __init__(self, storage: StorageInterface):

@@ -20,13 +20,13 @@ UV = uv
 .PHONY: help
 help:
 	@echo "Commands:"
-	@echo "  make build           Build Docker containers"
-	@echo "  make rebuild         Rebuild containers without cache"
-	@echo "  make up              Start containers in detached mode"
-	@echo "  make down            Stop and remove containers"
+	@echo "  make build           Build containers"
+	@echo "  make rebuild         Rebuild containers"
+	@echo "  make up              Start containers"
+	@echo "  make down            Stop containers"
 	@echo "  make restart         Restart services"
-	@echo "  make logs            View logs for all services"
-	@echo "  make clean           Remove all stopped containers, unused images, volumes, and networks"
+	@echo "  make logs            View logs"
+	@echo "  make clean           Clean up"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -66,7 +66,7 @@ clean:
 
 install-uv:
 	@command -v uv >/dev/null 2>&1 || { \
-		echo "Installing uv..."; \
+		echo "Installing uv"; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 		echo "uv installed to $$HOME/.local/bin"; \
 	}
@@ -80,6 +80,9 @@ install-dev:
 
 install:
 	$(UV) pip install -e .
+
+uninstall:
+	$(UV) pip uninstall noetl
 
 run:
 	$(VENV)/bin/noetl
@@ -96,14 +99,14 @@ publish:
 clean-dist:
 	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv
 
-#[NATS]#######################################################################
+#[NATS]#################################################################################################################
 
 .PHONY: install-nats-tools nats-create-noetl nats-delete-noetl nats-reset-noetl purge-noetl stream-ls
 
 install-nats-tools:
-	@echo "Tapping nats-io/nats-tools..."
+	@echo "Tapping nats-io/nats-tools"
 	@brew tap nats-io/nats-tools
-	@echo "Installing nats from nats-io/nats-tools..."
+	@echo "Installing nats from nats-io/nats-tools"
 	@brew install nats-io/nats-tools/nats
 	@echo "NATS installation complete."
 

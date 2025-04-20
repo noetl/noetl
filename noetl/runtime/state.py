@@ -1,5 +1,5 @@
 import asyncio
-from noetl.logger import setup_logger
+from noetl.shared import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -13,7 +13,7 @@ class State:
         self.running = True
         self.process_task = None
 
-        logger.info("Initialized State for job: %s", extra={"scope": f"[State {self.job_id}]"})
+        logger.info(f"Initialized State for job.", extra={"scope": f"[State {self.job_id}]"})
 
     async def start(self):
         logger.info("Starting State processor.", extra={"scope": f"[State {self.job_id}]"})

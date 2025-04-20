@@ -1,5 +1,5 @@
 import yaml
-from noetl.payload import Payload, AppConst
+from noetl.pubsub.nats_payload import Payload, AppConst
 
 
 class Playbook:

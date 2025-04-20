@@ -1,7 +1,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: test_public_api
-id: /catalog/playbooks/test_public_api
+path: /catalog/playbooks/test_public_api
 
 environment:
     dataPath: data

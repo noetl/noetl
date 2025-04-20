@@ -2,6 +2,7 @@ import json
 import logging
 import sys
 
+SUCCESS_LEVEL = 25
 LOG_SEVERITY = {
     "DEBUG": "📌",
     "INFO": "ℹ️",
@@ -11,15 +12,12 @@ LOG_SEVERITY = {
     "CRITICAL": "🔥"
 }
 
-SUCCESS_LEVEL = 25
 logging.addLevelName(SUCCESS_LEVEL, "SUCCESS")
-
 
 class CustomLogger(logging.Logger):
     def success(self, message, *args, **kwargs):
         if self.isEnabledFor(SUCCESS_LEVEL):
             self.log(SUCCESS_LEVEL, message, *args, **kwargs, stacklevel=2)
-
 
 def stringify_extra(value):
     if isinstance(value, (list, dict)):
@@ -106,9 +104,7 @@ def setup_logger(name: str, include_location=False, use_json=False):
             stream_handler.setFormatter(JSONFormatter())
         else:
             stream_handler.setFormatter(CustomFormatter(include_location=include_location))
-
         logger.addHandler(stream_handler)
-
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
     return logger

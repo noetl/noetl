@@ -1,12 +1,12 @@
 import asyncio
 import os
-from noetl.logger import setup_logger
-from noetl.interp import process_payload
-from noetl.storage import StorageFactory
-from noetl.event import Event
-from noetl.state import State
-from noetl.step import Step
-from noetl.context import Context
+from noetl.shared import setup_logger
+from noetl.runtime.interp import process_payload
+from noetl.runtime.storage import StorageFactory
+from noetl.runtime.event import Event
+from noetl.runtime.state import State
+from noetl.dsl.step import Step
+from noetl.dsl.context import Context
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -26,7 +26,7 @@ class Job:
         logger.info("initialized.", extra=self.context.scope.get_id())
 
     async def start_worker(self):
-        logger.info(f"Starting worker...", extra=self.context.scope.get_id())
+        logger.info(f"Starting worker.", extra=self.context.scope.get_id())
         self.state_worker_task = asyncio.create_task(self.state_worker())
 
     async def state_worker(self):
@@ -46,7 +46,7 @@ class Job:
                 logger.critical(f"Failed to process state operation: {str(e)}", extra=self.context.scope.get_id())
 
     async def shutdown_state_worker(self):
-        logger.info(f"Shutting down state worker...", extra=self.context.scope.get_id())
+        logger.info(f"Shutting down state worker.", extra=self.context.scope.get_id())
         self.state_worker_active = False
         await self.state_queue.join()
         if self.state_worker_task and not self.state_worker_task.done():
@@ -54,7 +54,7 @@ class Job:
             try:
                 await self.state_worker_task
             except asyncio.CancelledError:
-                logger.info(f"State worker task cancelled successfully.", extra=self.context.scope.get_id())
+                logger.info(f"State worker task cancelled.", extra=self.context.scope.get_id())
 
         logger.info(f"State worker shut down.", extra=self.context.scope.get_id())
 
@@ -87,7 +87,7 @@ class Job:
                 }
             ))
             if not isinstance(steps, list):
-                raise ValueError(f"Steps config must be a list, got {type(steps)}")
+                raise ValueError(f"Steps config must be a list but got {type(steps)}")
 
             for step_config in steps:
                 step_context = self.context.new_step_context(step_config)
@@ -105,7 +105,7 @@ class Job:
                 try:
                     step_result = await step.execute()
                     results[step_name] = step_result
-                    logger.success(f"Step '{step_name}' completed successfully.", extra=self.context.scope.get_id())
+                    logger.success(f"Step '{step_name}' completed.", extra=self.context.scope.get_id())
                 except Exception as e:
                     error_context = {
                         "event_type": "ERROR_STEP",
@@ -122,7 +122,7 @@ class Job:
                     logger.error(f"Step '{step_name}' failed: {str(e)}", extra=self.context.scope.get_id())
                     if self.context.break_on_failure:
                         raise e
-            logger.success(f"Workflow executed successfully.", extra=self.context.scope.get_id())
+            logger.success(f"Workflow execution finished.", extra=self.context.scope.get_id())
             return results
         except Exception as e:
             error_context = {
@@ -148,4 +148,4 @@ class Job:
                     logger.error("State worker has not canceled within timeout.", extra=self.context.scope.get_id())
                 except asyncio.CancelledError:
                     logger.info("State worker cancelled gracefully.", extra=self.context.scope.get_id())
-        await self.shutdown_state_worker()
+            await self.shutdown_state_worker()

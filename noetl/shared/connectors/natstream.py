@@ -5,11 +5,10 @@ from nats.aio.msg import Msg
 from nats.aio.errors import ErrTimeout
 from dataclasses import dataclass, asdict
 import json
-from loguru import logger
 from datetime import datetime
 from uuid import uuid4
-from nats import errors
-
+from noetl.shared import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 @dataclass
 class NatsConfig:
@@ -71,10 +70,10 @@ class NatsConnectionPool:
             else:
                 return await self.pool.get()
         except ErrTimeout as e:
-            logger.error(f"NATS connection timeout error: {e}")
+            logger.error(f"NATS connection timeout error: {e}.")
             raise
         except Exception as e:
-            logger.error(f"NATS connection error: {e}")
+            logger.error(f"NATS connection error: {e}.")
             raise
 
     def get_pool_size(self):
@@ -84,7 +83,7 @@ class NatsConnectionPool:
         try:
             await self.pool.put(nc)
         except Exception as e:
-            logger.error(f"NATS connection error to put back to pool: {e}")
+            logger.error(f"NATS connection error to put back to pool: {e}.")
             raise
 
     async def execute(self, func):
@@ -95,10 +94,10 @@ class NatsConnectionPool:
             js = nc.jetstream()
             return await func(js)
         except ErrTimeout as e:
-            logger.error(f"NATS JetStream timeout error: {e}")
+            logger.error(f"NATS JetStream timeout error: {e}.")
             raise
         except Exception as e:
-            logger.error(f"NATS JetStream error: {e}")
+            logger.error(f"NATS JetStream error: {e}.")
             raise
         finally:
             await self.put(nc)
@@ -117,7 +116,7 @@ class NatsConnectionPool:
                 await js.update_stream(name=stream_name, config=StreamConfig(max_msgs=0))
                 print(f"Stream {stream_name} truncated.")
         except Exception as e:
-            print(f"Error truncating stream: {e}")
+            print(f"Error truncating stream: {e}.")
 
     async def close_pool(self):
         while not self.pool.empty():
@@ -125,7 +124,7 @@ class NatsConnectionPool:
             try:
                 await nc.close()
             except Exception as e:
-                logger.error(f"NATS connection closing error: {e}")
+                logger.error(f"NATS connection closing error: {e}.")
             else:
                 logger.info("NATS connection closed.")
         logger.info("NATS connections in the pool closed.")
@@ -137,7 +136,7 @@ class NatsConnectionPool:
                 logger.info(f"Bucket {bucket_name} created.")
                 return bucket
             except Exception as e:
-                print(f"Bucket create error: {e}")
+                print(f"Bucket create error: {e}.")
 
     async def bucket_delete(self, bucket_name: str):
         async with self.connection() as js:
@@ -146,7 +145,7 @@ class NatsConnectionPool:
                 await bucket.delete(bucket_name)
                 logger.info(f"Bucket {bucket_name} deleted.")
             except Exception as e:
-                print(f"Bucket delete error: {e}")
+                print(f"Bucket delete error: {e}.")
 
     async def kv_put(self, bucket_name: str, key: str, value: bytes):
         async with self.connection() as js:
@@ -154,10 +153,10 @@ class NatsConnectionPool:
                 kv = await js.create_key_value(bucket=bucket_name)
                 revision_number = await kv.put(key, value)
                 entry = await kv.get(key)
-                logger.debug(f"KeyValue: bucket={bucket_name}, key={entry.key}, revision_number={revision_number}")
+                logger.debug(f"KeyValue: bucket={bucket_name}, key={entry.key}, revision_number={revision_number}.")
                 return revision_number
             except Exception as e:
-                logger.error(f"Bucket {bucket_name} failed to add kv {key}. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to add kv {key}. Error: {e}.")
 
     async def kv_get(self, bucket_name, key: str):
         async with self.connection() as js:
@@ -166,7 +165,7 @@ class NatsConnectionPool:
                 entry = await kv.get(key)
                 return entry.value
             except Exception as e:
-                logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to get record {key}. Error: {e}.")
             return None
 
     async def kv_get_all(self, bucket_name):
@@ -176,7 +175,7 @@ class NatsConnectionPool:
                 keys = await kv.keys()
                 return keys
             except Exception as e:
-                logger.error(f"Bucket {bucket_name} failed to get keys. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to get keys. Error: {e}.")
             return
 
     async def kv_delete(self, bucket_name, key: str):
@@ -184,9 +183,9 @@ class NatsConnectionPool:
             try:
                 kv = await js.create_key_value(bucket=bucket_name)
                 await kv.delete(key)
-                logger.debug(f"Bucket {bucket_name} record {key} deleted")
+                logger.debug(f"Bucket {bucket_name} record {key} deleted.")
             except Exception as e:
-                logger.error(f"Bucket {bucket_name} failed to delete record {key}. Error: {e}")
+                logger.error(f"Bucket {bucket_name} failed to delete record {key}. Error: {e}.")
 
     class _ConnectionContextManager:
         def __init__(self, pool):
@@ -196,7 +195,7 @@ class NatsConnectionPool:
         async def __aenter__(self):
             self.nc = await self.pool.get()
             if self.nc is None:
-                raise Exception("Failed to get NATS connection")
+                raise Exception("Failed to get NATS connection.")
             return self.nc.jetstream()
 
         async def __aexit__(self, exc_type, exc_value, traceback):
@@ -218,11 +217,11 @@ class NatsPool:
         elif isinstance(nats_pool, NatsConnectionPool):
             self.nats_pool = nats_pool
         else:
-            raise TypeError("nats_pool must be type of NatsConnectionPool or NatsConfig")
+            raise TypeError("nats_pool must be type of NatsConnectionPool or NatsConfig.")
 
     async def get_nats_pool(self):
         if self.nats_pool is None:
-            raise ValueError("NatsPool is not initialized")
+            raise ValueError("NatsPool is not initialized.")
         else:
             return self.nats_pool
 
@@ -232,7 +231,7 @@ class NatsPool:
                 msg = await js.get_msg(stream, sequence)
                 return msg
             except Exception as e:
-                logger.error(f"JetStream get message error for stream {stream} sequence {sequence}: {e}")
+                logger.error(f"JetStream get message error for stream {stream} sequence {sequence}: {e}.")
                 raise
 
     async def get_consumers_info(self, stream):
@@ -241,7 +240,7 @@ class NatsPool:
                 info = await js.consumers_info(stream)
                 return info
             except Exception as e:
-                logger.error(f"JetStream get consumer info error for stream {stream}: {e}")
+                logger.error(f"JetStream get consumer info error for stream {stream}: {e}.")
                 raise
 
     async def nats_subject_fetch(self, subject: str, batch=1, timeout=5):
@@ -284,7 +283,7 @@ if __name__ == "__main__":
 
 
     async def test():
-        ack = await nats_pool.nats_write("noetl.command.test", "noetl", b'Hello JS!2')
+        ack = await nats_pool.nats_write("noetl.command.test", "noetl", b'Hello JS')
         print(ack)
 
         msgs = await nats_pool.nats_subject_fetch("noetl.command.test", batch=100, timeout=1)

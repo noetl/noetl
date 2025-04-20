@@ -1,3 +1,5 @@
+from enum import Enum
+
 class AppConst:
     BASE64 = "base64"
     BLUEPRINT = "blueprint"
@@ -91,3 +93,9 @@ class AppConst:
     COMMAND_REGISTER_PLAYBOOK = "RegisterPlaybook"
     COMMAND_REGISTER_PLUGIN = "RegisterPlugin"
     COMMAND_REGISTER_PLAYBOOK_EXECUTION = "RegisterPlaybookExecution"
+
+    # event types
+
+class EventType(str, Enum):
+    START_TASK = "startTask"
+    TASK_COMPLETED = "taskCompleted"
