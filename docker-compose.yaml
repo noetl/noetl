@@ -12,13 +12,14 @@ services:
       TZ: America/Chicago
       POSTGRES_USER: noetl
       POSTGRES_PASSWORD: noetl
+      POSTGRES_SCHEMA: public
       POSTGRES_DB: noetl
       PGDATA: /var/lib/postgresql/data/pgdata
     command: "postgres -c port=5434 -c config_file=/etc/postgresql/postgresql.conf"
-#    volumes:
-#      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
-#      - ./data/noetl_postgres_db/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
-#      - ./data/noetl_postgres_db/noetl_schema_ddl.sql:/noetl_schema_ddl.sql
+    volumes:
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./data/noetl_postgres_db/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
+      - ./data/noetl_postgres_db/noetl_schema_ddl.sql:/noetl_schema_ddl.sql
     ports:
       - "5434:5434"
     healthcheck:

@@ -16,6 +16,6 @@ ESQL
 
 echo "Database schema ${POSTGRES_SCHEMA} created"
 
-$POSTGRES -v SCHEMA_NAME=${POSTGRES_SCHEMA} -f /noetl_schema_ddl.sql
+$POSTGRES -v SCHEMA_NAME=${POSTGRES_SCHEMA} -f /noetl_schema_ddl.sql --echo-all
 
 echo "Database schema ${POSTGRES_USER} objects created"
