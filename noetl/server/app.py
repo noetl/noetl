@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from noetl.shared import setup_logger, app_context, AppContext
-from noetl.server.api.main_routes import router as main_router
+from noetl.server.api.main_router import router as main_router
 log_name = (
     os.path.splitext(
         os.path.relpath(__file__, start=os.getcwd())
@@ -59,3 +59,4 @@ def create_app() -> FastAPI:
 
 def register_routers(app: FastAPI):
     app.include_router(main_router, prefix="", tags=["NoETL"])
+    app.include_router(catalog_router, prefix="/catalog", tags=["Catalog"])
