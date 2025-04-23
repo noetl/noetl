@@ -1,0 +1,88 @@
+apiVersion: noetl.io/v1
+kind: AgentPlaybook
+name: postgres_csv_workflow
+path: /catalog/playbooks/postgres_csv_workflow
+
+environment:
+  dbHost: "localhost"
+  dbPort: 5432
+  dbName: "test_db"
+  dbUser: "test_user"
+  dbPassword: "secure_password"
+  outputCsvPath: "data/exported_data.csv"
+  logPath: "logs/postgres_csv_{{ agentId }}.log"
+  logLevel: INFO
+
+tasks:
+  - name: create_table
+    description: "Create table in PostgreSQL database"
+    runtime:
+      mode: isolated
+      reportUrl: "http://localhost:8000/callbacks/db_init"
+    run:
+      - action: create_table
+        method: postgres
+        query: |
+          CREATE TABLE IF NOT EXISTS users (
+              user_id SERIAL PRIMARY KEY,
+              username VARCHAR(50),
+              email VARCHAR(100),
+              created_at TIMESTAMP DEFAULT NOW()
+          );
+
+  - name: insert_record
+    description: "Insert a record into PostgreSQL database"
+    run:
+      - action: insert_record
+        method: postgres
+        query: |
+          INSERT INTO users (username, email)
+          VALUES ('johndoe', 'john@example.com');
+
+  - name: export_to_csv
+    description: "Export data from PostgreSQL table to CSV"
+    run:
+      - action: export_csv
+        method: postgres_to_csv
+        query: "SELECT * FROM users;"
+        output: "{{ environment.outputCsvPath }}"
+        includeHeaders: true
+
+steps:
+  - name: initialize_db
+    description: "Create table and insert a record"
+    run:
+      - task: create_table
+      - task: insert_record
+    rule:
+      - case: "{{ result.success }}"
+        run:
+          - step: export_step
+      - case: "{{ not result.success }}"
+        run:
+          - step: handle_error
+
+  - name: export_step
+    description: "Export table data to CSV"
+    run:
+      - task: export_to_csv
+    rule:
+      - case: "{{ result.success }}"
+        run: []  # End of workflow
+      - case: "{{ not result.success }}"
+        run:
+          - step: handle_error
+
+  - name: handle_error
+    description: "Handle any errors during execution"
+    run:
+      - action: log
+        method: log
+        message: "{{ error.message }}"
+        level: ERROR
+    rule:
+      - case: "{{ error.retryable }}"
+        run:
+          - step: initialize_db
+      - case: "{{ not error.retryable }}"
+        run: []  # End of workflow
