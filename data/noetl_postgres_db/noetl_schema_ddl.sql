@@ -13,7 +13,6 @@ CREATE EXTENSION IF NOT EXISTS plpython3u WITH SCHEMA pg_catalog;
 
 SET search_path TO :"SCHEMA_NAME", pg_catalog;
 
--- Table to test data loading/exporting
 CREATE TABLE IF NOT EXISTS test_data_table (
     id SERIAL PRIMARY KEY,                    -- Auto-incrementing primary key
     name TEXT NOT NULL,                       -- Text data
@@ -36,28 +35,24 @@ VALUES
 ('Daisy', 35, '{"key_4": "value_4", "nested_key": {"inner_key": "value"}}'::jsonb, 'Another\nexample\nof multiline text.'),
 ('Eva', NULL, NULL, 'NULL JSON\nand AGE values.');
 
--- resource categories
 CREATE TABLE resource_type (
     name TEXT PRIMARY KEY
 );
 
--- source can be 'inline', 'gcs', 'filesystem', etc.
--- resource_location like GCS URL.
--- payload is DSL JSON for that version.
--- meta is for resource related metadata.
 CREATE TABLE catalog (
     resource_path     TEXT     NOT NULL,
     resource_type     TEXT     NOT NULL REFERENCES resource_type(name),
     resource_version  TEXT     NOT NULL,
     source            TEXT     NOT NULL DEFAULT 'inline',
     resource_location TEXT,
+    content           TEXT,
     payload           JSONB    NOT NULL,
     meta              JSONB,
+    template          TEXT,
     timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (resource_path, resource_version)
 );
 
--- event categories
 CREATE TABLE event_type (
     name TEXT PRIMARY KEY,
     template TEXT NOT NULL
@@ -66,16 +61,18 @@ CREATE TABLE event_type (
 CREATE TABLE event (
     event_id         TEXT         NOT NULL,
     event_type       TEXT         NOT NULL REFERENCES event_type(name),
+    event_message    TEXT,
     resource_path    TEXT         NOT NULL,
     resource_version TEXT         NOT NULL,
+    content          TEXT,
     payload          JSONB,
+    context          JSONB,
     meta             JSONB,
     timestamp        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     FOREIGN KEY (resource_path, resource_version)
         REFERENCES catalog(resource_path, resource_version)
 ) PARTITION BY RANGE (timestamp);
 
--- partition of the event table
 CREATE TABLE event_2025_04 PARTITION OF event
 FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');
 
@@ -104,12 +101,12 @@ CREATE TABLE event_2025_12 PARTITION OF event
 FOR VALUES FROM ('2025-12-01') TO ('2026-01-01');
 
 INSERT INTO resource_type (name) VALUES
-    ('playbook'),
-    ('workflow'),
-    ('target'),
-    ('step'),
-    ('task'),
-    ('action');
+    ('Playbook'),
+    ('Workflow'),
+    ('Target'),
+    ('Step'),
+    ('Task'),
+    ('Action');
 
 INSERT INTO event_type (name, template) VALUES
     ('REGISTERED',          'Resource {{ resource_path }} version {{ resource_version }} was registered.'),

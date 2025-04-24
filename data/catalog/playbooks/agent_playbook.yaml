@@ -1,5 +1,5 @@
 apiVersion: noetl.io/v1
-kind: AgentPlaybook
+kind: Playbook
 name: postgres_csv_workflow
 path: /catalog/playbooks/postgres_csv_workflow
 
@@ -51,38 +51,56 @@ tasks:
 steps:
   - name: initialize_db
     description: "Create table and insert a record"
-    run:
-      - task: create_table
-      - task: insert_record
     rule:
-      - case: "{{ result.success }}"
+      - when: "{{ result.success }}"
+        run:
+          - task: create_table
+          - task: insert_record
+      - when: "{{ not result.success }}"
+        run:
+          - step: handle_error
+    next:
+      - when: "{{ result.success }}"
         run:
           - step: export_step
-      - case: "{{ not result.success }}"
+      - when: "{{ not result.success }}"
         run:
           - step: handle_error
 
   - name: export_step
     description: "Export table data to CSV"
-    run:
-      - task: export_to_csv
     rule:
-      - case: "{{ result.success }}"
-        run: []  # End of workflow
-      - case: "{{ not result.success }}"
+      - when: "{{ result.success }}"
+        run:
+          - task: export_to_csv
+      - when: "{{ not result.success }}"
+        run:
+          - step: handle_error
+    next:
+      - when: "{{ result.success }}"
+        run: []
+      - when: "{{ not result.success }}"
         run:
           - step: handle_error
 
   - name: handle_error
     description: "Handle any errors during execution"
-    run:
-      - action: log
-        method: log
-        message: "{{ error.message }}"
-        level: ERROR
     rule:
-      - case: "{{ error.retryable }}"
+      - when: "{{ error.retryable }}"
+        run:
+          - action: log
+            method: log
+            message: "{{ error.message }}"
+            level: ERROR
+      - when: "{{ not error.retryable }}"
+        run:
+          - action: log
+            method: log
+            message: "{{ error.message }}"
+            level: ERROR
+    next:
+      - when: "{{ error.retryable }}"
         run:
           - step: initialize_db
-      - case: "{{ not error.retryable }}"
-        run: []  # End of workflow
+      - when: "{{ not error.retryable }}"
+        run: []

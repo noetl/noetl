@@ -103,13 +103,14 @@ class PostgresHandler:
                 logger.debug("Closing database connection generator.")
 
     async def execute_query(self, query: str, *args):
-        """Execute database query."""
         async with self.connect() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 try:
-                    logger.debug(f"Executing database query: {query} | Args: {args}.")
+                    logger.debug(f"Query execution arguments: {args}")
+                    if len(args) == 1 and isinstance(args[0], (tuple, list)):
+                        args = args[0]
                     await cur.execute(query, args)
-                    conn.commit()
+                    await conn.commit()
                     if cur.description:
                         return await cur.fetchall()
                 except ForeignKeyViolation as e:
@@ -127,8 +128,6 @@ class PostgresHandler:
                 except Exception as e:
                     logger.error(f"Unexpected error executing database query: {e}.")
                     raise e
-                finally:
-                    conn.putconn(conn)
 
     async def execute_sql(self, query: str, args: Tuple = ()):
         if not self.pool:
@@ -220,7 +219,7 @@ def parse_sql_statement(sql: str) -> Tuple[str, Tuple[Union[str, int, None], ...
     else:
         match = re.findall(r"%s", sql)
         if match:
-            raise ValueError("Expected arguments to be supplied for parameterized query.")
+            raise ValueError("Expected arguments in parameterized query.")
         else:
             return sql, ()
 
@@ -234,6 +233,6 @@ def validate_message(message):
             logger.warning(f"Unable to encode message: {message}. Error: {e}.")
             return str(message)
     else:
-        logger.warning(f"Invalid type for 'message': {type(message)}. Converting to string.")
+        logger.warning(f"Invalid message type: {type(message)}. Trying convert to string.")
         return str(message)
 

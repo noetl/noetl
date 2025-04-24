@@ -1,24 +1,20 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from noetl.shared import setup_logger
-from noetl.schemas.catalog_schema import CatalogEntryRequest, CatalogEntryResponse
+from noetl.shared.context import app_context, AppContext
+from noetl.schemas.catalog_schema import RegisterRequest, CatalogEntryRequest, CatalogEntryResponse
 from noetl.services.catalog_service import CatalogService
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
+
 def get_catalog_service():
     return CatalogService()
 
-@router.post("/catalog/{resource}/register", response_model=CatalogEntryResponse)
+@router.post("/register")
 async def register_resource(
-    resource: str,
-    request: CatalogEntryRequest,  # Validate input with a schema
-    catalog_service: CatalogService = Depends(get_catalog_service),
+        request: RegisterRequest,
+        context: AppContext = Depends(app_context)
 ):
-    try:
-        result = await catalog_service.register_resource(resource, request.dict())
-        return CatalogEntryRequest(message=result["message"])
-    except HTTPException as http_err:
-        raise http_err
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    logger.info(f"Received request to register resource.")
+    return await CatalogService.register_entry(content_base64=request.content_base64, context=context)
