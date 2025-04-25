@@ -32,11 +32,24 @@ class PostgresConfig:
     postgres_database: str = field(default_factory=lambda: os.getenv("POSTGRES_DATABASE", "noetl"))
     postgres_port: int = field(default_factory=lambda: int(os.getenv("POSTGRES_PORT", 5434)))
     postgres_pool_min_size: int = field(default_factory=lambda: int(os.getenv("POSTGRES_POOL_MIN_SIZE", 1)))
-    postgres_pool_max_size: int = field(default_factory=lambda: int(os.getenv("POSTGRES_POOL_MAX_SIZE", 100)))
+    postgres_pool_max_size: int = field(default_factory=lambda: int(os.getenv("POSTGRES_POOL_MAX_SIZE", 20)))
     postgres_pool_timeout: float = field(default_factory=lambda: int(os.getenv("POSTGRES_POOL_TIMEOUT", 1.0)))
     postgres_max_inactive_connection_lifetime: int = field(default_factory= lambda: int(os.getenv("POSTGRES_MAX_INACTIVE_CONNECTION_LIFETIME", 10)))
     postgres_server_settings={'jit': 'off'}
     timezone: str = field(default_factory=lambda: os.getenv("POSTGRES_TIMEZONE", "America/Chicago"))
+
+    def connection_uri(self) -> str:
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}@"
+            f"{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
+        )
+    def sqlalchemy_uri(self) -> str:
+        return (
+            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@"
+            f"{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
+        )
+
+
 
 @dataclass
 class AppConfig:

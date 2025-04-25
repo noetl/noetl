@@ -1,5 +1,6 @@
 import asyncio
 from noetl.config.config import AppConfig
+from noetl.shared import models
 from noetl.shared import setup_logger
 
 # Sovdagari
@@ -14,7 +15,7 @@ class AppContext:
 
     def register_component(self, name, component):
         self._components[name] = component
-        logger.info(f"Component {name} registered successfully.")
+        logger.info(f"Component {name} registered.")
 
     async def get_component(self, name):
         logger.debug(f"Attempting to retrieve component: {name}")
@@ -59,7 +60,11 @@ class AppContext:
             from noetl.shared.connectors.postgrefy import PostgresHandler
             postgres_handler = PostgresHandler(config=self.config.postgres)
             self.register_component("postgres", postgres_handler)
-        return await self.get_component("postgres")
+        postgres = await self.get_component("postgres")
+        await postgres.initialize()
+        await postgres.initialize_sqlmodel()
+        logger.info("NoETL tables initialized.")
+        return postgres
 
     async def initialize_gs(self):
         if "gs" not in self._components:
@@ -79,8 +84,6 @@ class AppContext:
         else:
             logger.warning("RequestHandler already registered.")
 
-
-
     @property
     def postgres(self):
         return self._components.get("postgres")
@@ -92,7 +95,6 @@ class AppContext:
     @property
     def request(self):
         return self._components.get("request")
-
 
 _context_instance = None
 

@@ -17,4 +17,8 @@ async def register_resource(
         context: AppContext = Depends(app_context)
 ):
     logger.info(f"Received request to register resource.")
-    return await CatalogService.register_entry(content_base64=request.content_base64, context=context)
+    return await CatalogService.register_entry(
+        content_base64=request.content_base64,
+        event_type="REGISTERED",
+        context=context
+    )

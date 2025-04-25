@@ -3,17 +3,19 @@ import contextlib
 import json
 import re
 from typing import Optional, Tuple,  Union
-
-from psycopg.errors import (
-    ForeignKeyViolation,
-    UniqueViolation,
-    CheckViolation,
-    NotNullViolation,
-    IntegrityError,
-)
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 from psycopg.rows import dict_row
 import psycopg
+from psycopg.errors import (
+    ForeignKeyViolation,
+    UniqueViolation,
+    NotNullViolation,
+    IntegrityError,
+)
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlmodel import SQLModel
 from noetl.shared import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
@@ -40,6 +42,9 @@ class PostgresHandler:
         self.pool: Optional[AsyncConnectionPool] = None
         self.pool_lock = asyncio.Lock()
         self._initialized = False
+        self.sqlalchemy_engine = None
+        self.session_maker = None
+
 
     async def initialize(self):
         if self._initialized:
@@ -67,8 +72,7 @@ class PostgresHandler:
             if self.pool is None:
                 try:
                     self.pool = AsyncConnectionPool(
-                        f"postgresql://{self.config.postgres_user}:{self.config.postgres_password}@"
-                        f"{self.config.postgres_host}:{self.config.postgres_port}/{self.config.postgres_database}",
+                        self.config.connection_uri(),
                         min_size=self.config.postgres_pool_min_size,
                         max_size=self.config.postgres_pool_max_size,
                         timeout=self.config.postgres_pool_timeout,
@@ -76,6 +80,17 @@ class PostgresHandler:
                     )
                     await self.pool.open()
                     logger.info("Postgres connection pool initialized.")
+                    self.sqlalchemy_engine = create_async_engine(
+                        self.config.sqlalchemy_uri(),
+                        future=True,
+                        echo=True
+                    )
+                    self.session_maker = async_sessionmaker(
+                        self.sqlalchemy_engine,
+                        expire_on_commit=False,
+                    )
+                    logger.info("Postgres sqlalchemy engine created.")
+
                 except Exception as e:
                     logger.error(f"Error initializing database connection pool: {e}.")
                     raise
@@ -101,6 +116,45 @@ class PostgresHandler:
                     raise
             finally:
                 logger.debug("Closing database connection generator.")
+
+
+    @contextlib.asynccontextmanager
+    async def sqlmodel_session(self) -> AsyncSession:
+        if not self.session_maker:
+            await self.initialize_pool()
+
+        session: AsyncSession = self.session_maker()
+        try:
+            yield session
+        finally:
+            await session.close()
+
+
+    async def initialize_sqlmodel(self):
+        if self.sqlalchemy_engine is None:
+            raise RuntimeError("SQLAlchemy engine is not initialized.")
+        async with self.sqlalchemy_engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+            logger.info("NoETL tables created.")
+            await seed_default_types(conn)
+            logger.info("NoETL default types seeded.")
+
+
+    async def create_partitions(self, sql_statements: list[str] = None):
+        """
+        Create partitions for the table by range:
+        sql_statements = [
+        'CREATE TABLE IF NOT EXISTS event_2025_04 PARTITION OF event FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');',
+        'CREATE TABLE IF NOT EXISTS event_2025_04 PARTITION OF event FOR VALUES FROM ('2025-05-01') TO ('2025-06-01');'
+        ]
+        """
+        async with self.connect() as conn:
+            for statement in sql_statements:
+                try:
+                    await conn.execute(statement)
+                    logger.info(f"Partition created using query: {statement}.")
+                except Exception as e:
+                    logger.error(f"Error creating partition with query: {statement}. Error: {e}.")
 
     async def execute_query(self, query: str, *args):
         async with self.connect() as conn:
@@ -236,3 +290,63 @@ def validate_message(message):
         logger.warning(f"Invalid message type: {type(message)}. Trying convert to string.")
         return str(message)
 
+
+
+async def seed_default_types(conn):
+    resource_types = [
+        "Playbook",
+        "Workflow",
+        "Target",
+        "Step",
+        "Task",
+        "Action",
+    ]
+    for name in resource_types:
+        await conn.execute(
+            text(
+                """
+                INSERT INTO resource_type (name)
+                VALUES (:name)
+                ON CONFLICT (name) DO NOTHING
+                """
+            ),
+            {"name": name},
+        )
+
+    event_types = [
+        (
+            "REGISTERED",
+            "Resource {{ resource_path }} version {{ resource_version }} was registered.",
+        ),
+        (
+            "UPDATED",
+            "Resource {{ resource_path }} version {{ resource_version }} was updated.",
+        ),
+        (
+            "UNCHANGED",
+            "Resource {{ resource_path }} already registered.",
+        ),
+        (
+            "EXECUTION_STARTED",
+            "Execution started for {{ resource_path }}.",
+        ),
+        (
+            "EXECUTION_FAILED",
+            "Execution failed for {{ resource_path }}.",
+        ),
+        (
+            "EXECUTION_COMPLETED",
+            "Execution completed for {{ resource_path }}.",
+        ),
+    ]
+    for name, template in event_types:
+        await conn.execute(
+            text(
+                """
+                INSERT INTO event_type (name, template)
+                VALUES (:name, :template)
+                ON CONFLICT (name) DO NOTHING
+                """
+            ),
+            {"name": name, "template": template},
+        )
