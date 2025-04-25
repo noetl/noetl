@@ -1,7 +1,7 @@
 [project]
 name = "noetl"
 version = "0.0.2"
-description = "notOnlyNoCodeExtractTransformLoad framework"
+description = "notOnlyNoCodeExtractTransformLoadFramework"
 authors = [
     { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" }
 ]
@@ -42,7 +42,7 @@ dev = [
 ]
 
 [project.scripts]
-noetl = "noetl.noetl:main"
+noetl = "noetl.main:main"
 
 [build-system]
 requires = ["hatchling"]

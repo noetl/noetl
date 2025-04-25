@@ -142,5 +142,6 @@ nats_kv_ls:
 gcp-credentials:
 	@mkdir -p ./secrets
 	@gcloud auth application-default login
+	@rmdir ./secrets/application_default_credentials.json
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"

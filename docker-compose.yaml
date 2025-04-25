@@ -47,7 +47,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./secrets/application_default_credentials.json:/secrets/application_default_credentials.json
+      - ./secrets/application_default_credentials.json:/app/secrets/application_default_credentials.json
     environment:
       TZ: America/Chicago
       LOG_LEVEL: INFO
@@ -59,6 +59,6 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5434
       POSTGRES_SCHEMA: public
-      GOOGLE_APPLICATION_CREDENTIALS: /secrets/application_default_credentials.json
+      GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/application_default_credentials.json
     networks:
       - noetl-network

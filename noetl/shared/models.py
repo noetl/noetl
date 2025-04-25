@@ -72,3 +72,7 @@ class Event(SQLModel, table=True):
         },
     )
     event_type_entry: Optional["EventType"] = Relationship(back_populates="events")
+
+
+def create_noetl_tables(engine):
+    SQLModel.metadata.create_all(engine)

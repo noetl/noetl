@@ -7,7 +7,6 @@ import yaml
 import json
 from datetime import datetime, UTC
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy import desc
 from noetl.shared.models import Catalog, ResourceType, EventType, Event
 
 logger = setup_logger(__name__, include_location=True)
@@ -31,9 +30,10 @@ async def check_catalog_entry(
     resource_path: str,
     content: str
 ) -> Optional[Catalog]:
-    stmt = select(Catalog).where(Catalog.resource_path == resource_path).order_by(desc(Catalog.resource_version)).limit(1)
-    result = await session.execute(stmt)
-    entry = result.scalars().first()
+    stmt = select(Catalog).where(Catalog.resource_path == resource_path).order_by(Catalog.resource_version.desc()).limit(1)
+    result = await session.exec(stmt)
+    logger.debug(f"Catalog entry query result: {result}")
+    entry = result.first()
     if entry and entry.content == content:
         logger.info(
             f"Catalog entry for resource_path '{resource_path}' has the same content (version={entry.resource_version})."
@@ -41,23 +41,33 @@ async def check_catalog_entry(
         return entry
     return None
 
+async def get_latest_catalog_entry(session: AsyncSession, resource_path: str) -> Optional[Catalog]:
+    stmt = select(Catalog).where(Catalog.resource_path == resource_path).order_by(Catalog.resource_version.desc()).limit(
+        1)
+    result = await session.exec(stmt)
+    logger.debug(f"Catalog entry query result: {result}")
+    entry = result.first()
+    logger.info(
+        f"Catalog entry for resource_path '{resource_path}' has (version={entry.resource_version})."
+    )
+    return entry
+
+
 def increment_version(version: str) -> str:
     version_parts = version.split(".")
     version_parts[-1] = str(int(version_parts[-1]) + 1)
     return ".".join(version_parts)
 
 
-async def create_catalog_entry(session: AsyncSession, resource_data: dict):
+async def create_catalog_entry(session: AsyncSession, current_content: str, resource_data: dict):
     resource_path = resource_data.get("path")
     resource_type = resource_data.get("kind")
-    current_content = json.dumps(resource_data, sort_keys=True)
-    latest_entry = await check_catalog_entry(session, resource_path, current_content)
-    if latest_entry:
-        logger.info(f"Catalog entry already exists for '{resource_path}' with the same content.")
-        return
+    latest_entry = await get_latest_catalog_entry(session, resource_path)
+    if latest_entry and latest_entry.content == current_content:
+        logger.info(f"Catalog entry for '{resource_path}' already exists with version {latest_entry.resource_version}.")
+        return latest_entry
 
     new_version = increment_version(latest_entry.resource_version) if latest_entry else "1.0.0"
-
     new_catalog_entry = Catalog(
         resource_path=resource_path,
         resource_version=new_version,
@@ -72,6 +82,8 @@ async def create_catalog_entry(session: AsyncSession, resource_data: dict):
     session.add(new_catalog_entry)
     await session.commit()
     logger.info(f"New catalog entry created with version '{new_version}' for path '{resource_path}'.")
+    return new_catalog_entry
+
 
 async def check_event_type(session: AsyncSession, event_type: str) -> bool:
     return await session.get(EventType, event_type) is not None
@@ -90,8 +102,8 @@ async def create_event_type(session: AsyncSession, event_type: str):
 async def log_event(session: AsyncSession, event_data: dict):
     event_id = event_data.get("event_id")
     existing_event_query = select(Event).where(Event.event_id == event_id)
-    existing_event_result = await session.execute(existing_event_query)
-    existing_event = existing_event_result.scalars().first()
+    existing_event_result = await session.exec(existing_event_query)
+    existing_event = existing_event_result.first()
 
     if existing_event:
         logger.info(f"Event '{event_id}' already exists.")
@@ -136,16 +148,16 @@ class CatalogService:
             for field in ["path", "name", "kind"]:
                 if field not in resource_data:
                     raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
-            async with context.postgres.sqlmodel_session() as session:
+            async with context.postgres.get_session() as session:
                 await create_resource_type(session, resource_data.get("kind"))
-                await create_catalog_entry(session, resource_data)
+                catalog_entry = await create_catalog_entry(session, decoded_yaml, resource_data)
                 await create_event_type(session, event_type)
-                event_id = f"{resource_data.get('path')}:{event_type}:{resource_data.get('version', '1.0.0')}"
+                event_id = f"{catalog_entry.resource_path}:{event_type}:{catalog_entry.resource_version}"
                 event_data = {
                     "event_id": event_id,
                     "event_type": event_type,
-                    "resource_path": resource_data.get("path"),
-                    "resource_version": resource_data.get("version", "1.0.0"),
+                    "resource_path": catalog_entry.resource_path,
+                    "resource_version": catalog_entry.resource_version,
                 }
                 event_result = await log_event(session, event_data)
             return event_result

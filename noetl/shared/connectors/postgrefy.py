@@ -13,10 +13,13 @@ from psycopg.errors import (
     IntegrityError,
 )
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlmodel import SQLModel
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import SQLModel, create_engine
 from noetl.shared import setup_logger
+from shared.categories import seed_default_types
+
 logger = setup_logger(__name__, include_location=True)
 
 def pgsql_execute(query: str, params=None, *, user="noetl", password="noetl", host="localhost", port=5432, database="noetl"):
@@ -42,7 +45,7 @@ class PostgresHandler:
         self.pool: Optional[AsyncConnectionPool] = None
         self.pool_lock = asyncio.Lock()
         self._initialized = False
-        self.sqlalchemy_engine = None
+        self.engine = None
         self.session_maker = None
 
 
@@ -79,18 +82,7 @@ class PostgresHandler:
                         open=False
                     )
                     await self.pool.open()
-                    logger.info("Postgres connection pool initialized.")
-                    self.sqlalchemy_engine = create_async_engine(
-                        self.config.sqlalchemy_uri(),
-                        future=True,
-                        echo=True
-                    )
-                    self.session_maker = async_sessionmaker(
-                        self.sqlalchemy_engine,
-                        expire_on_commit=False,
-                    )
-                    logger.info("Postgres sqlalchemy engine created.")
-
+                    logger.success("Postgres connection pool initialized.")
                 except Exception as e:
                     logger.error(f"Error initializing database connection pool: {e}.")
                     raise
@@ -119,26 +111,20 @@ class PostgresHandler:
 
 
     @contextlib.asynccontextmanager
-    async def sqlmodel_session(self) -> AsyncSession:
-        if not self.session_maker:
-            await self.initialize_pool()
-
-        session: AsyncSession = self.session_maker()
-        try:
+    async def get_session(self) -> AsyncSession:
+        async_session = sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as session:
             yield session
-        finally:
-            await session.close()
-
 
     async def initialize_sqlmodel(self):
-        if self.sqlalchemy_engine is None:
-            raise RuntimeError("SQLAlchemy engine is not initialized.")
-        async with self.sqlalchemy_engine.begin() as conn:
+        if self.engine is None:
+            self.engine = create_async_engine(self.config.sqlalchemy_uri(), future=True, echo=True)
+        async with self.engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
-            logger.info("NoETL tables created.")
-            await seed_default_types(conn)
-            logger.info("NoETL default types seeded.")
-
+            logger.success("NoETL tables created.")
+        async with self.get_session() as session:
+            await seed_default_types(session)
+            logger.success("NoETL default types seeded.")
 
     async def create_partitions(self, sql_statements: list[str] = None):
         """
@@ -169,19 +155,19 @@ class PostgresHandler:
                         return await cur.fetchall()
                 except ForeignKeyViolation as e:
                     logger.error(f"Foreign Key Violation: {e}.")
-                    raise e
+                    raise
                 except UniqueViolation as e:
                     logger.error(f"Unique Constraint Violation: {e}.")
-                    raise e
+                    raise
                 except NotNullViolation as e:
                     logger.error(f"Not Null Constraint Violation: {e}.")
-                    raise e
+                    raise
                 except IntegrityError as e:
                     logger.error(f"Integrity Error: {e}.")
-                    raise e
+                    raise
                 except Exception as e:
                     logger.error(f"Unexpected error executing database query: {e}.")
-                    raise e
+                    raise
 
     async def execute_sql(self, query: str, args: Tuple = ()):
         if not self.pool:
@@ -198,9 +184,7 @@ class PostgresHandler:
                     return None
             except Exception as e:
                 logger.error(f"Error executing sql statement '{query}': {e}.")
-                raise e
-            finally:
-                conn.putconn(conn)
+                raise
 
     async def call_routine(self, query: str, args: Tuple = (), is_procedure: bool = False, fetch_all: bool = True):
         if not self.pool:
@@ -289,64 +273,3 @@ def validate_message(message):
     else:
         logger.warning(f"Invalid message type: {type(message)}. Trying convert to string.")
         return str(message)
-
-
-
-async def seed_default_types(conn):
-    resource_types = [
-        "Playbook",
-        "Workflow",
-        "Target",
-        "Step",
-        "Task",
-        "Action",
-    ]
-    for name in resource_types:
-        await conn.execute(
-            text(
-                """
-                INSERT INTO resource_type (name)
-                VALUES (:name)
-                ON CONFLICT (name) DO NOTHING
-                """
-            ),
-            {"name": name},
-        )
-
-    event_types = [
-        (
-            "REGISTERED",
-            "Resource {{ resource_path }} version {{ resource_version }} was registered.",
-        ),
-        (
-            "UPDATED",
-            "Resource {{ resource_path }} version {{ resource_version }} was updated.",
-        ),
-        (
-            "UNCHANGED",
-            "Resource {{ resource_path }} already registered.",
-        ),
-        (
-            "EXECUTION_STARTED",
-            "Execution started for {{ resource_path }}.",
-        ),
-        (
-            "EXECUTION_FAILED",
-            "Execution failed for {{ resource_path }}.",
-        ),
-        (
-            "EXECUTION_COMPLETED",
-            "Execution completed for {{ resource_path }}.",
-        ),
-    ]
-    for name, template in event_types:
-        await conn.execute(
-            text(
-                """
-                INSERT INTO event_type (name, template)
-                VALUES (:name, :template)
-                ON CONFLICT (name) DO NOTHING
-                """
-            ),
-            {"name": name, "template": template},
-        )
