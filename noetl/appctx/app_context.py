@@ -1,6 +1,6 @@
 import asyncio
 from noetl.config.settings import AppConfig
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 logger = setup_logger(__name__)
 
 class AppContext:

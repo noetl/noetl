@@ -2,7 +2,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from noetl.api.models.resources import ResourceType, EventType
 
-
 async def seed_default_types(session: AsyncSession) -> None:
     resource_names = [
         "Playbook",

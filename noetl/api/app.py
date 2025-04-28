@@ -2,7 +2,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 from noetl.appctx.app_context import AppContext, get_app_context
 log_name = os.path.splitext(os.path.relpath(__file__, start=os.getcwd()).replace(os.sep, "."))[0]
 logger = setup_logger(log_name, include_location=True)

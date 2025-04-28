@@ -13,7 +13,7 @@ import datetime
 import random
 import string
 
-from noetl.shared import setup_logger
+from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

@@ -1,6 +1,6 @@
 import asyncio
 import os
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 from noetl.runtime.interp import process_payload
 from noetl.runtime.storage import StorageFactory
 from noetl.runtime.event import Event

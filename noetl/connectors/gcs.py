@@ -2,7 +2,7 @@ import asyncio
 import os
 from google.cloud import storage
 from noetl.config.settings import CloudConfig
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 def upload_blob(bucket_name: str, source_file_name: str, destination_blob_name: str, google_project: str):

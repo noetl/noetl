@@ -1,4 +1,4 @@
-from noetl.logger.custom_setup import setup_logger
+from noetl.util.custom_logger import setup_logger
 from noetl.api.app import create_app
 from noetl.cli.commands import cli
 import uvicorn

@@ -1,6 +1,6 @@
 from typing import Optional
 from sqlmodel import select
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 from noetl.appctx.app_context import AppContext
 from fastapi import HTTPException
 import base64

@@ -12,12 +12,11 @@ from psycopg.errors import (
     NotNullViolation,
     IntegrityError,
 )
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlmodel import SQLModel, create_engine
-from noetl.logger.custom_setup import setup_logger
+from sqlmodel import SQLModel
+from noetl.util import setup_logger
 from noetl.api.models.categories import seed_default_types
 
 logger = setup_logger(__name__, include_location=True)

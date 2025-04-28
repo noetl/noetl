@@ -1,15 +1,12 @@
 import copy
 import datetime
 import json
-import os
 from copy import deepcopy
-import random
-import string
 from typing import Dict, Any
 from jinja2 import Template
 from noetl.runtime.interp import resolve_system_paths
 from noetl.runtime.scope import Scope
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

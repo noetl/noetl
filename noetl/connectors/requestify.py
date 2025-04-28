@@ -4,7 +4,7 @@ from google.auth.exceptions import DefaultCredentialsError
 from google.auth.transport.requests import Request as GoogleRequest
 import httpx
 from noetl.config.settings import CloudConfig
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 def evaluate_response(response: httpx.Response) -> dict:

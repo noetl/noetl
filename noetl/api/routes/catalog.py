@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from noetl.logger.custom_setup import setup_logger
+from noetl.util import setup_logger
 from appctx.app_context import get_app_context, AppContext
 from noetl.api.schemas.catalog import RegisterRequest
 from noetl.api.services.catalog import CatalogService
