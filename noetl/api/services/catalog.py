@@ -149,9 +149,15 @@ class CatalogService:
             for field in ["path", "name", "kind"]:
                 if field not in resource_data:
                     raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
             async with context.postgres.get_session() as session:
                 await create_resource_type(session, resource_data.get("kind"))
                 catalog_entry = await create_catalog_entry(session, decoded_yaml, resource_data)
+                if catalog_entry.content == decoded_yaml:
+                    return {
+                        "status": "already_exists",
+                        "message": f"Catalog entry for '{catalog_entry.resource_path}' already exists with version {catalog_entry.resource_version}."
+                    }
                 await create_event_type(session, event_type)
                 event_id = f"{catalog_entry.resource_path}:{event_type}:{catalog_entry.resource_version}"
                 event_data = {
@@ -161,7 +167,11 @@ class CatalogService:
                     "resource_version": catalog_entry.resource_version,
                 }
                 event_result = await log_event(session, event_data)
-            return event_result
+
+            return {
+                "status": "success",
+                "message": f"Catalog entry for '{resource_data['path']}' successfully registered with version {catalog_entry.resource_version}."
+            }
 
         except yaml.YAMLError as e:
             logger.error(f"YAML Parsing Error: {e}")
@@ -169,3 +179,26 @@ class CatalogService:
         except Exception as e:
             logger.error(f"Unexpected Error: {e}")
             raise HTTPException(status_code=500, detail=f"Error registering resource: {e}.")
+
+    @staticmethod
+    async def fetch_all_entries(context: AppContext):
+        try:
+            async with context.postgres.get_session() as session:
+                stmt = select(Catalog).order_by(Catalog.timestamp.desc())
+                result = await session.exec(stmt)
+                entries = result.fetchall()
+                logger.info(f"Fetched {len(entries)} catalog entries.")
+                return [
+                    {
+                        "id": entry.resource_path,
+                        "name": entry.payload.get("name"),
+                        "event_type": entry.payload.get("kind"),
+                        "version": entry.resource_version,
+                        "timestamp": entry.timestamp,
+                    }
+                    for entry in entries
+                ]
+        except Exception as e:
+            logger.error(f"Error fetching catalog entries: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch catalog entries: {e}.")
+

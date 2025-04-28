@@ -1,6 +1,7 @@
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from noetl.util import setup_logger
 from noetl.appctx.app_context import AppContext, get_app_context
@@ -32,6 +33,9 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    from noetl.config.settings import AppConfig
+    app_config = AppConfig()
+
     app = FastAPI(
         title="NoETL API",
         description="NoETL workflow service",
@@ -46,6 +50,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     register_routers(app)
+    app.mount("/static", StaticFiles(directory=app_config.static_dir), name="static")
     return app
 
 
