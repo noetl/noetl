@@ -1,5 +1,5 @@
 import base64
-from fastapi import APIRouter, Depends, File, UploadFile, Form
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse
 from noetl.util import setup_logger
 from noetl.appctx.app_context import get_app_context, AppContext
@@ -42,8 +42,13 @@ async def catalog_page():
         <div id="catalog-table">
             <p>Catalog table will be displayed after playbook is uploaded.</p>
         </div>
+        <div id="details">
+            <h3>Details</h3>
+            <p>Select a playbook to view content or payload.</p>
+        </div>
     </div>
     """
+
 
 @router.post("/upload", response_class=HTMLResponse)
 async def upload_playbook(
@@ -63,18 +68,79 @@ async def upload_playbook(
         )
         catalog_entries = await catalog_service.fetch_all_entries(context)
         table_rows = "".join(
-            f"<tr><td>{entry['id']}</td><td>{entry['name']}</td><td>{entry['event_type']}</td><td>{entry['version']}</td><td>{entry['timestamp']}</td></tr>"
+            f"""
+            <tr>
+                <td>{entry['id']}</td>
+                <td>{entry['name']}</td>
+                <td>{entry['event_type']}</td>
+                <td>{entry['version']}</td>
+                <td>{entry['timestamp']}</td>
+                <td>
+                    <button hx-get="/catalog/content?id={entry['id']}" hx-target="#details">View Content</button>
+                </td>
+                <td>
+                    <button hx-get="/catalog/payload?id={entry['id']}" hx-target="#details">View Payload</button>
+                </td>
+            </tr>
+            """
             for entry in catalog_entries
         )
+
         message_html = f"<p><strong>Status:</strong> {response['message']}</p>"
         return f"""
         {message_html}
         <h3>Catalog Table</h3>
         <table border="1">
-            <tr><th>ID</th><th>Name</th><th>Event Type</th><th>Version</th><th>Timestamp</th></tr>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Event Type</th>
+                <th>Version</th>
+                <th>Timestamp</th>
+                <th>Content</th>
+                <th>Payload</th>
+            </tr>
             {table_rows}
         </table>
         """
     except Exception as e:
         logger.error(f"Error uploading playbook: {e}")
         return f"<p>Error processing the uploaded file: {e}</p>"
+
+
+@router.get("/content", response_class=HTMLResponse)
+async def get_content(
+        id: str,
+        catalog_service: CatalogService = Depends(get_catalog_service),
+        context: AppContext = Depends(get_app_context)
+):
+    try:
+        entry = await catalog_service.fetch_entry_id(context, id)
+        if not entry:
+            raise HTTPException(status_code=404, detail=f"Catalog entry with ID '{id}' not found.")
+        return f"""
+        <h4>Content for '{id}':</h4>
+        <pre>{entry.get('content', 'No content available')}</pre>
+        """
+    except Exception as e:
+        logger.error(f"Error fetching content: {e}")
+        return f"<p>Error fetching content for entry '{id}': {e}</p>"
+
+
+@router.get("/payload", response_class=HTMLResponse)
+async def get_payload(
+        id: str,
+        catalog_service: CatalogService = Depends(get_catalog_service),
+        context: AppContext = Depends(get_app_context)
+):
+    try:
+        entry = await catalog_service.fetch_entry_id(context, id)
+        if not entry:
+            raise HTTPException(status_code=404, detail=f"Catalog entry with ID '{id}' not found.")
+        return f"""
+        <h4>Payload for '{id}':</h4>
+        <pre>{entry.get('payload', 'No payload available')}</pre>
+        """
+    except Exception as e:
+        logger.error(f"Error fetching payload: {e}")
+        return f"<p>Error fetching payload for entry '{id}': {e}</p>"

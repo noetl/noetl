@@ -202,3 +202,18 @@ class CatalogService:
             logger.error(f"Error fetching catalog entries: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to fetch catalog entries: {e}.")
 
+    @staticmethod
+    async def fetch_entry_id(context: AppContext, id: str):
+        async with context.postgres.get_session() as session:
+            stmt = select(Catalog).where(Catalog.resource_path == id)
+            result = await session.exec(stmt)
+            entry = result.first()
+            if entry:
+                return {
+                    "id": entry.resource_path,
+                    "content": entry.content,
+                    "payload": entry.payload
+                }
+            return None
+
+
