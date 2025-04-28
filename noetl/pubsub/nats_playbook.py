@@ -1,4 +1,3 @@
-import yaml
 from noetl.pubsub.nats_payload import Payload, AppConst
 
 

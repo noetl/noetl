@@ -73,6 +73,28 @@ CREATE TABLE event (
         REFERENCES catalog(resource_path, resource_version)
 ) PARTITION BY RANGE (timestamp);
 
+
+CREATE TABLE event_claim (
+    event_id TEXT NOT NULL,          -- The event being claimed
+    job_id TEXT NOT NULL,            -- The job to which the event belongs
+    worker_id TEXT NOT NULL,         -- Unique identifier for the worker making the claim
+    meta             JSONB,
+    timestamp TIMESTAMPTZ NOT NULL,  -- Claim creation time
+    PRIMARY KEY (event_id, worker_id)
+);
+
+CREATE TABLE runtime (
+    id SERIAL PRIMARY KEY,                      -- Auto-incrementing unique ID
+    job_id TEXT NOT NULL,                       -- Unique job identifier (foreign key to jobs or events)
+    step_id TEXT,                               -- Current step being processed (nullable)
+    task_id TEXT,                               -- Current task being processed (nullable)
+    worker_id TEXT NOT NULL,                    -- Worker processing this runtime execution
+    status TEXT NOT NULL DEFAULT 'PENDING',     -- State: PENDING, RUNNING, COMPLETED, FAILED
+    context JSONB,                              -- Execution context (e.g. variables, metadata)
+    last_updated TIMESTAMPTZ DEFAULT now()      -- Timestamp for tracking activity
+);
+
+
 CREATE TABLE event_2025_04 PARTITION OF event
 FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');
 

@@ -9,7 +9,7 @@ from typing import Dict, Any
 from jinja2 import Template
 from noetl.runtime.interp import resolve_system_paths
 from noetl.runtime.scope import Scope
-from noetl.shared import setup_logger
+from noetl.logger.custom_setup import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

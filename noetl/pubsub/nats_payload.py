@@ -3,10 +3,10 @@ from datetime import datetime
 from enum import Enum
 from noetl.shared.utils import KeyVal
 from noetl.config.const import AppConst
-from noetl.shared.connectors.natstream import NatsPool, NatsConnectionPool, NatsConfig, NatsStreamReference, ErrTimeout, PubAck, \
+from noetl.connectors.natstream import NatsPool, NatsConnectionPool, NatsConfig, NatsStreamReference, ErrTimeout, PubAck, \
     RawStreamMsg
 
-from noetl.shared import setup_logger
+from noetl.logger.custom_setup import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 PLAYBOOKS = AppConst.PLAYBOOKS

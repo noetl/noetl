@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field, asdict
-from noetl.shared.utils import is_on, get_log_level
+from noetl.util import is_on, get_log_level
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__)))
 TMPL_DIR = os.path.join(BASE_DIR, "templates")
 
@@ -48,8 +48,6 @@ class PostgresConfig:
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@"
             f"{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
         )
-
-
 
 @dataclass
 class AppConfig:

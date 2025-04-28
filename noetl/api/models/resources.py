@@ -3,7 +3,7 @@ from sqlalchemy.dialects.postgresql import JSON
 from typing import Optional, List
 from datetime import datetime, UTC
 from sqlalchemy import Column, UniqueConstraint, ForeignKeyConstraint
-from noetl.shared import setup_logger
+from noetl.logger.custom_setup import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -76,3 +76,4 @@ class Event(SQLModel, table=True):
 
 def create_noetl_tables(engine):
     SQLModel.metadata.create_all(engine)
+

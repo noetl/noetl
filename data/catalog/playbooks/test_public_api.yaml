@@ -4,71 +4,83 @@ name: test_public_api
 path: /catalog/playbooks/test_public_api
 
 environment:
-    dataPath: data
-    outputPath: "{{ environment.dataPath }}/output/"
-    templatePath: "{{ environment.dataPath }}/catalog/templates/default.tpl"
-    playbookPath: "{{ environment.dataPath }}/catalog/playbooks/test_public_api.yaml"
-    executionPath: "{{ environment.dataPath }}/executions/job_{{ jobId }}.json"
-    storageType: json  # Options: 'json' or 'sqlite'
-    sqlitePath: "{{ environment.dataPath }}/state/noetl.db"  # Used when storage_type is 'sqlite'
-    logPath: "{{ environment.dataPath }}/logs/noetl_{{ jobId }}.log"
-    logLevel: DEBUG
-    logFormat: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  dataPath: data
+  outputPath: "{{ environment.dataPath }}/output/"
+  templatePath: "{{ environment.dataPath }}/catalog/templates/default.tpl"
+  playbookPath: "{{ environment.dataPath }}/catalog/playbooks/test_public_api.yaml"
+  executionPath: "{{ environment.dataPath }}/executions/job_{{ jobId }}.json"
+  storageType: json
+  sqlitePath: "{{ environment.dataPath }}/state/noetl.db"
+  logPath: "{{ environment.dataPath }}/logs/noetl_{{ jobId }}.log"
+  logLevel: DEBUG
+  logFormat: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-variables:
-  baseUrl: "https://jsonplaceholder.typicode.com"  
+context:
+  baseUrl: "https://jsonplaceholder.typicode.com"
+  break: false
   retry: 0
-
-steps:
-  - step: public_api_test
-    tasks: [test_posts, test_users]
+  jobId: "{{ generate_uuid() }}"
+  steps:
+    - name: public_api_test
+      status: READY
+  state: NEW
 
 tasks:
-  - task: test_posts
-    actions:
+  - name: test_posts
+    run:
       - action: http
         method: get
-        endpoint: "{{ baseUrl }}/posts"
+        endpoint: "{{ context.baseUrl }}/posts"
         params: {}
         retry: 3
-        description: "Retrieve posts from the public API"
+        desc: "Retrieve posts from the public API"
       - action: http
         method: post
-        endpoint: "{{ baseUrl }}/posts"
+        endpoint: "{{ context.baseUrl }}/posts"
         params:
           title: "Test Post"
           body: "This is a sample post created for testing"
           userId: 1
-        description: "Create a new post in the public API"
+        desc: "Create a new post in the public API"
 
-  - task: test_users
-    actions:
+  - name: test_users
+    run:
       - action: http
         method: get
-        endpoint: "{{ baseUrl }}/users"
+        endpoint: "{{ context.baseUrl }}/users"
         params: {}
         retry: 3
-        description: "Fetch user data from the public API"
+        desc: "Fetch user data from the public API"
       - action: http
         method: get
-        endpoint: "{{ baseUrl }}/users/1"
+        endpoint: "{{ context.baseUrl }}/users/1"
         params: {}
-        description: "Fetch details of user with ID 1"
+        desc: "Fetch details of user with ID 1"
 
-  - task: test_comments
-    actions:
+  - name: test_comments
+    run:
       - action: http
         method: get
-        endpoint: "{{ baseUrl }}/comments"
+        endpoint: "{{ context.baseUrl }}/comments"
         params: {}
         retry: 3
-        description: "Fetch comments from the API"
+        desc: "Fetch comments from the API"
       - action: http
         method: post
-        endpoint: "{{ baseUrl }}/comments"
+        endpoint: "{{ context.baseUrl }}/comments"
         params:
           postId: 1
           name: "Sample comment"
           email: "email@example.com"
           body: "This is a test comment sent to the API."
-        description: "Post a comment to a specific post"
+        desc: "Post a comment to a specific post"
+
+steps:
+  - name: public_api_test
+    mode: sequential
+    when: "{{ event.type == 'workflow_started' and event.jobId == context.jobId }}"
+    run:
+      - task: test_posts
+      - task: test_users
+      - task: test_comments
+    next: []

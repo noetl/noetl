@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 import json
 from datetime import datetime
 from uuid import uuid4
-from noetl.shared import setup_logger
+from noetl.logger.custom_setup import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 @dataclass

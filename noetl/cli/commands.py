@@ -1,10 +1,10 @@
 import typer
 from pathlib import Path
 import base64
-from noetl.shared.connectors.requestify import RequestHandler
-from noetl.config.config import CloudConfig
+from noetl.connectors.requestify import RequestHandler
+from noetl.config.settings import CloudConfig
 import asyncio
-from noetl.shared import setup_logger
+from noetl.logger.custom_setup import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 cli = typer.Typer(no_args_is_help=True)

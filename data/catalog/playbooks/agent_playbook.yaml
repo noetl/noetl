@@ -10,18 +10,22 @@ environment:
   dbUser: "test_user"
   dbPassword: "secure_password"
   outputCsvPath: "data/exported_data.csv"
-  logPath: "logs/postgres_csv_{{ agentId }}.log"
+  logPath: "logs/postgres_csv_{{ context.jobId }}.log"
   logLevel: INFO
+
+context:
+  jobId: "{{ generate_uuid() }}"
+  steps:
+    - name: initialize_db
+      status: READY
+  state: NEW
 
 tasks:
   - name: create_table
-    description: "Create table in PostgreSQL database"
-    runtime:
-      mode: isolated
-      reportUrl: "http://localhost:8000/callbacks/db_init"
     run:
       - action: create_table
         method: postgres
+        desc: "Create table in PostgreSQL database"
         query: |
           CREATE TABLE IF NOT EXISTS users (
               user_id SERIAL PRIMARY KEY,
@@ -31,34 +35,38 @@ tasks:
           );
 
   - name: insert_record
-    description: "Insert a record into PostgreSQL database"
     run:
       - action: insert_record
         method: postgres
+        desc: "Insert a record into PostgreSQL database"
         query: |
           INSERT INTO users (username, email)
           VALUES ('johndoe', 'john@example.com');
 
   - name: export_to_csv
-    description: "Export data from PostgreSQL table to CSV"
     run:
       - action: export_csv
         method: postgres_to_csv
+        desc: "Export data from PostgreSQL table to CSV"
         query: "SELECT * FROM users;"
         output: "{{ environment.outputCsvPath }}"
         includeHeaders: true
 
+  - name: handle_error_task
+    run:
+      - action: log
+        method: log
+        desc: "Log error message"
+        message: "{{ error.message }}"
+        level: ERROR
+
 steps:
   - name: initialize_db
-    description: "Create table and insert a record"
-    rule:
-      - when: "{{ result.success }}"
-        run:
-          - task: create_table
-          - task: insert_record
-      - when: "{{ not result.success }}"
-        run:
-          - step: handle_error
+    mode: sequential
+    when: "{{ event.type == 'workflow_started' and event.jobId == context.jobId }}"
+    run:
+      - task: create_table
+      - task: insert_record
     next:
       - when: "{{ result.success }}"
         run:
@@ -68,39 +76,15 @@ steps:
           - step: handle_error
 
   - name: export_step
-    description: "Export table data to CSV"
-    rule:
-      - when: "{{ result.success }}"
-        run:
-          - task: export_to_csv
-      - when: "{{ not result.success }}"
-        run:
-          - step: handle_error
+    mode: sequential
+    run:
+      - task: export_to_csv
     next:
-      - when: "{{ result.success }}"
-        run: []
-      - when: "{{ not result.success }}"
-        run:
-          - step: handle_error
+      - run: []
 
   - name: handle_error
-    description: "Handle any errors during execution"
-    rule:
-      - when: "{{ error.retryable }}"
-        run:
-          - action: log
-            method: log
-            message: "{{ error.message }}"
-            level: ERROR
-      - when: "{{ not error.retryable }}"
-        run:
-          - action: log
-            method: log
-            message: "{{ error.message }}"
-            level: ERROR
+    mode: sequential
+    run:
+      - task: handle_error_task
     next:
-      - when: "{{ error.retryable }}"
-        run:
-          - step: initialize_db
-      - when: "{{ not error.retryable }}"
-        run: []
+      - run: []

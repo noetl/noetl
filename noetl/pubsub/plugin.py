@@ -2,7 +2,7 @@ import os
 from abc import ABC, abstractmethod
 from argparse import Namespace, ArgumentParser
 from functools import partial
-from noetl.shared.connectors.natstream import NatsStreamReference, NatsPool, NatsConfig, Msg
+from noetl.connectors.natstream import NatsStreamReference, NatsPool, NatsConfig, Msg
 from noetl.pubsub.nats_payload import Payload, logger
 
 

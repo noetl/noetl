@@ -1,9 +1,9 @@
-from noetl.shared import setup_logger
-from noetl.server.app import create_app
-from noetl.cli.command import cli
+from noetl.logger.custom_setup import setup_logger
+from noetl.api.app import create_app
+from noetl.cli.commands import cli
 import uvicorn
 import typer
-
+# Sovdagari
 logger = setup_logger(__name__, include_location=True)
 
 @cli.command("server")

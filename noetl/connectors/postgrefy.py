@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, create_engine
-from noetl.shared import setup_logger
-from shared.categories import seed_default_types
+from noetl.logger.custom_setup import setup_logger
+from noetl.api.models.categories import seed_default_types
 
 logger = setup_logger(__name__, include_location=True)
 

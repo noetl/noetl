@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import RedirectResponse
-from noetl.shared.logger import setup_logger
+from noetl.logger.custom_setup import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

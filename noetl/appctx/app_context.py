@@ -1,13 +1,10 @@
 import asyncio
-from noetl.config.config import AppConfig
-from noetl.shared import models
-from noetl.shared import setup_logger
-
-# Sovdagari
-
+from noetl.config.settings import AppConfig
+from noetl.logger.custom_setup import setup_logger
 logger = setup_logger(__name__)
 
 class AppContext:
+    _lock = asyncio.Lock()
 
     def __init__(self, config: AppConfig):
         self._components = {}
@@ -57,7 +54,7 @@ class AppContext:
 
     async def initialize_postgres(self):
         if "postgres" not in self._components:
-            from noetl.shared.connectors.postgrefy import PostgresHandler
+            from noetl.connectors.postgrefy import PostgresHandler
             postgres_handler = PostgresHandler(config=self.config.postgres)
             self.register_component("postgres", postgres_handler)
         postgres = await self.get_component("postgres")
@@ -68,7 +65,7 @@ class AppContext:
 
     async def initialize_gs(self):
         if "gs" not in self._components:
-            from noetl.shared.connectors.gcs import GoogleStorageHandler
+            from noetl.connectors.gcs import GoogleStorageHandler
             gs_handler = GoogleStorageHandler(
                 config=self.config.cloud
             )
@@ -76,11 +73,11 @@ class AppContext:
         return await self.get_component("gs")
 
     async def initialize_request(self):
-        from noetl.shared.connectors.requestify import RequestHandler
+        from noetl.connectors.requestify import RequestHandler
 
         if "request" not in self._components:
             self._components["request"] = RequestHandler(self.config.cloud)
-            logger.info("RequestHandler registered successfully.")
+            logger.info("RequestHandler registered.")
         else:
             logger.warning("RequestHandler already registered.")
 
@@ -96,31 +93,39 @@ class AppContext:
     def request(self):
         return self._components.get("request")
 
-_context_instance = None
+    @staticmethod
+    def load_config():
+        from noetl.config.settings import AppConfig, CloudConfig, PostgresConfig, LogConfig
+        return AppConfig(
+            cloud=CloudConfig(),
+            log=LogConfig(),
+            postgres=PostgresConfig(),
+        )
 
+_app_context = None
 
-async def app_context() -> AppContext:
-    global _context_instance
-    from noetl.config.config import AppConfig, CloudConfig, PostgresConfig, LogConfig
+async def get_app_context() -> AppContext:
+    global _app_context
+    from noetl.config.settings import AppConfig, CloudConfig, PostgresConfig, LogConfig
 
-    if _context_instance is None:
+    if _app_context is None:
         lock = asyncio.Lock()
 
         async with lock:
-            if _context_instance is None:
+            if _app_context is None:
                 try:
                     config = AppConfig(
                         cloud=CloudConfig(),
                         log=LogConfig(),
                         postgres=PostgresConfig(),
                     )
-                    _context_instance = AppContext(config)
-                    await _context_instance.__aenter__()
-                    await _context_instance.initialize_postgres()
-                    await _context_instance.postgres.initialize()
-                    await _context_instance.initialize_request()
+                    _app_context = AppContext(config)
+                    await _app_context.__aenter__()
+                    await _app_context.initialize_postgres()
+                    await _app_context.postgres.initialize()
+                    await _app_context.initialize_request()
 
                 except Exception as e:
-                    raise Exception(f"Failed to initialize application context: {e}")
+                    raise Exception(f"Failed to initialize application context: {e}.")
 
-    return _context_instance
+    return _app_context

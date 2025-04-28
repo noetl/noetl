@@ -1,13 +1,14 @@
 from typing import Optional
 from sqlmodel import select
-from noetl.shared import setup_logger, AppContext
+from noetl.logger.custom_setup import setup_logger
+from noetl.appctx.app_context import AppContext
 from fastapi import HTTPException
 import base64
 import yaml
 import json
 from datetime import datetime, UTC
 from sqlmodel.ext.asyncio.session import AsyncSession
-from noetl.shared.models import Catalog, ResourceType, EventType, Event
+from noetl.api.models.resources import Catalog, ResourceType, EventType, Event
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -48,7 +49,7 @@ async def get_latest_catalog_entry(session: AsyncSession, resource_path: str) ->
     logger.debug(f"Catalog entry query result: {result}")
     entry = result.first()
     logger.info(
-        f"Catalog entry for resource_path '{resource_path}' has (version={entry.resource_version})."
+        f"Catalog entry for resource_path '{resource_path}'", extra=entry.dict() if entry else None
     )
     return entry
 

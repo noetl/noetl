@@ -1,0 +1,136 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "apiVersion": { "type": "string" },
+    "kind": { "type": "string", "enum": ["Playbook"] },
+    "name": { "type": "string" },
+    "path": { "type": "string" },
+    "environment": { 
+      "type": "object",
+      "properties": {},
+      "description": "Flexible environment variables allowed"
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "baseUrl": { "type": "string" },
+        "load": { "type": "string" },
+        "baseBlobPath": { "type": "string" },
+        "ngBlobPath": { "type": "string" },
+        "baseFilePath": { "type": "string" },
+        "bucket": { "type": "string" },
+        "break": { "type": "boolean" },
+        "retry": { "type": "integer" },
+        "jobId": { "type": "string" },
+        "state": { "type": "string" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "status": { "type": "string", "enum": ["READY", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"] }
+            },
+            "required": ["name", "status"]
+          }
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "loop": {
+            "type": "object",
+            "properties": {
+              "items": { "type": "array", "items": { "type": "string" } },
+              "iterator": { "type": "string" }
+            },
+            "required": ["items", "iterator"]
+          },
+          "run": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "action": { "type": "string" },
+                "method": { "type": "string" },
+                "name": { "type": "string" },
+                "desc": { "type": "string" },
+                "endpoint": { "type": "string" },
+                "params": { "type": "object" },
+                "loop": {
+                  "type": "object",
+                  "properties": {
+                    "items": { "type": "array", "items": { "type": "string" } },
+                    "iterator": { "type": "string" }
+                  },
+                  "required": ["items", "iterator"]
+                }
+              },
+              "required": ["action", "name"]
+            }
+          }
+        },
+        "required": ["name", "run"]
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "mode": { "type": "string", "enum": ["sequential", "parallel"] },
+          "when": { "type": "string" },
+          "loop": {
+            "type": "object",
+            "properties": {
+              "items": { "type": "array", "items": { "type": "string" } },
+              "iterator": { "type": "string" }
+            },
+            "required": ["items", "iterator"]
+          },
+          "run": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task": { "type": "string" },
+                "step": { "type": "string" },
+                "action": { "type": "string" }
+              }
+            }
+          },
+          "until": { "type": "string" },
+          "next": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "when": { "type": "string" },
+                "run": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task": { "type": "string" },
+                      "step": { "type": "string" },
+                      "action": { "type": "string" }
+                    }
+                  }
+                }
+              },
+              "required": ["when", "run"]
+            }
+          }
+        },
+        "required": ["name", "mode", "run"]
+      }
+    }
+  },
+  "required": ["apiVersion", "kind", "name", "path", "environment", "context", "tasks", "steps"]
+}

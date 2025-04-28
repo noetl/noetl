@@ -1,6 +1,5 @@
 import asyncio
-from noetl.shared import setup_logger
-
+from noetl.logger.custom_setup import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
