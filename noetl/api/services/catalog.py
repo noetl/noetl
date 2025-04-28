@@ -33,14 +33,14 @@ async def check_catalog_entry(
 ) -> Optional[Catalog]:
     stmt = select(Catalog).where(Catalog.resource_path == resource_path).order_by(Catalog.resource_version.desc()).limit(1)
     result = await session.exec(stmt)
-    logger.debug(f"Catalog entry query result: {result}")
     entry = result.first()
-    if entry and entry.content == content:
+    if entry and entry.content.strip() == content.strip():
         logger.info(
             f"Catalog entry for resource_path '{resource_path}' has the same content (version={entry.resource_version})."
         )
         return entry
     return None
+
 
 async def get_latest_catalog_entry(session: AsyncSession, resource_path: str) -> Optional[Catalog]:
     stmt = select(Catalog).where(Catalog.resource_path == resource_path).order_by(Catalog.resource_version.desc()).limit(
@@ -53,6 +53,15 @@ async def get_latest_catalog_entry(session: AsyncSession, resource_path: str) ->
     )
     return entry
 
+async def get_catalog_entry_path_version(session: AsyncSession, resource_path: str, resource_version: str) -> Optional[Catalog]:
+    stmt = select(Catalog).where((Catalog.resource_path == resource_path) & (Catalog.resource_version == resource_version))
+    result = await session.exec(stmt)
+    entry = result.first()
+    logger.info(
+            f"Catalog entry for resource_path '{resource_path}'", extra=entry.dict() if entry else None
+        )
+    return entry
+
 
 def increment_version(version: str) -> str:
     version_parts = version.split(".")
@@ -60,31 +69,46 @@ def increment_version(version: str) -> str:
     return ".".join(version_parts)
 
 
-async def create_catalog_entry(session: AsyncSession, current_content: str, resource_data: dict):
-    resource_path = resource_data.get("path")
-    resource_type = resource_data.get("kind")
-    latest_entry = await get_latest_catalog_entry(session, resource_path)
-    if latest_entry and latest_entry.content == current_content:
-        logger.info(f"Catalog entry for '{resource_path}' already exists with version {latest_entry.resource_version}.")
-        return latest_entry
 
-    new_version = increment_version(latest_entry.resource_version) if latest_entry else "1.0.0"
-    new_catalog_entry = Catalog(
-        resource_path=resource_path,
-        resource_version=new_version,
-        resource_type=resource_type,
-        content=current_content,
-        payload=resource_data,
-        meta=resource_data.get("meta", {}),
-        source=resource_data.get("source", "inline"),
-        resource_location=resource_data.get("location"),
-        timestamp=datetime.now(UTC),
-    )
-    session.add(new_catalog_entry)
-    await session.commit()
-    logger.info(f"New catalog entry created with version '{new_version}' for path '{resource_path}'.")
-    return new_catalog_entry
+async def create_catalog_entry(session: AsyncSession, current_content: str, resource_data: dict, resource_version=None) -> Catalog:
+    try:
+        resource_path = resource_data.get("path")
+        resource_type = resource_data.get("kind")
 
+        if not resource_path or not resource_type:
+            raise ValueError("Missing required fields: 'path' or 'kind'.")
+
+        if resource_version:
+            latest_entry = await get_catalog_entry_path_version(session, resource_path, resource_version)
+        else:
+            latest_entry = await get_latest_catalog_entry(session, resource_path)
+
+        if latest_entry and latest_entry.content == current_content:
+            logger.info(f"Catalog entry for '{resource_path}' already exists with version {latest_entry.resource_version}.")
+            return latest_entry
+
+        new_version = increment_version(latest_entry.resource_version) if latest_entry else "1.0.0"
+
+        new_catalog_entry = Catalog(
+            resource_path=resource_path,
+            resource_version=new_version,
+            resource_type=resource_type,
+            content=current_content,
+            payload=resource_data,
+            meta=resource_data.get("meta", {}),
+            source=resource_data.get("source", "inline"),
+            resource_location=resource_data.get("location"),
+            timestamp=datetime.now(UTC),
+        )
+        session.add(new_catalog_entry)
+        await session.commit()
+
+        logger.info(f"New catalog entry created with version '{new_version}' for path '{resource_path}'.")
+        return new_catalog_entry
+
+    except Exception as e:
+        logger.error(f"Error creating catalog entry: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating catalog entry: {e}.")
 
 async def check_event_type(session: AsyncSession, event_type: str) -> bool:
     return await session.get(EventType, event_type) is not None
@@ -148,17 +172,23 @@ class CatalogService:
             resource_data = yaml.safe_load(decoded_yaml)
             for field in ["path", "name", "kind"]:
                 if field not in resource_data:
-                    raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+                    raise HTTPException(status_code=400, detail=f"Missing field: {field}")
 
             async with context.postgres.get_session() as session:
                 await create_resource_type(session, resource_data.get("kind"))
-                catalog_entry = await create_catalog_entry(session, decoded_yaml, resource_data)
-                if catalog_entry.content == decoded_yaml:
+                existing_entry = await check_catalog_entry(session, resource_data["path"], decoded_yaml)
+                if existing_entry:
+                    logger.info(f"Catalog entry already exists for resource_path='{resource_data['path']}' with version '{existing_entry.resource_version}'.")
                     return {
                         "status": "already_exists",
-                        "message": f"Catalog entry for '{catalog_entry.resource_path}' already exists with version {catalog_entry.resource_version}."
+                        "message": f"Catalog entry for '{resource_data['path']}' already exists with version {existing_entry.resource_version}."
                     }
+
+                catalog_entry = await create_catalog_entry(session, decoded_yaml, resource_data)
+                if not catalog_entry:
+                    raise HTTPException(status_code=400, detail="Failed to create catalog entry.")
                 await create_event_type(session, event_type)
+
                 event_id = f"{catalog_entry.resource_path}:{event_type}:{catalog_entry.resource_version}"
                 event_data = {
                     "event_id": event_id,
@@ -166,7 +196,7 @@ class CatalogService:
                     "resource_path": catalog_entry.resource_path,
                     "resource_version": catalog_entry.resource_version,
                 }
-                event_result = await log_event(session, event_data)
+                await log_event(session, event_data)
 
             return {
                 "status": "success",
@@ -216,4 +246,31 @@ class CatalogService:
                 }
             return None
 
-
+    @staticmethod
+    async def fetch_entry_path_version(
+            context: AppContext,
+            resource_path: str,
+            resource_version: str
+    ) -> Optional[Catalog]:
+        async with context.postgres.get_session() as session:
+            stmt = select(Catalog).where(
+                (Catalog.resource_path == resource_path) &
+                (Catalog.resource_version == resource_version)
+            )
+            result = await session.exec(stmt)
+            entry = result.first()
+            if entry:
+                logger.info(
+                    f"Fetched catalog entry: resource_path='{resource_path}', version='{resource_version}'"
+                )
+                return {
+                    "id": entry.resource_path,
+                    "version": entry.resource_version,
+                    "content": entry.content,
+                    "payload": entry.payload
+                }
+            else:
+                logger.warning(
+                    f"No catalog entry found for resource_path='{resource_path}' and version='{resource_version}'"
+                )
+                return None

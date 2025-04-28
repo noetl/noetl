@@ -29,7 +29,8 @@ dependencies = [
     "urllib3>=2.3",
     "nats-py>=2.10.0",
     "Authlib>=1.5.1",
-    "typer>=0.15.2"
+    "typer>=0.15.2",
+    "deepdiff>=8.4.2",
 ]
 
 [project.optional-dependencies]
