@@ -6,48 +6,7 @@
     <title>NoETL Main Page</title>
     <script src="https://unpkg.com/htmx.org"></script>
     <link rel="stylesheet" href="/static/styles.css">
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-      }
-      .health-status-container {
-        display: flex;
-        align-items: center;
-        padding: 1em;
-        background-color: #f7f9fa;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-      }
-      .health-indicator {
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        background-color: green;
-        margin-right: 0.5em;
-        display: inline-block;
-      }
-      .health-text {
-        font-size: 1em;
-        vertical-align: middle;
-        color: #333;
-      }
-      nav ul {
-        list-style: none;
-        padding: 0;
-      }
-      nav ul li {
-        display: inline;
-        margin-right: 10px;
-      }
-      #content {
-        margin-top: 20px;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        background-color: #f9f9f9;
-        min-height: 100px;
-      }
-    </style>
+
   </head>
   <body>
     <h1>NoETL Dashboard</h1>
@@ -60,8 +19,7 @@
         <li><button onclick="location.href='/docs'">Docs</button></li>
       </ul>
     </nav>
-    <div id="content">
-      <p>Select a tab to view details.</p>
+    <div id="content" hx-get="/catalog" hx-trigger="load">
     </div>
   </body>
 </html>
