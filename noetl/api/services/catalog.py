@@ -9,7 +9,8 @@ import yaml
 import json
 from datetime import datetime, UTC
 from sqlmodel.ext.asyncio.session import AsyncSession
-from noetl.api.models.resources import Catalog, ResourceType, EventType, Event
+from noetl.api.models.catalog import Catalog, ResourceType
+from noetl.api.models.event import EventType, Event
 
 logger = setup_logger(__name__, include_location=True)
 

@@ -1,6 +1,12 @@
+from sqlmodel import SQLModel
+from noetl.api.models.catalog import Catalog, ResourceType
+from noetl.api.models.event import Event, EventType
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
-from noetl.api.models.resources import ResourceType, EventType
+
+def create_noetl_tables(engine):
+    SQLModel.metadata.create_all(engine)
+
 
 async def seed_default_types(session: AsyncSession) -> None:
     resource_names = [
