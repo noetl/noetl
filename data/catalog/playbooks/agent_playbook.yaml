@@ -1,7 +1,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: postgres_csv_workflow
-path: /catalog/playbooks/postgres_csv_workflow
+path: /playbooks/postgres_csv_workflow
 
 environment:
   dbHost: "localhost"

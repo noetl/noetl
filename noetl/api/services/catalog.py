@@ -11,6 +11,7 @@ from datetime import datetime, UTC
 from sqlmodel.ext.asyncio.session import AsyncSession
 from noetl.api.models.catalog import Catalog, ResourceType
 from noetl.api.models.event import EventType, Event
+from noetl.api.services.event import get_event_service
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -109,46 +110,6 @@ async def create_event_type(session: AsyncSession, event_type: str):
     else:
         logger.info(f"Event type '{event_type}' already exists.")
 
-async def log_event(session: AsyncSession, event_data: dict):
-    event_id = event_data.get("event_id")
-    existing_event_query = select(Event).where(Event.event_id == event_id)
-    existing_event_result = await session.exec(existing_event_query)
-    existing_event = existing_event_result.first()
-
-    if existing_event:
-        logger.info(f"Event '{event_id}' already exists.")
-        return {
-            "resource_path": existing_event.resource_path,
-            "resource_version": existing_event.resource_version,
-            "status": "already_exists",
-            "message": f"Event '{event_id}' already exists."
-        }
-    new_event = Event(
-        event_id=event_id,
-        event_type=event_data.get("event_type"),
-        resource_path=event_data.get("resource_path"),
-        resource_version=event_data.get("resource_version"),
-        event_message=event_data.get("event_message"),
-        content=event_data.get("content"),
-        payload=event_data.get("payload"),
-        context=event_data.get("context"),
-        meta=event_data.get("meta"),
-        timestamp=datetime.now(UTC),
-    )
-    session.add(new_event)
-    await session.commit()
-    logger.info(
-        f"Event '{event_id}' logged for resource '{event_data.get('resource_path')}' (version: {event_data.get('resource_version')})."
-    )
-    logger.debug(f"Event details: {json.dumps(event_data, indent=2)}")
-    return {
-        "resource_path": event_data["resource_path"],
-        "resource_version": event_data["resource_version"],
-        "status": "success",
-        "message": f"Event '{event_id}' logged successfully."
-    }
-
-
 class CatalogService:
     @staticmethod
     async def register_entry(content_base64: str, event_type: str, context: AppContext):
@@ -174,6 +135,8 @@ class CatalogService:
                     raise HTTPException(status_code=400, detail="Failed to create catalog entry.")
                 await create_event_type(session, event_type)
 
+
+                event_service = get_event_service()
                 event_id = f"{catalog_entry.resource_path}:{event_type}:{catalog_entry.resource_version}"
                 event_data = {
                     "event_id": event_id,
@@ -181,7 +144,7 @@ class CatalogService:
                     "resource_path": catalog_entry.resource_path,
                     "resource_version": catalog_entry.resource_version,
                 }
-                await log_event(session, event_data)
+                await event_service.log_event(session, event_data)
 
             return {
                 "status": "success",
