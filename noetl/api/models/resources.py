@@ -19,7 +19,7 @@ class Catalog(SQLModel, table=True):
         UniqueConstraint("resource_path", "resource_version", name="uq_catalog_path_version"),
     )
     resource_path: str = Field(primary_key=True)
-    resource_version: str = Field(primary_key=True)
+    resource_version: str = Field(primary_key=True, max_length=11, index=True)
     resource_type: str = Field(foreign_key="resource_type.name", nullable=False)
     source: str = Field(default="inline")
     resource_location: Optional[str] = Field(default=None)
@@ -76,4 +76,3 @@ class Event(SQLModel, table=True):
 
 def create_noetl_tables(engine):
     SQLModel.metadata.create_all(engine)
-

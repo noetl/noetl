@@ -1,53 +1,59 @@
 <h2>Catalog Page</h2>
-{% if message %}
-  <p><strong>Status:</strong> {{ message }}</p>
-{% endif %}
-<p>Upload a playbook and view the catalog table to inspect or edit entries.</p>
+
+<div id="status-message">
+  {% if message %}
+    <p id="upload-status-msg"><strong>Status:</strong> {{ message }}</p>
+  {% endif %}
+</div>
+
+<p>Upload a playbook.</p>
+
 <form
   id="upload-form"
-  hx-post="/catalog/upload"
-  hx-target="#catalog-table"
   enctype="multipart/form-data"
+  onsubmit="submitUploadForm(event)"
 >
   <label for="playbook-file">Upload Playbook:</label>
   <input type="file" name="playbook_file" id="playbook-file" required />
   <button type="submit">Upload</button>
 </form>
+
 <hr />
-<div id="catalog-table">
-  <h3>Catalog Table</h3>
-  <table border="1">
-    <tr>
-      <th>ID</th>
-      <th>Name</th>
-      <th>Event Type</th>
-      <th>Version</th>
-      <th>Timestamp</th>
-      <th>Content</th>
-      <th>Payload</th>
-    </tr>
-    {% for entry in catalog_entries %}
-      <tr>
-        <td>{{ entry.id }}</td>
-        <td>{{ entry.name }}</td>
-        <td>{{ entry.event_type }}</td>
-        <td>{{ entry.version }}</td>
-        <td>{{ entry.timestamp }}</td>
-        <td>
-          <button
-            onclick="window.open('/catalog/editor?type=content&resource_path={{ entry.id }}&resource_version={{ entry.version }}', '_blank')"
-          >
-            View/Edit Content
-          </button>
-        </td>
-        <td>
-          <button
-            onclick="window.open('/catalog/editor?type=payload&resource_path={{ entry.id }}&resource_version={{ entry.version }}', '_blank')"
-          >
-            View/Edit Payload
-          </button>
-        </td>
-      </tr>
-    {% endfor %}
-  </table>
-</div>
+
+<script>
+  async function submitUploadForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+
+    try {
+      const response = await fetch("/catalog/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (data.table_html) {
+        document.getElementById('catalog-table').outerHTML = data.table_html;
+      }
+
+      if (data.status_html) {
+        document.getElementById('status-message').innerHTML = data.status_html;
+
+        const statusEl = document.getElementById('upload-status-msg');
+        if (statusEl) {
+          setTimeout(() => {
+            statusEl.style.opacity = 0;
+            setTimeout(() => statusEl.remove(), 300);
+          }, 3000);
+        }
+      }
+    } catch (err) {
+      console.error("Upload error:", err);
+      document.getElementById('status-message').innerHTML = "<p><strong>Error:</strong> Failed to upload playbook.</p>";
+    }
+  }
+</script>
+
+{% include "catalog_table.html" %}

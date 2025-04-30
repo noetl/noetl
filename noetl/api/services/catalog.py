@@ -1,6 +1,7 @@
 from typing import Optional
 from sqlmodel import select
 from noetl.util import setup_logger
+from noetl.util.serialization import encode_version, increment_version
 from noetl.appctx.app_context import AppContext
 from fastapi import HTTPException
 import base64
@@ -14,7 +15,6 @@ logger = setup_logger(__name__, include_location=True)
 
 async def check_resource_type(session: AsyncSession, resource_type: str) -> bool:
     return await session.get(ResourceType, resource_type) is not None
-
 
 async def create_resource_type(session: AsyncSession, resource_type: str):
     exists = await check_resource_type(session, resource_type)
@@ -36,17 +36,13 @@ async def check_catalog_entry(
     entry = result.first()
     if entry and entry.content.strip() == content.strip():
         logger.info(
-            f"Catalog entry for resource_path '{resource_path}' has the same content (version={entry.resource_version})."
+            f"Catalog entry for resource_path '{resource_path}' version '{entry.resource_version}' has the same content."
         )
         return entry
     return None
-
-
 async def get_latest_catalog_entry(session: AsyncSession, resource_path: str) -> Optional[Catalog]:
-    stmt = select(Catalog).where(Catalog.resource_path == resource_path).order_by(Catalog.resource_version.desc()).limit(
-        1)
+    stmt = select(Catalog).where(Catalog.resource_path == resource_path).order_by(Catalog.resource_version.desc()).limit(1)
     result = await session.exec(stmt)
-    logger.debug(f"Catalog entry query result: {result}")
     entry = result.first()
     logger.info(
         f"Catalog entry for resource_path '{resource_path}'", extra=entry.dict() if entry else None
@@ -63,31 +59,19 @@ async def get_catalog_entry_path_version(session: AsyncSession, resource_path: s
     return entry
 
 
-def increment_version(version: str) -> str:
-    version_parts = version.split(".")
-    version_parts[-1] = str(int(version_parts[-1]) + 1)
-    return ".".join(version_parts)
-
-
-
 async def create_catalog_entry(session: AsyncSession, current_content: str, resource_data: dict, resource_version=None) -> Catalog:
     try:
         resource_path = resource_data.get("path")
         resource_type = resource_data.get("kind")
-
         if not resource_path or not resource_type:
-            raise ValueError("Missing required fields: 'path' or 'kind'.")
-
-        if resource_version:
-            latest_entry = await get_catalog_entry_path_version(session, resource_path, resource_version)
-        else:
-            latest_entry = await get_latest_catalog_entry(session, resource_path)
-
-        if latest_entry and latest_entry.content == current_content:
-            logger.info(f"Catalog entry for '{resource_path}' already exists with version {latest_entry.resource_version}.")
+            raise ValueError("Missing fields: 'path' / 'kind'.")
+        latest_entry = await get_latest_catalog_entry(session, resource_path)
+        if latest_entry and latest_entry.content.strip() == current_content.strip():
+            logger.info(
+                f"Catalog entry '{resource_path}' version {latest_entry.resource_version} already exists.")
             return latest_entry
 
-        new_version = increment_version(latest_entry.resource_version) if latest_entry else "1.0.0"
+        new_version = encode_version(increment_version(latest_entry.resource_version) if latest_entry else "1.0.0")
 
         new_catalog_entry = Catalog(
             resource_path=resource_path,
@@ -229,7 +213,7 @@ class CatalogService:
                     for entry in entries
                 ]
         except Exception as e:
-            logger.error(f"Error fetching catalog entries: {e}")
+            logger.error(f"Error fetching catalog entries: {e}.")
             raise HTTPException(status_code=500, detail=f"Failed to fetch catalog entries: {e}.")
 
     @staticmethod
@@ -271,6 +255,6 @@ class CatalogService:
                 }
             else:
                 logger.warning(
-                    f"No catalog entry found for resource_path='{resource_path}' and version='{resource_version}'"
+                    f"Catalog entry is missing for resource_path='{resource_path}' and version='{resource_version}'"
                 )
                 return None

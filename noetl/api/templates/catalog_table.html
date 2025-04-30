@@ -1,0 +1,33 @@
+<div id="catalog-table">
+  <h3>Catalog Table</h3>
+  <table border="1">
+    <tr>
+      <th>ID</th>
+      <th>Name</th>
+      <th>Event Type</th>
+      <th>Version</th>
+      <th>Timestamp</th>
+      <th>Content</th>
+      <th>Payload</th>
+    </tr>
+    {% for entry in catalog_entries %}
+    <tr>
+      <td>{{ entry.id }}</td>
+      <td>{{ entry.name }}</td>
+      <td>{{ entry.event_type }}</td>
+      <td>{{ entry.version }}</td>
+      <td>{{ entry.timestamp }}</td>
+      <td>
+        <button onclick="window.open('/catalog/editor?type=content&resource_path={{ entry.id }}&resource_version={{ entry.version }}', '_blank')">
+          View/Edit Content
+        </button>
+      </td>
+      <td>
+        <button onclick="window.open('/catalog/editor?type=payload&resource_path={{ entry.id }}&resource_version={{ entry.version }}', '_blank')">
+          View/Edit Payload
+        </button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
