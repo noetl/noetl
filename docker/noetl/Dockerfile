@@ -22,4 +22,4 @@ RUN pip install --upgrade pip \
  && pip install . \
  && pip install "uvicorn[standard]"
 EXPOSE 8080
-CMD ["bash", "-c", "uv run uvicorn --factory noetl.server.app:create_app --host 0.0.0.0 --port 8080 --reload"]
+CMD ["bash", "-c", "uv run uvicorn --factory noetl.api.app:create_app --host 0.0.0.0 --port 8080 --reload"]
