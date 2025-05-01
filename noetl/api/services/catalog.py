@@ -1,6 +1,5 @@
 from typing import Optional
 from sqlmodel import select
-from noetl.util import setup_logger
 from noetl.util.serialization import encode_version, increment_version
 from noetl.appctx.app_context import AppContext
 from fastapi import HTTPException
@@ -12,7 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from noetl.api.models.catalog import Catalog, ResourceType
 from noetl.api.models.event import EventType, Event
 from noetl.api.services.event import get_event_service
-
+from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 async def check_resource_type(session: AsyncSession, resource_type: str) -> bool:

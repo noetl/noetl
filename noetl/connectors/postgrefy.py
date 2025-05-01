@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import json
 import re
-from typing import Optional, Tuple,  Union
+from typing import Any, Optional, Union, Sequence, Tuple
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 from psycopg.rows import dict_row
 import psycopg
@@ -21,23 +21,6 @@ from noetl.api.models.noetl_init import seed_default_types
 
 logger = setup_logger(__name__, include_location=True)
 
-def pgsql_execute(query: str, params=None, *, user="noetl", password="noetl", host="localhost", port=5432, database="noetl"):
-    conn = psycopg.connect(
-        user=user,
-        password=password,
-        host=host,
-        port=port,
-        database=database
-    )
-    try:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            if cur.description:
-                return cur.fetchall()
-            conn.commit()
-    finally:
-        conn.close()
-
 class PostgresHandler:
     def __init__(self, config):
         self.config = config
@@ -46,7 +29,6 @@ class PostgresHandler:
         self._initialized = False
         self.engine = None
         self.session_maker = None
-
 
     async def initialize(self):
         if self._initialized:
@@ -141,51 +123,67 @@ class PostgresHandler:
                 except Exception as e:
                     logger.error(f"Error creating partition with query: {statement}. Error: {e}.")
 
-    async def execute_query(self, query: str, *args):
-        async with self.connect() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                try:
-                    logger.debug(f"Query execution arguments: {args}")
-                    if len(args) == 1 and isinstance(args[0], (tuple, list)):
-                        args = args[0]
-                    await cur.execute(query, args)
-                    await conn.commit()
-                    if cur.description:
-                        return await cur.fetchall()
-                except ForeignKeyViolation as e:
-                    logger.error(f"Foreign Key Violation: {e}.")
-                    raise
-                except UniqueViolation as e:
-                    logger.error(f"Unique Constraint Violation: {e}.")
-                    raise
-                except NotNullViolation as e:
-                    logger.error(f"Not Null Constraint Violation: {e}.")
-                    raise
-                except IntegrityError as e:
-                    logger.error(f"Integrity Error: {e}.")
-                    raise
-                except Exception as e:
-                    logger.error(f"Unexpected error executing database query: {e}.")
-                    raise
+    async def execute(
+            self,
+            query: str,
+            args: Union[Sequence[Any], tuple, list] = (),
+            fetch: bool = True,
+            connection_string: Optional[str] = None,
+    ) -> Optional[list[dict]]:
+        if len(args) == 1 and isinstance(args[0], (tuple, list)):
+            args = args[0]
+        query_type = re.match(r'^\s*(\w+)', query)
+        if query_type:
+            keyword = query_type.group(1).upper()
+            if keyword == "CALL" and fetch:
+                logger.warning("Fetch disabled.")
+                fetch = False
 
-    async def execute_sql(self, query: str, args: Tuple = ()):
+        if connection_string:
+            conn = psycopg.connect(connection_string)
+            try:
+                with conn.cursor() as cur:
+                    logger.debug(f"Executing: {query} | Args: {args}")
+                    cur.execute(query, args)
+                    if fetch and cur.description:
+                        return cur.fetchall()
+                    conn.commit()
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to connect database {connection_string}: {e}")
+                raise
+
         if not self.pool:
             logger.error("Connection pool is not initialized.")
             return None
 
         async with self.connect() as conn:
-            try:
-                async with conn.cursor(row_factory=dict_row) as cur:
-                    logger.debug(f"Execute: {query} with args: {args}.")
+            async with conn.cursor(row_factory=dict_row) as cur:
+                try:
+                    logger.debug(f"Executing query: {query} | Args: {args}")
                     await cur.execute(query, args)
-                    conn.commit()
-                    logger.success(f"Command executed: {query}.")
+                    await conn.commit()
+                    if fetch and cur.description:
+                        return await cur.fetchall()
+                    logger.success(f"Executed: {query}")
                     return None
-            except Exception as e:
-                logger.error(f"Error executing sql statement '{query}': {e}.")
-                raise
+                except ForeignKeyViolation as e:
+                    logger.error(f"Foreign Key Violation: {e}")
+                    raise
+                except UniqueViolation as e:
+                    logger.error(f"Unique Constraint Violation: {e}")
+                    raise
+                except NotNullViolation as e:
+                    logger.error(f"Not Null Constraint Violation: {e}")
+                    raise
+                except IntegrityError as e:
+                    logger.error(f"Integrity Error: {e}")
+                    raise
+                except Exception as e:
+                    logger.error(f"Unexpected error executing SQL: {e}")
+                    raise
 
-    async def call_routine(self, query: str, args: Tuple = (), is_procedure: bool = False, fetch_all: bool = True):
+    async def routine(self, query: str, args: Tuple = (), is_procedure: bool = False, fetch_all: bool = True):
         if not self.pool:
             logger.error("Connection pool is not initialized.")
             return None
@@ -228,7 +226,7 @@ class PostgresHandler:
 
 
 
-def parse_sql_statement(sql: str) -> Tuple[str, Tuple[Union[str, int, None], ...]]:
+def parse_sql(sql: str) -> Tuple[str, Tuple[Union[str, int, None], ...]]:
     sql = sql.strip()
     if sql.upper().startswith("CALL"):
         match = re.match(r"CALL\s+(\w+)\((.*)\);", sql, re.IGNORECASE)
@@ -259,6 +257,7 @@ def parse_sql_statement(sql: str) -> Tuple[str, Tuple[Union[str, int, None], ...
             raise ValueError("Expected arguments in parameterized query.")
         else:
             return sql, ()
+
 
 def validate_message(message):
     if isinstance(message, str):
