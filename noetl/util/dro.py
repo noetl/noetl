@@ -1,8 +1,16 @@
 """
 dro.py - დრო (Time)
 """
-
 from datetime import datetime, timedelta, timezone
+import random
+import string
+
+def generate_id() -> str:
+    start_date_time = datetime.now()
+    timestamp = start_date_time.strftime("%Y%m%d_%H%M%S")
+    microseconds = f"{start_date_time.microsecond:06d}"
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    return f"{timestamp}_{microseconds}_{suffix}"
 
 def get_duration_seconds(start_date, end_date) -> int | None:
     return int((start_date - end_date).total_seconds())

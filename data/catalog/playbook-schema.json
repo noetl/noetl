@@ -3,7 +3,7 @@
   "type": "object",
   "properties": {
     "apiVersion": { "type": "string" },
-    "kind": { "type": "string", "enum": ["Playbook"] },
+    "kind": { "type": "string", "enum": ["Playbook", "Workflow"] },
     "name": { "type": "string" },
     "path": { "type": "string" },
     "environment": { 
@@ -112,19 +112,9 @@
               "type": "object",
               "properties": {
                 "when": { "type": "string" },
-                "run": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "task": { "type": "string" },
-                      "step": { "type": "string" },
-                      "action": { "type": "string" }
-                    }
-                  }
-                }
+                "step": { "type": "string" }
               },
-              "required": ["when", "run"]
+              "required": ["step"]
             }
           }
         },

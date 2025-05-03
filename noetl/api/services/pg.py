@@ -1,7 +1,7 @@
 import csv
 import json
 from psycopg.rows import dict_row
-from noetl.appctx.app_context import AppContext
+from noetl.ctx.app_context import AppContext
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 

@@ -1,66 +1,61 @@
+from typing import Optional, List
 from sqlmodel import select
-from datetime import datetime, UTC
-import json
-from noetl.api.models.event import Event, EventType
+from noetl.ctx.app_context import AppContext
+from noetl.api.models.eventlog import EventLog, EventState
 from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
-def get_event_service():
-    return EventService()
+def get_event_service(context: AppContext):
+    return EventService(context)
 
 class EventService:
-    @staticmethod
-    async def create_event_type(session, event_type: str):
-        exists = await session.get(EventType, event_type)
-        if not exists:
-            new_event_type = EventType(name=event_type, template="Default event template")
-            session.add(new_event_type)
+    def __init__(self, context: AppContext) -> None:
+        self.context = context
+
+    async def get_events(self, search: Optional[str] = None) -> List[EventLog]:
+        async with self.context.postgres.get_session() as session:
+            query = select(EventLog)
+            if search:
+                query = query.where(EventLog.event_message.ilike(f"%{search}%"))
+            query = query.order_by(EventLog.timestamp.desc())
+            result = await session.exec(query)
+            events = result.all()
+            logger.info(f"Retrieved {len(events)} events", extra={"search": search})
+            return events
+
+    async def log_event(self, event_data: dict) -> EventLog:
+        async with self.context.postgres.get_session() as session:
+            new_event = EventLog(**event_data)
+            session.add(new_event)
             await session.commit()
-            logger.info(f"Event type '{event_type}' created.")
-        else:
-            logger.info(f"Event type '{event_type}' already exists.")
+            await session.refresh(new_event)
+            return new_event
 
-    @staticmethod
-    async def log_event(session, event_data: dict):
-        event_id = event_data.get("event_id")
-        existing_event_query = select(Event).where(Event.event_id == event_id)
-        existing_event_result = await session.exec(existing_event_query)
-        existing_event = existing_event_result.first()
+    async def event_state_exists(self, event_state: str) -> None:
+        async with self.context.postgres.get_session() as session:
+            existing = await session.get(EventState, event_state)
+            if not existing:
+                new_event_state = EventState(name=event_state, template="Default event template")
+                session.add(new_event_state)
+                await session.commit()
+                logger.info(f"Event type '{event_state}' created.")
+            else:
+                logger.info(f"Event type '{event_state}' already exists.")
 
-        if existing_event:
-            logger.info(f"Event '{event_id}' already exists.")
-            return {
-                "resource_path": existing_event.resource_path,
-                "resource_version": existing_event.resource_version,
-                "status": "already_exists",
-                "message": f"Event '{event_id}' already exists."
-            }
+    async def get_event_state(self, event_state: str) -> Optional[EventState]:
+        async with self.context.postgres.get_session() as session:
+            etype = await session.get(EventState, event_state)
+            if etype:
+                logger.info(f"Found event type '{event_state}'.")
+            else:
+                logger.warning(f"Event type '{event_state}' not found.")
+            return etype
 
-        await EventService.create_event_type(session, event_data.get("event_type"))
-
-        new_event = Event(
-            event_id=event_id,
-            event_type=event_data.get("event_type"),
-            resource_path=event_data.get("resource_path"),
-            resource_version=event_data.get("resource_version"),
-            event_message=event_data.get("event_message"),
-            content=event_data.get("content"),
-            payload=event_data.get("payload"),
-            context=event_data.get("context"),
-            meta=event_data.get("meta"),
-            timestamp=datetime.now(UTC),
-        )
-        session.add(new_event)
-        await session.commit()
-
-        logger.info(
-            f"Event '{event_id}' logged for resource '{event_data.get('resource_path')}' (version: {event_data.get('resource_version')})."
-        )
-        logger.debug(f"Event details: {json.dumps(event_data, indent=2)}")
-        return {
-            "resource_path": event_data["resource_path"],
-            "resource_version": event_data["resource_version"],
-            "status": "success",
-            "message": f"Event '{event_id}' logged successfully."
-        }
+    async def get_event_states(self) -> List[EventState]:
+        async with self.context.postgres.get_session() as session:
+            stmt = select(EventState)
+            result = await session.exec(stmt)
+            event_states = result.all()
+            logger.info(f"Retrieved {len(event_states)} event types.")
+            return event_states

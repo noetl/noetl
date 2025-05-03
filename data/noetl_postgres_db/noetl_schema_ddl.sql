@@ -55,23 +55,36 @@ VALUES
 
 -- CREATE TABLE event_type (
 --     name TEXT PRIMARY KEY,
---     template TEXT NOT NULL
+--     template TEXT NOT NULL,
+--     description TEXT
 -- );
-
+--
 -- CREATE TABLE event (
---     event_id         TEXT         NOT NULL,
---     event_type       TEXT         NOT NULL REFERENCES event_type(name),
---     event_message    TEXT,
---     resource_path    TEXT         NOT NULL,
---     resource_version TEXT         NOT NULL,
---     content          TEXT,
---     payload          JSONB,
---     context          JSONB,
---     meta             JSONB,
---     timestamp        TIMESTAMPTZ  NOT NULL DEFAULT now(),
---     FOREIGN KEY (resource_path, resource_version)
---         REFERENCES catalog(resource_path, resource_version)
--- ) PARTITION BY RANGE (timestamp);
+--     event_id VARCHAR(36) PRIMARY KEY,
+--     parent_id VARCHAR(36),
+--     execution_id VARCHAR(36),
+--     event_scope JSONB DEFAULT '{}'::jsonb,
+--     status TEXT NOT NULL DEFAULT 'UNPROCESSED',
+--     resource_path TEXT NOT NULL,
+--     resource_version TEXT NOT NULL,
+--     event_type TEXT NOT NULL,
+--     event_message TEXT,
+--     content TEXT,
+--     payload JSONB DEFAULT '{}'::jsonb,
+--     context JSONB DEFAULT '{}'::jsonb,
+--     meta JSONB DEFAULT '{}'::jsonb,
+--     timestamp TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC'),
+--
+--     CONSTRAINT fk_event_catalog FOREIGN KEY (resource_path, resource_version)
+--         REFERENCES catalog(resource_path, resource_version),
+--
+--     CONSTRAINT fk_event_type FOREIGN KEY (event_type)
+--         REFERENCES event_type(name)
+-- );
+--
+-- -- Indexes for performance
+-- CREATE INDEX idx_event_parent_id ON event(parent_id);
+-- CREATE INDEX idx_event_execution_id ON event(execution_id);
 
 
 -- CREATE TABLE event_claim (
@@ -137,4 +150,3 @@ VALUES
 --     ('EXECUTION_STARTED',   'Execution started for {{ resource_path }}.'),
 --     ('EXECUTION_FAILED',    'Execution failed for {{ resource_path }}.'),
 --     ('EXECUTION_COMPLETED', 'Execution completed for {{ resource_path }}.');
-

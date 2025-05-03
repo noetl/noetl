@@ -1,0 +1,34 @@
+<table id="events-data-table" border="1">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Timestamp</th>
+      <th>Event Type</th>
+      <th>Short Message</th>
+      <th>Detailed Message</th>
+      <th>Content</th>
+      <th>Payload</th>
+      <th>Context</th>
+      <th>Meta</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for event in events %}
+      <tr>
+        <td>{{ event.event_id }}</td>
+        <td>{{ event.timestamp }}</td>
+        <td>{{ event.event_type }}</td>
+        <td>{{ event.event_message or 'N/A' }}</td>
+        <td>{{ event.content or 'N/A' }}</td>
+        <td>{{ event.content or 'N/A' }}</td>
+        <td>{{ event.payload or 'N/A' }}</td>
+        <td>{{ event.context or 'N/A' }}</td>
+        <td>{{ event.meta or 'N/A' }}</td>
+      </tr>
+    {% else %}
+      <tr>
+        <td colspan="9">No events found.</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>

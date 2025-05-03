@@ -60,6 +60,10 @@ tasks:
         message: "{{ error.message }}"
         level: ERROR
 
+#events:
+#  REQUESTED: [REGISTERED, CANCELED]
+#  REGISTERED: [STARTED, CANCELED]
+
 steps:
   - name: initialize_db
     mode: sequential

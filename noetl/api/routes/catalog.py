@@ -1,47 +1,46 @@
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from noetl.util import setup_logger
-from noetl.config.settings import AppConfig
-from noetl.appctx.app_context import get_app_context, AppContext
+
+
 from noetl.api.schemas.catalog import RegisterRequest
-from noetl.api.services.catalog import CatalogService, create_catalog_entry
+from noetl.api.services.catalog import CatalogService
 import base64
 import json
 import yaml
 from noetl.util.serialization import ordered_yaml_dump, ordered_yaml_load
 from deepdiff import DeepDiff
-
+from noetl.config.settings import AppConfig
+from noetl.ctx.app_context import get_app_context, AppContext
+from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 app_config = AppConfig()
-templates = Jinja2Templates(directory=app_config.templates_dir)
+templates = Jinja2Templates(directory=app_config.get_template_folder("catalog"))
 router = APIRouter(prefix="/catalog")
 
-def get_catalog_service():
-    return CatalogService()
+def get_catalog_service(context: AppContext = Depends(get_app_context)) -> CatalogService:
+    return CatalogService(context)
 
 @router.post("/register")
 async def register_resource(
     request_data: RegisterRequest,
-    context: AppContext = Depends(get_app_context)
+    catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     content_base64 = request_data.content_base64
     logger.info("Received request to register resource.", extra={"content_base64": content_base64})
-    return await CatalogService.register_entry(
+    return await catalog_service.register_entry(
         content_base64=content_base64,
-        event_type="REGISTERED",
-        context=context
+        event_state="REGISTERED"
     )
 
 @router.get("/", response_class=HTMLResponse)
 async def catalog_page(
     request: Request,
-    catalog_service: CatalogService = Depends(get_catalog_service),
-    context: AppContext = Depends(get_app_context)
+    catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
-        catalog_entries = await catalog_service.fetch_all_entries(context)
-        return templates.TemplateResponse("catalog.html", {
+        catalog_entries = await catalog_service.fetch_all_entries()
+        return templates.TemplateResponse("catalog_page.html", {
             "request": request,
             "catalog_entries": catalog_entries
         })
@@ -53,8 +52,7 @@ async def catalog_page(
 async def upload_playbook(
     request: Request,
     playbook_file: UploadFile = File(...),
-    catalog_service: CatalogService = Depends(get_catalog_service),
-    context: AppContext = Depends(get_app_context)
+    catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
         logger.info(f"Upload request file: {playbook_file.filename}")
@@ -62,11 +60,10 @@ async def upload_playbook(
         base64_content = base64.b64encode(raw_content).decode("utf-8")
         response = await catalog_service.register_entry(
             content_base64=base64_content,
-            event_type="REGISTERED",
-            context=context
+            event_state="REGISTERED"
         )
         message = response.get("message", "")
-        catalog_entries = await catalog_service.fetch_all_entries(context)
+        catalog_entries = await catalog_service.fetch_all_entries()
         catalog_table_html = templates.get_template("catalog_table.html").render({
             "catalog_entries": catalog_entries,
             "request": request,
@@ -96,13 +93,10 @@ async def editor(
     type: str,
     resource_path: str,
     resource_version: str,
-    catalog_service: CatalogService = Depends(get_catalog_service),
-    context: AppContext = Depends(get_app_context)
+    catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
-        entry = await catalog_service.fetch_entry_path_version(
-            context, resource_path, resource_version
-        )
+        entry = await catalog_service.fetch_entry(resource_path, resource_version)
         if not entry:
             raise HTTPException(
                 status_code=404,
@@ -135,15 +129,11 @@ async def save_editor(
     resource_version: str = Form(...),
     type: str = Form(...),
     data: str = Form(...),
-    catalog_service: CatalogService = Depends(get_catalog_service),
-    context: AppContext = Depends(get_app_context)
+    catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
         logger.info(f"Saving {type} for resource_path='{resource_path}' (version='{resource_version}').")
-        async with context.postgres.get_session() as session:
-            current_entry = await catalog_service.fetch_entry_path_version(
-                context, resource_path, resource_version
-            )
+        current_entry = await catalog_service.fetch_entry(resource_path, resource_version)
 
         if not current_entry:
             raise HTTPException(
@@ -167,7 +157,7 @@ async def save_editor(
             return RedirectResponse(url="/", status_code=303)
 
         new_content, new_payload = result
-        updated_entry = await create_catalog_entry(session, new_content, new_payload)
+        updated_entry = await catalog_service.create_catalog_entry(new_content, new_payload)
         logger.info(f"Saved new version '{updated_entry.resource_version}' for '{resource_path}'.")
 
         return RedirectResponse(url="/", status_code=303)

@@ -90,3 +90,7 @@ class AppConfig:
     cloud: CloudConfig = field(default_factory=CloudConfig)
     log: LogConfig = field(default_factory=LogConfig)
     postgres: PostgresConfig = field(default_factory=PostgresConfig)
+
+    def get_template_folder(self, dir_name) -> str:
+        import os
+        return os.path.join(self.templates_dir, dir_name)

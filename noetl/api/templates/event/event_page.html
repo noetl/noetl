@@ -1,0 +1,19 @@
+<h2>Events Page</h2>
+
+<div>
+  <input
+    type="text"
+    id="event-filter"
+    name="search"
+    placeholder="Filter events"
+    value="{{ search or '' }}"
+    hx-get="/events"
+    hx-trigger="keyup changed delay:500ms"
+    hx-target="#events-table"
+    hx-vals='{"search": this.value}'
+  />
+</div>
+
+<div id="events-table">
+  {% include "event_table.html" %}
+</div>

@@ -1,27 +1,37 @@
-from noetl.appctx.app_context import get_app_context, AppContext
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi.templating import Jinja2Templates
+from noetl.ctx.app_context import get_app_context, AppContext
 from noetl.api.schemas.event import EmitEventRequest
-from noetl.appctx.app_context import get_app_context
-from noetl.api.services.event import EventService, get_event_service
+from noetl.api.services.event import EventService
+from noetl.api.services.dispatcher import dispatch_event
+from noetl.config.settings import AppConfig
 
+app_config = AppConfig()
+templates = Jinja2Templates(directory=app_config.get_template_folder("event"))
 router = APIRouter(prefix="/events")
 
+def get_event_service(context: AppContext = Depends(get_app_context)) -> EventService:
+    return EventService(context)
+
+
 @router.get("/", response_class=HTMLResponse)
-async def events_page():
-    return """
-    <div>
-        <h2>Events Page</h2>
-        <p>Track events.</p>
-    </div>
-    """
+async def events_page(
+    request: Request,
+    search: Optional[str] = None,
+    event_service: EventService = Depends(get_event_service)
+):
+    events = await event_service.get_events(search=search)
+    return templates.TemplateResponse("event_page.html", {"request": request, "events": events, "search": search})
 
 @router.post("/event")
 async def emit_event(
-    event: EmitEventRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
     event_service: EventService = Depends(get_event_service),
-    context: AppContext = Depends(get_app_context),
 ):
-    async with context.postgres.get_session() as session:
-        result = await event_service.log_event(session, event.dict())
-        return result
+    event_data = await request.json()
+    new_event = await event_service.log_event(event_data)
+    background_tasks.add_task(dispatch_event, new_event, event_service)
+    return {"job_id": new_event.id, "status": "Event logged; background processing started"}

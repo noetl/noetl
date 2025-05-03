@@ -28,10 +28,10 @@ class Catalog(SQLModel, table=True):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
     resource_type_entry: Optional["ResourceType"] = Relationship(back_populates="catalog_entries")
-    events: Optional[List["Event"]] = Relationship(
+    events: Optional[List["EventLog"]] = Relationship(
         back_populates="catalog_entry",
         sa_relationship_kwargs={
-            "primaryjoin": "and_(Catalog.resource_path == Event.resource_path, "
-                           "Catalog.resource_version == Event.resource_version)"
+            "primaryjoin": "and_(Catalog.resource_path == EventLog.resource_path, "
+                           "Catalog.resource_version == EventLog.resource_version)"
         },
     )

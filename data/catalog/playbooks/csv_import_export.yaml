@@ -1,0 +1,49 @@
+apiVersion: "v1"
+kind: "Playbook"
+name: "Load and Export CSV with ARC Transition"
+path: "/playbook/noetl-csv-sync-test/csv-import-export.yaml"
+environment:
+  dataPath: "data"
+  baseUrl: "http://localhost:8082"
+context:
+  load: "csv_import_export"
+  baseFilePath: "."
+  state: "READY"
+  jobId: "{{ generate_uuid() }}"
+  steps:
+    - name: "Run Import"
+      status: "READY"
+tasks:
+  - name: "Import CSV to Postgres"
+    run:
+      - action: "http"
+        name: "CSV Import"
+        desc: "Import CSV file to Postgres using pg router"
+        method: "POST"
+        endpoint: "{{ environment.baseUrl }}/pg/csv/import"
+        params:
+          table_name: "target_table"
+          file_path: "data/noetl_postgres_db/test_data.csv"
+          schema_name: "public"
+          column_names: []
+  - name: "Export CSV from Postgres"
+    run:
+      - action: "http"
+        name: "CSV Export"
+        desc: "Export CSV file from Postgres using pg router"
+        method: "POST"
+        endpoint: "{{ environment.baseUrl }}/pg/csv/export"
+        params:
+          query: "SELECT * FROM target_table;"
+          file_path: "data/noetl_postgres_db/exported_data.csv"
+steps:
+  - name: "Run Import"
+    mode: "sequential"
+    run:
+      - task: "Import CSV to Postgres"
+    next:
+      - step: "Run Export"
+  - name: "Run Export"
+    mode: "sequential"
+    run:
+      - task: "Export CSV from Postgres"

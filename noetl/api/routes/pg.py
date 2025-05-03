@@ -3,7 +3,7 @@ from noetl.api.schemas.pg import CSVExportRequest, CSVImportRequest
 from noetl.api.services.pg import export_csv, import_csv
 from noetl.util import setup_logger
 from noetl.config.settings import AppConfig
-from noetl.appctx.app_context import get_app_context, AppContext
+from noetl.ctx.app_context import get_app_context, AppContext
 from noetl.connectors.postgrefy import  parse_sql
 from noetl.api.schemas.pg import ProcedureCallRequest, SQLExecutionRequest
 
