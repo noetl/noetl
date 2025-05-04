@@ -1,7 +1,7 @@
 from typing import Optional, List
 from sqlmodel import select
 from noetl.ctx.app_context import AppContext
-from noetl.api.models.eventlog import EventLog, EventState
+from noetl.api.models.event import Event, EventState
 from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -13,20 +13,21 @@ class EventService:
     def __init__(self, context: AppContext) -> None:
         self.context = context
 
-    async def get_events(self, search: Optional[str] = None) -> List[EventLog]:
+    async def get_events(self, search: Optional[str] = None) -> List[Event]:
         async with self.context.postgres.get_session() as session:
-            query = select(EventLog)
+            query = select(Event)
             if search:
-                query = query.where(EventLog.event_message.ilike(f"%{search}%"))
-            query = query.order_by(EventLog.timestamp.desc())
+                query = query.where(Event.event_message.ilike(f"%{search}%"))
+            query = query.order_by(Event.timestamp.desc())
             result = await session.exec(query)
             events = result.all()
             logger.info(f"Retrieved {len(events)} events", extra={"search": search})
             return events
 
-    async def log_event(self, event_data: dict) -> EventLog:
+    async def log_event(self, event_data: dict) -> Event:
         async with self.context.postgres.get_session() as session:
-            new_event = EventLog(**event_data)
+            logger.info(f" log_event Logging event: {event_data}", extra=event_data)
+            new_event = Event(**event_data)
             session.add(new_event)
             await session.commit()
             await session.refresh(new_event)
@@ -45,12 +46,12 @@ class EventService:
 
     async def get_event_state(self, event_state: str) -> Optional[EventState]:
         async with self.context.postgres.get_session() as session:
-            etype = await session.get(EventState, event_state)
-            if etype:
+            e_state = await session.get(EventState, event_state)
+            if e_state:
                 logger.info(f"Found event type '{event_state}'.")
             else:
                 logger.warning(f"Event type '{event_state}' not found.")
-            return etype
+            return e_state
 
     async def get_event_states(self) -> List[EventState]:
         async with self.context.postgres.get_session() as session:

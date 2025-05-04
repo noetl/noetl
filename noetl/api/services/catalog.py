@@ -6,7 +6,7 @@ from fastapi import HTTPException
 import base64
 import yaml
 import json
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from noetl.api.models.catalog import Catalog, ResourceType
 from noetl.api.services.event import get_event_service
 from noetl.util import setup_logger
@@ -89,7 +89,7 @@ class CatalogService:
                 meta=resource_data.get("meta", {}),
                 source=resource_data.get("source", "inline"),
                 resource_location=resource_data.get("location"),
-                timestamp=datetime.now(UTC),
+                timestamp=datetime.now(timezone.utc),
             )
             async with self.context.postgres.get_session() as session:
                 session.add(new_catalog_entry)
@@ -129,6 +129,7 @@ class CatalogService:
                 "resource_path": catalog_entry.resource_path,
                 "resource_version": catalog_entry.resource_version,
             }
+            logger.info(f"Logging event: {event_data}")
             await self.event_service.log_event(event_data)
 
             return {

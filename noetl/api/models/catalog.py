@@ -1,12 +1,15 @@
 from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional, List
-from datetime import datetime
-from sqlalchemy import Column, UniqueConstraint, ForeignKeyConstraint
+from typing import Optional, List, Dict
+from datetime import datetime, timezone
+from sqlalchemy import Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSON
+
 
 class ResourceType(SQLModel, table=True):
     __tablename__ = "resource_type"
+
     name: str = Field(primary_key=True)
+
     catalog_entries: List["Catalog"] = Relationship(back_populates="resource_type_entry")
 
 
@@ -16,22 +19,23 @@ class Catalog(SQLModel, table=True):
         UniqueConstraint("resource_path", "resource_version", name="uq_catalog_path_version"),
     )
 
-    resource_path: str = Field(primary_key=True)
+    resource_path: str = Field(primary_key=True, max_length=255)
     resource_version: str = Field(primary_key=True, max_length=11, index=True)
     resource_type: str = Field(foreign_key="resource_type.name", nullable=False)
-    source: str = Field(default="inline")
-    resource_location: Optional[str] = Field(default=None)
+    resource_location: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     content: Optional[str] = Field(default=None)
     payload: dict = Field(sa_column=Column(JSON, nullable=False))
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    labels: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
+    tags: Optional[Dict[str, str]] = Field(default_factory=dict, sa_column=Column(JSON))
     template: Optional[str] = Field(default=None)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=datetime.now(timezone.utc))
 
     resource_type_entry: Optional["ResourceType"] = Relationship(back_populates="catalog_entries")
-    events: Optional[List["EventLog"]] = Relationship(
-        back_populates="catalog_entry",
+    registry_entries: List["Registry"] = Relationship(
         sa_relationship_kwargs={
-            "primaryjoin": "and_(Catalog.resource_path == EventLog.resource_path, "
-                           "Catalog.resource_version == EventLog.resource_version)"
+            "primaryjoin": "and_(Catalog.resource_path == Registry.resource_path, "
+                           "Catalog.resource_version == Registry.resource_version)"
         },
+        back_populates="catalog_entry",
     )

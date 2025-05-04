@@ -16,14 +16,17 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
+
+from config.settings import AppConfig, PostgresConfig
 from noetl.util import setup_logger
-from noetl.api.models.noetl_init import seed_default_types
+from noetl.api.models.seed import seed_default_types
 
 logger = setup_logger(__name__, include_location=True)
 
 class PostgresHandler:
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, config: AppConfig):
+        self.config: PostgresConfig = config.postgres
+        self.app_config: AppConfig = config
         self.pool: Optional[AsyncConnectionPool] = None
         self.pool_lock = asyncio.Lock()
         self._initialized = False
@@ -98,8 +101,22 @@ class PostgresHandler:
             yield session
 
     async def initialize_sqlmodel(self):
+        from alembic.config import Config
+        from alembic import command
+
         if self.engine is None:
             self.engine = create_async_engine(self.config.sqlalchemy_uri(), future=True, echo=True)
+
+        if self.app_config.env == "production":
+            alembic_cfg = Config("alembic.ini")
+            command.upgrade(alembic_cfg, "head")
+            logger.success("Alembic migrations applied successfully.")
+        else:
+            async with self.engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
+                logger.success("Development tables created using SQLModel.")
+
+
         async with self.engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
             logger.success("NoETL tables created.")

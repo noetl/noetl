@@ -55,7 +55,7 @@ class AppContext:
     async def initialize_postgres(self):
         if "postgres" not in self._components:
             from noetl.connectors.postgrefy import PostgresHandler
-            postgres_handler = PostgresHandler(config=self.config.postgres)
+            postgres_handler = PostgresHandler(config=self.config)
             self.register_component("postgres", postgres_handler)
         postgres = await self.get_component("postgres")
         await postgres.initialize()
@@ -65,7 +65,7 @@ class AppContext:
 
     async def initialize_gs(self):
         if "gs" not in self._components:
-            from noetl.connectors.gcs import GoogleStorageHandler
+            from connectors.gcp.cloud_storage import GoogleStorageHandler
             gs_handler = GoogleStorageHandler(
                 config=self.config.cloud
             )

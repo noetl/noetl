@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel
 from noetl.api.models.catalog import Catalog, ResourceType
-from noetl.api.models.eventlog import EventLog, EventState
+from noetl.api.models.event import Event, EventState
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 

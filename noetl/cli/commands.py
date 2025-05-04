@@ -4,11 +4,101 @@ import base64
 from noetl.connectors.requestify import RequestHandler
 from noetl.config.settings import CloudConfig
 import asyncio
+
 from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 cli = typer.Typer(no_args_is_help=True)
 catalog_cli = typer.Typer()
+alembic_cli = typer.Typer(name="alembic", help="Commands related to Alembic migrations.")
+
+
+@alembic_cli.command("migrate")
+def migrate(
+    message: str = typer.Option(None, help="Revision message."),
+    autogenerate: bool = typer.Option(
+        False, help="Generate the migration script."
+    ),
+    upgrade: bool = typer.Option(
+        False, help="Apply migrations to the database."
+    ),
+):
+    from subprocess import run
+
+    alembic_config = Path(__file__).parent.parent / "config" / "alembic.ini"
+
+    if not alembic_config.exists():
+        typer.echo(
+            f"Error: Alembic config file 'alembic.ini' not found at {alembic_config}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if autogenerate:
+        typer.echo("Generating migration.")
+        result = run(
+            [
+                "alembic",
+                "--config",
+                str(alembic_config),
+                "revision",
+                "--autogenerate",
+                "-m",
+                f"{message or 'New migration'}",
+            ],
+            check=False,
+        )
+        typer.echo(f"Generated result: {result}.")
+
+    if upgrade:
+        typer.echo("Applying migrations to database.")
+        result = run(
+            ["alembic", "--config", str(alembic_config), "upgrade", "head"],
+            check=False,
+        )
+        typer.echo(f"Upgraded result: {result}.")
+
+
+@alembic_cli.command("history")
+def alembic_history():
+    from subprocess import run
+
+    alembic_config = Path(__file__).parent.parent / "config" / "alembic.ini"
+
+    if not alembic_config.exists():
+        typer.echo(
+            f"Error: Alembic config file 'alembic.ini' not found at {alembic_config}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo("Displaying Alembic migration history.")
+    result = run(
+        ["alembic", "--config", str(alembic_config), "history"],
+        check=False,
+    )
+    typer.echo(f"History result: {result}.")
+
+
+@alembic_cli.command("heads")
+def alembic_heads():
+    from subprocess import run
+    alembic_config = Path(__file__).parent.parent / "config" / "alembic.ini"
+
+    if not alembic_config.exists():
+        typer.echo(
+            f"Error: Alembic config file 'alembic.ini' not found at {alembic_config}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo("Displaying Alembic current heads.")
+    result = run(
+        ["alembic", "--config", str(alembic_config), "heads"],
+        check=False,
+    )
+    typer.echo(f"Heads result: {result}.")
+
 
 @catalog_cli.command("register")
 def register(
@@ -21,12 +111,13 @@ def register(
         encoded_yaml = base64.b64encode(file_contents).decode("utf-8")
         url = f"http://{host}:{port}/catalog/register"
         handler = RequestHandler(CloudConfig())
-        result = asyncio.run(handler.request(
-            url=url,
-            method="POST",
-            json_data={"content_base64": encoded_yaml}
-        ))
-        # logger.debug(f"Register result: {result}")
+        result = asyncio.run(
+            handler.request(
+                url=url,
+                method="POST",
+                json_data={"content_base64": encoded_yaml},
+            )
+        )
         status_code = result.get("status_code")
         if status_code and 200 <= status_code < 300:
             status = result.get("body").get("status")
@@ -40,8 +131,6 @@ def register(
         typer.echo({"status": "error", "details": str(e)}, err=True)
         raise typer.Exit(code=1)
 
-cli.add_typer(catalog_cli, name="catalog")
-
 
 @cli.command("health")
 def health_check(
@@ -51,10 +140,12 @@ def health_check(
     try:
         url = f"http://{host}:{port}/health"
         handler = RequestHandler(CloudConfig())
-        result = asyncio.run(handler.request(
-            url=url,
-            method="GET"
-        ))
+        result = asyncio.run(
+            handler.request(
+                url=url,
+                method="GET",
+            )
+        )
         status = result.get("status_code")
         if status and 200 <= status < 300:
             typer.echo(result.get("body"))
@@ -65,6 +156,8 @@ def health_check(
         typer.echo(f"Error during health check: {str(e)}", err=True)
         raise typer.Exit(code=1)
 
+
+cli.add_typer(alembic_cli, name="alembic")
 cli.add_typer(catalog_cli, name="catalog")
 
 if __name__ == "__main__":

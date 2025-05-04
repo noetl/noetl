@@ -10,7 +10,7 @@ API_SCHEMAS_DIR = os.path.join(API_DIR, "schemas")
 API_SERVICES_DIR = os.path.join(API_DIR, "services")
 TMPL_DIR = os.path.join(API_DIR, "templates")
 STATIC_DIR = os.path.join(API_DIR, "static")
-APPCTX_DIR = os.path.join(BASE_DIR, "appctx")
+CTX_DIR = os.path.join(BASE_DIR, "ctx")
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 CONNECTORS_DIR = os.path.join(BASE_DIR, "connectors")
 DSL_DIR = os.path.join(BASE_DIR, "dsl")
@@ -70,14 +70,20 @@ class PostgresConfig:
             f"{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
         )
 
+@dataclass
+class AlembicConfig:
+    alembic_ini_path: str = field(default_factory=lambda: os.path.join(CONFIG_DIR, "alembic.ini"))
+    script_location: str = field(default_factory=lambda: os.getenv("ALEMBIC_SCRIPT_LOCATION", "noetl/migrations"))
+
 
 @dataclass
 class AppConfig:
+    env: str = field(default_factory=lambda: os.getenv("ENV", "development"))
     base_dir: str = field(default_factory=lambda: os.getenv("BASE_DIR", BASE_DIR))
     api_dir: str = field(default_factory=lambda: API_DIR)
     templates_dir: str = field(default_factory=lambda: TMPL_DIR)
     static_dir: str = field(default_factory=lambda: STATIC_DIR)
-    appctx_dir: str = field(default_factory=lambda: APPCTX_DIR)
+    ctx_dir: str = field(default_factory=lambda: CTX_DIR)
     config_dir: str = field(default_factory=lambda: CONFIG_DIR)
     connectors_dir: str = field(default_factory=lambda: CONNECTORS_DIR)
     dsl_dir: str = field(default_factory=lambda: DSL_DIR)
@@ -90,6 +96,7 @@ class AppConfig:
     cloud: CloudConfig = field(default_factory=CloudConfig)
     log: LogConfig = field(default_factory=LogConfig)
     postgres: PostgresConfig = field(default_factory=PostgresConfig)
+    alembic: AlembicConfig = field(default_factory=AlembicConfig)
 
     def get_template_folder(self, dir_name) -> str:
         import os
