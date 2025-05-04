@@ -12,7 +12,7 @@ class Execution(SQLModel, table=True):
     execution_id: str = Field(primary_key=True, max_length=36)
     registry_id: str = Field(foreign_key="registry.registry_id", nullable=False)
     status: str = Field(default="READY", nullable=False)
-    started_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    started_at: datetime = Field(default=datetime.now(timezone.utc))
     completed_at: Optional[datetime] = Field(default_factory=datetime.now(timezone.utc))
     logs: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
     labels: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))

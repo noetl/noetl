@@ -29,7 +29,7 @@ class Catalog(SQLModel, table=True):
     labels: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
     tags: Optional[Dict[str, str]] = Field(default_factory=dict, sa_column=Column(JSON))
     template: Optional[str] = Field(default=None)
-    timestamp: datetime = Field(default_factory=datetime.now(timezone.utc))
+    timestamp: datetime = Field(default=datetime.now(timezone.utc))
 
     resource_type_entry: Optional["ResourceType"] = Relationship(back_populates="catalog_entries")
     registry_entries: List["Registry"] = Relationship(

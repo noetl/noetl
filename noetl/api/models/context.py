@@ -15,7 +15,7 @@ class Context(SQLModel, table=True):
     meta: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     labels: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
     tags: Optional[Dict[str, str]] = Field(default_factory=dict, sa_column=Column(JSON))
-    started_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    started_at: datetime = Field(default=datetime.now(timezone.utc))
     completed_at: Optional[datetime] = Field(default_factory=datetime.now(timezone.utc))
 
     # Relationships

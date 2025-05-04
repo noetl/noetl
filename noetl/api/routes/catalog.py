@@ -80,7 +80,7 @@ async def upload_playbook(
         })
 
     except Exception as e:
-        logger.error(f"Error uploading playbook: {e}")
+        logger.exception(f"Error uploading playbook: {e}")
         return JSONResponse({
             "table_html": "",
             "status_html": f"<p><strong>Error:</strong> {str(e)}</p>"

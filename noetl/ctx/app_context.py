@@ -65,7 +65,7 @@ class AppContext:
 
     async def initialize_gs(self):
         if "gs" not in self._components:
-            from connectors.gcp.cloud_storage import GoogleStorageHandler
+            from noetl.connectors.gcp.cloud_storage import GoogleStorageHandler
             gs_handler = GoogleStorageHandler(
                 config=self.config.cloud
             )

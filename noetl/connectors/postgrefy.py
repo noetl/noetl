@@ -17,7 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
-from config.settings import AppConfig, PostgresConfig
+from noetl.config.settings import AppConfig, PostgresConfig
 from noetl.util import setup_logger
 from noetl.api.models.seed import seed_default_types
 

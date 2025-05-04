@@ -83,3 +83,21 @@ To install NoETL use `pip`:
 ```bash
 pip install noetl
 ```
+
+### Get started
+
+make install-uv
+
+make create-venv
+
+source .venv/bin/activate
+
+make install
+
+make build -- init env(Postgresql, and noetl server)
+
+noetl
+
+make up    -- up (postgresql + api)
+
+noetl server

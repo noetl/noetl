@@ -18,7 +18,7 @@ class Registry(SQLModel, table=True):
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     labels: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
     tags: Optional[Dict[str, str]] = Field(default_factory=dict, sa_column=Column(JSON))
-    timestamp: datetime = Field(default_factory=datetime.now(timezone.utc))
+    timestamp: datetime = Field(default=datetime.now(timezone.utc))
 
     __table_args__ = (
         sa.ForeignKeyConstraint(

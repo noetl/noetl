@@ -16,7 +16,7 @@ class Result(SQLModel, table=True):
     meta: Optional[Dict[str, str]] = Field(default_factory=dict, sa_column=Column(JSON) )
     labels: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
     tags: Optional[Dict[str, str]] = Field(default_factory=dict, sa_column=Column(JSON))
-    timestamp: datetime = Field(default_factory=datetime.now(timezone.utc))
+    timestamp: datetime = Field(default=datetime.now(timezone.utc))
 
     execution_entry: Optional["Execution"] = Relationship(back_populates="results")
     context_entry: Optional["Context"] = Relationship(back_populates="results")

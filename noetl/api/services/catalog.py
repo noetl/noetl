@@ -141,7 +141,7 @@ class CatalogService:
             logger.error(f"YAML Parsing Error: {e}")
             raise HTTPException(status_code=400, detail=f"YAML Parsing Error: {e}.")
         except Exception as e:
-            logger.error(f"Unexpected Error: {e}")
+            logger.exception(f"Unexpected Error: {e}")
             raise HTTPException(status_code=500, detail=f"Error registering resource: {e}.")
 
     async def fetch_all_entries(self):
