@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -16,6 +17,14 @@ from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 app_config = AppConfig()
 templates = Jinja2Templates(directory=app_config.get_template_folder("catalog"))
+# TODO need centralize templates initialization
+def datetimeformat(value, format='%Y-%m-%d %H:%M'):
+    if isinstance(value, str):
+        value = datetime.strptime(value, '%Y-%m-%d %H:%M:%S.%f')
+    return value.strftime(format)
+
+templates.env.filters['datetimeformat'] = datetimeformat
+
 router = APIRouter(prefix="/catalog")
 
 def get_catalog_service(context: AppContext = Depends(get_app_context)) -> CatalogService:
