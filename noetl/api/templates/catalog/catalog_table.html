@@ -1,40 +1,47 @@
-<div id="catalog-table">
-  <h3>Catalog Table</h3>
-  <table border="1">
-    <tr>
-      <th>Resource Path</th>
-      <th>Name</th>
-      <th>Resource Type</th>
-      <th>Version</th>
-      <th>Timestamp</th>
-      <th>Content</th>
-      <th>Payload</th>
-      <th>Execute Job</th>
-    </tr>
-    {% for entry in catalog_entries %}
-    <tr>
-      <td>{{ entry.resource_path }}</td>
-      <td>{{ entry.name }}</td>
-      <td>{{ entry.resource_type }}</td>
-      <td>{{ entry.version }}</td>
-      <td>{{ entry.timestamp }}</td>
-      <td>
-        <button onclick="window.open('/catalog/editor?type=content&resource_path={{ entry.resource_path }}&resource_version={{ entry.version }}', '_blank')">
-          View/Edit Content
-        </button>
-      </td>
-      <td>
-        <button onclick="window.open('/catalog/editor?type=payload&resource_path={{ entry.resource_path }}&resource_version={{ entry.version }}', '_blank')">
-          View/Edit Payload
-        </button>
-      </td>
-      <td>
-        <button onclick="triggerJob('{{ entry.resource_path }}', '{{ entry.version }}')">
-          Trigger Job
-        </button>
-      </td>
-    </tr>
-    {% endfor %}
+<div id="catalog-table" class="overflow-x-auto mt-6">
+  <h3 class="text-xl font-semibold text-gray-800 mb-4">Catalog Table</h3>
+  <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
+    <thead class="bg-gray-100 text-gray-700 text-sm uppercase">
+      <tr>
+        <th class="px-2 py-1 border">Resource Path</th>
+        <th class="px-2 py-1 border">Name</th>
+        <th class="px-2 py-1 border">Resource Type</th>
+        <th class="px-2 py-1 border">Version</th>
+        <th class="px-2 py-1 border">Timestamp</th>
+        <th class="px-2 py-1 border">Content</th>
+        <th class="px-2 py-1 border">Payload</th>
+        <th class="px-2 py-1 border">Execute Job</th>
+      </tr>
+    </thead>
+    <tbody class="text-sm text-gray-800">
+      {% for entry in catalog_entries %}
+      <tr class="hover:bg-blue-50 transition">
+        <td class="px-2 py-1 border">{{ entry.resource_path }}</td>
+        <td class="px-2 py-1 border">{{ entry.name }}</td>
+        <td class="px-2 py-1 border">{{ entry.resource_type }}</td>
+        <td class="px-2 py-1 border">{{ entry.version }}</td>
+        <td class="px-2 py-1 border">{{ entry.timestamp | datetimeformat('%b %d, %Y %H:%M') }}</td>
+        <td class="px-2 py-1 border text-center">
+          <button class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition text-xs"
+            onclick="window.open('/catalog/editor?type=content&resource_path={{ entry.resource_path }}&resource_version={{ entry.version }}', '_blank')">
+            View/Edit
+          </button>
+        </td>
+        <td class="px-2 py-1 border text-center">
+          <button class="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 transition text-xs"
+            onclick="window.open('/catalog/editor?type=payload&resource_path={{ entry.resource_path }}&resource_version={{ entry.version }}', '_blank')">
+            View/Edit
+          </button>
+        </td>
+        <td class="px-2 py-1 border text-center">
+          <button class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition text-xs"
+            onclick="triggerJob('{{ entry.resource_path }}', '{{ entry.version }}')">
+            Trigger Job
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
   </table>
 </div>
 
@@ -49,15 +56,13 @@
     try {
       const response = await fetch('/events/event', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+
       if (response.ok) {
         const result = await response.json();
-        // Assuming the returned JSON has a 'job_id' or 'event_id' key that you can trace.
-        if(result.job_id) {
+        if (result.job_id) {
           window.open('/events?search=' + result.job_id, '_blank');
         } else {
           alert("Job triggered but no job id returned");
