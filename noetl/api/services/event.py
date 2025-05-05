@@ -1,7 +1,8 @@
 from typing import Optional, List
 from sqlmodel import select
 from noetl.ctx.app_context import AppContext
-from noetl.api.models.event import Event, EventState
+from noetl.api.models.event import Event
+from noetl.api.models.state_type import StateType
 from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -53,42 +54,42 @@ class EventService:
             logger.debug(f"Retrieved {len(events)} events for search: {search}")
             return events
 
-    async def event_state_exists(self, event_state: str) -> bool:
+    async def state_exists(self, state: str) -> bool:
         async with self.context.postgres.get_session() as session:
-            existing = await session.get(EventState, event_state)
+            existing = await session.get(StateType, state)
             if existing:
                 return True
             return False
 
-    async def get_event_state(self, event_state: str) -> Optional[EventState]:
+    async def get_state(self, state: str) -> Optional[StateType]:
         async with self.context.postgres.get_session() as session:
-            e_state = await session.get(EventState, event_state)
+            e_state = await session.get(StateType, state)
             if e_state:
-                logger.debug(f"Found event state '{event_state}'.")
+                logger.debug(f"Found state '{state}'.")
             else:
-                logger.warning(f"Event state '{event_state}' not found.")
+                logger.warning(f"State '{state}' not found.")
             return e_state
 
-    async def get_event_states(self) -> List[EventState]:
+    async def get_states(self) -> List[StateType]:
         async with self.context.postgres.get_session() as session:
-            stmt = select(EventState)
+            stmt = select(StateType)
             result = await session.exec(stmt)
-            event_states = result.all()
-            logger.debug(f"Retrieved {len(event_states)} event states.")
-            return event_states
+            states = result.all()
+            logger.debug(f"Retrieved {len(states)} event states.")
+            return states
 
     async def emit(self, event_data: dict) -> Event:
         async with self.context.postgres.get_session() as session:
             logger.debug(f"Emit event: {event_data}", extra=event_data)
-            event_state_name = event_data.get("event_state")
-            if event_state_name:
-                event_state_exists = await self.event_state_exists(event_state_name)
-                if not event_state_exists:
-                    raise ValueError(f"Event state '{event_state_name}' does not exist.")
-            event_state = await self.get_event_state(event_state_name)
-            if not event_state:
-                raise ValueError(f"Event state '{event_state_name}' does not exist.")
-            event_message = create_event_message(event_data.get("meta"), event_state.template)
+            state_name = event_data.get("state")
+            if state_name:
+                state_exists = await self.state_exists(state_name)
+                if not state_exists:
+                    raise ValueError(f"Event state '{state_name}' does not exist.")
+            state = await self.get_state(state_name)
+            if not state:
+                raise ValueError(f"State '{state_name}' does not exist.")
+            event_message = create_event_message(event_data.get("meta"), state.template)
             new_event = Event(**event_data | {"event_message": event_message})
             session.add(new_event)
             await session.commit()

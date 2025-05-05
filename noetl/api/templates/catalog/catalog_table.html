@@ -33,61 +33,24 @@
             View/Edit
           </button>
         </td>
+<!--        <td class="px-2 py-1 border text-center">-->
+<!--          <button class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition text-xs"-->
+<!--            onclick="triggerJob('{{ entry.resource_path }}', '{{ entry.version }}')">-->
+<!--            Run Job-->
+<!--          </button>-->
+<!--        </td>-->
         <td class="px-2 py-1 border text-center">
-          <button class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition text-xs"
-            onclick="triggerJob('{{ entry.resource_path }}', '{{ entry.version }}')">
-            Run Job
-          </button>
-        </td>
+        <button class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition text-xs"
+        onclick="triggerJob('{{ entry.resource_path }}', '{{ entry.version }}')">
+        Run Job
+        </button>
+      </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
-<!--<script>-->
-<!--  async function triggerJob(resourcePath, resourceVersion) {-->
-<!--    const payload = {-->
-<!--      meta: {-->
-<!--        resource_path: resourcePath,-->
-<!--        resource_version: resourceVersion-->
-<!--      },-->
-<!--      event_type: "JobTrigger",-->
-<!--      event_state: "REQUESTED"-->
-<!--    };-->
-
-<!--    try {-->
-<!--      const response = await fetch('/events/emit', {-->
-<!--        method: 'POST',-->
-<!--        headers: { 'Content-Type': 'application/json' },-->
-<!--        body: JSON.stringify(payload)-->
-<!--      });-->
-
-<!--      if (response.ok) {-->
-<!--        const result = await response.json();-->
-<!--        if (result.event_id) {-->
-<!--          const fetchUrl = `/events?event_id=${encodeURIComponent(result.event_id)}`;-->
-
-<!--          // Update main content section dynamically-->
-<!--          const mainContent = document.querySelector('#content');-->
-<!--          if (mainContent) {-->
-<!--            mainContent.setAttribute('hx-get', fetchUrl);-->
-<!--            mainContent.setAttribute('hx-trigger', 'load');-->
-<!--            htmx.trigger(mainContent, 'load'); // Dynamically trigger update-->
-<!--          } else {-->
-<!--            console.error("Main content container (#content) not found.");-->
-<!--          }-->
-<!--        } else {-->
-<!--          alert("Job triggered, but no job ID returned.");-->
-<!--        }-->
-<!--      } else {-->
-<!--        alert("Failed to trigger job: " + (await response.text()));-->
-<!--      }-->
-<!--    } catch (error) {-->
-<!--      alert("Error sending event: " + error.message);-->
-<!--    }-->
-<!--  }-->
-<!--</script>-->
 
 <script>
   async function triggerJob(resourcePath, resourceVersion) {
@@ -97,7 +60,7 @@
         resource_version: resourceVersion
       },
       event_type: "JobTrigger",
-      event_state: "REQUESTED"
+      state: "REQUESTED"
     };
 
     try {
@@ -109,22 +72,14 @@
 
       if (response.ok) {
         const result = await response.json();
-        if (result.event_id) {
-          const queryParams = new URLSearchParams({
-            event_id: result.event_id,
-            execution_id: result.execution_id || '',
-            context_id: result.context_id || '',
-            registry_id: result.registry_id || ''
-          });
-          window.open('/events?' + queryParams.toString(), '_blank');
-        } else {
-          alert("Job triggered but no job id returned");
-        }
+        alert(`Job triggered successfully! Event ID: ${result.event_id}`);
       } else {
-        alert("Failed to trigger job: " + response.statusText);
+        alert(`Failed to trigger job: ${response.statusText}`);
       }
     } catch (error) {
-      alert("Error sending event: " + error);
+      console.error("Error triggering job:", error);
+      alert("An error occurred while triggering the job.");
     }
   }
 </script>
+

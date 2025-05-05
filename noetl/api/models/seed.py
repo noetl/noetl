@@ -1,6 +1,8 @@
 from sqlmodel import SQLModel
-from noetl.api.models.catalog import Catalog, ResourceType
-from noetl.api.models.event import Event, EventState
+from noetl.api.models.catalog import Catalog
+from noetl.api.models.resource_type import ResourceType
+from noetl.api.models.event import Event
+from noetl.api.models.state_type import StateType
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -101,19 +103,19 @@ async def seed_default_types(session: AsyncSession) -> None:
         ),
     ]
 
-    result = await session.exec(select(EventState))
-    existing_events = {e.name for e in result.all()}
+    result = await session.exec(select(StateType))
+    existing_state_types = {e.name for e in result.all()}
 
-    new_event_types = [
-        EventState(
+    new_state_types = [
+        StateType(
             name=name,
             template=template,
             description=description,
             transitions=transitions
         )
         for name, template, description, transitions in event_definitions
-        if name not in existing_events
+        if name not in existing_state_types
     ]
-    session.add_all(new_event_types)
+    session.add_all(new_state_types)
 
     await session.commit()

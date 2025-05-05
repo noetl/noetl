@@ -10,7 +10,7 @@ class Execution(SQLModel, table=True):
 
 
     execution_id: str = Field(primary_key=True, max_length=36)
-    registry_id: str = Field(foreign_key="registry.registry_id", nullable=False)
+    registry_id: str = Field(foreign_key="registry.registry_id", nullable=False, max_length=36)
     status: str = Field(default="READY", nullable=False)
     started_at: datetime = Field(default=datetime.now(timezone.utc))
     completed_at: Optional[datetime] = Field(default_factory=datetime.now(timezone.utc))

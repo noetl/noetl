@@ -7,8 +7,8 @@ async def dispatch_event(event: Event, event_service: EventService):
     await process_event(event, event_service)
 
 async def process_event(event: Event, event_service: EventService):
-    logger.info(f"Processing event: {event.event_state}", extra=event.model_dump())
+    logger.info(f"Processing event: {event.state}", extra=event.model_dump())
 
-    if event.event_state:
-        await event_service.event_state_exists(event.event_state)
+    if event.state:
+        await event_service.state_exists(event.state)
 

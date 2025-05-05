@@ -7,7 +7,9 @@ from noetl.api.schemas.event import EmitEventRequest
 from noetl.api.services.event import EventService
 from noetl.api.services.dispatcher import dispatch_event
 from noetl.config.settings import AppConfig
-
+from fastapi import Query
+from noetl.util import setup_logger
+logger = setup_logger(__name__, include_location=True)
 app_config = AppConfig()
 templates = Jinja2Templates(directory=app_config.get_template_folder("event"))
 router = APIRouter(prefix="/events")
@@ -16,16 +18,7 @@ def get_event_service(context: AppContext = Depends(get_app_context)) -> EventSe
     return EventService(context)
 
 
-# @router.get("/", response_class=HTMLResponse)
-# async def events_page(
-#     request: Request,
-#     search: Optional[str] = None,
-#     event_service: EventService = Depends(get_event_service)
-# ):
-#     events = await event_service.get_events(search=search)
-#     return templates.TemplateResponse("event_page.html", {"request": request, "events": events, "search": search})
 
-from fastapi import Query
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -38,10 +31,6 @@ async def events_page(
         event_message: Optional[str] = Query(None),
         event_service: EventService = Depends(get_event_service)
 ):
-    """
-    Retrieve filtered events based on multiple search criteria.
-    """
-    # Build the search dictionary dynamically
     search_params = {
         "event_id": event_id,
         "execution_id": execution_id,
@@ -50,28 +39,15 @@ async def events_page(
         "event_message": event_message
     }
 
-    # Remove keys with `None` values
     search_params = {k: v for k, v in search_params.items() if v is not None}
 
-    # Retrieve filtered events
     events = await event_service.get_events(search=search_params)
 
-    # Render the events table with filtered results
     return templates.TemplateResponse("event_page.html", {
         "request": request,
         "events": events,
         "search": search_params,
     })
-
-@router.get("/{id}")
-async def get_event_by_id(
-    id: int,
-    event_service: EventService = Depends(get_event_service),
-):
-    event = await event_service.get_event(id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event
 
 @router.post("/emit")
 async def emit_event(

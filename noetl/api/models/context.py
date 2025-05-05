@@ -9,7 +9,7 @@ class Context(SQLModel, table=True):
     __tablename__ = "context"
 
     context_id: str = Field(primary_key=True, max_length=36)
-    execution_id: str = Field(foreign_key="execution.execution_id", nullable=False)
+    execution_id: str = Field(foreign_key="execution.execution_id", nullable=False, max_length=36)
     status: str = Field(default="PENDING", nullable=False)
     payload: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))
     meta: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))

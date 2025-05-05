@@ -10,6 +10,7 @@ class Registry(SQLModel, table=True):
     __tablename__ = "registry"
 
     registry_id: str = Field(primary_key=True, max_length=36)
+    event_id: Optional[str] = Field(foreign_key="registry.registry_id", default=None, index=True, max_length=36)
     resource_path: str = Field(nullable=False)
     resource_version: str = Field(nullable=False)
     namespace: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))

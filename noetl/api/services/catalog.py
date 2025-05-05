@@ -7,7 +7,8 @@ import base64
 import yaml
 import json
 from datetime import datetime, timezone
-from noetl.api.models.catalog import Catalog, ResourceType
+from noetl.api.models.catalog import Catalog
+from noetl.api.models.resource_type import ResourceType
 from noetl.api.services.event import get_event_service
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -100,7 +101,7 @@ class CatalogService:
             logger.error(f"Error creating catalog entry: {e}")
             raise HTTPException(status_code=500, detail=f"Error creating catalog entry: {e}.")
 
-    async def register_entry(self, content_base64: str, event_state: str):
+    async def register_entry(self, content_base64: str, state: str):
         try:
             decoded_yaml = base64.b64decode(content_base64).decode("utf-8")
             resource_data = yaml.safe_load(decoded_yaml)
@@ -124,7 +125,7 @@ class CatalogService:
 
             event_data = {
                 "event_type": "CatalogEntryRegistered",
-                "event_state": event_state,
+                "state": state,
                 "meta": {
                     "resource_path": catalog_entry.resource_path,
                     "resource_version": catalog_entry.resource_version
