@@ -1,34 +1,41 @@
-<table id="events-data-table" border="1">
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>Timestamp</th>
-      <th>Event Type</th>
-      <th>Short Message</th>
-      <th>Detailed Message</th>
-      <th>Content</th>
-      <th>Payload</th>
-      <th>Context</th>
-      <th>Meta</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for event in events %}
+<div id="events-table" class="overflow-x-auto mt-6">
+  <h3 class="text-xl font-semibold text-gray-800 mb-4">Events Table</h3>
+  <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
+    <thead class="bg-gray-100 text-gray-700 text-sm uppercase">
       <tr>
-        <td>{{ event.event_id }}</td>
-        <td>{{ event.timestamp }}</td>
-        <td>{{ event.event_type }}</td>
-        <td>{{ event.event_message or 'N/A' }}</td>
-        <td>{{ event.content or 'N/A' }}</td>
-        <td>{{ event.content or 'N/A' }}</td>
-        <td>{{ event.payload or 'N/A' }}</td>
-        <td>{{ event.context or 'N/A' }}</td>
-        <td>{{ event.meta or 'N/A' }}</td>
+        <th class="px-2 py-1 border">Event ID</th>
+        <th class="px-2 py-1 border">Timestamp</th>
+        <th class="px-2 py-1 border">Event Type</th>
+        <th class="px-2 py-1 border">Event Message</th>
+        <th class="px-2 py-1 border">Execution ID</th>
+        <th class="px-2 py-1 border">Registry ID</th>
+        <th class="px-2 py-1 border">Context ID</th>
+        <th class="px-2 py-1 border">Meta</th>
       </tr>
-    {% else %}
-      <tr>
-        <td colspan="9">No events found.</td>
-      </tr>
-    {% endfor %}
-  </tbody>
-</table>
+    </thead>
+    <tbody class="text-sm text-gray-800">
+      {% for event in events %}
+        <tr class="hover:bg-blue-50 transition">
+          <td class="px-2 py-1 border">{{ event.event_id }}</td>
+          <td class="px-2 py-1 border">{{ event.timestamp }}</td>
+          <td class="px-2 py-1 border">{{ event.event_type }}</td>
+          <td class="px-2 py-1 border">{{ event.event_message or 'N/A' }}</td>
+          <td class="px-2 py-1 border">{{ event.execution_id or 'N/A' }}</td>
+          <td class="px-2 py-1 border">{{ event.registry_id or 'N/A' }}</td>
+          <td class="px-2 py-1 border">{{ event.context_id or 'N/A' }}</td>
+          <td class="px-2 py-1 border">
+            {% if event.meta %}
+              <pre>{{ event.meta | safe }}</pre>
+            {% else %}
+              N/A
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="8" class="text-center py-4">No events found.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

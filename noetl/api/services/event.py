@@ -13,17 +13,6 @@ class EventService:
     def __init__(self, context: AppContext) -> None:
         self.context = context
 
-    async def get_events(self, search: Optional[str] = None) -> List[Event]:
-        async with self.context.postgres.get_session() as session:
-            query = select(Event)
-            if search:
-                query = query.where(Event.event_message.ilike(f"%{search}%"))
-            query = query.order_by(Event.timestamp.desc())
-            result = await session.exec(query)
-            events = result.all()
-            logger.debug(f"Retrieved {len(events)} events", extra={"search": search})
-            return events
-
     async def get_event(self, event_id: Optional[str] = None) -> Optional[Event]:
         async with self.context.postgres.get_session() as session:
             if event_id:
@@ -36,6 +25,33 @@ class EventService:
             else:
                 logger.warning("No event ID provided for get_event.")
                 return None
+
+    async def get_events(self, search: Optional[dict] = None) -> List[Event]:
+        async with self.context.postgres.get_session() as session:
+            query = select(Event)
+            if search:
+                filters = []
+                fields = {
+                    "event_id": Event.event_id,
+                    "execution_id": Event.execution_id,
+                    "context_id": Event.context_id,
+                    "registry_id": Event.registry_id,
+                    "event_message": Event.event_message
+                }
+
+                for key, value in search.items():
+                    if key in fields and value:
+                        if key == "event_message":
+                            filters.append(fields[key].ilike(f"%{value}%"))
+                        else:
+                            filters.append(fields[key] == value)
+                if filters:
+                    query = query.where(*filters)
+            query = query.order_by(Event.timestamp.desc())
+            result = await session.exec(query)
+            events = result.all()
+            logger.debug(f"Retrieved {len(events)} events for search: {search}")
+            return events
 
     async def event_state_exists(self, event_state: str) -> bool:
         async with self.context.postgres.get_session() as session:
