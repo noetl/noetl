@@ -12,7 +12,7 @@ def create_server(
     port: int = typer.Option(8082, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload (development).")
 ):
-    app = create_app()
+    app = create_app(host=host, port=port)
     uvicorn.run(app, host=host, port=port, reload=reload)
 
 def main():

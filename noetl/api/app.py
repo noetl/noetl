@@ -32,9 +32,10 @@ async def lifespan(app: FastAPI):
 
 
 
-def create_app() -> FastAPI:
+def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
     from noetl.config.settings import AppConfig
     app_config = AppConfig()
+    app_config.noetl_url = f"http://{host}:{port}"
 
     app = FastAPI(
         title="NoETL API",

@@ -4,7 +4,7 @@ import sys
 
 SUCCESS_LEVEL = 25
 LOG_SEVERITY = {
-    "DEBUG": "📌",
+    "DEBUG": "🔍",
     "INFO": "ℹ️",
     "SUCCESS": "✅",
     "WARNING": "⚠️",

@@ -25,13 +25,24 @@ async def events_page(
     events = await event_service.get_events(search=search)
     return templates.TemplateResponse("event_page.html", {"request": request, "events": events, "search": search})
 
-@router.post("/event")
+
+@router.get("/{id}")
+async def get_event_by_id(
+    id: int,
+    event_service: EventService = Depends(get_event_service),
+):
+    event = await event_service.get_event(id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+@router.post("/emit")
 async def emit_event(
     request: Request,
     background_tasks: BackgroundTasks,
     event_service: EventService = Depends(get_event_service),
 ):
     event_data = await request.json()
-    new_event = await event_service.log_event(event_data)
+    new_event = await event_service.emit(event_data)
     background_tasks.add_task(dispatch_event, new_event, event_service)
-    return {"job_id": new_event.id, "status": "Event logged; background processing started"}
+    return {"event_id": new_event.event_id, "status": "Event logged."}

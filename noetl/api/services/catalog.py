@@ -17,18 +17,18 @@ def get_catalog_service(context: AppContext):
 
 class CatalogService:
     def __init__(self, context: AppContext):
-        self.context = context
+        self.app_context = context
         self.event_service = get_event_service(context)
 
     async def resource_type_exists(self, resource_type: str) -> bool:
-        async with self.context.postgres.get_session() as session:
+        async with self.app_context.postgres.get_session() as session:
             return await session.get(ResourceType, resource_type) is not None
 
     async def create_resource_type(self, resource_type: str):
         exists = await self.resource_type_exists(resource_type)
         if not exists:
             new_resource_type = ResourceType(name=resource_type)
-            async with self.context.postgres.get_session() as session:
+            async with self.app_context.postgres.get_session() as session:
                 session.add(new_resource_type)
                 await session.commit()
             logger.info(f"Resource type '{resource_type}' created.")
@@ -37,7 +37,7 @@ class CatalogService:
 
 
     async def get_catalog_entry(self, resource_path: str, resource_version: Optional[str] = None) -> Optional[Catalog]:
-        async with self.context.postgres.get_session() as session:
+        async with self.app_context.postgres.get_session() as session:
             if resource_version:
                 stmt = select(Catalog).where(
                     (Catalog.resource_path == resource_path) & (Catalog.resource_version == resource_version)
@@ -51,7 +51,7 @@ class CatalogService:
                 )
             result = await session.exec(stmt)
             entry = result.first()
-        logger.info(
+        logger.debug(
             f"Catalog entry for resource_path '{resource_path}'",
             extra=entry.dict() if entry else None
         )
@@ -60,7 +60,7 @@ class CatalogService:
     async def catalog_entry_exists(self, resource_path: str, content: str) -> Optional[Catalog]:
         entry = await self.get_catalog_entry(resource_path)
         if entry and entry.content.strip() == content.strip():
-            logger.info(
+            logger.debug(
                 f"Catalog entry for resource_path '{resource_path}' version '{entry.resource_version}' has the same content."
             )
             return entry
@@ -91,7 +91,7 @@ class CatalogService:
                 resource_location=resource_data.get("location"),
                 timestamp=datetime.now(timezone.utc),
             )
-            async with self.context.postgres.get_session() as session:
+            async with self.app_context.postgres.get_session() as session:
                 session.add(new_catalog_entry)
                 await session.commit()
             logger.info(f"New catalog entry path='{resource_path}', and version='{new_version}' created.")
@@ -121,20 +121,29 @@ class CatalogService:
             catalog_entry = await self.create_catalog_entry(decoded_yaml, resource_data)
             if not catalog_entry:
                 raise HTTPException(status_code=400, detail="Failed to create catalog entry.")
-            await self.event_service.event_state_exists(event_state)
-            event_id = f"{catalog_entry.resource_path}:{event_state}:{catalog_entry.resource_version}"
+
             event_data = {
                 "event_type": "CatalogEntryRegistered",
                 "event_state": event_state,
-                "resource_path": catalog_entry.resource_path,
-                "resource_version": catalog_entry.resource_version,
+                "meta": {
+                    "resource_path": catalog_entry.resource_path,
+                    "resource_version": catalog_entry.resource_version
+                }
             }
-            logger.info(f"Logging event: {event_data}")
-            await self.event_service.log_event(event_data)
+
+            response = await self.app_context.request.request(
+                url=f"{self.app_context.config.noetl_url}/events/emit",
+                method="POST",
+                json_data=event_data
+            )
+
+            if response.get("status_code") != 200:
+                logger.error(f"Failed to emit event: {response.get('body')}")
+                raise HTTPException(status_code=response.get("status_code"), detail="Failed to emit event.")
 
             return {
                 "status": "success",
-                "message": f"Catalog entry for '{resource_data['path']}' successfully registered with version {catalog_entry.resource_version}."
+                "message": f"Catalog entry for {resource_data.get('path')} successfully registered with version {catalog_entry.resource_version}."
             }
 
         except yaml.YAMLError as e:
@@ -144,9 +153,10 @@ class CatalogService:
             logger.exception(f"Unexpected Error: {e}")
             raise HTTPException(status_code=500, detail=f"Error registering resource: {e}.")
 
+
     async def fetch_all_entries(self):
         try:
-            async with self.context.postgres.get_session() as session:
+            async with self.app_context.postgres.get_session() as session:
                 stmt = select(Catalog).order_by(Catalog.timestamp.desc())
                 result = await session.exec(stmt)
                 entries = result.fetchall()

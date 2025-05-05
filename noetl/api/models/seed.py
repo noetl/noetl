@@ -29,79 +29,81 @@ async def seed_default_types(session: AsyncSession) -> None:
     event_definitions = [
         (
             "REQUESTED",
-            "Execution requested for {{ resource_path }}.",
+            "Execution requested for {{ namespace }}.",
             "Initial event when an execution is triggered.",
             ["REGISTERED", "CANCELED"]
         ),
         (
             "REGISTERED",
-            "Resource {{ resource_path }} version {{ resource_version }} was registered.",
+            "{{ namespace }} was registered.",
             "The resource has been registered in the system.",
             ["CANCELED"]
         ),
         (
             "STARTED",
-            "Execution started for {{ resource_path }}.",
+            "Execution started for {{ namespace }}.",
             "Execution has begun.",
             ["FAILED", "COMPLETED", "TERMINATED", "PAUSED"]
         ),
         (
             "CANCELED",
-            "Execution canceled for {{ resource_path }}.",
+            "Execution canceled for {{ namespace }}.",
             "Execution was manually or automatically canceled.",
             []
         ),
         (
             "FAILED",
-            "Execution failed for {{ resource_path }}.",
+            "Execution failed for {{ namespace }}.",
             "Execution encountered an error and did not complete successfully.",
             ["RESTARTED"]
         ),
         (
             "COMPLETED",
-            "Execution completed for {{ resource_path }}.",
+            "Execution completed for {{ namespace }}.",
             "Execution completed successfully.",
             []
         ),
         (
             "TERMINATED",
-            "Execution terminated for {{ resource_path }}.",
+            "Execution terminated for {{ namespace }}.",
             "Execution was forcibly terminated.",
             ["RESTARTED"]
         ),
         (
             "PAUSED",
-            "Execution paused for {{ resource_path }}.",
+            "Execution paused for {{ namespace }}.",
             "Execution has been paused.",
             ["COMPLETED", "TERMINATED", "CONTINUED"]
         ),
         (
             "CONTINUED",
-            "Execution continued for {{ resource_path }}.",
+            "Execution continued for {{ namespace }}.",
             "Paused execution has resumed.",
             ["FAILED", "COMPLETED", "TERMINATED", "PAUSED"]
         ),
         (
             "RESTARTED",
-            "Execution restarted for {{ resource_path }}.",
+            "Execution restarted for {{ namespace }}.",
             "Execution restarted from the beginning or a checkpoint.",
             ["FAILED", "COMPLETED", "TERMINATED", "PAUSED", "CONTINUED"]
         ),
         (
             "UPDATED",
-            "Resource {{ resource_path }} version {{ resource_version }} was updated.",
+            "Resource {{ namespace }} was updated.",
             "The registered resource has changed.",
             []
         ),
         (
             "UNCHANGED",
-            "Resource {{ resource_path }} already registered.",
+            "Resource {{ namespace }} is already registered.",
             "The resource is already registered and hasn't changed.",
             []
         ),
     ]
+
     result = await session.exec(select(EventState))
     existing_events = {e.name for e in result.all()}
+
     new_event_types = [
         EventState(
             name=name,

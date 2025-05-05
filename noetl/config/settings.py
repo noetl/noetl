@@ -79,6 +79,7 @@ class AlembicConfig:
 @dataclass
 class AppConfig:
     env: str = field(default_factory=lambda: os.getenv("ENV", "development"))
+    noetl_url: str = field(default_factory=lambda: os.getenv("NOETL_URL", "http://localhost:8082"))
     base_dir: str = field(default_factory=lambda: os.getenv("BASE_DIR", BASE_DIR))
     api_dir: str = field(default_factory=lambda: API_DIR)
     templates_dir: str = field(default_factory=lambda: TMPL_DIR)

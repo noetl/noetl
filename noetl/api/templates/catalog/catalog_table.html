@@ -8,9 +8,9 @@
         <th class="px-2 py-1 border">Resource Type</th>
         <th class="px-2 py-1 border">Version</th>
         <th class="px-2 py-1 border">Timestamp</th>
-        <th class="px-2 py-1 border">Content</th>
-        <th class="px-2 py-1 border">Payload</th>
-        <th class="px-2 py-1 border">Execute Job</th>
+        <th class="px-2 py-1 border">Resource (YAML)</th>
+        <th class="px-2 py-1 border">Resource (JSON)</th>
+        <th class="px-2 py-1 border">Execute</th>
       </tr>
     </thead>
     <tbody class="text-sm text-gray-800">
@@ -36,7 +36,7 @@
         <td class="px-2 py-1 border text-center">
           <button class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition text-xs"
             onclick="triggerJob('{{ entry.resource_path }}', '{{ entry.version }}')">
-            Trigger Job
+            Run Job
           </button>
         </td>
       </tr>
@@ -62,8 +62,8 @@
 
       if (response.ok) {
         const result = await response.json();
-        if (result.job_id) {
-          window.open('/events?search=' + result.job_id, '_blank');
+        if (result.registry_id) {
+          window.open('/events?search=' + result.registry_id, '_blank');
         } else {
           alert("Job triggered but no job id returned");
         }
