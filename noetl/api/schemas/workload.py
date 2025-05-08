@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 
-class RegistryRequest(BaseModel):
+class WorkloadRequest(BaseModel):
     event_id: Optional[str] = None
     resource_path: str
     resource_version: str
@@ -15,8 +15,8 @@ class RegistryRequest(BaseModel):
     tags: Optional[Dict[str, str]] = Field(default_factory=dict)
 
 
-class RegistryResponse(BaseModel):
-    registry_id: str
+class WorkloadResponse(BaseModel):
+    workload_id: str
     event_id: Optional[str] = None
     namespace: Optional[dict] = None
     status: str

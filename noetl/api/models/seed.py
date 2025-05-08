@@ -1,8 +1,8 @@
 from sqlmodel import SQLModel
 from noetl.api.models.catalog import Catalog
-from noetl.api.models.resource_type import ResourceType
+from noetl.api.models.dict_resource import DictResource
 from noetl.api.models.event import Event
-from noetl.api.models.state_type import StateType
+from noetl.api.models.dict_state import DictState
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -19,10 +19,10 @@ async def seed_default_types(session: AsyncSession) -> None:
         "Task",
         "Action",
     ]
-    result = await session.exec(select(ResourceType))
+    result = await session.exec(select(DictResource))
     existing = {r.name for r in result.all()}
     new_resource_types = [
-        ResourceType(name=name)
+        DictResource(name=name)
         for name in resource_names
         if name not in existing
     ]
@@ -103,11 +103,11 @@ async def seed_default_types(session: AsyncSession) -> None:
         ),
     ]
 
-    result = await session.exec(select(StateType))
+    result = await session.exec(select(DictState))
     existing_state_types = {e.name for e in result.all()}
 
     new_state_types = [
-        StateType(
+        DictState(
             name=name,
             template=template,
             description=description,

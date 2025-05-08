@@ -13,7 +13,7 @@ class Catalog(SQLModel, table=True):
 
     resource_path: str = Field(primary_key=True, max_length=255)
     resource_version: str = Field(primary_key=True, max_length=11, index=True)
-    resource_type: str = Field(foreign_key="resource_type.name", nullable=False)
+    resource_type: str = Field(foreign_key="dict_resource.name", nullable=False)
     resource_location: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     content: Optional[str] = Field(default=None)
     payload: dict = Field(sa_column=Column(JSON, nullable=False))
@@ -23,11 +23,11 @@ class Catalog(SQLModel, table=True):
     template: Optional[str] = Field(default=None)
     timestamp: datetime = Field(default=datetime.now(timezone.utc))
 
-    resource_type_entry: Optional["ResourceType"] = Relationship(back_populates="catalog_entries")
-    registry_entries: List["Registry"] = Relationship(
+    dict_resource_entry: Optional["DictResource"] = Relationship(back_populates="catalog_entries")
+    workload_entry: List["Workload"] = Relationship(
         sa_relationship_kwargs={
-            "primaryjoin": "and_(Catalog.resource_path == Registry.resource_path, "
-                           "Catalog.resource_version == Registry.resource_version)"
+            "primaryjoin": "and_(Catalog.resource_path == Workload.resource_path, "
+                           "Catalog.resource_version == Workload.resource_version)"
         },
         back_populates="catalog_entry",
     )

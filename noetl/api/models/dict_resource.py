@@ -5,9 +5,9 @@ from sqlalchemy import Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSON
 
 
-class ResourceType(SQLModel, table=True):
-    __tablename__ = "resource_type"
+class DictResource(SQLModel, table=True):
+    __tablename__ = "dict_resource"
 
     name: str = Field(primary_key=True)
 
-    catalog_entries: List["Catalog"] = Relationship(back_populates="resource_type_entry")
+    catalog_entries: List["Catalog"] = Relationship(back_populates="dict_resource_entry")

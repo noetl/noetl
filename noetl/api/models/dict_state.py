@@ -5,8 +5,8 @@ from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy import Column
 from noetl.util.dro import generate_id
 
-class StateType(SQLModel, table=True):
-    __tablename__ = "state_type"
+class DictState(SQLModel, table=True):
+    __tablename__ = "dict_state"
 
     name: str = Field(primary_key=True)
     template: str = Field(nullable=False)
@@ -15,4 +15,4 @@ class StateType(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON)
     )
 
-    events: List["Event"] = Relationship(back_populates="state_type_entry")
+    event_entry: List["Event"] = Relationship(back_populates="dict_state_entry")

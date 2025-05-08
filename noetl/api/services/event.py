@@ -2,7 +2,7 @@ from typing import Optional, List
 from sqlmodel import select
 from noetl.ctx.app_context import AppContext
 from noetl.api.models.event import Event
-from noetl.api.models.state_type import StateType
+from noetl.api.models.dict_state import DictState
 from noetl.api.schemas.event import EventSchema
 from noetl.util import setup_logger
 
@@ -35,9 +35,9 @@ class EventService:
                 filters = []
                 fields = {
                     "event_id": Event.event_id,
-                    "execution_id": Event.execution_id,
+                    "workload_id": Event.workload_id,
                     "context_id": Event.context_id,
-                    "registry_id": Event.registry_id,
+                    "runtime_id": Event.runtime_id,
                     "event_message": Event.event_message
                 }
 
@@ -57,23 +57,23 @@ class EventService:
 
     async def state_exists(self, state: str) -> bool:
         async with self.context.postgres.get_session() as session:
-            existing = await session.get(StateType, state)
+            existing = await session.get(DictState, state)
             if existing:
                 return True
             return False
 
-    async def get_state(self, state: str) -> Optional[StateType]:
+    async def get_state(self, state: str) -> Optional[DictState]:
         async with self.context.postgres.get_session() as session:
-            e_state = await session.get(StateType, state)
+            e_state = await session.get(DictState, state)
             if e_state:
                 logger.debug(f"Found state '{state}'.")
             else:
                 logger.warning(f"State '{state}' not found.")
             return e_state
 
-    async def get_states(self) -> List[StateType]:
+    async def get_states(self) -> List[DictState]:
         async with self.context.postgres.get_session() as session:
-            stmt = select(StateType)
+            stmt = select(DictState)
             result = await session.exec(stmt)
             states = result.all()
             logger.debug(f"Retrieved {len(states)} event states.")
@@ -102,7 +102,7 @@ class EventService:
 def create_event_message(meta: dict[str, str], event_state_template) -> str:
     from jinja2 import Template
     try:
-        keys = ["resource_path", "resource_version", "registry_id", "execution_id", "context_id"]
+        keys = ["resource_path", "resource_version", "workload_id", "runtime_id", "context_id"]
         tokens = []
         for key in keys:
             if key in meta:

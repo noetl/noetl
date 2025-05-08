@@ -8,7 +8,7 @@ import yaml
 import json
 from datetime import datetime, timezone
 from noetl.api.models.catalog import Catalog
-from noetl.api.models.resource_type import ResourceType
+from noetl.api.models.dict_resource import DictResource
 from noetl.api.services.event import get_event_service
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -23,12 +23,12 @@ class CatalogService:
 
     async def resource_type_exists(self, resource_type: str) -> bool:
         async with self.app_context.postgres.get_session() as session:
-            return await session.get(ResourceType, resource_type) is not None
+            return await session.get(DictResource, resource_type) is not None
 
     async def create_resource_type(self, resource_type: str):
         exists = await self.resource_type_exists(resource_type)
         if not exists:
-            new_resource_type = ResourceType(name=resource_type)
+            new_resource_type = DictResource(name=resource_type)
             async with self.app_context.postgres.get_session() as session:
                 session.add(new_resource_type)
                 await session.commit()

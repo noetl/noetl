@@ -1,19 +1,19 @@
 from noetl.api.models.catalog import Catalog
-from noetl.api.models.resource_type import ResourceType
+from noetl.api.models.dict_resource import DictResource
 from noetl.api.models.context import Context
 from noetl.api.models.event import Event
-from noetl.api.models.state_type import StateType
-from noetl.api.models.execution import Execution
-from noetl.api.models.registry import Registry
+from noetl.api.models.dict_state import DictState
+from noetl.api.models.runtime import Runtime
+from noetl.api.models.workload import Workload
 from noetl.api.models.result import Result
 
 __all__ = [
     "Catalog",
-    "ResourceType",
+    "DictResource",
     "Context",
     "Event",
-    "StateType",
-    "Execution",
-    "Registry",
+    "DictState",
+    "Runtime",
+    "Workload",
     "Result",
 ]

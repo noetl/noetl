@@ -6,10 +6,10 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSON
 from noetl.util.dro import generate_id
 
-class Registry(SQLModel, table=True):
-    __tablename__ = "registry"
+class Workload(SQLModel, table=True):
+    __tablename__ = "workload"
 
-    registry_id: str = Field(default_factory=generate_id, primary_key=True, max_length=36)
+    workload_id: str = Field(default_factory=generate_id, primary_key=True, max_length=36)
     event_id: Optional[str] = Field(foreign_key="event.event_id", default=None, index=True, max_length=36)
     resource_path: str = Field(nullable=False)
     resource_version: str = Field(nullable=False)
@@ -31,25 +31,25 @@ class Registry(SQLModel, table=True):
 
     event_entry: Optional["Event"] = Relationship(
         sa_relationship_kwargs={
-            "foreign_keys": "[Registry.event_id]",
-            "primaryjoin": "Registry.event_id == Event.event_id"
+            "foreign_keys": "[Workload.event_id]",
+            "primaryjoin": "Workload.event_id == Event.event_id"
         }
     )
 
     events: List["Event"] = Relationship(
-        back_populates="registry_entry",
+        back_populates="workload_entry",
         sa_relationship_kwargs={
-            "foreign_keys": "[Event.registry_id]",
-            "primaryjoin": "Registry.registry_id == Event.registry_id"
+            "foreign_keys": "[Event.workload_id]",
+            "primaryjoin": "Workload.workload_id == Event.workload_id"
         }
     )
 
     catalog_entry: Optional["Catalog"] = Relationship(
-        back_populates="registry_entries",
+        back_populates="workload_entry",
         sa_relationship_kwargs={
-            "primaryjoin": "and_(Registry.resource_path == Catalog.resource_path, "
-                           "Registry.resource_version == Catalog.resource_version)"
+            "primaryjoin": "and_(Workload.resource_path == Catalog.resource_path, "
+                           "Workload.resource_version == Catalog.resource_version)"
         }
     )
 
-    executions: List["Execution"] = Relationship(back_populates="registry_entry")
+    runtime_entry: List["Runtime"] = Relationship(back_populates="workload_entry")
