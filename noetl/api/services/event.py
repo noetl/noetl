@@ -3,6 +3,7 @@ from sqlmodel import select
 from noetl.ctx.app_context import AppContext
 from noetl.api.models.event import Event
 from noetl.api.models.state_type import StateType
+from noetl.api.schemas.event import EventSchema
 from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -78,7 +79,7 @@ class EventService:
             logger.debug(f"Retrieved {len(states)} event states.")
             return states
 
-    async def emit(self, event_data: dict) -> Event:
+    async def emit(self, event_data: dict) -> EventSchema:
         async with self.context.postgres.get_session() as session:
             logger.debug(f"Emit event: {event_data}", extra=event_data)
             state_name = event_data.get("state")
@@ -94,7 +95,8 @@ class EventService:
             session.add(new_event)
             await session.commit()
             await session.refresh(new_event)
-            return new_event
+            event_schema = EventSchema.model_validate(new_event)
+            return event_schema
 
 
 def create_event_message(meta: dict[str, str], event_state_template) -> str:

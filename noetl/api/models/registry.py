@@ -4,13 +4,13 @@ from datetime import datetime, timezone
 from sqlalchemy import Column
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSON
-
+from noetl.util.dro import generate_id
 
 class Registry(SQLModel, table=True):
     __tablename__ = "registry"
 
-    registry_id: str = Field(primary_key=True, max_length=36)
-    event_id: Optional[str] = Field(foreign_key="registry.registry_id", default=None, index=True, max_length=36)
+    registry_id: str = Field(default_factory=generate_id, primary_key=True, max_length=36)
+    event_id: Optional[str] = Field(foreign_key="event.event_id", default=None, index=True, max_length=36)
     resource_path: str = Field(nullable=False)
     resource_version: str = Field(nullable=False)
     namespace: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))
@@ -29,7 +29,21 @@ class Registry(SQLModel, table=True):
         ),
     )
 
-    # Relationships
+    event_entry: Optional["Event"] = Relationship(
+        sa_relationship_kwargs={
+            "foreign_keys": "[Registry.event_id]",
+            "primaryjoin": "Registry.event_id == Event.event_id"
+        }
+    )
+
+    events: List["Event"] = Relationship(
+        back_populates="registry_entry",
+        sa_relationship_kwargs={
+            "foreign_keys": "[Event.registry_id]",
+            "primaryjoin": "Registry.registry_id == Event.registry_id"
+        }
+    )
+
     catalog_entry: Optional["Catalog"] = Relationship(
         back_populates="registry_entries",
         sa_relationship_kwargs={
@@ -37,5 +51,5 @@ class Registry(SQLModel, table=True):
                            "Registry.resource_version == Catalog.resource_version)"
         }
     )
+
     executions: List["Execution"] = Relationship(back_populates="registry_entry")
-    events: List["Event"] = Relationship(back_populates="registry_entry")

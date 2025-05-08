@@ -54,7 +54,7 @@ class RequestHandler:
             verify: bool = True
     ) -> dict:
         headers = headers.copy() if headers else {}
-        logger.debug(f"Request {method} {url}.")
+        logger.debug(f"Request {method} {url}.", extra={"headers": headers, "params": params, "json_data": json_data})
         if include_google_auth and self.google_credentials:
             headers["Authorization"] = f"Bearer {self.google_credentials.token}"
 

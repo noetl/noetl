@@ -5,18 +5,6 @@ from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy import Column
 from noetl.util.dro import generate_id
 
-# class EventState(SQLModel, table=True):
-#     __tablename__ = "event_state"
-#
-#     name: str = Field(primary_key=True)
-#     template: str = Field(nullable=False)
-#     description: Optional[str] = Field(default=None)
-#     transitions: Optional[List[str]] = Field(
-#         default_factory=list, sa_column=Column(JSON)
-#     )
-#
-#     events: List["Event"] = Relationship(back_populates="event_state_entry")
-
 
 class Event(SQLModel, table=True):
     __tablename__ = "event"
@@ -37,7 +25,14 @@ class Event(SQLModel, table=True):
     tags: Optional[Dict[str, str]] = Field(default_factory=dict, sa_column=Column(JSON))
     timestamp: datetime = Field(default=datetime.now(timezone.utc))
 
-    registry_entry: Optional["Registry"] = Relationship(back_populates="events")
+    registry_entry: Optional["Registry"] = Relationship(
+        back_populates="events",
+        sa_relationship_kwargs={
+            "foreign_keys": "[Event.registry_id]",
+            "primaryjoin": "Event.registry_id == Registry.registry_id"
+        }
+    )
+
     execution_entry: Optional["Execution"] = Relationship(back_populates="events")
     context_entry: Optional["Context"] = Relationship(back_populates="events")
     state_type_entry: Optional["StateType"] = Relationship(back_populates="events")

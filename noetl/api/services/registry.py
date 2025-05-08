@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy.future import select
 
 from noetl.api.schemas.registry import RegistryResponse, RegistryRequest
@@ -16,20 +18,26 @@ class RegistryService:
     def __init__(self, context: AppContext) -> None:
         self.context = context
 
-    async def check_registry_entry(self, resource_path: str, resource_version: str) -> bool:
-        logger.debug(f"Checking if registry exists for path={resource_path}, version={resource_version}")
+    async def check_registry_entry(self, resource_path: str, resource_version: str,
+                                   event_id: Optional[str] = None) -> bool:
+        logger.debug(
+            f"Checking if registry exists for path={resource_path}, version={resource_version}, event_id={event_id}")
 
         async with self.context.postgres.get_session() as session:
-            result = await session.execute(
-                select(Registry).where(
-                    Registry.resource_path == resource_path,
-                    Registry.resource_version == resource_version,
-                )
+            query = select(Registry).where(
+                Registry.resource_path == resource_path,
+                Registry.resource_version == resource_version,
             )
-            registry_entry = result.scalars().first()
-            return registry_entry is not None
+            if event_id:
+                query = query.where(Registry.event_id == event_id)
 
-    async def save_registry_entry(self, registry_data: Registry) -> Registry:
+            result = await session.execute(query)
+            registry_entry = result.scalars().first()
+            return registry_entry
+
+    async def save_registry_entry(self, registry_data: Registry) -> (
+
+            Registry):
         logger.info(f"Saving registry: path={registry_data.resource_path}, version={registry_data.resource_version}")
 
         async with self.context.postgres.get_session() as session:
@@ -41,7 +49,7 @@ class RegistryService:
     async def register(self, registry_data: RegistryRequest) -> RegistryResponse:
         logger.info(f"Attempting to register new entry: path={registry_data.resource_path}, version={registry_data.resource_version}")
 
-        exists = await self.check_registry_entry(registry_data.resource_path, registry_data.resource_version)
+        exists = await self.check_registry_entry(registry_data.resource_path, registry_data.resource_version, registry_data.event_id)
         if exists:
             logger.warning(
                 f"Registry already exists for: path={registry_data.resource_path}, version={registry_data.resource_version}"
@@ -50,20 +58,34 @@ class RegistryService:
                 f"Registry entry for resource_path '{registry_data.resource_path}' and version '{registry_data.resource_version}' already exists."
             )
 
-        new_entry = await self.save_registry_entry(registry_data)
+        registry = Registry(
+            event_id=registry_data.event_id,
+            resource_path=registry_data.resource_path,
+            resource_version=registry_data.resource_version,
+            namespace=registry_data.namespace,
+            status=registry_data.status,
+            payload=registry_data.payload,
+            meta=registry_data.meta,
+            labels=registry_data.labels,
+            tags=registry_data.tags
+        )
+        new_entry = await self.save_registry_entry(registry)
 
         event_data = {
-            "event_id": new_entry.registry_id,
+            "registry_id": new_entry.registry_id,
+            "parent_id": new_entry.event_id,
             "event_type": "RegistryEntryCreated",
+            "state": "REGISTERED",
             "meta": {
+                "registry_id": new_entry.registry_id,
+                "parent_id": new_entry.event_id,
                 "resource_path": new_entry.resource_path,
                 "resource_version": new_entry.resource_version,
             },
         }
 
-        emit_event_url = f"{self.context.config.noetl_url}/events/emit"
         response = await self.context.request.request(
-            url=emit_event_url,
+            url=f"{self.context.config.noetl_url}/events/emit",
             method="POST",
             json_data=event_data,
         )
@@ -74,4 +96,14 @@ class RegistryService:
             raise Exception(f"Failed to emit event: {error_message}")
 
         logger.info(f"Registry entry registered successfully. Event emitted for: {new_entry.registry_id}")
-        return new_entry
+        return RegistryResponse(
+            registry_id=new_entry.registry_id,
+            event_id=new_entry.event_id,
+            namespace=new_entry.namespace,
+            status=new_entry.status,
+            payload=new_entry.payload,
+            meta=new_entry.meta,
+            labels=new_entry.labels,
+            tags=new_entry.tags,
+            timestamp=new_entry.timestamp
+        )

@@ -31,3 +31,26 @@ class EmitEventRequest(BaseModel):
     #     if not any(identifiers):
     #         raise ValueError("At least one identifier (event_id, parent_id, registry_id, execution_id, or context_id) must be provided.")
     #     return values
+
+
+
+class EventSchema(BaseModel):
+    event_id: str
+    parent_id: Optional[str] = None
+    registry_id: Optional[str] = None
+    execution_id: Optional[str] = None
+    context_id: Optional[str] = None
+    event_type: str
+    status: str
+    state: str
+    event_message: Optional[str] = None
+    content: Optional[str] = None
+    payload: Optional[dict] = None
+    meta: Optional[dict] = None
+    labels: Optional[List[str]] = None
+    tags: Optional[Dict[str, str]] = None
+    timestamp: datetime
+
+    model_config = {
+        "from_attributes": True
+    }

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from noetl.ctx.app_context import get_app_context, AppContext
-from noetl.api.schemas.event import EmitEventRequest
+from noetl.api.schemas.event import EmitEventRequest, EventSchema
 from noetl.api.services.event import EventService
 from noetl.api.services.dispatcher import dispatch_event
 from noetl.config.settings import AppConfig
@@ -56,6 +56,7 @@ async def emit_event(
     event_service: EventService = Depends(get_event_service),
 ):
     event_data = await request.json()
-    new_event = await event_service.emit(event_data)
+    logger.debug(f"Received event data: {event_data}")
+    new_event: EventSchema = await event_service.emit(event_data)
     background_tasks.add_task(dispatch_event, new_event, event_service)
     return {"event_id": new_event.event_id, "status": new_event.event_message}

@@ -3,12 +3,12 @@ from typing import Optional, List, Dict
 from datetime import datetime, timezone
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSON
-
+from noetl.util.dro import generate_id
 
 class Context(SQLModel, table=True):
     __tablename__ = "context"
 
-    context_id: str = Field(primary_key=True, max_length=36)
+    context_id: str = Field(default_factory=generate_id, primary_key=True, max_length=36)
     execution_id: str = Field(foreign_key="execution.execution_id", nullable=False, max_length=36)
     status: str = Field(default="PENDING", nullable=False)
     payload: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))
