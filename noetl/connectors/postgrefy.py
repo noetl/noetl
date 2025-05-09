@@ -19,7 +19,7 @@ from sqlmodel import SQLModel
 
 from noetl.config.settings import AppConfig, PostgresConfig
 from noetl.util import setup_logger
-from noetl.api.models.seed import seed_default_types
+from noetl.api.models.seed import seed_all
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -121,7 +121,7 @@ class PostgresHandler:
             await conn.run_sync(SQLModel.metadata.create_all)
             logger.success("NoETL tables created.")
         async with self.get_session() as session:
-            await seed_default_types(session)
+            await seed_all(session)
             logger.success("NoETL default types seeded.")
 
     async def create_partitions(self, sql_statements: list[str] = None):

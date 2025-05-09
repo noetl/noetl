@@ -6,6 +6,7 @@ from noetl.api.models.dict_state import DictState
 from noetl.api.models.runtime import Runtime
 from noetl.api.models.workload import Workload
 from noetl.api.models.result import Result
+from noetl.api.models.state_transition import StateTransition
 
 __all__ = [
     "Catalog",
@@ -13,7 +14,13 @@ __all__ = [
     "Context",
     "Event",
     "DictState",
+    "StateTransition",
     "Runtime",
     "Workload",
     "Result",
 ]
+
+
+def create_noetl_tables(engine):
+    from sqlmodel import SQLModel
+    SQLModel.metadata.create_all(engine)
