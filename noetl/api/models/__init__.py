@@ -7,6 +7,8 @@ from noetl.api.models.runtime import Runtime
 from noetl.api.models.workload import Workload
 from noetl.api.models.result import Result
 from noetl.api.models.state_transition import StateTransition
+from noetl.api.models.dict_unit import DictUnit
+from noetl.api.models.unit_transition import UnitTransition
 
 __all__ = [
     "Catalog",
@@ -18,6 +20,8 @@ __all__ = [
     "Runtime",
     "Workload",
     "Result",
+    "DictUnit",
+    "UnitTransition",
 ]
 
 
