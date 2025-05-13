@@ -15,6 +15,7 @@ class Event(SQLModel, table=True):
     runtime_id: Optional[str] = Field(foreign_key="runtime.runtime_id", default=None, index=True, max_length=36)
     context_id: Optional[str] = Field(foreign_key="context.context_id", default=None, index=True, max_length=36)
     event_type: str = Field(nullable=False)
+    scope: Optional[str] = Field(default=None, description="Scope of the event: workflow, task, action, loop")
     status: str = Field(default="READY", nullable=False)
     state: str = Field(foreign_key="dict_state.name", nullable=False)
     event_message: Optional[str] = Field(default=None)
