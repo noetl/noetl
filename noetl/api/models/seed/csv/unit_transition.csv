@@ -1,0 +1,9 @@
+from_unit,to_unit,method,active
+workflow,step,RUN,true
+step,workflow,RUN,true
+step,task,RUN,true
+step,action,RUN,true
+step,step,NEXT,true
+task,action,RUN,true
+cursor,step,RUN,true
+cursor,action,RUN,true

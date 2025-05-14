@@ -1,44 +1,61 @@
-import re
+import pandas as pd
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from noetl.api.models.flow_transition import FlowTransition
-from noetl.api.models.dict_flow import DictFlow
-from noetl.api.models.dict_unit import DictUnit
+from noetl.api.models.dict_component import DictComponent
+from noetl.api.models.dict_operand import DictOperand
 
-def route_path(event_type: str) -> list[str]:
-    return [chunk.lower() for chunk in re.findall(r'[A-Z][a-z0-9]*', event_type)]
+def generate_event_type(operand: str, component: str, next_state: str) -> str:
+    return f"{component.capitalize()}{operand.capitalize()}{next_state.capitalize()}"
 
-async def seed_flow_transitions(session: AsyncSession) -> None:
-    default_start_state = "REQUESTED"
+async def seed_flow_transition_csv(session: AsyncSession, folder_path: str) -> None:
+    dict_component = pd.read_csv(f'{folder_path}/dict_component.csv').fillna('')
+    dict_operand = pd.read_csv(f'{folder_path}/dict_operand.csv').fillna('')
+    dict_state = pd.read_csv(f'{folder_path}/dict_state.csv').fillna('')
+    dict_unit = pd.read_csv(f'{folder_path}/dict_unit.csv').fillna('')
+    state_transition = pd.read_csv(f'{folder_path}/state_transition.csv').fillna('')
+    unit_transition = pd.read_csv(f'{folder_path}/unit_transition.csv').fillna('')
 
-    flow_results = await session.exec(select(DictFlow))
-    unit_results = await session.exec(select(DictUnit))
-    flows = flow_results.all()
-    units = unit_results.all()
+    valid_units = pd.unique(unit_transition[['from_unit', 'to_unit']].values.ravel())
+    existing = await session.exec(select(FlowTransition))
+    existing_keys = {
+        (t.operand_name, t.component_name, t.unit_name, t.current_state, t.event_type)
+        for t in existing
+    }
 
     new_transitions = []
-    existing = await session.exec(select(FlowTransition))
-    existing_keys = {(ft.event_type, ft.event_state, ft.unit_name) for ft in existing.all()}
 
-    for flow in flows:
-        for unit in units:
-            key = (flow.event_type, default_start_state, unit.name)
-            if key not in existing_keys:
-                new_transitions.append(FlowTransition(
-                    event_type=flow.event_type,
-                    event_state=default_start_state,
-                    unit_name=unit.name,
-                    route_path='/' + '/'.join(route_path(flow.event_type)),
-                    http_method="POST",
-                    module_name=route_path(flow.event_type)[0],
-                    route_module=None,
-                    service_module=None,
-                    model_module=None,
-                    table_name=None,
-                    description=f"Transition for {flow.event_type} on {unit.name}",
-                    next_event_type=None,
-                    next_event_state=None
-                ))
+    for _, operand_row in dict_operand.iterrows():
+        operand_name = operand_row['operand_name']
+
+        for _, component_row in dict_component.iterrows():
+            component_name = component_row['component_name']
+            route_path = f"/{component_name}/{operand_name}"
+
+            for unit_name in valid_units:
+                for _, state_row in state_transition.iterrows():
+                    current_state = state_row['from_state']
+                    next_state = state_row['to_state']
+
+                    event_type = generate_event_type(operand_name, component_name, next_state)
+                    key = (operand_name, component_name, unit_name, current_state, event_type)
+
+                    if key not in existing_keys:
+                        description = f"{operand_name.capitalize()} {component_name.capitalize()} for {unit_name} from {current_state} to {next_state}"
+
+                        new_transitions.append(
+                            FlowTransition(
+                                operand_name=operand_name,
+                                component_name=component_name,
+                                unit_name=unit_name,
+                                current_state=current_state,
+                                next_state=next_state,
+                                event_type=event_type,
+                                route_path=route_path,
+                                http_method="POST",
+                                description=description
+                            )
+                        )
 
     session.add_all(new_transitions)
     await session.commit()

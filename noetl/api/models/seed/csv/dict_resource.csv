@@ -1,0 +1,12 @@
+name,description
+Playbook,"A versioned declarative file defining rules, tasks, and actions for execution."
+Workflow,"The runtime execution of a Playbook, composed of steps and transitions."
+Step,A logical control block in a Workflow that defines sequencing and conditions.
+Task,An container unit of action group.
+Action,"An atomic executable unit, often interfacing with APIs or databases."
+Target,"A runtime scope or destination for workflow execution (e.g., environment, system)."
+Endpoint,An external API or internal service URL invoked by Actions or Tasks.
+Model,An AI/ML model used within workflows.
+Dataset,"A structured collection of data used for training, testing, or inference."
+Connector,"An integration interface to external systems (e.g., database, API, queue)."
+Trigger,An event or condition that initiates a Playbook or Workflow execution.
