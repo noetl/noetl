@@ -4,13 +4,13 @@ import os
 from noetl.api.schemas.gs import GoogleBucketStorageError
 from noetl.util.env import mkdir
 from noetl.config.settings import AppConfig
-from noetl.ctx.app_context import AppContext
+from noetl.connectors.hub import ConnectorHub
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 app_config = AppConfig()
 
 
-async def gs_upload(gs_uri: str, blob: str, local_file: str, context: AppContext):
+async def gs_upload(gs_uri: str, blob: str, local_file: str, context: ConnectorHub):
     try:
         if not os.path.exists(local_file):
             raise FileNotFoundError(f"Local file '{local_file}' not found.")

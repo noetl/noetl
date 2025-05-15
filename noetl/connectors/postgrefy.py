@@ -17,6 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
+# from noetl.api.routes.catalog import app_config
 from noetl.config.settings import AppConfig, PostgresConfig
 from noetl.util import setup_logger
 from noetl.api.models.seed import seed_all
@@ -121,7 +122,7 @@ class PostgresHandler:
             await conn.run_sync(SQLModel.metadata.create_all)
             logger.success("NoETL tables created.")
         async with self.get_session() as session:
-            await seed_all(session)
+            await seed_all(session, self.app_config)
             logger.success("NoETL default types seeded.")
 
     async def create_partitions(self, sql_statements: list[str] = None):

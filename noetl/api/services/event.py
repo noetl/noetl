@@ -1,6 +1,6 @@
 from typing import Optional, List
 from sqlmodel import select
-from noetl.ctx.app_context import AppContext
+from noetl.connectors.hub import ConnectorHub
 from noetl.api.models.event import Event
 from noetl.api.models.dict_state import DictState
 from noetl.api.schemas.event import EventSchema
@@ -8,11 +8,11 @@ from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
-def get_event_service(context: AppContext):
+def get_event_service(context: ConnectorHub):
     return EventService(context)
 
 class EventService:
-    def __init__(self, context: AppContext) -> None:
+    def __init__(self, context: ConnectorHub) -> None:
         self.context = context
 
     async def get_event(self, event_id: Optional[str] = None) -> Optional[Event]:

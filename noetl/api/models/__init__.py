@@ -12,6 +12,7 @@ from noetl.api.models.result import Result
 from noetl.api.models.state_transition import StateTransition
 from noetl.api.models.dict_unit import DictUnit
 from noetl.api.models.unit_transition import UnitTransition
+from noetl.api.models.dispatch import Dispatch
 
 __all__ = [
     "Catalog",

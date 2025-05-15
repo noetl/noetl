@@ -4,17 +4,17 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from noetl.util import setup_logger
-from noetl.ctx.app_context import AppContext, get_app_context
+from noetl.connectors.hub import ConnectorHub, get_connector_hub
 log_name = os.path.splitext(os.path.relpath(__file__, start=os.getcwd()).replace(os.sep, "."))[0]
 logger = setup_logger(log_name, include_location=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app_context: AppContext | None = None
+    app_context: ConnectorHub | None = None
     try:
         logger.info("NoETL service starting.")
-        app_context = await get_app_context()
+        app_context = await get_connector_hub()
         await app_context.initialize_gs()
         logger.info("NoETL components initialized.")
         logger.info("NoETL service started.")
@@ -39,7 +39,7 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
 
     app = FastAPI(
         title="NoETL API",
-        description="NoETL workflow service",
+        description="NoETL SERVICE API",
         version="0.0.2",
         lifespan=lifespan,
     )

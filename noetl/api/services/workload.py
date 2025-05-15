@@ -1,21 +1,19 @@
 from typing import Optional
-
 from sqlalchemy.future import select
-
 from noetl.api.schemas.workload import WorkloadResponse, WorkloadRequest
-from noetl.ctx.app_context import AppContext
+from noetl.connectors.hub import ConnectorHub
 from noetl.api.models.workload import Workload
 from noetl.util import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
 
-def get_registry_service(context: AppContext):
+def get_registry_service(context: ConnectorHub):
     return WorkloadService(context)
 
 
 class WorkloadService:
-    def __init__(self, context: AppContext) -> None:
+    def __init__(self, context: ConnectorHub) -> None:
         self.context = context
 
     async def check_workload_entry(self, resource_path: str, resource_version: str,

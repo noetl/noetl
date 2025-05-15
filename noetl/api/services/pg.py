@@ -1,11 +1,11 @@
 import csv
 import json
 from psycopg.rows import dict_row
-from noetl.ctx.app_context import AppContext
+from noetl.connectors.hub import ConnectorHub
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
-async def export_csv(query, file_path, context: AppContext, headers=True):
+async def export_csv(query, file_path, context: ConnectorHub, headers=True):
     if not context.postgres:
         logger.error("Postgres connection is not initialized.")
         raise RuntimeError("Database not initialized.")
@@ -39,7 +39,7 @@ async def export_csv(query, file_path, context: AppContext, headers=True):
     return {"status": "success", "file_path": file_path}
 
 
-async def import_csv(table_name, file_path, context: AppContext, schema_name='public', headers=True, column_names=None):
+async def import_csv(table_name, file_path, context: ConnectorHub, schema_name='public', headers=True, column_names=None):
     if not context.postgres:
         logger.error("Postgres connection is not initialized.")
         raise RuntimeError("Database not initialized.")

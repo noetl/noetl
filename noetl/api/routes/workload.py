@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from noetl.ctx.app_context import AppContext,get_app_context
+from noetl.connectors.hub import ConnectorHub,get_connector_hub
 from noetl.api.services.workload import WorkloadService
 from noetl.api.schemas.workload import WorkloadRequest, WorkloadResponse
 from noetl.util import setup_logger
@@ -7,7 +7,7 @@ logger = setup_logger(__name__, include_location=True)
 
 router = APIRouter(prefix="/workload")
 
-def get_registry_service(context: AppContext = Depends(get_app_context)) -> WorkloadService:
+def get_registry_service(context: ConnectorHub = Depends(get_connector_hub)) -> WorkloadService:
     return WorkloadService(context)
 
 @router.post("/register", response_model=WorkloadResponse, status_code=201)

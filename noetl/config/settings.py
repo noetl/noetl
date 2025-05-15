@@ -102,3 +102,7 @@ class AppConfig:
     def get_template_folder(self, dir_name) -> str:
         import os
         return os.path.join(self.templates_dir, dir_name)
+
+    def get_seed_folder(self, dir_name="models/seed/csv") -> str:
+        import os
+        return os.path.join(self.api_dir, dir_name)

@@ -1,8 +1,6 @@
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship, Column, UniqueConstraint, JSON
 from typing import Optional, List, Dict
 from datetime import datetime, timezone
-from sqlalchemy import Column, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSON
 from noetl.util.dro import generate_id
 
 class Catalog(SQLModel, table=True):

@@ -12,7 +12,7 @@ import yaml
 from noetl.util.serialization import ordered_yaml_dump, ordered_yaml_load
 from deepdiff import DeepDiff
 from noetl.config.settings import AppConfig
-from noetl.ctx.app_context import get_app_context, AppContext
+from noetl.connectors.hub import get_connector_hub, ConnectorHub
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 app_config = AppConfig()
@@ -27,7 +27,7 @@ templates.env.filters['datetimeformat'] = datetimeformat
 
 router = APIRouter(prefix="/catalog")
 
-def get_catalog_service(context: AppContext = Depends(get_app_context)) -> CatalogService:
+def get_catalog_service(context: ConnectorHub = Depends(get_connector_hub)) -> CatalogService:
     return CatalogService(context)
 
 @router.post("/register")

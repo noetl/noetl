@@ -3,7 +3,7 @@ from noetl.api.services.gs import gs_upload
 from noetl.api.schemas.gs import GoogleBucketStorageError
 from noetl.util import setup_logger
 from noetl.config.settings import AppConfig
-from noetl.ctx.app_context import get_app_context, AppContext
+from noetl.connectors.hub import get_connector_hub, ConnectorHub
 logger = setup_logger(__name__, include_location=True)
 app_config = AppConfig()
 router = APIRouter(prefix="/gs")
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/gs")
 async def gs_upload(
         uri: str,
         local_file: str,
-        context: AppContext=Depends(get_app_context)
+        context: ConnectorHub=Depends(get_connector_hub)
 ):
     try:
         return await gs_upload(gs_uri=uri, local_file=local_file, context=context)
@@ -26,7 +26,7 @@ async def gs_upload(
 async def gs_download(
         uri: str,
         local_file: str = None,
-        context: AppContext=Depends(get_app_context)
+        context: ConnectorHub=Depends(get_connector_hub)
 ):
     try:
         return await gs_download(gs_uri=uri, local_file=local_file, context=context)

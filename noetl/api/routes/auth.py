@@ -1,8 +1,4 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from noetl.ctx.app_context import get_app_context, AppContext
+from fastapi import APIRouter
 from noetl.config.settings import AppConfig
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)

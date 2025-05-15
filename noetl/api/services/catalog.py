@@ -1,11 +1,10 @@
 from typing import Optional
 from sqlmodel import select
 from noetl.util.serialization import encode_version, increment_version
-from noetl.ctx.app_context import AppContext
+from noetl.connectors.hub import ConnectorHub
 from fastapi import HTTPException
 import base64
 import yaml
-import json
 from datetime import datetime, timezone
 from noetl.api.models.catalog import Catalog
 from noetl.api.models.dict_resource import DictResource
@@ -13,11 +12,11 @@ from noetl.api.services.event import get_event_service
 from noetl.util import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
-def get_catalog_service(context: AppContext):
+def get_catalog_service(context: ConnectorHub):
     return CatalogService(context)
 
 class CatalogService:
-    def __init__(self, context: AppContext):
+    def __init__(self, context: ConnectorHub):
         self.app_context = context
         self.event_service = get_event_service(context)
 

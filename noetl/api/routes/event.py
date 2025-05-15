@@ -1,9 +1,9 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from noetl.ctx.app_context import get_app_context, AppContext
-from noetl.api.schemas.event import EmitEventRequest, EventSchema
+from noetl.connectors.hub import get_connector_hub, ConnectorHub
+from noetl.api.schemas.event import EventSchema
 from noetl.api.services.event import EventService
 from noetl.api.services.dispatcher import dispatch_event
 from noetl.config.settings import AppConfig
@@ -14,7 +14,7 @@ app_config = AppConfig()
 templates = Jinja2Templates(directory=app_config.get_template_folder("event"))
 router = APIRouter(prefix="/events")
 
-def get_event_service(context: AppContext = Depends(get_app_context)) -> EventService:
+def get_event_service(context: ConnectorHub = Depends(get_connector_hub)) -> EventService:
     return EventService(context)
 
 

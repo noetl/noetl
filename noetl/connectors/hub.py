@@ -3,7 +3,7 @@ from noetl.config.settings import AppConfig
 from noetl.util import setup_logger
 logger = setup_logger(__name__)
 
-class AppContext:
+class ConnectorHub:
     _lock = asyncio.Lock()
 
     def __init__(self, config: AppConfig):
@@ -102,30 +102,30 @@ class AppContext:
             postgres=PostgresConfig(),
         )
 
-_app_context = None
+_connector_hub = None
 
-async def get_app_context() -> AppContext:
-    global _app_context
+async def get_connector_hub() -> ConnectorHub:
+    global _connector_hub
     from noetl.config.settings import AppConfig, CloudConfig, PostgresConfig, LogConfig
 
-    if _app_context is None:
+    if _connector_hub is None:
         lock = asyncio.Lock()
 
         async with lock:
-            if _app_context is None:
+            if _connector_hub is None:
                 try:
                     config = AppConfig(
                         cloud=CloudConfig(),
                         log=LogConfig(),
                         postgres=PostgresConfig(),
                     )
-                    _app_context = AppContext(config)
-                    await _app_context.__aenter__()
-                    await _app_context.initialize_postgres()
-                    await _app_context.postgres.initialize()
-                    await _app_context.initialize_request()
+                    _connector_hub = ConnectorHub(config)
+                    await _connector_hub.__aenter__()
+                    await _connector_hub.initialize_postgres()
+                    await _connector_hub.postgres.initialize()
+                    await _connector_hub.initialize_request()
 
                 except Exception as e:
                     raise Exception(f"Failed to initialize application context: {e}.")
 
-    return _app_context
+    return _connector_hub
