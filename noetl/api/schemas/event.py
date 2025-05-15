@@ -10,6 +10,8 @@ class EmitEventRequest(BaseModel):
     workload_id: Optional[str] = None
     runtime_id: Optional[str] = None
     context_id: Optional[str] = None
+    component_id: Optional[str] = None
+    unit_id: Optional[str] = None
     resource_path: Optional[str] = None
     resource_version: Optional[str] = None
     event_type: str
@@ -40,6 +42,8 @@ class EventSchema(BaseModel):
     workload_id: Optional[str] = None
     runtime_id: Optional[str] = None
     context_id: Optional[str] = None
+    component_id: Optional[str] = None
+    unit_id: Optional[str] = None
     event_type: str
     status: str
     state: str

@@ -14,3 +14,4 @@ class DictUnit(SQLModel, table=True):
         back_populates="to_unit_entry",
         sa_relationship_kwargs={"foreign_keys": "[UnitTransition.to_unit]"}
     )
+    event_entry: List["Event"] = Relationship(back_populates="dict_unit_entry")

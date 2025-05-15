@@ -1,5 +1,5 @@
-from sqlmodel import SQLModel, Field
-from typing import Optional
+from sqlmodel import SQLModel, Field, Relationship
+from typing import Optional, List
 
 class DictComponent(SQLModel, table=True):
     __tablename__ = "dict_component"
@@ -11,3 +11,5 @@ class DictComponent(SQLModel, table=True):
     model_module: Optional[str] = None
     table_name: Optional[str] = None
     description: Optional[str] = None
+
+    event_entry: List["Event"] = Relationship(back_populates="dict_component_entry")

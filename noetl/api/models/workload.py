@@ -1,9 +1,9 @@
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Column, Relationship, ForeignKeyConstraint, JSON
 from typing import Optional, List, Dict
 from datetime import datetime, timezone
-from sqlalchemy import Column
-import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSON
+# from sqlalchemy import Column
+# import sqlalchemy as sa
+# from sqlalchemy.dialects.postgresql import JSON
 from noetl.util.dro import generate_id
 
 class Workload(SQLModel, table=True):
@@ -22,7 +22,7 @@ class Workload(SQLModel, table=True):
     timestamp: datetime = Field(default=datetime.now(timezone.utc))
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
+        ForeignKeyConstraint(
             ['resource_path', 'resource_version'],
             ['catalog.resource_path', 'catalog.resource_version'],
             name="fk_registry_catalog"

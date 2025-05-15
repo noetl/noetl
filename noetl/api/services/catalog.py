@@ -75,10 +75,13 @@ class CatalogService:
                 raise ValueError("Missing fields: 'path' / 'kind'.")
 
             latest_entry = await self.get_catalog_entry(resource_path, resource_version)
+            meta = {"resource_path": resource_path}
+            if latest_entry:
+                meta["resource_version"] = latest_entry.resource_version
             event = await self.event_emit(
                 event_type="CatalogRegisterRequested",
                 state="REQUESTED",
-                meta={"resource_path": resource_path, "resource_version": latest_entry.resource_version}
+                meta=meta
             )
             if latest_entry and latest_entry.content.strip() == current_content.strip():
                 log_message=f"Catalog entry '{resource_path}' version {latest_entry.resource_version} already exists."
@@ -116,8 +119,7 @@ class CatalogService:
                 parent_id=event.get("body", {}).get("event_id"),
                 meta={
                     "resource_path": new_catalog_entry.resource_path,
-                    "resource_version": new_catalog_entry.resource_version,
-                    "prev_resource_version": latest_entry.resource_version,
+                    "resource_version": new_catalog_entry.resource_version
                 }
             )
             return new_catalog_entry
@@ -129,6 +131,7 @@ class CatalogService:
         event_data = {
             "event_type": event_type,
             "state": state,
+            "component_id": "catalog",
             "meta": meta
         }
         if parent_id:
