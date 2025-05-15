@@ -9,7 +9,6 @@ from noetl.api.models.seed.dict_unit import seed_dict_unit
 from noetl.api.models.seed.dict_operand import seed_dict_operand
 from noetl.api.models.seed.dict_component import seed_dict_component
 from noetl.api.models.seed.unit_transition import seed_unit_transition
-from noetl.api.models.seed.flow_transition import seed_flow_transition_csv
 from noetl.api.models.seed.dispatch import seed_dispatch
 
 async def seed_all(session: AsyncSession, app_config: AppConfig) -> None:
@@ -21,4 +20,3 @@ async def seed_all(session: AsyncSession, app_config: AppConfig) -> None:
     await seed_dict_operand(session)
     await seed_dict_component(session)
     await seed_dispatch(session, app_config.get_seed_folder())
-    # await seed_flow_transition_csv(session, app_config.get_seed_folder())

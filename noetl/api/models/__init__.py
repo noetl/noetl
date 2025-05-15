@@ -4,7 +4,6 @@ from noetl.api.models.context import Context
 from noetl.api.models.event import Event
 from noetl.api.models.dict_state import DictState
 from noetl.api.models.dict_operand import DictOperand
-from noetl.api.models.flow_transition import FlowTransition
 from noetl.api.models.seed.dict_component import DictComponent
 from noetl.api.models.runtime import Runtime
 from noetl.api.models.workload import Workload
@@ -22,7 +21,6 @@ __all__ = [
     "DictState",
     "DictOperand",
     "DictComponent",
-    "FlowTransition",
     "StateTransition",
     "Runtime",
     "Workload",
