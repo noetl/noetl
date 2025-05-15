@@ -39,7 +39,7 @@ async def register_resource(
     logger.info("Received request to register resource.", extra={"content_base64": content_base64})
     return await catalog_service.register_entry(
         content_base64=content_base64,
-        state="REGISTERED"
+        state="REQUESTED"
     )
 
 @router.get("/", response_class=HTMLResponse)
@@ -69,7 +69,7 @@ async def upload_playbook(
         base64_content = base64.b64encode(raw_content).decode("utf-8")
         response = await catalog_service.register_entry(
             content_base64=base64_content,
-            state="REGISTERED"
+            state="REQUESTED"
         )
         message = response.get("message", "")
         catalog_entries = await catalog_service.fetch_all_entries()

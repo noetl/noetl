@@ -73,10 +73,25 @@ class CatalogService:
             resource_type = resource_data.get("kind")
             if not resource_path or not resource_type:
                 raise ValueError("Missing fields: 'path' / 'kind'.")
+
             latest_entry = await self.get_catalog_entry(resource_path, resource_version)
+            event = await self.event_emit(
+                event_type="CatalogRegisterRequested",
+                state="REQUESTED",
+                meta={"resource_path": resource_path, "resource_version": latest_entry.resource_version}
+            )
             if latest_entry and latest_entry.content.strip() == current_content.strip():
-                logger.info(
-                    f"Catalog entry '{resource_path}' version {latest_entry.resource_version} already exists."
+                log_message=f"Catalog entry '{resource_path}' version {latest_entry.resource_version} already exists."
+                logger.info(log_message)
+                event = await self.event_emit(
+                    event_type="CatalogRegisterCanceled",
+                    state="CANCELED",
+                    parent_id=event.get("body", {}).get("event_id"),
+                    meta={
+                    "resource_path": latest_entry.resource_path,
+                    "resource_version": latest_entry.resource_version,
+                    "message": log_message
+                }
                 )
                 return latest_entry
             new_version = encode_version(increment_version(latest_entry.resource_version) if latest_entry else "1.0.0")
@@ -95,10 +110,38 @@ class CatalogService:
                 session.add(new_catalog_entry)
                 await session.commit()
             logger.info(f"New catalog entry path='{resource_path}', and version='{new_version}' created.")
+            event = await self.event_emit(
+                event_type="CatalogRegisterRegistered",
+                state="REGISTERED",
+                parent_id=event.get("body", {}).get("event_id"),
+                meta={
+                    "resource_path": new_catalog_entry.resource_path,
+                    "resource_version": new_catalog_entry.resource_version,
+                    "prev_resource_version": latest_entry.resource_version,
+                }
+            )
             return new_catalog_entry
         except Exception as e:
             logger.error(f"Error creating catalog entry: {e}")
             raise HTTPException(status_code=500, detail=f"Error creating catalog entry: {e}.")
+
+    async def event_emit(self, event_type: str, state: str, meta: dict, parent_id: Optional[str] = None):
+        event_data = {
+            "event_type": event_type,
+            "state": state,
+            "meta": meta
+        }
+        if parent_id:
+            event_data["parent_id"] = parent_id
+        response = await self.app_context.request.request(
+            url=f"{self.app_context.config.noetl_url}/events/emit",
+            method="POST",
+            json_data=event_data
+        )
+        if response.get("status_code") != 200:
+            logger.error(f"Failed to emit event: {response.get('body')}")
+            raise HTTPException(status_code=response.get("status_code"), detail="Failed to emit event.")
+        return response
 
     async def register_entry(self, content_base64: str, state: str):
         try:
@@ -109,37 +152,50 @@ class CatalogService:
                     raise HTTPException(status_code=400, detail=f"Missing field: {field}")
 
             await self.create_resource_type(resource_data.get("kind"))
+
+            event = await self.event_emit(
+                event_type="CatalogRegisterRequested",
+                state=state,
+                meta={"resource_path": resource_data["path"]}
+            )
+
             existing_entry = await self.catalog_entry_exists(resource_data["path"], decoded_yaml)
             if existing_entry:
                 logger.info(
                     f"Catalog entry already exists for resource_path='{resource_data['path']}' with version '{existing_entry.resource_version}'."
                 )
+                log_message = f"Catalog entry for '{resource_data['path']}' already exists with version {existing_entry.resource_version}."
+                event = await self.event_emit(
+                    event_type="CatalogRegisterCanceled",
+                    state="CANCELED",
+                    parent_id=event.get("body", {}).get("event_id"),
+                    meta={
+                    "resource_path": existing_entry.resource_path,
+                    "resource_version": existing_entry.resource_version,
+                    "message": log_message
+                }
+                )
                 return {
                     "status": "already_exists",
-                    "message": f"Catalog entry for '{resource_data['path']}' already exists with version {existing_entry.resource_version}."
+                    "message": log_message
                 }
             catalog_entry = await self.create_catalog_entry(decoded_yaml, resource_data)
             if not catalog_entry:
                 raise HTTPException(status_code=400, detail="Failed to create catalog entry.")
 
-            event_data = {
-                "event_type": "CatalogEntryRegistered",
-                "state": state,
-                "meta": {
+            event = await self.event_emit(
+                event_type="CatalogRegisterRegistered",
+                state="REGISTERED",
+                parent_id=event.get("body", {}).get("event_id"),
+                meta={
                     "resource_path": catalog_entry.resource_path,
                     "resource_version": catalog_entry.resource_version
                 }
-            }
-
-            response = await self.app_context.request.request(
-                url=f"{self.app_context.config.noetl_url}/events/emit",
-                method="POST",
-                json_data=event_data
             )
 
-            if response.get("status_code") != 200:
-                logger.error(f"Failed to emit event: {response.get('body')}")
-                raise HTTPException(status_code=response.get("status_code"), detail="Failed to emit event.")
+            if event.get("status_code") != 200:
+                logger.error(f"Failed to emit event: {event.get('body')}")
+                raise HTTPException(status_code=event.get("status_code"), detail="Failed to emit event.")
 
             return {
                 "status": "success",
