@@ -103,7 +103,9 @@ def validate_playbook_structure(playbook):
 
     logger.success("Playbook validation passed")
 
-def main(filepath, context={}):
+def main(filepath, context=None):
+    if context is None:
+        context = {}
     with open(filepath, "r", encoding="utf-8") as f:
         raw = f.read()
 
