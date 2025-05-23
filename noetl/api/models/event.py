@@ -11,6 +11,7 @@ class Event(SQLModel, table=True):
 
     event_id: str = Field(default_factory=generate_id, primary_key=True, max_length=36)
     parent_id: Optional[str] = Field(default=None, index=True, max_length=36)
+    root_id: Optional[str] = Field(default=None, index=True, max_length=36)
     workload_id: Optional[str] = Field(foreign_key="workload.workload_id", default=None, index=True, max_length=36)
     runtime_id: Optional[str] = Field(foreign_key="runtime.runtime_id", default=None, index=True, max_length=36)
     context_id: Optional[str] = Field(foreign_key="context.context_id", default=None, index=True, max_length=36)

@@ -15,16 +15,17 @@ environment:
 
 context:
   jobId: "{{ generate_uuid() }}"
-  steps:
-    - name: initialize_db
+  start:
+    - step: initialize_db
       status: READY
   state: NEW
 
-tasks:
-  - name: create_table
+workbook:
+  - task: create_table
     run:
       - action: create_table
         method: postgres
+        dbUri: "postgresql://{{ environment.dbUser }}:{{ environment.dbPassword }}@{{ environment.dbHost }}:{{ environment.dbPort }}/{{ environment.dbName }}"
         desc: "Create table in PostgreSQL database"
         query: |
           CREATE TABLE IF NOT EXISTS users (
@@ -34,7 +35,7 @@ tasks:
               created_at TIMESTAMP DEFAULT NOW()
           );
 
-  - name: insert_record
+  - task: insert_record
     run:
       - action: insert_record
         method: postgres
@@ -43,7 +44,7 @@ tasks:
           INSERT INTO users (username, email)
           VALUES ('johndoe', 'john@example.com');
 
-  - name: export_to_csv
+  - task: export_to_csv
     run:
       - action: export_csv
         method: postgres_to_csv
@@ -52,7 +53,7 @@ tasks:
         output: "{{ environment.outputCsvPath }}"
         includeHeaders: true
 
-  - name: handle_error_task
+  - task: handle_error_task
     run:
       - action: log
         method: log
@@ -64,31 +65,39 @@ tasks:
 #  REQUESTED: [REGISTERED, CANCELED]
 #  REGISTERED: [STARTED, CANCELED]
 
-steps:
-  - name: initialize_db
+workflow:
+  - when: "{{ event.type == 'workflow_started' and event.jobId == context.jobId }}"
+    step: initialize_db
     mode: sequential
-    when: "{{ event.type == 'workflow_started' and event.jobId == context.jobId }}"
     run:
       - task: create_table
       - task: insert_record
+      - action: log
+        method: log
+        desc: "Log initialization message"
+        message: "Database initialized and record inserted."
+        level: INFO
+      - workflow: export_workflow
+        params:
+          dbHost: "{{ environment.dbHost }}"
+          dbPort: "{{ environment.dbPort }}"
+          dbName: "{{ environment.dbName }}"
     next:
       - when: "{{ result.success }}"
-        run:
-          - step: export_step
+        then:
+          - step: export_step1
+          - step: export_step2
       - when: "{{ not result.success }}"
-        run:
+        then:
           - step: handle_error
 
-  - name: export_step
-    mode: sequential
-    run:
+  - step: export_step
       - task: export_to_csv
-    next:
-      - run: []
 
-  - name: handle_error
-    mode: sequential
-    run:
+  - step: handle_error
       - task: handle_error_task
-    next:
-      - run: []
+      - action: log
+        method: log
+        desc: "Log error message"
+        message: "An error occurred during the workflow."
+        level: ERROR

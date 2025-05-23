@@ -100,16 +100,16 @@ async def upload_playbook(
 async def editor(
     request: Request,
     type: str,
-    resource_path: str,
-    resource_version: str,
+    path: str,
+    version: str,
     catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
-        entry = await catalog_service.fetch_entry(resource_path, resource_version)
+        entry = await catalog_service.fetch_entry(path, version)
         if not entry:
             raise HTTPException(
                 status_code=404,
-                detail=f"Catalog entry for '{resource_path}' with version '{resource_version}' not found."
+                detail=f"Catalog entry for '{path}' with version '{version}' not found."
             )
         if type == "content":
             data = entry.get("content")
@@ -123,31 +123,31 @@ async def editor(
         return templates.TemplateResponse("editor.html", {
             "request": request,
             "type": type,
-            "resource_path": resource_path,
-            "resource_version": resource_version,
+            "path": path,
+            "version": version,
             "data": data,
             "language": language
         })
     except Exception as e:
         logger.error(f"Error opening editor: {e}")
-        return HTMLResponse(f"<p>Error opening editor for '{resource_path}' (version '{resource_version}'): {e}</p>", status_code=500)
+        return HTMLResponse(f"<p>Error opening editor for '{path}' (version '{version}'): {e}</p>", status_code=500)
 
 @router.post("/save", response_class=RedirectResponse)
 async def save_editor(
-    resource_path: str = Form(...),
-    resource_version: str = Form(...),
+    path: str = Form(...),
+    version: str = Form(...),
     type: str = Form(...),
     data: str = Form(...),
     catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
-        logger.info(f"Saving {type} for resource_path='{resource_path}' (version='{resource_version}').")
-        current_entry = await catalog_service.fetch_entry(resource_path, resource_version)
+        logger.info(f"Saving {type} for path='{path}' (version='{version}').")
+        current_entry = await catalog_service.fetch_entry(path, version)
 
         if not current_entry:
             raise HTTPException(
                 status_code=404,
-                detail=f"No matching entry found for '{resource_path}' version '{resource_version}'."
+                detail=f"No matching entry found for '{path}' version '{version}'."
             )
 
         content = current_entry.get("content").strip()
@@ -158,8 +158,8 @@ async def save_editor(
             data=data,
             content=content,
             payload=payload,
-            resource_path=resource_path,
-            resource_version=resource_version
+            path=path,
+            version=version
         )
 
         if result is None:
@@ -167,14 +167,14 @@ async def save_editor(
 
         new_content, new_payload = result
         updated_entry = await catalog_service.create_catalog_entry(new_content, new_payload)
-        logger.info(f"Saved new version '{updated_entry.resource_version}' for '{resource_path}'.")
+        logger.info(f"Saved new version '{updated_entry.version}' for '{path}'.")
 
         return RedirectResponse(url="/", status_code=303)
     except Exception as e:
-        logger.error(f"Error saving {type} for {resource_path} (version={resource_version}): {e}")
+        logger.error(f"Error saving {type} for {path} (version={version}): {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error saving {type} for '{resource_path}' (version '{resource_version}'): {e}"
+            detail=f"Error saving {type} for '{path}' (version '{version}'): {e}"
         )
 
 def parse_editor_data(type: str, data: str) -> tuple[str, dict]:
@@ -200,13 +200,13 @@ def compare_content(
     data: str,
     content: str,
     payload: dict,
-    resource_path: str,
-    resource_version: str
+    path: str,
+    version: str
 ):
     new_content, new_payload = parse_editor_data(type, data)
     new_content_striped = ordered_yaml_dump(ordered_yaml_load(new_content)).strip()
     payload_diff = DeepDiff(payload, new_payload, ignore_order=True)
     if ordered_yaml_dump( ordered_yaml_load(content)).strip() == new_content_striped and not payload_diff:
-        logger.info(f"No changes detected for '{resource_path}' (version='{resource_version}').")
+        logger.info(f"No changes detected for '{path}' (version='{version}').")
         return None
     return new_content_striped, new_payload

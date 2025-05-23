@@ -15,11 +15,11 @@ async def seed_dict_resource(session: AsyncSession) -> None:
         "Step": "A logical control block in a Workflow that defines sequencing and conditions.",
         "Task": "An container unit of action group.",
         "Action": "An atomic executable unit, often interfacing with APIs or databases.",
-        "Target": "A runtime scope or destination for workflow execution (e.g., environment, system).",
-        "Endpoint": "An external API or internal service URL invoked by Actions or Tasks.",
-        "Model": "An AI/ML model used within workflows.",
+        "Target": "A runtime scope or destination for workflow execution.",
+        "Endpoint": "An external API or internal service URL.",
+        "Model": "An AI/ML model.",
         "Dataset": "A structured collection of data used for training, testing, or inference.",
-        "Connector": "An integration interface to external systems (e.g., database, API, queue).",
+        "Connector": "An integration interface to external systems (e.g., database, API).",
         "Trigger": "An event or condition that initiates a Playbook or Workflow execution."
     }
 

@@ -1,0 +1,88 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: process_orders
+path: workflows/orders/main.yaml
+
+environment:
+  region: us-west
+  api_url: https://api.example.com/orders
+  validation_url: https://api.example.com/validate
+  audit_url: https://api.example.com/audit
+
+context:
+  jobId: {{ job.uuid }}
+  state: pending
+  steps:
+    - step: fetch_orders
+      status: completed
+  results: {}
+
+workbook:
+  - task: fetch_orders
+    mode: parallel
+    loop: for customer in result.customer.list
+    run:
+      - action: call_api
+        mode: parallel
+        method: GET
+        name: fetchData_{{ customer }}
+        desc: Fetch orders for {{ customer }}
+        endpoint: {{ environment.api_url }}/{{ customer }}
+        params:
+          token: {{ context.token }}
+        run:
+          - action: call_api
+            loop: for order in result
+            method: GET
+            name: fetchOrder_{{ order }}
+            desc: Fetch order details for {{ customer }}
+            endpoint: {{ environment.api_url }}/{{ customer }}/orders/{{ order }}
+            params:
+              token: {{ context.token }}
+
+  - task: validate_orders
+    run:
+      - action: validate
+        method: POST
+        name: validateData
+        desc: Validate the fetched orders
+        endpoint: {{ environment.validation_url }}
+        params:
+          schema: orderSchema
+          payload: {{ results.fetch_orders }}
+
+workflow:
+  - step: fetch_data
+    loop: for store in ['storeA', 'storeB']
+    run:
+      - task: fetch_orders
+        until: results.fetch_orders is not none
+    next:
+      - when: results.fetch_orders is not none
+        then: [validate_data, validate_data2]
+      - when: results.fetch_orders is none
+        then: [validate_data2]
+
+  - step: validate_data
+    when: results.fetch_orders is not none
+    run:
+      - task: validate_orders
+      - action: audit_log
+        method: POST
+        name: logValidation
+        desc: Log validation results
+        endpoint: {{ environment.audit_url }}
+        params:
+          step: validate_data
+
+  - step: validate_data2
+    when: results.fetch_orders is not none
+    run:
+      - task: validate_orders
+      - action: audit_log
+        method: POST
+        name: logValidation
+        desc: Log validation results
+        endpoint: {{ environment.audit_url }}
+        params:
+          step: validate_data

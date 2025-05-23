@@ -36,71 +36,71 @@ class CatalogService:
             logger.info(f"Resource type '{resource_type}' already exists.")
 
 
-    async def get_catalog_entry(self, resource_path: str, resource_version: Optional[str] = None) -> Optional[Catalog]:
+    async def get_catalog_entry(self, path: str, version: Optional[str] = None) -> Optional[Catalog]:
         async with self.app_context.postgres.get_session() as session:
-            if resource_version:
+            if version:
                 stmt = select(Catalog).where(
-                    (Catalog.resource_path == resource_path) & (Catalog.resource_version == resource_version)
+                    (Catalog.path == path) & (Catalog.version == version)
                 )
             else:
                 stmt = (
                     select(Catalog)
-                    .where(Catalog.resource_path == resource_path)
-                    .order_by(Catalog.resource_version.desc())
+                    .where(Catalog.path == path)
+                    .order_by(Catalog.version.desc())
                     .limit(1)
                 )
             result = await session.exec(stmt)
             entry = result.first()
         logger.debug(
-            f"Catalog entry for resource_path '{resource_path}'",
+            f"Catalog entry for path '{path}'",
             extra=entry.dict() if entry else None
         )
         return entry
 
-    async def catalog_entry_exists(self, resource_path: str, content: str) -> Optional[Catalog]:
-        entry = await self.get_catalog_entry(resource_path)
+    async def catalog_entry_exists(self, path: str, content: str) -> Optional[Catalog]:
+        entry = await self.get_catalog_entry(path)
         if entry and entry.content.strip() == content.strip():
             logger.debug(
-                f"Catalog entry for resource_path '{resource_path}' version '{entry.resource_version}' has the same content."
+                f"Catalog entry for path '{path}' version '{entry.version}' has the same content."
             )
             return entry
         return None
 
 
-    async def create_catalog_entry(self, current_content: str, resource_data: dict, resource_version=None) -> Catalog:
+    async def create_catalog_entry(self, current_content: str, resource_data: dict, version=None) -> Catalog:
         try:
-            resource_path = resource_data.get("path")
+            path = resource_data.get("path")
             resource_type = resource_data.get("kind")
-            if not resource_path or not resource_type:
+            if not path or not resource_type:
                 raise ValueError("Missing fields: 'path' / 'kind'.")
 
-            latest_entry = await self.get_catalog_entry(resource_path, resource_version)
-            meta = {"resource_path": resource_path}
+            latest_entry = await self.get_catalog_entry(path, version)
+            meta = {"path": path}
             if latest_entry:
-                meta["resource_version"] = latest_entry.resource_version
+                meta["version"] = latest_entry.version
             event = await self.event_emit(
                 event_type="CatalogRegisterRequested",
                 state="REQUESTED",
                 meta=meta
             )
             if latest_entry and latest_entry.content.strip() == current_content.strip():
-                log_message=f"Catalog entry '{resource_path}' version {latest_entry.resource_version} already exists."
+                log_message=f"Catalog entry '{path}' version {latest_entry.version} already exists."
                 logger.info(log_message)
                 event = await self.event_emit(
                     event_type="CatalogRegisterCanceled",
                     state="CANCELED",
                     parent_id=event.get("body", {}).get("event_id"),
                     meta={
-                    "resource_path": latest_entry.resource_path,
-                    "resource_version": latest_entry.resource_version,
+                    "path": latest_entry.path,
+                    "version": latest_entry.version,
                     "message": log_message
                 }
                 )
                 return latest_entry
-            new_version = encode_version(increment_version(latest_entry.resource_version) if latest_entry else "1.0.0")
+            new_version = encode_version(increment_version(latest_entry.version) if latest_entry else "1.0.0")
             new_catalog_entry = Catalog(
-                resource_path=resource_path,
-                resource_version=new_version,
+                path=path,
+                version=new_version,
                 resource_type=resource_type,
                 content=current_content,
                 payload=resource_data,
@@ -112,14 +112,14 @@ class CatalogService:
             async with self.app_context.postgres.get_session() as session:
                 session.add(new_catalog_entry)
                 await session.commit()
-            logger.info(f"New catalog entry path='{resource_path}', and version='{new_version}' created.")
+            logger.info(f"New catalog entry path='{path}', and version='{new_version}' created.")
             event = await self.event_emit(
                 event_type="CatalogRegisterRegistered",
                 state="REGISTERED",
                 parent_id=event.get("body", {}).get("event_id"),
                 meta={
-                    "resource_path": new_catalog_entry.resource_path,
-                    "resource_version": new_catalog_entry.resource_version
+                    "path": new_catalog_entry.path,
+                    "version": new_catalog_entry.version
                 }
             )
             return new_catalog_entry
@@ -159,22 +159,22 @@ class CatalogService:
             event = await self.event_emit(
                 event_type="CatalogRegisterRequested",
                 state=state,
-                meta={"resource_path": resource_data["path"]}
+                meta={"path": resource_data["path"]}
             )
 
             existing_entry = await self.catalog_entry_exists(resource_data["path"], decoded_yaml)
             if existing_entry:
                 logger.info(
-                    f"Catalog entry already exists for resource_path='{resource_data['path']}' with version '{existing_entry.resource_version}'."
+                    f"Catalog entry already exists for path='{resource_data['path']}' with version '{existing_entry.version}'."
                 )
-                log_message = f"Catalog entry for '{resource_data['path']}' already exists with version {existing_entry.resource_version}."
+                log_message = f"Catalog entry for '{resource_data['path']}' already exists with version {existing_entry.version}."
                 event = await self.event_emit(
                     event_type="CatalogRegisterCanceled",
                     state="CANCELED",
                     parent_id=event.get("body", {}).get("event_id"),
                     meta={
-                    "resource_path": existing_entry.resource_path,
-                    "resource_version": existing_entry.resource_version,
+                    "path": existing_entry.path,
+                    "version": existing_entry.version,
                     "message": log_message
                 }
                 )
@@ -191,8 +191,8 @@ class CatalogService:
                 state="REGISTERED",
                 parent_id=event.get("body", {}).get("event_id"),
                 meta={
-                    "resource_path": catalog_entry.resource_path,
-                    "resource_version": catalog_entry.resource_version
+                    "path": catalog_entry.path,
+                    "version": catalog_entry.version
                 }
             )
 
@@ -202,7 +202,7 @@ class CatalogService:
 
             return {
                 "status": "success",
-                "message": f"Catalog entry for {resource_data.get('path')} successfully registered with version {catalog_entry.resource_version}."
+                "message": f"Catalog entry for {resource_data.get('path')} successfully registered with version {catalog_entry.version}."
             }
 
         except yaml.YAMLError as e:
@@ -222,10 +222,10 @@ class CatalogService:
                 logger.info(f"Fetched {len(entries)} catalog entries.")
                 return [
                     {
-                        "resource_path": entry.resource_path,
+                        "path": entry.path,
                         "name": entry.payload.get("name"),
                         "resource_type": entry.payload.get("kind"),
-                        "version": entry.resource_version,
+                        "version": entry.version,
                         "timestamp": entry.timestamp,
                     }
                     for entry in entries
@@ -234,20 +234,20 @@ class CatalogService:
             logger.error(f"Error fetching catalog entries: {e}.")
             raise HTTPException(status_code=500, detail=f"Failed to fetch catalog entries: {e}.")
 
-    async def fetch_entry(self, resource_path: str, resource_version: str) -> Optional[Catalog]:
-        entry = await self.get_catalog_entry(resource_path, resource_version)
+    async def fetch_entry(self, path: str, version: str) -> Optional[Catalog]:
+        entry = await self.get_catalog_entry(path, version)
         if entry:
             logger.info(
-                f"Fetched catalog entry: resource_path='{resource_path}', version='{resource_version}'"
+                f"Fetched catalog entry: path='{path}', version='{version}'"
             )
             return {
-                "resource_path": entry.resource_path,
-                "version": entry.resource_version,
+                "path": entry.path,
+                "version": entry.version,
                 "content": entry.content,
                 "payload": entry.payload
             }
         else:
             logger.warning(
-                f"Catalog entry is missing for resource_path='{resource_path}' and version='{resource_version}'"
+                f"Catalog entry is missing for path='{path}' and version='{version}'"
             )
             return None

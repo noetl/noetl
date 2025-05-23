@@ -1,126 +1,124 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noetl.io/schemas/playbook.schema.json",
+  "title": "NoETL Playbook",
   "type": "object",
+  "required": ["apiVersion", "kind", "name", "path", "environment", "context", "workbook", "workflow"],
   "properties": {
-    "apiVersion": { "type": "string" },
-    "kind": { "type": "string", "enum": ["Playbook", "Workflow"] },
+    "apiVersion": { "const": "noetl.io/v1" },
+    "kind": { "const": "Playbook" },
     "name": { "type": "string" },
     "path": { "type": "string" },
-    "environment": { 
+
+    "environment": {
       "type": "object",
-      "properties": {},
-      "description": "Flexible environment variables allowed"
+      "additionalProperties": { "type": "string" }
     },
+
     "context": {
       "type": "object",
+      "required": ["jobId", "state", "steps", "results"],
       "properties": {
-        "baseUrl": { "type": "string" },
-        "load": { "type": "string" },
-        "baseBlobPath": { "type": "string" },
-        "ngBlobPath": { "type": "string" },
-        "baseFilePath": { "type": "string" },
-        "bucket": { "type": "string" },
-        "break": { "type": "boolean" },
-        "retry": { "type": "integer" },
         "jobId": { "type": "string" },
         "state": { "type": "string" },
+        "results": { "type": "object" },
         "steps": {
           "type": "array",
           "items": {
             "type": "object",
+            "required": ["step", "status"],
             "properties": {
-              "name": { "type": "string" },
-              "status": { "type": "string", "enum": ["READY", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"] }
-            },
-            "required": ["name", "status"]
+              "step": { "type": "string" },
+              "status": { "type": "string" }
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "workbook": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task", "run"],
+        "properties": {
+          "task": { "type": "string" },
+          "mode": { "type": "string", "enum": ["parallel", "sequential"] },
+          "loop": { "type": "string" },
+          "run": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/unit" }
           }
         }
       }
     },
-    "tasks": {
+
+    "workflow": {
       "type": "array",
       "items": {
         "type": "object",
+        "required": ["step", "run"],
         "properties": {
-          "name": { "type": "string" },
-          "loop": {
-            "type": "object",
-            "properties": {
-              "items": { "type": "array", "items": { "type": "string" } },
-              "iterator": { "type": "string" }
-            },
-            "required": ["items", "iterator"]
-          },
-          "run": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "action": { "type": "string" },
-                "method": { "type": "string" },
-                "name": { "type": "string" },
-                "desc": { "type": "string" },
-                "endpoint": { "type": "string" },
-                "params": { "type": "object" },
-                "loop": {
-                  "type": "object",
-                  "properties": {
-                    "items": { "type": "array", "items": { "type": "string" } },
-                    "iterator": { "type": "string" }
-                  },
-                  "required": ["items", "iterator"]
-                }
-              },
-              "required": ["action", "name"]
-            }
-          }
-        },
-        "required": ["name", "run"]
-      }
-    },
-    "steps": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string" },
-          "mode": { "type": "string", "enum": ["sequential", "parallel"] },
+          "step": { "type": "string" },
+          "mode": { "type": "string", "enum": ["parallel", "sequential"] },
+          "loop": { "type": "string" },
           "when": { "type": "string" },
-          "loop": {
-            "type": "object",
-            "properties": {
-              "items": { "type": "array", "items": { "type": "string" } },
-              "iterator": { "type": "string" }
-            },
-            "required": ["items", "iterator"]
-          },
           "run": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "task": { "type": "string" },
-                "step": { "type": "string" },
-                "action": { "type": "string" }
-              }
+                "action": { "type": "string" },
+                "playbook": { "type": "string" },
+                "until": { "type": "string" }
+              },
+              "additionalProperties": false
             }
           },
-          "until": { "type": "string" },
           "next": {
             "type": "array",
             "items": {
               "type": "object",
+              "required": ["when", "then"],
               "properties": {
                 "when": { "type": "string" },
-                "step": { "type": "string" }
+                "then": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
               },
-              "required": ["step"]
+              "additionalProperties": false
             }
           }
-        },
-        "required": ["name", "mode", "run"]
+        }
       }
     }
   },
-  "required": ["apiVersion", "kind", "name", "path", "environment", "context", "tasks", "steps"]
+
+  "$defs": {
+    "unit": {
+      "type": "object",
+      "required": ["action", "method", "name", "desc", "endpoint", "params"],
+      "properties": {
+        "action": { "type": "string" },
+        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"] },
+        "name": { "type": "string" },
+        "desc": { "type": "string" },
+        "endpoint": { "type": "string" },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "loop": { "type": "string" },
+        "mode": { "type": "string", "enum": ["parallel", "sequential"] },
+        "run": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/unit" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
 }

@@ -6,11 +6,13 @@ class RegisterRequest(BaseModel):
     content_base64: str
 
 class CatalogEntryRequest(BaseModel):
-    resource_path: str
-    resource_version: str
+    path: str
+    version: str
     resource_type: str
     source: str = "inline"
-    resource_location: Optional[str]
+    location: Optional[str]
+    content: Optional[str]
+    template: Optional[str]
     payload: Dict = Field(..., description="JSON payload required")
     meta: Optional[Dict]
 

@@ -1,9 +1,6 @@
 from sqlmodel import SQLModel, Field, Column, Relationship, ForeignKeyConstraint, JSON
 from typing import Optional, List, Dict
 from datetime import datetime, timezone
-# from sqlalchemy import Column
-# import sqlalchemy as sa
-# from sqlalchemy.dialects.postgresql import JSON
 from noetl.util.dro import generate_id
 
 class Workload(SQLModel, table=True):
@@ -15,6 +12,7 @@ class Workload(SQLModel, table=True):
     resource_version: str = Field(nullable=False)
     namespace: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = Field(default="PENDING", nullable=False)
+    content: str = Field(nullable=False)
     payload: dict = Field(sa_column=Column(JSON, nullable=False))
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     labels: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
@@ -24,7 +22,7 @@ class Workload(SQLModel, table=True):
     __table_args__ = (
         ForeignKeyConstraint(
             ['resource_path', 'resource_version'],
-            ['catalog.resource_path', 'catalog.resource_version'],
+            ['catalog.path', 'catalog.version'],
             name="fk_registry_catalog"
         ),
     )
@@ -47,8 +45,8 @@ class Workload(SQLModel, table=True):
     catalog_entry: Optional["Catalog"] = Relationship(
         back_populates="workload_entry",
         sa_relationship_kwargs={
-            "primaryjoin": "and_(Workload.resource_path == Catalog.resource_path, "
-                           "Workload.resource_version == Catalog.resource_version)"
+            "primaryjoin": "and_(Workload.resource_path == Catalog.path, "
+                           "Workload.resource_version == Catalog.version)"
         }
     )
 
