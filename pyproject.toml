@@ -33,7 +33,8 @@ dependencies = [
     "typer>=0.15.3",
     "click>=8.1.0,<8.2.0",
     "deepdiff>=8.4.2",
-    "pandas>=2.2.3"
+    "pandas>=2.2.3",
+    "lark>=1.2.2",
 ]
 
 [project.optional-dependencies]

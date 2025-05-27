@@ -1,0 +1,103 @@
+(* NoETL Playbook Grammar *)
+
+playbook = metadata, context, workbook, workflow;
+
+metadata = "apiVersion", ":", string_literal,
+          "kind", ":", "Playbook",
+          "name", ":", string_literal,
+          "path", ":", string_literal;
+
+context = "context", ":", "{", {key_value_entry}, "}";
+
+workbook = "workbook", ":", "[", {task_definition}, "]";
+
+task_definition = "task", ":", identifier_literal,
+                 "type", ":", identifier_literal,
+                 [loop_clause],
+                 ["method", ":", identifier_literal],
+                 ["desc", ":", string_literal],
+                 ["endpoint", ":", expression_literal],
+                 ["params", ":", "{", {key_value_entry}, "}"],
+                 ["run", ":", "[", {task_definition}, "]"];
+
+workflow = "workflow", ":", "[", {workflow_step}, "]";
+
+workflow_step = "step", ":", (identifier_literal | end_step_literal),
+               ["desc", ":", string_literal],
+               [loop_clause],
+               ["run", ":", "[", {step_run_item}, "]"],
+               ["next", ":", "[", {next_clause}, "]"];
+
+next_clause = ["when", ":", boolean_expression_literal],
+             ("then" | "else"), ":", "[", {identifier_literal}, "]";
+
+step_run_item = ("task" | "playbook"), ":", identifier_literal;
+
+loop_clause = "loop", ":", "{",
+             "in", ":", quoted_template_literal,
+             "iterator", ":", identifier_literal,
+             "}";
+
+key_value_entry = identifier_literal, ":", value_literal;
+
+value_literal = string_literal
+              | number_literal
+              | boolean_literal
+              | null_literal
+              | quoted_template_literal
+              | list_literal
+              | dictionary_literal;
+
+expression_literal = value_literal | boolean_expression_literal;
+
+boolean_expression_literal = boolean_literal
+                         | quoted_template_boolean
+                         | comparison_expression;
+
+comparison_expression = value_literal, comparison_operator, value_literal;
+
+comparison_operator = "==" | "!=" | ">" | "<" | ">=" | "<=" | "is" | "is not";
+
+quoted_template_literal = '"', "{{", {template_char}, "}}", '"';
+
+quoted_template_boolean = '"', "{{", boolean_template_expression, "}}", '"';
+
+list_literal = "[", [value_literal, {",", value_literal}], "]";
+
+dictionary_literal = "{", [key_value_entry, {",", key_value_entry}], "}";
+
+string_literal = '"', {character}, '"';
+
+number_literal = ["-"], digit, {digit}, [".", digit, {digit}];
+
+boolean_literal = "true" | "false";
+
+null_literal = "null";
+
+end_step_literal = "end";
+
+identifier_literal = letter, {letter | digit | "_"};
+
+letter = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+       | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+       | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
+       | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z";
+
+digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+
+character = unicode_safe_char
+         | "\", '"'  (* escaped double-quote *)
+         | "\", "n"  (* newline *)
+         | "\", "t"  (* tab *)
+         | "\", "r"  (* carriage return *)
+         | "\", "b"  (* backspace *)
+         | "\", "f"; (* form feed *)
+
+template_char = unicode_safe_char
+             | "{" | "}" | "." | "_" | "[" | "]" | "(" | ")"
+             | "+" | "-" | "/" | "*" | " " | "=" | "!" | "<" | ">"
+             | ":" | "," | "'" | '"' | "%" | "|" | "&" | "\t" | "\n";
+
+unicode_safe_char = ? any Unicode character except double-quote (") and control characters U+0000 to U+001F and U+007F ?;
+
+boolean_template_expression = ? expression that evaluates to boolean ?;
