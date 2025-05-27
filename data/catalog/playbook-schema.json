@@ -3,7 +3,7 @@
   "$id": "https://noetl.io/schemas/playbook.schema.json",
   "title": "NoETL Playbook",
   "type": "object",
-  "required": ["apiVersion", "kind", "name", "path", "environment", "context", "workbook", "workflow"],
+  "required": ["apiVersion", "kind", "name", "path", "context", "workbook", "workflow"],
   "properties": {
     "apiVersion": { "const": "noetl.io/v1" },
     "kind": { "const": "Playbook" },
@@ -12,27 +12,16 @@
 
     "environment": {
       "type": "object",
-      "additionalProperties": { "type": "string" }
+      "additionalProperties": true
     },
 
     "context": {
       "type": "object",
-      "required": ["jobId", "state", "steps", "results"],
+      "required": ["jobId", "state"],
       "properties": {
         "jobId": { "type": "string" },
         "state": { "type": "string" },
-        "results": { "type": "object" },
-        "steps": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["step", "status"],
-            "properties": {
-              "step": { "type": "string" },
-              "status": { "type": "string" }
-            }
-          }
-        }
+        "results": { "type": "object" }
       },
       "additionalProperties": true
     },
@@ -41,15 +30,44 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["task", "run"],
+        "required": ["task", "type", "desc"],
         "properties": {
           "task": { "type": "string" },
-          "mode": { "type": "string", "enum": ["parallel", "sequential"] },
-          "loop": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["python", "http", "runner"]
+          },
+          "desc": { "type": "string" },
+          "code": { "type": "string" },
+          "method": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]
+          },
+          "endpoint": { "type": "string" },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "loop": {
+            "type": "object",
+            "properties": {
+              "in": { "type": ["string", "array"] },
+              "iterator": { "type": "string" },
+              "mode": {
+                "type": "string",
+                "enum": ["parallel", "sequential"]
+              }
+            },
+            "required": ["in", "iterator"]
+          },
           "run": {
             "type": "array",
-            "items": { "$ref": "#/$defs/unit" }
+            "items": { "$ref": "#/$defs/task" }
           }
+        },
+        "dependencies": {
+          "method": ["endpoint"],
+          "endpoint": ["method"]
         }
       }
     },
@@ -58,38 +76,46 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["step", "run"],
+        "required": ["step", "desc"],
         "properties": {
           "step": { "type": "string" },
-          "mode": { "type": "string", "enum": ["parallel", "sequential"] },
-          "loop": { "type": "string" },
-          "when": { "type": "string" },
+          "desc": { "type": "string" },
           "run": {
             "type": "array",
             "items": {
               "type": "object",
+              "required": ["task"],
               "properties": {
                 "task": { "type": "string" },
-                "action": { "type": "string" },
-                "playbook": { "type": "string" },
                 "until": { "type": "string" }
-              },
-              "additionalProperties": false
+              }
             }
           },
           "next": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["when", "then"],
-              "properties": {
-                "when": { "type": "string" },
-                "then": {
-                  "type": "array",
-                  "items": { "type": "string" }
+              "anyOf": [
+                {
+                  "required": ["when", "then"],
+                  "properties": {
+                    "when": { "type": "string" },
+                    "then": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                },
+                {
+                  "required": ["then"],
+                  "properties": {
+                    "then": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
                 }
-              },
-              "additionalProperties": false
+              ]
             }
           }
         }
@@ -98,27 +124,38 @@
   },
 
   "$defs": {
-    "unit": {
+    "task": {
       "type": "object",
-      "required": ["action", "method", "name", "desc", "endpoint", "params"],
+      "required": ["type", "desc"],
       "properties": {
-        "action": { "type": "string" },
-        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"] },
-        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["python", "http", "runner"]
+        },
         "desc": { "type": "string" },
+        "code": { "type": "string" },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        },
         "endpoint": { "type": "string" },
         "params": {
           "type": "object",
           "additionalProperties": true
         },
-        "loop": { "type": "string" },
-        "mode": { "type": "string", "enum": ["parallel", "sequential"] },
-        "run": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/unit" }
+        "loop": {
+          "type": "object",
+          "properties": {
+            "in": { "type": ["string", "array"] },
+            "iterator": { "type": "string" }
+          },
+          "required": ["in", "iterator"]
         }
       },
-      "additionalProperties": false
+      "dependencies": {
+        "method": ["endpoint"],
+        "endpoint": ["method"]
+      }
     }
   }
 }
