@@ -47,6 +47,9 @@ workbook:
             desc: "Process forecast data for {{ city.name }}"
             code: |
               def main(context, results):
+                  city_name = '{{ city.name }}'
+                  logger.info(f"Process forecast data for {city_name}.  Context: {context}")
+                  logger.info(f"Process forecast data for {city_name}.  Parent Task Results: {results}")
                   if isinstance(results, dict):
                       if 'data' in results:
                           response_data = results['data']
@@ -54,10 +57,10 @@ workbook:
                           response_data = results
                   else:
                       response_data = {'error': 'Invalid response format'}
-                      logger.error(f"Invalid response format: {results}")
+                      logger.error(f"Process forecast data for {city_name}. Invalid response format: {results}")
                       return response_data
           
-                  logger.info(f"Response data: {response_data}")
+                  logger.info(f"Process forecast data for {city_name}.  Response data: {response_data}")
           
                   try:
                       hourly_data = response_data.get('hourly', {})
@@ -75,7 +78,7 @@ workbook:
                           'raw_data': response_data
                       }
           
-                      logger.info(f"Processed result: {result}")
+                      logger.debug(f"Forecast data processed for {city_name}. Result: {result}")
                       return result
           
                   except Exception as e:
@@ -92,33 +95,47 @@ workbook:
     desc: "Analyze weather patterns across cities"
     code: |
       def main(context, results):
-          import logging
-          logging.basicConfig(level=logging.INFO)
-
-          raw_data = context.get('fetch_weather_data', [])
+          import json
+          
+          raw_data_str = context.get('fetch_weather_data', '[]')
           cities_data = []
           errors = []
-
-          logging.info(f"Analyzing raw data: {raw_data}")
-
-          for city_group in raw_data:
-              if not city_group:
-                  continue
-
-              for city_result in city_group:
-                  if isinstance(city_result, dict):
-                      if 'error' in city_result:
-                          errors.append(city_result)
-                      else:
-                          cities_data.append({
-                              'city': city_result.get('city'),
-                              'max_temp': city_result.get('max_temp', 0),
-                              'high_wind_hours': city_result.get('high_wind_hours', 0),
-                              'needs_alert': city_result.get('needs_alert', False)
-                          })
-
-          alert_cities = [city for city in cities_data if city.get('needs_alert')]
-
+      
+          try:
+              logger.debug(f"Raw data string type: {type(raw_data_str)}")
+              logger.debug(f"Raw data string: {raw_data_str}")
+      
+              if isinstance(raw_data_str, (list, dict)):
+                  raw_data = raw_data_str
+              else:
+                  import ast
+                  python_obj = ast.literal_eval(raw_data_str)
+                  json_str = json.dumps(python_obj)
+                  raw_data = json.loads(json_str)
+              
+              for city_result in raw_data:
+                  logger.debug(f"Processing city result: {city_result.get('status')} - {city_result.get('data', {}).get('city')}")
+                  
+                  if city_result.get('status') == 'success':
+                      city_data = city_result['data']
+                      cities_data.append({
+                          'city': city_data['city'],
+                          'max_temp': city_data['max_temp'],
+                          'high_wind_hours': city_data['high_wind_hours'],
+                          'needs_alert': city_data['needs_alert']
+                      })
+                  else:
+                      errors.append(city_result)
+          except (json.JSONDecodeError, ValueError, SyntaxError) as e:
+              logger.error(f"Data parsing error: {str(e)}")
+              errors.append({'error': f'Failed to parse weather data: {str(e)}'})
+          except Exception as e:
+              logger.error(f"Error processing city data: {str(e)}")
+              errors.append({'error': str(e)})
+      
+          logger.info(f"[Task: analyze_weather_patterns] Cities data: {cities_data}")
+          alert_cities = [city for city in cities_data if city['needs_alert']]
+      
           result = {
               'total_cities': len(cities_data),
               'alert_needed': len(alert_cities) > 0,
@@ -127,8 +144,8 @@ workbook:
               'errors': errors,
               'has_errors': len(errors) > 0
           }
-
-          logging.info(f"Analysis result: {result}")
+      
+          logger.info(f"[Task: analyze_weather_patterns] Analysis result: {result}")
           return result
 
   - task: send_alerts
@@ -137,7 +154,7 @@ workbook:
     desc: "Send alerts for high temperature cities"
     endpoint: "{{ context.alert_endpoint }}/weather-alerts"
     payload:
-      cities: "{{ results.analyze_weather_patterns.alert_cities }}"
+      cities: "{{ context.analyze_weather_patterns.data.alert_cities }}"
       severity: "high"
       type: "temperature"
 
@@ -146,7 +163,7 @@ workbook:
     method: POST
     desc: "Store processed weather data"
     endpoint: "{{ context.db_endpoint }}/weather-data"
-    payload: "{{ results.fetch_weather_data }}"
+    payload: "{{ context.fetch_weather_data }}"
 
   - task: log_error
     type: http
@@ -155,8 +172,8 @@ workbook:
     endpoint: "{{ context.alert_endpoint }}/errors"
     payload:
       jobId: "{{ context.jobId }}"
-      error: "{{ context.error }}"
-      state: "{{ context.state }}"
+      error: "{{ context.error if context is defined and context.error is defined else 'Unknown error occurred' }}"
+      state: "{{ context.state if context is defined and context.state is defined else 'error' }}"
 
   - task: update_status
     type: http
@@ -199,21 +216,22 @@ workflow:
     run:
       - task: analyze_weather_patterns
     next:
-      - when: "{{ context.analyze_weather_patterns.alert_needed }}"
+      - when: "{{ results.analyze_weather_patterns.data.alert_needed }}"
         then:
           - step: send_alerts
-            analyze_weather_patterns: "{{ context.analyze_weather_patterns }}"
+            analyze_weather_patterns: "{{ results.analyze_weather_patterns }}"
           - step: store_results
-            analyze_weather_patterns: "{{ context.analyze_weather_patterns }}"
-      - when: "{{ not context.analyze_weather_patterns.alert_needed }}"
+            analyze_weather_patterns: "{{ results.analyze_weather_patterns }}"
+      - when: "{{ not results.analyze_weather_patterns.data.alert_needed }}"
         then:
           - step: store_results
-            analyze_weather_patterns: "{{ context.analyze_weather_patterns }}"
+            analyze_weather_patterns: "{{ results.analyze_weather_patterns }}"
       - else:
           - step: error_handler
 
   - step: send_alerts
     desc: "Send alerts for cities with high temperatures"
+    when: "{{ context.analyze_weather_patterns is defined and context.analyze_weather_patterns.data.alert_cities|length > 0 }}"
     run:
       - task: send_alerts
     next:
@@ -245,9 +263,18 @@ workflow:
     desc: "Handle errors in the workflow"
     run:
       - task: log_error
+        type: http
+        method: POST
+        desc: "Log errors"
+        endpoint: "{{ context.alert_endpoint }}/errors"
+        payload:
+          jobId: "{{ context.jobId }}"
+          error: "{{ context.error | default('Unknown error occurred') }}"
+          state: "{{ context.state | default('error') }}"
     next:
       - then:
           - step: end
+
 
   - step: complete
     desc: "Final step to mark workflow completion"

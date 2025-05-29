@@ -3,7 +3,7 @@ import jinja2
 import requests
 import uuid
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 import sys
 import os
 from urllib.parse import urlparse
@@ -83,7 +83,6 @@ class PlaybookRunner:
         }
         if extra_vars:
             vars_dict.update(extra_vars)
-        logger.debug(f"Rendering template: {template_str} with vars: {vars_dict}")
 
         if not ('{{' in template_str and '}}' in template_str):
             return template_str
@@ -92,12 +91,15 @@ class PlaybookRunner:
             template = self.environment.from_string(str(template_str))
             rendered = template.render(vars_dict)
 
-            if rendered.strip().startswith('{') or rendered.strip().startswith('['):
-                try:
-                    return json.loads(rendered)
-                except json.JSONDecodeError:
-                    pass
-            logger.debug(f"Rendered template: {rendered}")
+            try:
+                import ast
+                return ast.literal_eval(rendered)
+            except (ValueError, SyntaxError):
+                if rendered.strip().startswith('{') or rendered.strip().startswith('['):
+                    try:
+                        return json.loads(rendered)
+                    except json.JSONDecodeError:
+                        pass
             return rendered
         except Exception as e:
             logger.error(f"Template rendering error for '{template_str}': {e}")
@@ -110,18 +112,18 @@ class PlaybookRunner:
         while current_step != 'end':
             try:
                 if current_step in visited_steps:
-                    logger.error(f"Circular dependency detected! Step {current_step} has already been visited")
+                    logger.error(f"Circular dependency detected. Step {current_step} has already been visited.")
                     break
 
                 visited_steps.add(current_step)
 
                 logger.debug(f"Executing step: {current_step}")
-                logger.debug(f"Current context: {json.dumps(self.context, indent=2, default=str)}")
+                # logger.debug(f"Current context: {json.dumps(self.context, indent=2, default=str)}")
 
                 next_step = self.execute_step(current_step)
 
                 logger.debug(f"Step {current_step} completed. Next step: {next_step}")
-                logger.debug(f"Updated context: {json.dumps(self.context, indent=2, default=str)}")
+                # logger.debug(f"Updated context: {json.dumps(self.context, indent=2, default=str)}")
 
                 if next_step:
                     current_step = next_step
@@ -141,10 +143,9 @@ class PlaybookRunner:
         return self.results
 
 
-    def execute_step(self, step_name: str) -> str:
+    def execute_step(self, step_name: str) -> str | dict:
         logger.debug(f"Looking for step: {step_name}")
-        step = next((s for s in self.playbook.get('workflow', [])
-                     if s.get('step') == step_name), None)
+        step = next((s for s in self.playbook.get('workflow', []) if s.get('step') == step_name), None)
 
         if not step:
             logger.error(f"Step not found: {step_name}")
@@ -238,42 +239,116 @@ class PlaybookRunner:
                     return task
         return {}
 
-    def execute_task(self, task_name: str, extra_vars: Dict = None) -> Any:
-        logger.debug(f"Looking for task: {task_name}")
-        task = self.find_task(task_name)
+    def execute_task(self, task_name: str, context: Dict = None, parent_result: Any = None) -> Any:
+        context = context or {}
 
-        if not task:
-            raise ValueError(f"Task not found: {task_name}")
+        def execute_recursive(task: Union[str, Dict], current_context: Dict, parent_result: Any = None) -> Any:
+            if isinstance(task, str):
+                task_def = self.find_task(task)
+                if not task_def:
+                    raise ValueError(f"Task not found: {task}")
+            else:
+                task_def = task
 
-        task_type = task.get('type', 'unknown')
-        logger.info(f"Executing task: {task_name} (type: {task_type})")
-        logger.debug(f"Task configuration: {json.dumps(task, indent=2)}")
+            logger.debug(f"Executing task: {task_def.get('task')} with parent result: {parent_result}")
+
+            task_context = {
+                **current_context,
+                'results': parent_result
+            }
+
+            if 'loop' in task_def:
+                return execute_loop(task_def, task_context)
+
+            current_result = execute_single(task_def, task_context)
+
+            if 'run' in task_def:
+                for nested_task in task_def['run']:
+                    nested_context = {**task_context}
+                    rendered_task = render_task_templates(nested_task, nested_context)
+                    current_result = execute_recursive(rendered_task, nested_context, current_result)
+
+            return current_result
+
+        def execute_loop(task: Dict, context: Dict) -> List:
+            loop_spec = task['loop']
+            iterator_name = loop_spec.get('iterator')
+            loop_data = render_value(loop_spec.get('in'), context)
+
+            if isinstance(loop_data, str):
+                import ast
+                try:
+                    loop_data = ast.literal_eval(loop_data)
+                except (ValueError, SyntaxError) as e:
+                    raise ValueError(f"Failed to parse loop data: {e}")
+
+            if not isinstance(loop_data, list):
+                raise ValueError(f"Loop data must be a list, got: {type(loop_data)}")
+
+            results = []
+            for idx, item in enumerate(loop_data):
+                logger.info(f"Processing loop item {idx + 1}/{len(loop_data)}")
+                iteration_context = {**context, iterator_name: item}
+                task_without_loop = task.copy()
+                task_without_loop.pop('loop')
+                result = execute_recursive(task_without_loop, iteration_context)
+                results.append(result)
+                logger.info(f"Completed loop item {idx + 1}", extra={'results': result})
+
+            return results
+
+        def execute_single(task: Dict, context: Dict) -> Any:
+            task_type = task.get('type', 'unknown')
+            rendered_task = render_task_templates(task, context)
+            try:
+                return self.execute_task_instance(rendered_task, task_type, context)
+            except Exception as e:
+                logger.error(f"Error executing task {task.get('task')}: {str(e)}")
+                raise
+
+        def render_task_templates(task: Dict, context: Dict) -> Dict:
+            rendered = {}
+            for key, value in task.items():
+                if isinstance(value, str):
+                    rendered[key] = render_value(value, context)
+                elif isinstance(value, dict):
+                    rendered[key] = render_task_templates(value, context)
+                elif isinstance(value, list):
+                    rendered[key] = [
+                        render_task_templates(item, context) if isinstance(item, dict)
+                        else render_value(item, context) if isinstance(item, str)
+                        else item
+                        for item in value
+                    ]
+                else:
+                    rendered[key] = value
+            return rendered
+
+        def render_value(value: Any, context: Dict) -> Any:
+            if isinstance(value, str) and ('{{' in value or '{%' in value):
+                return self.render_template(value, context)
+            return value
 
         try:
-            result = None
-            if task_type == 'http':
-                result = self.execute_http_task(task, extra_vars)
-            elif task_type == 'python':
-                result = self.execute_python_task(task, extra_vars)
-            elif task_type == 'runner':
-                result = self.execute_runner_task(task, extra_vars)
-            else:
-                raise ValueError(f"Unsupported task type: {task_type}")
-
+            result = execute_recursive(task_name, context, parent_result)
+            # task_id = task_name if isinstance(task_name, str) else task.get('task')
             self.results[task_name] = result
-
-            logger.debug(f"Task {task_name} completed with result: {json.dumps(result, default=str)}")
-
             return result
-
         except Exception as e:
-            logger.error(f"Error executing task {task_name}: {str(e)}", exc_info=True)
-            error_result = {
-                'status': 'error',
-                'error': str(e)
-            }
-            self.results[task_name] = error_result
+            error_result = {'status': 'error', 'error': str(e)}
+            if isinstance(task_name, str):
+                self.results[task_name] = error_result
             raise
+
+    def execute_task_instance(self, task: Dict, task_type: str, vars_dict: Dict = None) -> Any:
+        if task_type == 'http':
+            return self.execute_http_task(task, vars_dict)
+        elif task_type == 'python':
+            return self.execute_python_task(task, vars_dict)
+        elif task_type == 'runner':
+            return self.execute_runner_task(task, vars_dict)
+        else:
+            raise ValueError(f"Unsupported task type: {task_type}")
 
     def execute_http_task(self, task: Dict, extra_vars: Dict = None) -> Dict:
         method = task.get('method', 'GET')
@@ -333,23 +408,16 @@ class PlaybookRunner:
             namespace.update(extra_vars)
 
         try:
-            modified_code = code.replace('import logging\n    logging.basicConfig(level=logging.INFO)',
-                                         'from logging import getLogger\n    logger = getLogger()')
-            modified_code = modified_code.replace('logging.info', 'logger.info')
-            modified_code = modified_code.replace('logging.error', 'logger.error')
-            modified_code = modified_code.replace('logging.debug', 'logger.debug')
-
-            logger.debug(f"Executing Python code:\n{modified_code}")
-
-            exec(modified_code, namespace)
+            logger.debug(f"Executing Python code:\n{code}")
+            exec(code, namespace)
 
             main_func = namespace.get('main')
             if not main_func or not callable(main_func):
                 raise ValueError("Python task must define a 'main(context, results)' function")
 
-            result = main_func(namespace['context'], namespace['results'])
+            result = main_func(namespace.get('context', {}), namespace.get('results', {}))
 
-            logger.debug(f"Python task result: {result}")
+            # logger.debug(f"Python task {task.get('task')} result: {result}")
 
             return {
                 'status': 'success',
@@ -363,68 +431,16 @@ class PlaybookRunner:
                 'error': str(e)
             }
 
-    def execute_runner_task(self, task: Dict, extra_vars: Dict = None) -> List:
-
-        def process_task_sequence(subtasks: List[Dict], vars_dict: Dict) -> Any:
-
-            last_result = None
-            for subtask in subtasks:
-                subtask_copy = subtask.copy()
-                for key, value in subtask_copy.items():
-                    if isinstance(value, str):
-                        subtask_copy[key] = self.render_template(value, vars_dict)
-                    elif isinstance(value, dict):
-                        for subkey, subvalue in value.items():
-                            if isinstance(subvalue, str):
-                                subtask_copy[key][subkey] = self.render_template(subvalue, vars_dict)
-                subtask_type = subtask_copy.get('type')
-                if subtask_type == 'http':
-                    last_result = self.execute_http_task(subtask_copy, vars_dict)
-                elif subtask_type == 'python':
-                    python_vars = dict(vars_dict)
-                    python_vars['results'] = last_result
-                    last_result = self.execute_python_task(subtask_copy, python_vars)
-                else:
-                    raise ValueError(f"Unsupported subtask type: {subtask_type}")
-            return last_result
-
+    def execute_runner_task(self, task: Dict, extra_vars: Dict = None) -> Any:
         try:
-            if task.get('loop'):
-                logger.info(f"Executing runner task with loop. Task: {task.get('task', 'unnamed')}")
-                loop_data = self.render_template(task.get('loop', {}).get('in'), extra_vars)
+            if extra_vars:
                 iterator_name = task.get('loop', {}).get('iterator')
-                if isinstance(loop_data, str):
-                    import ast
-                    try:
-                        logger.debug("Converting string loop data to Python object")
-                        loop_data = ast.literal_eval(loop_data)
-                    except (ValueError, SyntaxError) as e:
-                        logger.error(f"Failed to parse loop data: {e}")
-                        raise
-
-                if not isinstance(loop_data, list):
-                    raise ValueError(f"Loop data must be a list, got: {type(loop_data)}")
-
-                results = []
-                for idx, item in enumerate(loop_data):
-                    logger.info(f"Processing loop item {idx + 1}/{len(loop_data)}")
-                    loop_vars = {iterator_name: item}
-                    if extra_vars:
-                        loop_vars.update(extra_vars)
-                    processed_result = process_task_sequence(task.get('run', []), loop_vars)
-                    results.append(processed_result)
-                    logger.info(f"Completed loop item {idx + 1} {item}", extra={'results': processed_result})
-                return results
-            else:
-                logger.info("No loop found, executing tasks directly")
-                return process_task_sequence(task.get('run', []), extra_vars or {})
-
+                if iterator_name and iterator_name in extra_vars:
+                    return {iterator_name: extra_vars[iterator_name]}
+            return extra_vars or {}
         except Exception as e:
             logger.error(f"Error in runner task: {e}", exc_info=True)
             raise
-
-
-
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -435,7 +451,6 @@ def parse_arguments() -> argparse.Namespace:
         action='store_true',
         help='Run in mock mode (simulate HTTP requests)'
     )
-
 
     parser.add_argument(
         '-f', '--file',
