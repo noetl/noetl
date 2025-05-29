@@ -34,7 +34,7 @@ workbook:
         type: http
         method: GET
         desc: "Get weather forecast for {{ city.name }}"
-        endpoint: "https://api.open-meteo.com/v1/forecast"
+        endpoint: "{{ context.base_url }}/forecast"
         params:
           latitude: "{{ city.lat }}"
           longitude: "{{ city.lon }}"
@@ -46,95 +46,95 @@ workbook:
             type: python
             desc: "Process forecast data for {{ city.name }}"
             code: |
-              import logging
-              logging.info(f"Processing results: {results}")
-              if isinstance(results, dict):
-                  if 'data' in results:
-                      response_data = results['data']
+              def main(context, results):
+                  if isinstance(results, dict):
+                      if 'data' in results:
+                          response_data = results['data']
+                      else:
+                          response_data = results
                   else:
-                      response_data = results
-              else:
-                  response_data = {'error': 'Invalid response format'}
-                  logging.error(f"Invalid response format: {results}")
-                  return response_data
-              
-              logging.info(f"Response data: {response_data}")
-              
-              try:
-                  hourly_data = response_data.get('hourly', {})
-                  temps = hourly_data.get('temperature_2m', [0])
-                  winds = hourly_data.get('windspeed_10m', [])
-                  
-                  max_temp = max(temps) if temps else 0
-                  high_wind_hours = len([w for w in winds if w > 20]) if winds else 0
-                  
-                  result = {
-                      'city': '{{ city.name }}',
-                      'max_temp': max_temp,
-                      'high_wind_hours': high_wind_hours,
-                      'needs_alert': max_temp > {{ context.temperature_threshold }},
-                      'raw_data': response_data
-                  }
-                  
-                  logging.info(f"Processed result: {result}")
-                  return result
-                  
-              except Exception as e:
-                  error_msg = f"Error processing data: {str(e)}"
-                  logging.error(error_msg)
-                  return {
-                      'city': '{{ city.name }}',
-                      'error': error_msg,
-                      'raw_data': response_data
-                  }
-
-
+                      response_data = {'error': 'Invalid response format'}
+                      logger.error(f"Invalid response format: {results}")
+                      return response_data
+          
+                  logger.info(f"Response data: {response_data}")
+          
+                  try:
+                      hourly_data = response_data.get('hourly', {})
+                      temps = hourly_data.get('temperature_2m', [0])
+                      winds = hourly_data.get('windspeed_10m', [])
+          
+                      max_temp = max(temps) if temps else 0
+                      high_wind_hours = len([w for w in winds if w > 20]) if winds else 0
+          
+                      result = {
+                          'city': '{{ city.name }}',
+                          'max_temp': max_temp,
+                          'high_wind_hours': high_wind_hours,
+                          'needs_alert': max_temp > context['temperature_threshold'],
+                          'raw_data': response_data
+                      }
+          
+                      logger.info(f"Processed result: {result}")
+                      return result
+          
+                  except Exception as e:
+                      error_msg = f"Error processing data: {str(e)}"
+                      logger.error(error_msg)
+                      return {
+                          'city': '{{ city.name }}',
+                          'error': error_msg,
+                          'raw_data': response_data
+                      }
 
   - task: analyze_weather_patterns
     type: python
     desc: "Analyze weather patterns across cities"
     code: |
-      import logging
-      raw_data = results.get('fetch_weather_data', [])
-      cities_data = []
-      errors = []
-      
-      logging.info(f"Analyzing raw data: {raw_data}")
-      
-      for city_group in raw_data:
-          if not city_group:
-              continue
-              
-          for city_result in city_group:
-              if isinstance(city_result, dict):
-                  if 'error' in city_result:
-                      errors.append(city_result)
-                  else:
-                      cities_data.append({
-                          'city': city_result.get('city'),
-                          'max_temp': city_result.get('max_temp', 0),
-                          'high_wind_hours': city_result.get('high_wind_hours', 0),
-                          'needs_alert': city_result.get('needs_alert', False)
-                      })
+      def main(context, results):
+          import logging
+          logging.basicConfig(level=logging.INFO)
 
-      alert_cities = [city for city in cities_data if city.get('needs_alert')]
+          raw_data = context.get('fetch_weather_data', [])
+          cities_data = []
+          errors = []
 
-      result = {
-          'total_cities': len(cities_data),
-          'alert_needed': len(alert_cities) > 0,
-          'alert_cities': alert_cities,
-          'cities_data': cities_data,
-          'errors': errors,
-          'has_errors': len(errors) > 0
-      }
-      logging.info(f"Analysis result: {result}")
+          logging.info(f"Analyzing raw data: {raw_data}")
 
+          for city_group in raw_data:
+              if not city_group:
+                  continue
+
+              for city_result in city_group:
+                  if isinstance(city_result, dict):
+                      if 'error' in city_result:
+                          errors.append(city_result)
+                      else:
+                          cities_data.append({
+                              'city': city_result.get('city'),
+                              'max_temp': city_result.get('max_temp', 0),
+                              'high_wind_hours': city_result.get('high_wind_hours', 0),
+                              'needs_alert': city_result.get('needs_alert', False)
+                          })
+
+          alert_cities = [city for city in cities_data if city.get('needs_alert')]
+
+          result = {
+              'total_cities': len(cities_data),
+              'alert_needed': len(alert_cities) > 0,
+              'alert_cities': alert_cities,
+              'cities_data': cities_data,
+              'errors': errors,
+              'has_errors': len(errors) > 0
+          }
+
+          logging.info(f"Analysis result: {result}")
+          return result
 
   - task: send_alerts
     type: http
     method: POST
     desc: "Send alerts for high temperature cities"
-    when: "{{ results.analyze_weather_patterns.alert_needed }}"
     endpoint: "{{ context.alert_endpoint }}/weather-alerts"
     payload:
       cities: "{{ results.analyze_weather_patterns.alert_cities }}"
@@ -148,15 +148,36 @@ workbook:
     endpoint: "{{ context.db_endpoint }}/weather-data"
     payload: "{{ results.fetch_weather_data }}"
 
+  - task: log_error
+    type: http
+    method: POST
+    desc: "Log errors"
+    endpoint: "{{ context.alert_endpoint }}/errors"
+    payload:
+      jobId: "{{ context.jobId }}"
+      error: "{{ context.error }}"
+      state: "{{ context.state }}"
+
+  - task: update_status
+    type: http
+    method: POST
+    desc: "Update job status"
+    endpoint: "{{ context.db_endpoint }}/jobs/{{ context.jobId }}"
+    payload:
+      status: "completed"
+      timestamp: "{{ now() }}"
 
 workflow:
   - step: start
     next:
       - when: "{{ context.state == 'ready' }}"
-        then: [fetch_data]
+        then:
+          - step: fetch_data
       - when: "{{ context.state == 'error' }}"
-        then: [error_handler]
-      - else: [end]
+        then:
+          - step: error_handler
+      - else:
+          - step: end
 
   - step: fetch_data
     desc: "Fetch weather data for given cities"
@@ -164,21 +185,32 @@ workflow:
       - task: fetch_weather_data
     next:
       - when: "{{ results.fetch_weather_data is not none }}"
-        then: [analyze_data]
+        then:
+          - step: analyze_data
+            fetch_weather_data: "{{ results.fetch_weather_data }}"
       - when: "{{ results.fetch_weather_data is none }}"
-        then: [error_handler]
-      - else: [end]
+        then:
+          - step: error_handler
+      - else:
+          - step: end
 
   - step: analyze_data
     desc: "Analyze weather data and trigger alerts if needed"
     run:
       - task: analyze_weather_patterns
     next:
-      - when: "{{ results.analyze_weather_patterns.alert_needed }}"
-        then: [send_alerts, store_results]
-      - when: "{{ not results.analyze_weather_patterns.alert_needed }}"
-        then: [store_results]
-      - else: [error_handler]
+      - when: "{{ context.analyze_weather_patterns.alert_needed }}"
+        then:
+          - step: send_alerts
+            analyze_weather_patterns: "{{ context.analyze_weather_patterns }}"
+          - step: store_results
+            analyze_weather_patterns: "{{ context.analyze_weather_patterns }}"
+      - when: "{{ not context.analyze_weather_patterns.alert_needed }}"
+        then:
+          - step: store_results
+            analyze_weather_patterns: "{{ context.analyze_weather_patterns }}"
+      - else:
+          - step: error_handler
 
   - step: send_alerts
     desc: "Send alerts for cities with high temperatures"
@@ -186,10 +218,14 @@ workflow:
       - task: send_alerts
     next:
       - when: "{{ results.send_alerts.status == 'success' }}"
-        then: [store_results]
+        then:
+          - step: store_results
+            send_alerts: "{{ results.send_alerts }}"
       - when: "{{ results.send_alerts.status != 'success' }}"
-        then: [error_handler]
-      - else: [error_handler]
+        then:
+          - step: error_handler
+      - else:
+          - step: error_handler
 
   - step: store_results
     desc: "Store processed weather data in database"
@@ -197,37 +233,29 @@ workflow:
       - task: store_data
     next:
       - when: "{{ results.store_data.status == 'success' }}"
-        then: [complete]
+        then:
+          - step: complete
       - when: "{{ results.store_data.status != 'success' }}"
-        then: [error_handler]
-      - else: [error_handler]
+        then:
+          - step: error_handler
+      - else:
+          - step: error_handler
 
   - step: error_handler
     desc: "Handle errors in the workflow"
     run:
       - task: log_error
-        type: http
-        method: POST
-        endpoint: "{{ context.alert_endpoint }}/errors"
-        payload:
-          jobId: "{{ context.jobId }}"
-          error: "{{ context.error }}"
-          state: "{{ context.state }}"
     next:
-      - then: [end]
+      - then:
+          - step: end
 
   - step: complete
     desc: "Final step to mark workflow completion"
     run:
       - task: update_status
-        type: http
-        method: POST
-        endpoint: "{{ context.db_endpoint }}/jobs/{{ context.jobId }}"
-        payload:
-          status: "completed"
-          timestamp: "{{ now() }}"
     next:
-      - then: [end]
+      - then:
+          - step: end
 
   - step: end
     desc: "The end of workflow"
