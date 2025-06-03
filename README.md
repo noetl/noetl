@@ -2,6 +2,7 @@
 __NoETL__ ("Not Only ETL") is a workflow automation framework designed for processing data in distributed runtime environments.
 
   - [NoETL Playbook Specification](wiki/playbook_specification.md)
+  - [NoETL Playbook Weather Example](data/catalog/playbooks/weather_example.yaml)
 
 Originally built for data pipelines and MLOps orchestration, NoETL supports advanced use cases in __Agentic AI automation__ of dynamic, plugin-based task execution at scale.
 
