@@ -1,103 +1,78 @@
-# NoETL Workflow Execution System Documentation
+# NoETL Documentation
+__NoETL__ ("Not Only ETL") is a workflow automation framework designed for processing data in distributed runtime environments.
 
-- [Dynamic Agent Execution Engine](https://github.com/noetl/noetl/wiki/Dynamic-Agent-Execution-Engine)
+  - [NoETL Playbook Specification](wiki/playbook_specification.md)
 
-NoETL ("Not Only ETL") is a workflow automation library and framework to simplify the process of defining, managing, and executing complex workflows. Particularly well-suited for orchestrating data processing pipelines, it extends beyond just ETL tasks and is designed for task automation in distributed runtime environments.
+Originally built for data pipelines and MLOps orchestration, NoETL supports advanced use cases in __Agentic AI automation__ of dynamic, plugin-based task execution at scale.
+
+---
 
 ## Introduction
 
-This repository contains the `noetl` library which is available on pip [here](https://pypi.org/project/noetl/). 
+This repository contains the `noetl` Python library, available on PyPI:  
+- [__NoETL on PyPI__](https://pypi.org/project/noetl/)
+- NoETL is a workflow execution engine designed to automate tasks defined in [YAML-based playbooks](wiki/playbook_specification.md). 
+- The architecture draws inspiration from Erlang's resilience and modular design principles.
 
-The actual runtime applications are located in other repositories:
-- [API](https://github.com/noetl/noetl-api)
-- [Plugins](https://github.com/noetl/noetl-plugins)
-- [NATS Kubernetes dependencies](https://github.com/noetl/k8s)
-
-The NoETL system is a workflow execution engine designed to automate the execution of tasks defined in a playbook or just deployed as services. It employs a publisher-subscriber pattern for `command` transmission and `event` reception using the NATS messaging system. Inspired by Erlang's architecture, NoETL leverages a plugin-based approach, enabling a scalable, resilient, and efficient execution environment.
+---
 
 ## Architecture Overview
 
-At its core, NoETL is built around a publisher-subscriber model that utilizes the NATS messaging system. This system is designed for the automated execution of tasks as defined by a specific playbook, incorporating an Erlang-inspired, plugin-based architecture.
+Tasks are executed according to [declarative playbooks](wiki/playbook_specification.md), and plugins are treated as isolated services.
 
-## Plugin-Based Workflow and Erlang Design Principles
+### Process-Based Design Inspired by Erlang
 
-NoETL's architecture draws heavily from several key concepts of Erlang:
+#### Key Principles:
 
-- **Everything as a Plugin:** All functional units in NoETL are treated as plugins, similar to Erlang's process encapsulation. These plugins are Docker images that can be executed as services or jobs within a Kubernetes environment. In playbooks, the term 'plugin' refers to an alias to Docker images.
-- **Strong Isolation:** Each plugin operates independently and in isolation, akin to Erlang's process isolation.
-- **Lightweight Plugin Management:** Dynamic and efficient creation and destruction of plugin instances are central to NoETL, enabling a scalable architecture.
-- **Message Passing Interaction:** Plugins communicate through message passing via NATS streams, ensuring targeted and accurate messaging.
-- **No Shared Resources:** Plugins operate without shared resources, fostering isolated execution and reduced contention.
-- **Resilience and Reliability:** Each plugin is designed to perform effectively or fail gracefully, ensuring the robustness of the system.
+- **Everything is a Process:** Every unit of execution whether a task, step, or plugin—is treated as an isolated, addressable process with its own lifecycle and context. These processes may be short-lived (jobs) or long-lived (services), and they communicate asynchronously through messages.
+- **Strong Isolation:** Each process runs independently, with no shared state. Failures are contained and localized.
+- **Dynamic Scaling:** Processes can be created and terminated on demand, allowing the system to scale fluidly.
+- **Asynchronous Messaging:** Processes interact through targeted, decoupled message passing, not shared memory or direct function calls.
+- **Fail-Fast & Resilient:** Each process is designed to either complete its task or fail gracefully.
+
+---
 
 ## Workflow
 
-In NoETL, workflows are defined as playbooks – YAMLs declarations to direct the execution of tasks. Each playbook describes a series of steps within tasks, where each step corresponds to a specific plugin implementation.
+Workflows are defined using [YAML-based playbooks](wiki/playbook_specification.md). 
 
-## Tasks and Steps
+### Tasks and Steps
 
-Tasks are the primary operational elements within a playbook, consisting of multiple sequential steps:
+- **Task:** A named set of units that can be executed in parallel or sequentially.  
+- **Step:** A state of the system transaction, representing a transition invocation.
 
-- **Parallel Task Execution:** Tasks can be executed concurrently, enhancing playbook efficiency.
-- **Sequential Step Execution:** Steps within a task are executed in order, with each step needing to complete before the next begins.
-- **Atomic Operation - Step:** The most atomic operation in NoETL is the 'step,' referring to the execution of a plugin module.
+---
 
 ## Events and Commands
 
-Events and commands drive the operation of NoETL:
+The runtime is event-driven:
 
-- **Commands:** Trigger the execution of a step in the task.
-- **Events:** Published upon step and task completion, signaling its end.
+- **Command:** trigger a specific plugin or step execution.  
+- **Event:** emitted after step or task completion, used to signal readiness or failure.
 
-This model maintains a decoupled and fault-tolerant playbook execution.
+---
 
-## NATS Communication Subjects
 
-Subjects in NoETL provide contextual information:
+## Prerequisites
 
-- **Command Subjects:** `command.<plugin_service_name>.<workflow_instance_id>`
-- **Event Subjects:** `event.<plugin_service_name>.<workflow_instance_id>`
- 
-**N.B.** Error handling is a part of event subjects.
-
-## Microservice-Plugin Architecture
-
-NoETL includes several core service plugins:
-
-- **NoETL GraphQL API plugin service:** Provides an interface for querying and interacting with NoETL using GraphQL.
-- **Dispatcher plugin service:** Responsible for dispatch actions, steps' output, task queue management, and creating commands for the next steps to be executed by actual plugins.
-- **Registrar plugin service:**  Manages playbook, plugin, and command reception and registration.
-
-Plugins communicate using NATS messaging, driven by YAML playbooks specifying task sequences. The Kubernetes environment serves as the execution platform.  
-
-### Prerequisites
-
-- Python 3.11 or later
+- Python 3.12+
 - [pip](https://pip.pypa.io/en/stable/installation/)
-- Docker Desktop's Kubernetes cluster, for local development
+- Docker (for local plugin development and testing)
 
-### Installation
+---
 
-To install NoETL use `pip`:
+## Installation
+
+Install NoETL with:
 
 ```bash
-pip install noetl
-```
-
-### Get started
-
-make install-uv
-
-make create-venv
-
+make install-uv        # Install uv pip
+make create-venv       # Create a Python virtual environment
 source .venv/bin/activate
-
-make install
-
-make build -- init env(Postgresql, and noetl server)
-
-noetl
-
-make up    -- up (postgresql + api)
-
-noetl server
+make install           # Install dependencies
+make build             # Initialize environment (PostgreSQL, NoETL server)
+make up                # Start docker services
+noetl server           # Run the NoETL server
+```
+## License
+NoETL is open source and available under the MIT License.
