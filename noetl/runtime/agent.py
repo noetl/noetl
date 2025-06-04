@@ -4,14 +4,14 @@ import requests
 import uuid
 import time
 from datetime import datetime
-from typing import Dict, Any, List, Union
+from typing import Dict, Any
 import sys
 import os
 from urllib.parse import urlparse
 import json
-import textwrap
 import argparse
 from noetl.util import setup_logger
+import random
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -21,15 +21,27 @@ def mock_http_response(task: Dict) -> Dict:
     method = task.get('method', 'GET')
     parsed_url = urlparse(endpoint)
 
+    if not hasattr(mock_http_response, "last_above_25"):
+        mock_http_response.last_above_25 = False
+
     if '/forecast' in parsed_url.path:
+        if not mock_http_response.last_above_25:
+            temps = [round(random.uniform(20, 30), 1) for _ in range(24)]
+            temps[random.randint(0, 23)] = round(random.uniform(26, 30), 1)
+            mock_http_response.last_above_25 = True
+        else:
+            temps = [round(random.uniform(20, 24.9), 1) for _ in range(24)]
+            mock_http_response.last_above_25 = False
+        precip = [random.randint(0, 100) for _ in range(24)]
+        wind = [round(random.uniform(5, 25), 1) for _ in range(24)]
         return {
             'status': 'success',
             'status_code': 200,
             'data': {
                 'hourly': {
-                    'temperature_2m': [25.5, 21.0, 22.5, 23.0, 24.5],
-                    'precipitation_probability': [0, 10, 20, 30, 40],
-                    'windspeed_10m': [5, 8, 12, 15, 18]
+                    'temperature_2m': temps,
+                    'precipitation_probability': precip,
+                    'windspeed_10m': wind
                 }
             }
         }
@@ -53,17 +65,37 @@ def mock_http_response(task: Dict) -> Dict:
         }
 
 
-def deep_merge_dicts(a, b):
-    """Recursively merge dict b into dict a and return the result."""
+def deep_merge(a, b):
     result = dict(a)
     for k, v in b.items():
         if (
             k in result and isinstance(result[k], dict) and isinstance(v, dict)
         ):
-            result[k] = deep_merge_dicts(result[k], v)
+            result[k] = deep_merge(result[k], v)
         else:
             result[k] = v
     return result
+
+
+def execute_python_task(task: Dict, namespace: Dict) -> Any:
+    namespace = dict(namespace)
+    namespace.update({'__builtins__': __builtins__})
+    try:
+        exec(task.get('code', ''), namespace)
+        main_func = namespace.get('main')
+        if not main_func or not callable(main_func):
+            raise ValueError("Python task must define a 'main' function")
+        import inspect
+        sig = inspect.signature(main_func)
+        input_data = namespace.get('input', {})
+        filtered_input = {k: v for k, v in input_data.items() if k in sig.parameters}
+        result = main_func(**filtered_input)
+        if isinstance(result, dict) and 'status' in result and 'data' in result:
+            return result
+        return {'status': 'success', 'data': result}
+    except Exception as e:
+        logger.error(f"Error executing Python task: {e}", exc_info=True)
+        return {'status': 'error', 'error': str(e)}
 
 
 class PlaybookAgent:
@@ -76,7 +108,7 @@ class PlaybookAgent:
             undefined=jinja2.StrictUndefined,
             autoescape=False
         )
-        self.environment.filters['to_json'] = json.dumps
+        self.environment.trim_blocks = True
         self.jinja2_filters = {
             'to_json': json.dumps
         }
@@ -182,6 +214,8 @@ class PlaybookAgent:
         if task_def.get('type') == 'loop' or task_def.get('loop'):
             loop_data = self.render_template(task_def.get('in'), context)
             iterator_name = task_def.get('iterator', 'item')
+            if not isinstance(iterator_name, str):
+                iterator_name = 'item'
 
             if not isinstance(loop_data, list):
                 if isinstance(loop_data, dict):
@@ -191,24 +225,32 @@ class PlaybookAgent:
 
             results = []
             for item in loop_data:
-                iter_context = deep_merge_dicts(self.context, context)
+                iter_context = deep_merge(self.context, context or {})
                 iter_context[iterator_name] = item
                 iteration_results = {}
                 for run_task in task_def.get('run', []):
                     try:
-                        # Always use the latest iter_context (with previous results)
-                        run_task_context = deep_merge_dicts(iter_context, iteration_results)
+                        run_task_context = deep_merge(iter_context, iteration_results)
+                        run_task_context[iterator_name] = item
                         if run_task.get('with'):
                             with_ctx = self.render_template(run_task['with'], run_task_context)
-                            run_task_context = deep_merge_dicts(run_task_context, with_ctx)
+                            run_task_context = deep_merge(run_task_context, with_ctx)
+                        if iterator_name not in run_task_context or run_task_context.get(iterator_name) is None:
+                            run_task_context[iterator_name] = item
                         task_type = run_task.get('type', 'http')
-                        result = self.execute_task_instance(run_task, task_type, run_task_context)
-                        if isinstance(result, dict):
-                            iteration_results[run_task.get('task')] = result.get('data', result)
+                        if run_task.get('type') == 'python' and run_task.get('with'):
+                            input_data = self.render_template(run_task['with'], run_task_context)
+                            namespace = {
+                                'context': run_task_context,
+                                'results': self.results,
+                                'logger': logger,
+                                'input': input_data
+                            }
+                            result = execute_python_task(run_task, namespace)
                         else:
-                            iteration_results[run_task.get('task')] = result
-                        # Update iter_context with the result for next tasks
-                        iter_context[run_task.get('task')] = iteration_results[run_task.get('task')]
+                            result = self.execute_task_instance(run_task, task_type, run_task_context)
+                        iteration_results[run_task.get('task')] = result
+                        iter_context[run_task.get('task')] = result
                     except Exception as e:
                         if run_task.get('on_error') == 'continue':
                             logger.warning(f"Task error (continuing): {e}")
@@ -336,34 +378,66 @@ class PlaybookAgent:
             return result
 
         elif task_type == 'python':
-            # Merge 'with' context if present
-            py_context = deep_merge_dicts(context or {}, {})
             if task.get('with'):
-                with_ctx = self.render_template(task['with'], py_context)
-                py_context = deep_merge_dicts(py_context, with_ctx)
-            result = self.execute_python_task(task, py_context)
-            task_name = task.get('task')
-            if task_name:
-                py_context[task_name] = result
-            return result
+                input_data = self.render_template(task['with'], context or {})
+            else:
+                input_data = context or {}
+
+            namespace = {
+                'context': context,
+                'results': self.results,
+                'logger': logger
+            }
+            namespace.update({'__builtins__': __builtins__})
+
+            try:
+                exec(task.get('code', ''), namespace)
+                main_func = namespace.get('main')
+                if not main_func or not callable(main_func):
+                    raise ValueError("Python task must define a 'main' function")
+
+                import inspect
+                sig = inspect.signature(main_func)
+                filtered_input = {k: v for k, v in input_data.items() if k in sig.parameters}
+                result = main_func(**filtered_input)
+                task_name = task.get('task')
+                if task_name and context is not None:
+                    context[task_name] = result
+                    if isinstance(result, dict):
+                        context[task_name].update(result)
+
+                if isinstance(result, dict) and 'status' in result and 'data' in result:
+                    return result
+                return {
+                    'status': 'success',
+                    'data': result
+                }
+            except Exception as e:
+                logger.error(f"Error executing Python task: {e}", exc_info=True)
+                return {
+                    'status': 'error',
+                    'error': str(e)
+                }
 
         elif task_type == 'loop':
             logger.debug(f"Executing loop task with configuration: {json.dumps(task, indent=2)}")
             loop_data = self.render_template(task.get('in'), context)
             iterator_name = task.get('iterator', 'item')
+            if not isinstance(iterator_name, str):
+                iterator_name = 'item'
 
             if not isinstance(loop_data, list):
                 if isinstance(loop_data, dict):
                     loop_data = [loop_data]
                 else:
-                    raise ValueError(f"Loop data must be a list or dict, got: {type(loop_data)}")
+                    raise ValueError(f"Loop data is {type(loop_data)} must be a list or dict")
 
             results = []
             run_tasks = task.get('run', [])
             for item in loop_data:
                 iteration_context = {
                     **self.context,
-                    iterator_name: item,
+                    str(iterator_name): item,
                     'results': {},
                     **(context or {})
                 }
@@ -380,11 +454,28 @@ class PlaybookAgent:
                             if not should_execute:
                                 continue
                         task_type = run_task.get('type', 'http')
-                        result = self.execute_task_instance(
-                            run_task,
-                            task_type,
-                            {**iteration_context, **iteration_results}
-                        )
+                        run_task_context = {**iteration_context, **iteration_results}
+                        run_task_context[str(iterator_name)] = item
+                        if run_task.get('with'):
+                            with_ctx = self.render_template(run_task['with'], run_task_context)
+                            run_task_context = deep_merge(run_task_context, with_ctx)
+                        if str(iterator_name) not in run_task_context or run_task_context.get(iterator_name) is None:
+                            run_task_context[iterator_name] = item
+                        if run_task.get('type') == 'python' and run_task.get('with'):
+                            input_data = self.render_template(run_task['with'], run_task_context)
+                            namespace = {
+                                'context': run_task_context,
+                                'results': self.results,
+                                'logger': logger,
+                                'input': input_data
+                            }
+                            result = execute_python_task(run_task, namespace)
+                        else:
+                            result = self.execute_task_instance(
+                                run_task,
+                                task_type,
+                                run_task_context
+                            )
                         task_name = run_task.get('task')
                         if task_name:
                             iteration_results[task_name] = result
@@ -408,48 +499,6 @@ class PlaybookAgent:
         else:
             raise ValueError(f"Unsupported task type: {task_type}")
 
-    def execute_python_task(self, task: Dict, context: Dict = None) -> Dict:
-        code = task.get('code', '')
-        task_input = task.get('input', {})
-        if task_input:
-            input_data = {
-                k: self.render_template(v, context)
-                for k, v in task_input.items()
-            }
-        else:
-            input_data = {}
-
-        namespace = {
-            'context': context,
-            'results': self.results,
-            'logger': logger,
-            'input': input_data
-        }
-
-        try:
-            exec(code, namespace)
-            main_func = namespace.get('main')
-            if not main_func or not callable(main_func):
-                raise ValueError("Python task must define a 'main' function")
-
-            result = main_func(input_data)
-            task_name = task.get('task')
-            if task_name and context is not None:
-                context[task_name] = result
-                if isinstance(result, dict):
-                    context[task_name].update(result)
-
-            return {
-                'status': 'success',
-                'data': result
-            }
-        except Exception as e:
-            logger.error(f"Error executing Python task: {e}", exc_info=True)
-            return {
-                'status': 'error',
-                'error': str(e)
-            }
-
     def execute_step(self, step_name: str) -> str:
         if not hasattr(self, 'jinja2_filters'):
             self.jinja2_filters = {}
@@ -469,10 +518,9 @@ class PlaybookAgent:
 
         try:
             step_context = {}
-            # Merge 'with' context if present
             if 'with' in step:
                 with_ctx = self.render_template(step.get('with'), self.context)
-                step_context = deep_merge_dicts(self.context, with_ctx)
+                step_context = deep_merge(self.context, with_ctx)
             else:
                 step_context = dict(self.context)
 
@@ -484,11 +532,10 @@ class PlaybookAgent:
                 for task in step.get('run', []):
                     task_name = task.get('task')
                     try:
-                        # Merge 'with' context if present
-                        task_context = deep_merge_dicts(step_context, {})
+                        task_context = deep_merge(step_context, {})
                         if task.get('with'):
                             with_ctx = self.render_template(task['with'], task_context)
-                            task_context = deep_merge_dicts(task_context, with_ctx)
+                            task_context = deep_merge(task_context, with_ctx)
 
                         result = self.execute_task(task_name, context=task_context)
                         step_results[task_name] = result
@@ -522,7 +569,7 @@ class PlaybookAgent:
                                 if isinstance(next_step, dict):
                                     if next_step.get('with'):
                                         with_params = self.render_template(next_step.get('with'), self.context)
-                                        self.context = deep_merge_dicts(self.context, with_params)
+                                        self.context = deep_merge(self.context, with_params)
                                     return next_step.get('step', 'end')
                                 return next_step
                     except jinja2.exceptions.UndefinedError as e:
@@ -536,7 +583,7 @@ class PlaybookAgent:
                     if isinstance(next_step, dict):
                         if next_step.get('with'):
                             with_params = self.render_template(next_step.get('with'), self.context)
-                            self.context = deep_merge_dicts(self.context, with_params)
+                            self.context = deep_merge(self.context, with_params)
                         return next_step.get('step', 'end')
                     return next_step
 
@@ -601,3 +648,4 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+

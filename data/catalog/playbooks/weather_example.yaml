@@ -48,12 +48,13 @@ workbook:
         desc: "Process forecast data for {{ city.name }}"
         with:
           forecast_response: "{{ get_forecast }}"
-          city: "{{ city }}"
-          temperature_threshold: "{{ workload.temperature_threshold }}"
+          city: "{{ city | to_json }}"
+          temperature_threshold: "{{ temperature_threshold }}"
         code: |
-          def main(input):
-              city_name = input.get('city', {}).get('name')
-              response_data = input.get('forecast_response', {}).get('data', {})
+          def main(city, forecast_response, temperature_threshold):
+              logger.info(f"Processing forecast input for city: {city}")
+              city_name = city.get('name') if city else None
+              response_data = forecast_response.get('data', {})
               try:
                   hourly = response_data.get('hourly', {})
                   temps = hourly.get('temperature_2m', [])
@@ -66,7 +67,7 @@ workbook:
                           'city': city_name,
                           'max_temp': max_temp,
                           'high_wind_hours': high_wind_hours,
-                          'needs_alert': max_temp > input.get('temperature_threshold', 0),
+                          'needs_alert': max_temp > temperature_threshold,
                           'raw_data': response_data
                       }
                   }
