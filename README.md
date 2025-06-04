@@ -1,24 +1,18 @@
 # NoETL Documentation
 __NoETL__ ("Not Only ETL") is an _Agentic AI automation framework_ designed for MLOps orchestration and processing data in distributed runtime environments.
 
-  - [NoETL Playbook Specification](wiki/playbook_specification.md)
-  - [NoETL Playbook Weather Example](data/catalog/playbooks/weather_example.yaml)
+  - [__NoETL Playbook Specification__](wiki/playbook_specification.md)
+    - [Playbook EBNF](data/catalog/playbook.ebnf)
+    - [Playbook Weather Example](data/catalog/playbooks/weather_example.yaml)
 
 ---
 
 ## Introduction
 
 This repository contains the `noetl` Python library, available on PyPI:  
-- [__NoETL on PyPI__](https://pypi.org/project/noetl/)
-- NoETL is a workflow execution engine designed to automate tasks defined in [YAML-based playbooks](wiki/playbook_specification.md). 
-- The architecture draws inspiration from Erlang's resilience and modular design principles.
 
----
-
-## Architecture Overview
-
-- Workflows are executed according to [declarative playbooks](wiki/playbook_specification.md)  
-- [Execution Model](wiki/execution_model.md)
+- [__NoETL Execution Model__](wiki/execution_model.md)
+- [__NoETL Python library on PyPI__](https://pypi.org/project/noetl/)
 
 ### Process-Based Design Inspired by Erlang
 
