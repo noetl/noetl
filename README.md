@@ -1,10 +1,8 @@
 # NoETL Documentation
-__NoETL__ ("Not Only ETL") is a workflow automation framework designed for processing data in distributed runtime environments.
+__NoETL__ ("Not Only ETL") is an _Agentic AI automation framework_ designed for MLOps orchestration and processing data in distributed runtime environments.
 
   - [NoETL Playbook Specification](wiki/playbook_specification.md)
   - [NoETL Playbook Weather Example](data/catalog/playbooks/weather_example.yaml)
-
-Originally built for data pipelines and MLOps orchestration, NoETL supports advanced use cases in __Agentic AI automation__ of dynamic, plugin-based task execution at scale.
 
 ---
 
@@ -19,37 +17,27 @@ This repository contains the `noetl` Python library, available on PyPI:
 
 ## Architecture Overview
 
-Tasks are executed according to [declarative playbooks](wiki/playbook_specification.md), and plugins are treated as isolated services.
+- Workflows are executed according to [declarative playbooks](wiki/playbook_specification.md)  
+- [Execution Model](wiki/execution_model.md)
 
 ### Process-Based Design Inspired by Erlang
 
 #### Key Principles:
 
-- **Everything is a Process:** Every unit of execution whether a task, step, or plugin—is treated as an isolated, addressable process with its own lifecycle and context. These processes may be short-lived (jobs) or long-lived (services), and they communicate asynchronously through messages.
+- **Everything is a Process:** Every unit of execution whether a task, step, are treated as an isolated, addressable process with its own lifecycle and context. These processes may be short-lived (jobs) or long-lived (services), and they communicate asynchronously through messages.
 - **Strong Isolation:** Each process runs independently, with no shared state. Failures are contained and localized.
 - **Dynamic Scaling:** Processes can be created and terminated on demand, allowing the system to scale fluidly.
-- **Asynchronous Messaging:** Processes interact through targeted, decoupled message passing, not shared memory or direct function calls.
+- **Asynchronous Messaging:** Data is passing only via explicit context/messages between tasks and steps, inspired by Erlang's process model.
 - **Fail-Fast & Resilient:** Each process is designed to either complete its task or fail gracefully.
 
----
 
-## Workflow
+#### Benefits for Data Processing:
 
-Workflows are defined using [YAML-based playbooks](wiki/playbook_specification.md). 
-
-### Tasks and Steps
-
-- **Task:** A named set of units that can be executed in parallel or sequentially.  
-- **Step:** A state of the system transaction, representing a transition invocation.
-
----
-
-## Events and Commands
-
-The runtime is event-driven:
-
-- **Command:** trigger a specific plugin or step execution.  
-- **Event:** emitted after step or task completion, used to signal readiness or failure.
+- __Isolation:__ Each task operates on its own data, reducing side effects and making debugging easier.
+- __Composability:__ Chain and nest tasks flexibly, as each task only needs its input.
+- __Parallelism:__ Isolated tasks can be run in parallel for streaming data processing pipelines.
+- __Determinism:__ No hidden state, data flows are explicit and traceable.
+- __Error Handling:__ Failures are contained and routed to error handlers, just like Erlang's "let it crash".
 
 ---
 
