@@ -53,6 +53,19 @@ def mock_http_response(task: Dict) -> Dict:
         }
 
 
+def deep_merge_dicts(a, b):
+    """Recursively merge dict b into dict a and return the result."""
+    result = dict(a)
+    for k, v in b.items():
+        if (
+            k in result and isinstance(result[k], dict) and isinstance(v, dict)
+        ):
+            result[k] = deep_merge_dicts(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
 class PlaybookAgent:
     def __init__(self, playbook_path: str, mock: bool = False):
         self.playbook = self.load_playbook(playbook_path)
@@ -79,7 +92,7 @@ class PlaybookAgent:
             }
         }
         self.context.update(initial_context)
-        workload = self.render_dict_templates(self.playbook.get('workload', {}), initial_context)
+        workload = self.render_template(self.playbook.get('workload', {}), initial_context)
         self.context = {
             'job': initial_context['job'],
             'workload': workload
@@ -89,24 +102,6 @@ class PlaybookAgent:
     def load_playbook(path: str) -> dict:
         with open(path, 'r') as f:
             return yaml.safe_load(f)
-
-    def render_dict_templates(self, d: dict, context: dict) -> dict:
-        result = {}
-        for k, v in d.items():
-            if isinstance(v, str):
-                result[k] = self.render_template(v, context)
-            elif isinstance(v, dict):
-                result[k] = self.render_dict_templates(v, context)
-            elif isinstance(v, list):
-                result[k] = [
-                    self.render_dict_templates(item, context) if isinstance(item, dict)
-                    else self.render_template(item, context) if isinstance(item, str)
-                    else item
-                    for item in v
-                ]
-            else:
-                result[k] = v
-        return result
 
     def render_template(self, template, context: Dict = None) -> Any:
         if isinstance(template, dict):
@@ -196,31 +191,30 @@ class PlaybookAgent:
 
             results = []
             for item in loop_data:
-                iter_context = {
-                    **self.context,
-                    iterator_name: item,
-                    **context
-                }
-
+                iter_context = deep_merge_dicts(self.context, context)
+                iter_context[iterator_name] = item
                 iteration_results = {}
                 for run_task in task_def.get('run', []):
                     try:
+                        # Always use the latest iter_context (with previous results)
+                        run_task_context = deep_merge_dicts(iter_context, iteration_results)
+                        if run_task.get('with'):
+                            with_ctx = self.render_template(run_task['with'], run_task_context)
+                            run_task_context = deep_merge_dicts(run_task_context, with_ctx)
                         task_type = run_task.get('type', 'http')
-                        result = self.execute_task_instance(run_task, task_type, iter_context)
-
+                        result = self.execute_task_instance(run_task, task_type, run_task_context)
                         if isinstance(result, dict):
                             iteration_results[run_task.get('task')] = result.get('data', result)
                         else:
                             iteration_results[run_task.get('task')] = result
-
+                        # Update iter_context with the result for next tasks
+                        iter_context[run_task.get('task')] = iteration_results[run_task.get('task')]
                     except Exception as e:
                         if run_task.get('on_error') == 'continue':
                             logger.warning(f"Task error (continuing): {e}")
                             continue
                         raise
-
                 results.append(iteration_results)
-
             if isinstance(task_name, str):
                 self.results[task_name] = results
             return results
@@ -248,9 +242,9 @@ class PlaybookAgent:
                     task_def['type'] = 'loop'
                     task_def['loop'] = {
                         'iterator': task_def.get('iterator', 'item'),
-                        'in': task_def['in']
+                        'in': task_def.get('in')
                     }
-                elif 'type' not in task_def:
+                elif not task_def.get('type'):
                     task_def['type'] = 'http'
 
                 logger.debug(f"Processed task definition: {json.dumps(task_def, indent=2)}")
@@ -342,10 +336,15 @@ class PlaybookAgent:
             return result
 
         elif task_type == 'python':
-            result = self.execute_python_task(task, context)
+            # Merge 'with' context if present
+            py_context = deep_merge_dicts(context or {}, {})
+            if task.get('with'):
+                with_ctx = self.render_template(task['with'], py_context)
+                py_context = deep_merge_dicts(py_context, with_ctx)
+            result = self.execute_python_task(task, py_context)
             task_name = task.get('task')
             if task_name:
-                context[task_name] = result
+                py_context[task_name] = result
             return result
 
         elif task_type == 'loop':
@@ -470,25 +469,33 @@ class PlaybookAgent:
 
         try:
             step_context = {}
+            # Merge 'with' context if present
+            if 'with' in step:
+                with_ctx = self.render_template(step.get('with'), self.context)
+                step_context = deep_merge_dicts(self.context, with_ctx)
+            else:
+                step_context = dict(self.context)
+
             if 'input' in step:
-                step_context['input'] = self.render_template(step['input'])
+                step_context['input'] = self.render_template(step.get('input'), step_context)
 
             if step.get('run'):
                 step_results = {}
                 for task in step.get('run', []):
                     task_name = task.get('task')
                     try:
-                        task_context = {**step_context}
-                        if task.get('input'):
-                            task_input = self.render_template(task.get('input'))
-                            task_context['input'] = task_input
+                        # Merge 'with' context if present
+                        task_context = deep_merge_dicts(step_context, {})
+                        if task.get('with'):
+                            with_ctx = self.render_template(task['with'], task_context)
+                            task_context = deep_merge_dicts(task_context, with_ctx)
 
                         result = self.execute_task(task_name, context=task_context)
                         step_results[task_name] = result
                         self.context[task_name] = result
 
                         if task.get('output'):
-                            self.context[task['output']] = result
+                            self.context[task.get('output')] = result
                     except Exception as e:
                         if task.get('on_error') == 'continue':
                             logger.warning(f"Task {task_name} failed but continuing: {e}")
@@ -496,7 +503,7 @@ class PlaybookAgent:
                         raise
                 self.context['output'] = step_results
 
-            logger.debug(f"Context after step execution: {json.dumps(self.context, indent=2)}")
+            # logger.debug(f"Context after step execution: {json.dumps(self.context, indent=2)}")
             if not step.get('next'):
                 return 'end'
 
@@ -506,30 +513,30 @@ class PlaybookAgent:
                         env = jinja2.Environment(undefined=jinja2.StrictUndefined)
                         env.filters.update(self.jinja2_filters)
                         env.tests.update(self.jinja2_tests)
-                        template = env.from_string(transition['when'])
+                        template = env.from_string(transition.get('when'))
                         result = template.render(self.context)
-                        logger.debug(f"Evaluating condition: {transition['when']} -> {result}")
+                        logger.debug(f"Evaluating condition: {transition.get('when')} -> {result}")
                         if result.lower() in ('true', '1', 'yes'):
-                            if 'then' in transition and transition['then']:
-                                next_step = transition['then'][0]
+                            if 'then' in transition and transition.get('then'):
+                                next_step = transition.get('then')[0]
                                 if isinstance(next_step, dict):
-                                    if 'with' in next_step:
-                                        with_params = self.render_template(next_step['with'])
-                                        self.context.update(with_params)
+                                    if next_step.get('with'):
+                                        with_params = self.render_template(next_step.get('with'), self.context)
+                                        self.context = deep_merge_dicts(self.context, with_params)
                                     return next_step.get('step', 'end')
                                 return next_step
                     except jinja2.exceptions.UndefinedError as e:
                         logger.debug(f"Variable undefined in condition: {e}")
                         continue
                     except Exception as e:
-                        logger.error(f"Error evaluating condition '{transition['when']}': {e}")
+                        logger.error(f"Error evaluating condition '{transition.get('when')}': {e}")
                         raise
                 elif transition.get('else'):
-                    next_step = transition['else'][0]
+                    next_step = transition.get('else')[0]
                     if isinstance(next_step, dict):
-                        if 'with' in next_step:
-                            with_params = self.render_template(next_step['with'])
-                            self.context.update(with_params)
+                        if next_step.get('with'):
+                            with_params = self.render_template(next_step.get('with'), self.context)
+                            self.context = deep_merge_dicts(self.context, with_params)
                         return next_step.get('step', 'end')
                     return next_step
 
@@ -540,8 +547,6 @@ class PlaybookAgent:
             self.context['error'] = str(e)
             self.context['state'] = 'error'
             return 'error_handler'
-
-
 
 
 def parse_arguments() -> argparse.Namespace:

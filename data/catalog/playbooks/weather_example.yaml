@@ -25,14 +25,14 @@ workload:
 workbook:
   - task: fetch_weather_data
     type: loop
-    in: "{{ workload.cities | default([]) }}"
+    in: "{{ cities | default([]) }}"
     iterator: city
     run:
       - task: get_forecast
         type: http
         method: GET
         desc: "Get weather forecast for {{ city.name }}"
-        endpoint: "{{ workload.base_url }}/forecast"
+        endpoint: "{{ base_url }}/forecast"
         params:
           latitude: "{{ city.lat }}"
           longitude: "{{ city.lon }}"
@@ -46,13 +46,13 @@ workbook:
       - task: process_forecast
         type: python
         desc: "Process forecast data for {{ city.name }}"
-        input:
+        with:
           forecast_response: "{{ get_forecast }}"
           city: "{{ city }}"
           temperature_threshold: "{{ workload.temperature_threshold }}"
         code: |
           def main(input):
-              city_name = input['city']['name']
+              city_name = input.get('city', {}).get('name')
               response_data = input.get('forecast_response', {}).get('data', {})
               try:
                   hourly = response_data.get('hourly', {})
@@ -66,7 +66,7 @@ workbook:
                           'city': city_name,
                           'max_temp': max_temp,
                           'high_wind_hours': high_wind_hours,
-                          'needs_alert': max_temp > input['temperature_threshold'],
+                          'needs_alert': max_temp > input.get('temperature_threshold', 0),
                           'raw_data': response_data
                       }
                   }
@@ -86,10 +86,10 @@ workbook:
         method: POST
         desc: "Send alert for {{ city.name }} if needed"
         endpoint: "{{ workload.alert_endpoint }}/weather-alerts"
-        when: "{{ process_forecast.data.data.needs_alert | default(false) }}"
+        when: "{{ process_forecast.data.needs_alert | default(false) }}"
         payload:
-          city: "{{ process_forecast.data.data.city }}"
-          max_temp: "{{ process_forecast.data.data.max_temp }}"
+          city: "{{ process_forecast.data.city }}"
+          max_temp: "{{ process_forecast.data.max_temp }}"
           severity: "high"
           type: "temperature"
         retry: 3
@@ -97,12 +97,15 @@ workbook:
         on_error: continue
 
 
+
+
   - task: store_data
     type: http
     method: POST
     desc: "Store processed weather data"
     endpoint: "{{ workload.db_endpoint }}/weather-data"
-    payload: "{{ fetch_weather_data }}"
+    payload:
+      results: "{{ data }}"
     retry: 3
     retry_delay: 5
     on_error: continue
@@ -155,6 +158,8 @@ workflow:
     desc: "Store processed weather data"
     run:
       - task: store_data
+        with:
+          data: "{{ fetch_weather_data }}"
     next:
       - when: "{{ store_data is defined }}"
         then:
