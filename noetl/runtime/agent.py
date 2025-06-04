@@ -598,11 +598,11 @@ class PlaybookAgent:
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Execute NoETL playbook')
-    parser.add_argument('--mock', action='store_true', help='Run mock mode')
-    parser.add_argument('-f', '--file', required=True, help='Playbook YAML file path')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
-    parser.add_argument('--dry-run', action='store_true', help='Validate without executing')
-    parser.add_argument('--output', choices=['json', 'yaml', 'plain'], default='plain', help='Output format')
+    parser.add_argument('-m', '--mock', action='store_true', help='Mockup mode')
+    parser.add_argument('-f', '--file', required=True, help='Playbook file path')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
+    parser.add_argument('-d', '--dry-run', action='store_true', help='Dryrun mode')
+    parser.add_argument('-o', '--output', choices=['json', 'yaml', 'plain'], default='plain', help='Output format')
     return parser.parse_args()
 
 
@@ -636,7 +636,8 @@ def main():
 
         logger.info(f"Executing playbook: {args.file}")
         results = agent.execute()
-        print(format_output(results, args.output))
+        logger.debug(f"Format: {json.dumps(args.output, indent=2)}")
+        logger.debug(f"Result: {format_output(results, args.output)}")
         return 0
 
     except Exception as e:
