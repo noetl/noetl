@@ -274,7 +274,7 @@ An implementation is conformant if:
 
 ## 6. Playbook Example with Loops and Calls
 
-- [**data/catalog/playbooks/weather_loop_chain_example.yaml**](data/catalog/playbooks/weather_loop_chain_example.yaml)
+- [**data/catalog/playbooks/weather_loop_chain_example.yaml**](../data/catalog/playbooks/weather_loop_chain_example.yaml)
 
 ## 7. Execution Model
 - The playbook starts at the `"step": "start"`.
