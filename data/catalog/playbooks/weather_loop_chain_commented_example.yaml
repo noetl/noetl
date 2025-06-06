@@ -1,0 +1,144 @@
+apiVersion: noetl.io/v1  # Specifies the version of the NoETL DSL
+kind: Playbook  # Indicates this is a Playbook definition
+name: weather_loop_chain_example  # Human-readable name for the playbook
+path: workflows/weather/demo_chain  # Unique path identifier for this playbook
+
+workload:  # Defines input parameters accessible throughout the workflow
+  cities:  # List of cities to process in the loop
+    - name: "London"  # City name
+      lat: 51.51  # Latitude
+      lon: -0.13  # Longitude
+    - name: "Paris"
+      lat: 48.85
+      lon: 2.35
+    - name: "Berlin"
+      lat: 52.52
+      lon: 13.41
+  base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
+  temperature_threshold: 25  # Threshold for alerting on temperature
+
+workflow:  # Defines workflow steps and transitions
+  - step: start  # Entry point of the workflow
+    desc: "Start Weather Analysis Workflow"  # Description of the step
+    next:  # Transition rules based on condition
+      - when: "{{ workload.state == 'ready' }}"  # Condition for transition
+        then:
+          - step: city_loop  # If condition met, go to city_loop step
+      - else:
+          - step: end  # If not ready, end the workflow
+
+  - step: city_loop  # Step to iterate over the list of cities
+    desc: "Iterate over cities"
+    loop:
+      in: "{{ workload.cities }}"  # Input list for iteration
+      iterator: city  # Name of the variable for current item in loop
+      join: aggregate_alerts  # Required join step after all iterations complete
+    next:
+      - step: fetch_and_evaluate  # Step to call after each loop iteration
+        with:
+          city: "{{ city }}"  # Pass the current city
+          base_url: "{{ workload.base_url }}"  # Pass API base URL
+          temperature_threshold: "{{ workload.temperature_threshold }}"  # Pass temperature threshold
+
+  - step: fetch_and_evaluate  # Step to fetch and evaluate weather
+    desc: "Fetch and evaluate weather for one city"
+    call:
+      task: process_city_weather  # Task to call
+      with:
+        city: "{{ city }}"
+        base_url: "{{ base_url }}"
+        temperature_threshold: "{{ temperature_threshold }}"
+    next:
+      - when: "{{ process_city_weather.result.alert }}"  # Check if alert is needed
+        then:
+          - step: alert_step  # If alert needed
+            with:
+              city: "{{ city.name }}"
+              max_temp: "{{ process_city_weather.result.max_temp }}"
+      - else:
+          - step: log_step  # If no alert needed
+            with:
+              city: "{{ city.name }}"
+
+  - step: alert_step  # Sends alert if temperature exceeds threshold
+    desc: "Send alert if threshold exceeded"
+    call:
+      task: alert_task  # Task to call
+      with:
+        city: "{{ city }}"
+        temperature: "{{ max_temp }}"
+    next:
+      - step: end  # End after alert
+
+  - step: log_step  # Logs city without alert
+    desc: "Log result if no alert"
+    call:
+      task: log_task
+      with:
+        city: "{{ city }}"
+    next:
+      - step: end
+
+  - step: aggregate_alerts  # Join step for aggregating results from loop
+    desc: "Aggregate results after all city loops complete"
+    with:
+      alerts: "{{ join_results }}"  # Special variable containing loop results
+    next:
+      - step: end
+
+workbook:  # Task definitions used in the workflow
+  - task: process_city_weather
+    type: task  # Generic task that runs a set of subtasks
+    run:
+      - task: log_forcast_request  # First subtask to log forecast request
+        type: http
+        method: GET
+        endpoint: "{{ base_url }}/forecast"
+        params:
+          latitude: "{{ city.lat }}"
+          longitude: "{{ city.lon }}"
+          hourly: "temperature_2m"
+          forecast_days: 1
+
+      - task: get_forecast  # Second subtask to fetch weather data
+        type: http
+        method: GET
+        endpoint: "{{ base_url }}/forecast"
+        params:
+          latitude: "{{ city.lat }}"
+          longitude: "{{ city.lon }}"
+          hourly: "temperature_2m"
+          forecast_days: 1
+        run:
+          - task: evaluate_weather  # Evaluate weather after getting forecast
+            type: python
+            with:
+              forecast_data: "{{ result.data }}"
+              city: "{{ city }}"
+              threshold: "{{ temperature_threshold }}"
+            code: |
+              def main(forecast_data, city, threshold):
+                  temps = forecast_data.get('hourly', {}).get('temperature_2m', [])
+                  max_temp = max(temps) if temps else 0
+                  return {
+                      "city": city["name"],
+                      "max_temp": max_temp,
+                      "alert": max_temp > threshold
+                  }
+
+  - task: alert_task
+    type: http  # Sends an HTTP POST to alert service
+    method: POST
+    endpoint: "http://alert-service.local/alerts"
+    payload:
+      city: "{{ city }}"
+      temperature: "{{ temperature }}"
+      message: "Alert! High temperature."
+
+  - task: log_task
+    type: http  # Sends an HTTP POST to log service
+    method: POST
+    endpoint: "http://log-service.local/logs"
+    payload:
+      city: "{{ city }}"
+      message: "No alert needed."
