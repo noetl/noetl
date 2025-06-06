@@ -1,0 +1,135 @@
+apiVersion: noetl.io/v1
+kind: Playbook # <apiVersion and kind should be defined to identify the playbook>
+name: weather_loop_chain_example # <name is a human-readable name for the playbook>
+path: workflows/weather/demo_chain # <path is a unique identifier for the playbook, it should be unique across all playbooks>
+
+workload: # <workload is a special section that contains parameters that will be used in the workflow steps>
+  cities: # <cities is a list of cities that will be used in the demo workflow>
+    - name: "London"
+      lat: 51.51
+      lon: -0.13
+    - name: "Paris"
+      lat: 48.85
+      lon: 2.35
+    - name: "Berlin"
+      lat: 52.52
+      lon: 13.41
+  base_url: "https://api.open-meteo.com/v1" # <base_url is a URL for the weather API>
+  temperature_threshold: 25
+
+workflow: # <workflow is a special section that contains transition rules of the workflow>
+  - step: start # <first step in the workflow should be always named start>
+    desc: "Start Weather Analysis Workflow"
+    next: # <transition arc points to the next steps (if more than one will be executed in parallel) in the workflow should be always defined>
+      - when: "{{ workload.state == 'ready' }}"
+        then:
+          - step: city_loop # <step should be always defined with name and description>
+      - else:  # <else step should be defined to handle cases when the condition is not met>
+          - step: end # <end is a special step name reserved to finish the workflow>
+
+  - step: city_loop # <loop step to iterate over cities that takes cities from workload>
+    desc: "Iterate over cities"
+    loop: # <loop step should have in and iterator defined>
+      in: "{{ workload.cities }}" # <in should point to the list of items to iterate over>
+      iterator: city # <iterator is a variable that will be used in the next steps to refer to the current item>
+    next: # <next should point to the next steps that will be executed after the loop>
+      - step: fetch_and_evaluate # <step to fetch and evaluate weather for one city>
+        with: # <with should point to the parameters that will be passed to the next step>
+          city: "{{ city }}" # <city is the current item from the loop>
+          base_url: "{{ workload.base_url }}" # <base_url is taken from the workload>
+          temperature_threshold: "{{ workload.temperature_threshold }}" # <temperature_threshold is taken from the workload>
+
+  - step: fetch_and_evaluate # <step to fetch and evaluate weather for one city>
+    desc: "Fetch and evaluate weather for one city"
+    call: # <call should point to the task defined at top level in workbook>
+      task: process_city_weather # <task should be defined with a name pointing to the task in the workbook, only one task can be called in the step>
+      with: # <with should point to the parameters that will be passed to the task>
+        city: "{{ city }}" # <city is the current item from the loop>
+        base_url: "{{ workload.base_url }}" # <base_url is taken from the workload>
+        temperature_threshold: "{{ workload.temperature_threshold }}" # <temperature_threshold is taken from the workload>
+    next: # <next should point to the next steps that will be executed after the task is called>
+      - when: "{{ process_city_weather.result.alert }}" # <when should point to the condition that will be checked after the task is called>
+        then: # <then should point to the steps that will be executed if the condition is met>
+          - step: alert_step # <step to send alert if threshold exceeded>
+            with: # <with should point to the parameters that will be passed to the step>
+              city: "{{ city.name }}" # <city name is taken from the current item in the loop passed to the step>
+              max_temp: "{{ process_city_weather.result.max_temp }}" # <max_temp is taken from the result of the task>
+      - else: # <else should point to the steps that will be executed if the condition is not met>
+          - step: log_step # <step to log if no alert needed>
+            with: # <with should point to the parameters that will be passed to the step>
+              city: "{{ city.name }}" # <city name is taken from the current item in the loop passed to the step>
+
+  - step: alert_step # <step to send alert if threshold exceeded, used to call the task defined in the workbook>
+    desc: "Alert step if threshold exceeded"
+    call:
+      task: alert_task # <task should be defined with a name pointing to the task in the top level of the workbook>
+      with: # <with should point to the parameters that will be passed to the task and received from the previous step>
+        city: "{{ city }}"
+        temperature: "{{ max_temp }}"
+    next: # <next should point to the next steps that will be executed after the task is called>
+      - step: end # <end is a special step name reserved to finish the workflow>
+
+  - step: log_step # <step to log if no alert needed, used to call the task defined in the workbook>
+    desc: "Logging step if no alert"
+    call: # <call should point to the task defined in the workbook at the top level>
+      task: log_task # <task should be defined with a name pointing to the task in the top level of the workbook>
+      with: # <with should point to the parameters that will be passed to the task and received from the previous step>
+        city: "{{ city }}" # <city is the current item from the loop passed to the step>
+    next: # <next should point to the next steps that will be executed after the task is called>
+      - step: end # <end is a special step name reserved to finish the workflow>
+
+workbook: # <workbook is a special section that contains definition of tasks that can be called from the workflow steps>
+  - task: process_city_weather # <without type will execute nothing and go to section run bellow immidiaetly>
+    type: task # <how to execute this task if == task, then will go directy to run section>
+    run: # <if task has run than what tasks listed there will run in parallel>
+      - task: log_forcast_request # <will be executed in parallel with get_forecast>
+        type: http # < if task type == http, then will execute http request>
+        method: GET # <for http task method should be defined>
+        endpoint: "{{ base_url }}/forecast" # <endpoint is a URL for the weather API>
+        params: # <params are the parameters that will be passed to the endpoint>
+          latitude: "{{ city.lat }}" # <latitude is taken from the current item in the loop>
+          longitude: "{{ city.lon }}" # <longitude is taken from the current item in the loop>
+          hourly: "temperature_2m" # <hourly is a parameter that will be passed to the endpoint>
+          forecast_days: 1 # <forecast_days is a parameter that will be passed to the endpoint>
+      - task: get_forecast # <will be executed in parallel with log_forcast_request>
+        type: http # <how to execute this task like python, http, shell, sql, ssh>
+        method: GET # <method that will be used to call the endpoint>
+        endpoint: "{{ base_url }}/forecast" # <endpoint is a URL for the weather API>
+        params: # <params are the parameters that will be passed to the endpoint>
+          latitude: "{{ city.lat }}" # <latitude is taken from the current item in the loop>
+          longitude: "{{ city.lon }}"
+          hourly: "temperature_2m"
+          forecast_days: 1
+        run: # <if task has run than what tasks listed there will run in parallel>
+          - task: evaluate_weather # <will be executed after get_forecast and inherit result and scope from get_forecast>
+            type: python  # <how to execute this task like python, http, shell, sql, ssh>
+            with:
+              forecast_data: "{{ result.data }}" # <params that will contain the result of get_forecast and inherit scope from get_forecast>
+              city: "{{ city }}"
+              threshold: "{{ temperature_threshold }}"
+            code: | # <code that will be executed in python and use params from with>
+              def main(forecast_data, city, threshold): # <main function that will be executed in python argments should match with params from with>
+                  temps = forecast_data.get('hourly', {}).get('temperature_2m', [])
+                  max_temp = max(temps) if temps else 0
+                  return {
+                      "city": city["name"],
+                      "max_temp": max_temp,
+                      "alert": max_temp > threshold
+                  } # <return should be a dict with keys that will bubble up to parent scope>
+
+  - task: alert_task # <if task defined at the top level of the runbook it will be executed only when called from workflow steps>
+    type: http # <how to execute this task like python, http, shell, sql, ssh>
+    method: POST # <method that will be used to call the endpoint>
+    endpoint: "http://alert-service.local/alerts"
+    payload:
+      city: "{{ city }}" # <parameters that will be passed to the task from workflow step using with>
+      temperature: "{{ temperature }}"
+      message: "Alert! High temperature."
+
+  - task: log_task # <if task defined at the top level of the runbook it will be executed only when called from workflow steps>
+    type: http # <how to execute this task like python, http, shell, sql, ssh>
+    method: POST # <method that will be used to call the endpoint>
+    endpoint: "http://log-service.local/logs" # <endpoint is a URL for the logging service>
+    payload: # <payload is a dictionary that will be passed to the endpoint>
+      city: "{{ city }}" # <city is the current item from the loop passed to the step>
+      message: "No alert needed." # <message is a string that will be passed to the endpoint>
