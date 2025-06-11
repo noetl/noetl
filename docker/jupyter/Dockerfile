@@ -1,0 +1,14 @@
+FROM jupyter/datascience-notebook:latest
+
+RUN pip install --no-cache-dir \
+    duckdb>=1.3.0 \
+    polars[pyarrow]>=1.30.0 \
+    jupysql>=0.11.1 \
+    ipython-sql \
+    psycopg[binary]>=3.2.7 \
+    connectorx>=0.4.3 \
+    fsspec>=2025.5.1 \
+    gcsfs>=2025.5.1 \
+    google-cloud-secret-manager>=2.24.0
+
+RUN jupyter server extension enable jupysql

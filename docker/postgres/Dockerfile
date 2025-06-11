@@ -16,4 +16,4 @@ ENV TZ=America/Chicago
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY ./docker/postgres/postgresql.conf /etc/postgresql/postgresql.conf
 COPY ./data/noetl_postgres_db/init_database.sh /docker-entrypoint-initdb.d/init_database.sh
-COPY ./data/noetl_postgres_db/noetl_schema_ddl.sql /noetl_schema_ddl.sql
+COPY ./data/noetl_postgres_db/schema_ddl.sql /schema_ddl.sql

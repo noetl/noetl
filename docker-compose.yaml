@@ -19,7 +19,7 @@ services:
     volumes:
       - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
       - ./data/noetl_postgres_db/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
-      - ./data/noetl_postgres_db/noetl_schema_ddl.sql:/noetl_schema_ddl.sql
+      - ./data/noetl_postgres_db/schema_ddl.sql:/schema_ddl.sql
     ports:
       - "5434:5434"
     healthcheck:
@@ -60,5 +60,23 @@ services:
       POSTGRES_PORT: 5434
       POSTGRES_SCHEMA: public
       GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/application_default_credentials.json
+    networks:
+      - noetl-network
+
+  jupyter:
+    build:
+      context: .
+      dockerfile: docker/jupyter/Dockerfile
+    container_name: noetl-jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./data/work:/home/jovyan/work
+      - ./data/jupyter:/home/jovyan/data
+      - .secrets/noetl-demo.json:/app/secrets/noetl-demo.json
+    environment:
+      - JUPYTER_TOKEN=noetl
+      - TZ=America/Chicago
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/noetl-demo.json
     networks:
       - noetl-network
