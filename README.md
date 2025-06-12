@@ -57,5 +57,19 @@ make build             # Initialize environment (PostgreSQL, NoETL server)
 make up                # Start docker services
 noetl server           # Run the NoETL server
 ```
+
+## Google Cloud Setup
+
+- [Switching Between Google Service Account and Regular User Account](wiki/google_cloud_accounts.md)
+### Running the Setup Script
+To set up your Google Cloud environment for the noetl demo, use the included shell script:
+```bash
+bin/setup_noetl_demo.sh <GCP_PROJECT_ID> <SERVICE_ACCOUNT_NAME> <BUCKET_NAME>
+```
+Example:
+```bash
+bin/setup_noetl_demo.sh noetl-demo-20250101 noetl-demo noetl-demo-bucket
+```
+
 ## License
 NoETL is open source and available under the MIT License.
