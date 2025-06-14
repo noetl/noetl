@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: docker/postgres/Dockerfile
-    container_name: noetl-db
+    container_name: noetl-database
     environment:
       TZ: America/Chicago
       POSTGRES_USER: noetl
@@ -15,15 +15,15 @@ services:
       POSTGRES_SCHEMA: public
       POSTGRES_DB: noetl
       PGDATA: /var/lib/postgresql/data/pgdata
-    command: "postgres -c port=5434 -c config_file=/etc/postgresql/postgresql.conf"
+    command: "postgres -c port=5432 -c config_file=/etc/postgresql/postgresql.conf"
     volumes:
-      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./data/noetl_postgres_db/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
-      - ./data/noetl_postgres_db/schema_ddl.sql:/schema_ddl.sql
+      - ./database/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./database/postgres/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
+      - ./database/postgres/schema_ddl.sql:/schema_ddl.sql
     ports:
-      - "5434:5434"
+      - "5434:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noetl -d noetl -p 5434"]
+      test: ["CMD-SHELL", "pg_isready -U noetl -d noetl -p 5432"]
       interval: 5s
       timeout: 5s
       retries: 3
@@ -56,8 +56,8 @@ services:
       POSTGRES_USER: noetl
       POSTGRES_DB: noetl
       POSTGRES_PASSWORD: noetl
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5434
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
       POSTGRES_SCHEMA: public
       GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/application_default_credentials.json
     networks:
