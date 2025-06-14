@@ -2,7 +2,10 @@ FROM jupyter/datascience-notebook:latest
 
 RUN pip install --no-cache-dir \
     duckdb>=1.3.0 \
+    duckdb-engine>=0.17.0 \
     polars[pyarrow]>=1.30.0 \
+    matplotlib>=3.10.3 \
+    networkx>=3.5 \
     jupysql>=0.11.1 \
     ipython-sql \
     psycopg[binary]>=3.2.7 \

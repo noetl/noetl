@@ -92,3 +92,90 @@ workflow:
 | Non-local error handling | Error handler steps receive error messages |
 | Do or fail | Tasks/steps either succeed or route to error handler |
 
+Relationaship
+
+```text
+workbook
+  |
+  |-> basic_api_call (http)
+  |   |-> input: api_key
+  |   `-> output: API response
+  |
+  |-> configurable_alert (http)
+  |   |-> input: severity (default="medium"), message
+  |   `-> output: alert status
+  |
+  |-> process_weather (python)
+      |-> input: data, rules
+      |-> output: {processed, alerts}
+      |
+      |-> calls -> basic_api_call
+      |   |-> uses: result.processed.api_key
+      |   
+      `-> calls -> configurable_alert
+          |-> uses: result.alerts
+          `-> when: alerts exist
+
+batch_process (loop)
+  |-> in: items
+  |-> iterator: item
+  |-> with: batch_id
+  |
+  `-> process_item (python) [for each item]
+      |-> input: current(item), batch
+      |-> output: {item_id}
+      |
+      `-> calls -> configurable_alert
+          |-> severity="high"
+          `-> message=result.item_id
+
+data_pipeline (loop)
+  |-> in: data_sources
+  |-> iterator: source
+  |
+  |-> fetch_data (http)
+  |   |-> endpoint: source.url
+  |   `-> output: raw_data
+  |
+  `-> transform_data (python)
+      |-> input: fetch_data.result
+      |-> output: {transformed}
+      |
+      `-> calls -> store_data
+          `-> data=result.transformed
+
+smart_processor (python)
+  |-> input: input_data
+  |-> output: {needs_alert, needs_storage, data}
+  |
+  |-> calls -> configurable_alert
+  |   |-> when: result.needs_alert
+  |   
+  `-> calls -> store_data
+      |-> when: result.needs_storage
+```
+
+Data Flow:
+```text
+Parameters ---> Task ----> Result
+                 |
+                 `-> calls --> Other Task
+                      with: result.xyz
+
+Loop Context:
+items -----> Loop Task -----> item
+              |
+              `-> Nested Task --> Result
+                   with: item.xyz
+
+Pipeline Flow:
+fetch_data -----> transform_data -----> store_data
+result          with: fetch_data.result   with: result.transformed
+
+Conditional Flow:
+Task -----> [when: condition] -----> Called Task
+     \
+      `-----> [when: condition] -----> Another Called Task
+
+```
+

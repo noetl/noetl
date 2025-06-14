@@ -65,28 +65,31 @@ if [ -z "$GCP_PROJECT_ID" ] || [ -z "$SERVICE_ACCOUNT_NAME" ] || [ -z "$BUCKET_N
   exit 1
 fi
 
-echo "Setting up Google Cloud Project: $GCP_PROJECT_ID"
-gcloud config set project "$GCP_PROJECT_ID"
+#echo "Creating Google Cloud Project: $GCP_PROJECT_ID"
+#gcloud projects create $GCP_PROJECT_ID --name=$GCP_PROJECT_ID
+#
+#echo "Setting up Google Cloud Project: $GCP_PROJECT_ID"
+#gcloud config set project "$GCP_PROJECT_ID"
 
-echo "Creating service account: $SERVICE_ACCOUNT_NAME"
-gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" \
-  --project="$GCP_PROJECT_ID" \
-  --display-name="$SERVICE_ACCOUNT_NAME"
+#echo "Creating service account: $SERVICE_ACCOUNT_NAME"
+#gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" \
+#  --project="$GCP_PROJECT_ID" \
+#  --display-name="$SERVICE_ACCOUNT_NAME"
 
 SA_EMAIL="${SERVICE_ACCOUNT_NAME}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 
-echo "Granting Storage Admin role to service account"
-gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
-  --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/storage.admin"
+#echo "Granting Storage Admin role to service account"
+#gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+#  --member="serviceAccount:${SA_EMAIL}" \
+#  --role="roles/storage.admin"
+#
+#echo "Granting user permission to impersonate the service account"
+#gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+#  --member="user:${USER_EMAIL}" \
+#  --role="roles/iam.serviceAccountTokenCreator"
 
-echo "Granting user permission to impersonate the service account"
-gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
-  --member="user:${USER_EMAIL}" \
-  --role="roles/iam.serviceAccountTokenCreator"
-
-echo "Creating bucket: gs://${BUCKET_NAME}"
-gsutil mb -p "$GCP_PROJECT_ID" -c STANDARD -l US "gs://${BUCKET_NAME}"
+#echo "Creating bucket: gs://${BUCKET_NAME}"
+#gsutil mb -p "$GCP_PROJECT_ID" -c STANDARD -l US "gs://${BUCKET_NAME}"
 
 echo "Enabling S3 interoperability and creating HMAC keys"
 HMAC_OUTPUT=$(gcloud alpha storage hmac-keys create "$SA_EMAIL" --project="$GCP_PROJECT_ID" --format=json)
