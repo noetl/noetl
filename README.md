@@ -2,8 +2,8 @@
 __NoETL__ ("Not Only ETL") is an _Agentic AI automation framework_ designed for MLOps orchestration and processing data in distributed runtime environments.
 
   - [__NoETL Playbook Specification__](wiki/playbook_specification.md)
-    - [Playbook EBNF](data/catalog/playbook.ebnf)
-    - [Playbook Weather Example](data/catalog/playbooks/weather_example.yaml)
+    - [Playbook EBNF](catalog/playbook.ebnf)
+    - [Playbook Weather Example](catalog/playbooks/weather_example.yaml)
 
 ---
 

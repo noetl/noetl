@@ -150,3 +150,98 @@ VALUES
 --     ('EXECUTION_STARTED',   'Execution started for {{ resource_path }}.'),
 --     ('EXECUTION_FAILED',    'Execution failed for {{ resource_path }}.'),
 --     ('EXECUTION_COMPLETED', 'Execution completed for {{ resource_path }}.');
+
+-- NoETL Agent Tables
+-- TODO : Add DuckLake metadata tables
+CREATE TABLE IF NOT EXISTS context (
+    execution_id VARCHAR,
+    timestamp TIMESTAMP,
+    key VARCHAR,
+    value TEXT,
+    PRIMARY KEY (execution_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS task_results (
+    execution_id VARCHAR,
+    task_id VARCHAR,
+    task_name VARCHAR,
+    task_type VARCHAR,
+    parent_id VARCHAR,
+    timestamp TIMESTAMP,
+    status VARCHAR,
+    data TEXT,
+    error TEXT,
+    PRIMARY KEY (execution_id, task_id)
+);
+
+CREATE TABLE IF NOT EXISTS step_results (
+    execution_id VARCHAR,
+    step_id VARCHAR,
+    step_name VARCHAR,
+    parent_id VARCHAR,
+    timestamp TIMESTAMP,
+    status VARCHAR,
+    data TEXT,
+    error TEXT,
+    PRIMARY KEY (execution_id, step_id)
+);
+
+CREATE TABLE IF NOT EXISTS loop_state (
+    execution_id VARCHAR,
+    loop_id VARCHAR,
+    loop_name VARCHAR,
+    parent_id VARCHAR,
+    iterator VARCHAR,
+    items TEXT,
+    current_index INTEGER,
+    current_item TEXT,
+    results TEXT,
+    timestamp TIMESTAMP,
+    status VARCHAR,
+    PRIMARY KEY (execution_id, loop_id)
+);
+
+CREATE TABLE IF NOT EXISTS event_log (
+    execution_id VARCHAR,
+    event_id VARCHAR,
+    parent_event_id VARCHAR,
+    timestamp TIMESTAMP,
+    event_type VARCHAR,
+    node_id VARCHAR,
+    node_name VARCHAR,
+    node_type VARCHAR,
+    status VARCHAR,
+    duration DOUBLE PRECISION,
+    input_context TEXT,
+    output_result TEXT,
+    metadata TEXT,
+    PRIMARY KEY (execution_id, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS workflow (
+    execution_id VARCHAR,
+    step_id VARCHAR,
+    step_name VARCHAR,
+    step_type VARCHAR,
+    description TEXT,
+    raw_config TEXT,
+    PRIMARY KEY (execution_id, step_id)
+);
+
+CREATE TABLE IF NOT EXISTS workbook (
+    execution_id VARCHAR,
+    task_id VARCHAR,
+    task_name VARCHAR,
+    task_type VARCHAR,
+    raw_config TEXT,
+    PRIMARY KEY (execution_id, task_id)
+);
+
+CREATE TABLE IF NOT EXISTS transitions (
+    execution_id VARCHAR,
+    from_step VARCHAR,
+    to_step VARCHAR,
+    condition TEXT,
+    with_params TEXT,
+    PRIMARY KEY (execution_id, from_step, to_step, condition)
+);

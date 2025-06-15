@@ -306,7 +306,7 @@ PythonTask ::= Map {
 
 ## 10. Playbook Example with Loops and Calls
 
-- [**data/catalog/playbooks/weather_loop_chain_example.yaml**](../data/catalog/playbooks/weather_loop_chain_commented_example.yaml)
+- [**data/catalog/playbooks/weather_loop_chain_example.yaml**](../catalog/playbooks/weather_loop_chain_commented_example.yaml)
 
 ## 11. Execution Model
 - Start at step `"start"`

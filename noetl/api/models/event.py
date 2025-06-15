@@ -13,8 +13,8 @@ class Event(SQLModel, table=True):
     parent_id: Optional[str] = Field(default=None, index=True, max_length=36)
     root_id: Optional[str] = Field(default=None, index=True, max_length=36)
     workload_id: Optional[str] = Field(foreign_key="workload.workload_id", default=None, index=True, max_length=36)
-    runtime_id: Optional[str] = Field(foreign_key="runtime.runtime_id", default=None, index=True, max_length=36)
-    context_id: Optional[str] = Field(foreign_key="context.context_id", default=None, index=True, max_length=36)
+    # runtime_id: Optional[str] = Field(foreign_key="runtime.runtime_id", default=None, index=True, max_length=36)
+    # context_id: Optional[str] = Field(foreign_key="context.context_id", default=None, index=True, max_length=36)
     unit_id: Optional[str] = Field(foreign_key="dict_unit.name", default=None, index=True)
     component_id: Optional[str] = Field(foreign_key="dict_component.component_name", default=None, index=True)
     event_type: str = Field(nullable=False)
@@ -37,8 +37,8 @@ class Event(SQLModel, table=True):
         }
     )
 
-    runtime_entry: Optional["Runtime"] = Relationship(back_populates="event_entry")
-    context_entry: Optional["Context"] = Relationship(back_populates="event_entry")
+    # runtime_entry: Optional["Runtime"] = Relationship(back_populates="event_entry")
+    # context_entry: Optional["Context"] = Relationship(back_populates="event_entry")
     dict_state_entry: Optional["DictState"] = Relationship(back_populates="event_entry")
     dict_unit_entry: Optional["DictUnit"] = Relationship(back_populates="event_entry")
     dict_component_entry: Optional["DictComponent"] = Relationship(back_populates="event_entry")

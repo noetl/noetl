@@ -514,7 +514,6 @@ class NoETLAgent:
 
     def find_loop(self, loop_name: str, include_completed: bool = False) -> Optional[Dict]:
         """Find loop
-
         Args:
             loop_name: Name of the loop
             include_completed: includes loops that are marked as completed, if true
@@ -563,7 +562,7 @@ class NoETLAgent:
         return None
 
     def complete_loop(self, loop_id: str):
-        #Mark loop as completed
+        #Mark loop completed
         self.conn.execute("""
                           UPDATE loop_state
                           SET status    = 'completed',
@@ -642,7 +641,7 @@ class NoETLAgent:
                 }
             else:
                 # TODO update this for real call. Return mock data. Remove mock to separate test.
-                mock_response = {"data": "real_http_would_go_here"}
+                mock_response = {"data": "real http would be here"}
 
                 end_time = datetime.datetime.now()
                 duration = (end_time - start_time).total_seconds()
@@ -849,101 +848,15 @@ class NoETLAgent:
 
         return result
 
-# TODO not sure if we still need this loop, to be discussed
     def execute_loop_task(self, task_config: Dict, context: Dict, parent_id: str = None) -> Dict:
-        task_name = task_config.get('task', 'loop_task')
-        start_time = datetime.datetime.now()
-        iterator = task_config.get('iterator', 'item')
-        items = render_template(self.jinja_env, task_config.get('in', []), context)
-
-        if not isinstance(items, list):
-            task_id = str(uuid.uuid4())
-            error_msg = f"Loop items must be a list, got: {type(items)}"
-            self.save_task_result(
-                task_id, task_name, 'loop', parent_id,
-                'error', None, error_msg
-            )
-            self.log_event(
-                'loop_error', task_id, task_name, 'task.loop',
-                'error', 0, context, None,
-                {'error': error_msg}, parent_id
-            )
-
-            return {
-                'id': task_id,
-                'status': 'error',
-                'error': error_msg
-            }
-
-        logger.info(f"Starting loop task {task_name} with {len(items)} items")
-        loop_id = self.create_loop_state(task_name, iterator, items, parent_id)
-        task_id = loop_id
-        loop_start_event = self.log_event(
-            'loop_start', task_id, task_name, 'task.loop',
-            'in_progress', 0, context, None,
-            {'item_count': len(items), 'iterator': iterator}, parent_id
-        )
-        all_results = []
-
-        for idx, item in enumerate(items):
-            self.update_loop_state(loop_id, idx, item, 'processing')
-            iter_event = self.log_event(
-                'loop_iteration', f"{task_id}_{idx}", f"{task_name}[{idx}]", 'iteration',
-                'in_progress', 0, context, None,
-                {'index': idx, 'item': item}, loop_start_event
-            )
-            iter_context = dict(context)
-            iter_context[iterator] = item
-
-            # TODO We probably going to get rid of execution of subtasks
-            subtasks = task_config.get('run', [])
-            subtask_results = {}
-
-            for subtask_config in subtasks:
-                subtask_name = subtask_config.get('task')
-                subtask_with = render_template(self.jinja_env, subtask_config.get('with', {}), iter_context)
-                subtask_context = {**iter_context, **subtask_with}
-                when_condition = subtask_config.get('when')
-                if when_condition:
-                    condition_result = render_template(self.jinja_env, when_condition, subtask_context)
-                    if not condition_result:
-                        logger.info(f"Skipping subtask {subtask_name} due to condition")
-                        continue
-                subtask_result = self.execute_task(subtask_name, subtask_context, iter_event)
-                subtask_results[subtask_name] = subtask_result
-                iter_context[subtask_name] = {'result': subtask_result.get('data'),
-                                              'status': subtask_result.get('status')}
-            result_data = {k: v.get('data') for k, v in subtask_results.items() if v.get('status') == 'success'}
-            self.add_loop_result(loop_id, result_data)
-            all_results.append(result_data)
-            self.log_event(
-                'loop_iteration_complete', f"{task_id}_{idx}", f"{task_name}[{idx}]", 'iteration',
-                'success', 0, iter_context, result_data,
-                {'index': idx, 'item': item}, iter_event
-            )
-        self.update_loop_state(loop_id, len(items), None, 'completed')
-
-        return_data = all_results
-        if 'return' in task_config:
-            return_template = task_config['return']
-            return_context = self.get_context()
-            return_data = render_template(self.jinja_env, return_template, return_context)
-        self.save_task_result(
-            task_id, task_name, 'loop', parent_id,
-            'success', return_data, None
-        )
-        end_time = datetime.datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        self.log_event(
-            'loop_complete', task_id, task_name, 'task.loop',
-            'success', duration, context, return_data,
-            {'item_count': len(items), 'processed_count': len(all_results)}, loop_start_event
-        )
-
+        # TODO this is deprecated and should not be used for nested task execution.
+        # TODO loops handled at the step level only now - Kadyapam - don't change this logic.
+        error_msg = "Nested loop task execution is not supported. Use step-level loops only."
+        logger.error(error_msg)
         return {
-            'id': task_id,
-            'status': 'success',
-            'data': return_data
+            'id': str(uuid.uuid4()),
+            'status': 'error',
+            'error': error_msg
         }
 
     def execute_step(self, step_name: str, step_with: Dict = None) -> Dict:
@@ -989,37 +902,21 @@ class NoETLAgent:
         )
         if 'end_loop' in step_config:
             result = self.end_loop_step(step_config, step_context, step_id)
-        # Handle loop step
         elif 'loop' in step_config:
             result = self.execute_loop_step(step_config, step_context, step_id)
-        # Handle call step
         elif 'call' in step_config:
             call_config = step_config['call']
             task_name = call_config.get('task')
             task_with = render_template(self.jinja_env, call_config.get('with', {}), step_context)
-
-            # Merge task parameters into context
             task_context = {**step_context, **task_with}
-
-            # Execute the task
             result = self.execute_task(task_name, task_context, step_event)
-
-            # Update context with task result
             self.update_context(task_name, {
                 'result': result.get('data'),
                 'status': result.get('status')
             })
-
-            # Also store the result directly in the context as 'result'
-            # This allows templates to access the result directly as {{ result }}
             self.update_context('result', result.get('data'))
-
-            # If this is the get_city_districts task, also store the result as 'districts'
-            # This is a special case for the weather_example.yaml playbook
             if task_name == 'get_city_districts':
                 self.update_context('districts', result.get('data').get('data'))
-
-            # Process return value
             if 'return' in step_config and result['status'] == 'success':
                 return_template = step_config['return']
                 return_context = {**self.get_context(), 'result': result.get('data')}
@@ -1028,7 +925,6 @@ class NoETLAgent:
                 self.update_context(step_name, return_data)
                 result['data'] = return_data
         else:
-            # Default success for simple steps
             self.save_step_result(
                 step_id, step_name, None,
                 'success', {}, None
@@ -1039,17 +935,13 @@ class NoETLAgent:
                 'data': {}
             }
 
-        # Calculate duration
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
-
-        # Log step completion event
         self.log_event(
             'step_complete', step_id, step_name, 'step',
             result['status'], duration, step_context, result.get('data'),
             {'step_type': 'standard'}, step_event
         )
-
         return result
 
     def end_loop_step(self, step_config: Dict, context: Dict, step_id: str) -> Dict:
@@ -1362,7 +1254,109 @@ class NoETLAgent:
         logger.warning("No execution data to export")
         return None
 
-    def run(self, use_ml_flow: bool = False) -> Dict[str, Any]:
+    def postgres_sync(self, noetl_pgdb: str):
+        """Sync agent tables to a remote NoETL Postgres database.
+        The connection string should be in the format:
+        'dbname=noetl user=noetl password=noetl host=localhost port=5434'
+        """
+        logger.info("Syncing DuckDB tables to Postgres.")
+        self.conn.execute("INSTALL postgres; LOAD postgres;")
+        self.conn.execute(f"ATTACH '{noetl_pgdb}' AS pg (TYPE POSTGRES);")
+        tables = [
+            'context', 'task_results', 'step_results', 'loop_state',
+            'event_log', 'workflow', 'workbook', 'transitions'
+        ]
+        for table in tables:
+            logger.info(f"Syncing table: {table}")
+            self.conn.execute(f"CREATE TABLE IF NOT EXISTS pg.public.temp_{table} AS SELECT * FROM {table} WHERE 1=0;")
+            self.conn.execute(f"INSERT INTO pg.public.temp_{table} SELECT * FROM {table};")
+
+            if table == 'context':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, timestamp, key, value)
+                    SELECT t.execution_id, t.timestamp, t.key, t.value 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND key = t.key
+                    );
+                """)
+            elif table == 'task_results':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, task_id, task_name, task_type, parent_id, timestamp, status, data, error)
+                    SELECT t.execution_id, t.task_id, t.task_name, t.task_type, t.parent_id, t.timestamp, t.status, t.data, t.error 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND task_id = t.task_id
+                    );
+                """)
+            elif table == 'step_results':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, step_id, step_name, parent_id, timestamp, status, data, error)
+                    SELECT t.execution_id, t.step_id, t.step_name, t.parent_id, t.timestamp, t.status, t.data, t.error 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND step_id = t.step_id
+                    );
+                """)
+            elif table == 'loop_state':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, loop_id, loop_name, parent_id, iterator, items, current_index, current_item, results, timestamp, status)
+                    SELECT t.execution_id, t.loop_id, t.loop_name, t.parent_id, t.iterator, t.items, t.current_index, t.current_item, t.results, t.timestamp, t.status 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND loop_id = t.loop_id
+                    );
+                """)
+            elif table == 'event_log':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, input_context, output_result, metadata)
+                    SELECT t.execution_id, t.event_id, t.parent_event_id, t.timestamp, t.event_type, t.node_id, t.node_name, t.node_type, t.status, t.duration, t.input_context, t.output_result, t.metadata 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND event_id = t.event_id
+                    );
+                """)
+            elif table == 'workflow':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, step_id, step_name, step_type, description, raw_config)
+                    SELECT t.execution_id, t.step_id, t.step_name, t.step_type, t.description, t.raw_config 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND step_id = t.step_id
+                    );
+                """)
+            elif table == 'workbook':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, task_id, task_name, task_type, raw_config)
+                    SELECT t.execution_id, t.task_id, t.task_name, t.task_type, t.raw_config 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND task_id = t.task_id
+                    );
+                """)
+            elif table == 'transitions':
+                self.conn.execute(f"""
+                    INSERT INTO pg.public.{table} (execution_id, from_step, to_step, condition, with_params)
+                    SELECT t.execution_id, t.from_step, t.to_step, t.condition, t.with_params 
+                    FROM pg.public.temp_{table} t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pg.public.{table} 
+                        WHERE execution_id = t.execution_id AND from_step = t.from_step AND to_step = t.to_step AND condition = t.condition
+                    );
+                """)
+
+            self.conn.execute(f"DROP TABLE pg.public.temp_{table};")
+
+        logger.info("Sync to Postgres complete.")
+
+    def run(self, mlflow: bool = False) -> Dict[str, Any]:
         """Run the playbook end to end"""
         logger.info(f"Starting playbook: {self.playbook.get('name', 'Unnamed')}")
         self.update_context('workload', self.playbook.get('workload', {}))
@@ -1397,7 +1391,7 @@ class NoETLAgent:
 
                 break
 
-            if use_ml_flow:
+            if mlflow:
                 next_step = self.get_ml_recommendation(current_step, self.context)
                 if next_step:
                     current_step = next_step
@@ -1459,14 +1453,16 @@ class NoETLAgent:
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="NoETL Standalone Agent with DuckDB Persistence", allow_abbrev=False)
+    parser = argparse.ArgumentParser(description="NoETL Agent with DuckDB Persistence", allow_abbrev=False)
     parser.add_argument("-f", "--file", required=True, help="Path to playbook YAML file")
     parser.add_argument("--mock", action="store_true", help="Run in mock mode")
     parser.add_argument("-o", "--output", default="json", choices=["json", "plain"], help="Output format")
-    parser.add_argument("--db", default=None, help="DuckDB database path (default: agent007.duckdb in script directory)")
+    parser.add_argument("--duckdb", default=None, help="DuckDB database path (default: agent007.duckdb in script directory)")
     parser.add_argument("--export", help="Export execution data to Parquet file")
-    parser.add_argument("--ml-flow", action="store_true", help="Use ML model for workflow control")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--mlflow", action="store_true", help="Use ML model for workflow control")
+    parser.add_argument("--sync", action="store_true", help="Sync DuckDB tables to Postgres")
+    parser.add_argument("--pgdb", default=None, help="Postgres conn for DuckDB ATTACH (or set NOETL_PGDB env). Example: 'dbname=noetl user=noetl password=noetl host=localhost port=5434'")
+    parser.add_argument("--debug", action="store_true", help="Set debug logging level")
     args, unknown = parser.parse_known_args()
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -1474,8 +1470,8 @@ def main():
         logger.warning(f"Ignoring unknown arguments: {unknown}")
 
     try:
-        agent = NoETLAgent(args.file, mock_mode=args.mock, db_path=args.db)
-        results = agent.run(use_ml_flow=args.ml_flow)
+        agent = NoETLAgent(args.file, mock_mode=args.mock, db_path=args.duckdb)
+        results = agent.run(mlflow=args.mlflow)
 
         if args.export:
             agent.export_execution_data(args.export)
@@ -1486,10 +1482,15 @@ def main():
             for step, result in results.items():
                 logger.info(f"{step}: {result}")
 
-        logger.info(f"\n[INFO] DuckDB database file: {agent.db_path}")
-        logger.info("To validate the generated tables, open the notebook:")
-        logger.info("       notebooks/inspect_agent007_duckdb.ipynb")
-        logger.info("       and set db_path to the above file path.")
+        logger.info(f"DuckDB database file: {agent.db_path}")
+        logger.info(f"To validate result open the notebook notebook/agent007_mission_report.ipynb and set 'db_path' to {agent.db_path}")
+
+        if args.sync:
+            noetl_pgdb = args.pgdb or os.environ.get("NOETL_PGDB")
+            if not noetl_pgdb:
+                logger.error("--sync-postgres Postgres connection string missing (use --pgdb or NOETL_PGDB env var)")
+            else:
+                agent.postgres_sync(noetl_pgdb=noetl_pgdb)
 
     except Exception as e:
         logger.error(f"Error executing playbook: {e}", exc_info=True)
