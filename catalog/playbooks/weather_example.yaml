@@ -73,7 +73,7 @@ workflow:  # Defines workflow steps and transitions
         city: "{{ city }}"
         threshold: "{{ temperature_threshold }}"
     next:
-      - when: "{{ evaluate_weather_step.alert }}"  # Check if alert is needed
+      - when: "{{ evaluate_weather_step.alerts }}"  # Check if alert is needed
         then:
           - step: alert_step  # If alert needed
             with:
