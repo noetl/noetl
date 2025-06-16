@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS context (
     PRIMARY KEY (execution_id, key)
 );
 
-CREATE TABLE IF NOT EXISTS task_results (
+CREATE TABLE IF NOT EXISTS task_result (
     execution_id VARCHAR,
     task_id VARCHAR,
     task_name VARCHAR,
@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS task_results (
     PRIMARY KEY (execution_id, task_id)
 );
 
-CREATE TABLE IF NOT EXISTS step_results (
+CREATE TABLE IF NOT EXISTS step_result (
     execution_id VARCHAR,
     step_id VARCHAR,
     step_name VARCHAR,
@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS workbook (
     PRIMARY KEY (execution_id, task_id)
 );
 
-CREATE TABLE IF NOT EXISTS transitions (
+CREATE TABLE IF NOT EXISTS transition (
     execution_id VARCHAR,
     from_step VARCHAR,
     to_step VARCHAR,

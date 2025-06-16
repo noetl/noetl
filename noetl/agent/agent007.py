@@ -125,7 +125,7 @@ class NoETLAgent:
 
         # Task results table
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS task_results (
+            CREATE TABLE IF NOT EXISTS task_result (
                 execution_id VARCHAR,
                 task_id VARCHAR,
                 task_name VARCHAR,
@@ -141,7 +141,7 @@ class NoETLAgent:
 
         # Step results table
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS step_results (
+            CREATE TABLE IF NOT EXISTS step_result (
                 execution_id VARCHAR,
                 step_id VARCHAR,
                 step_name VARCHAR,
@@ -217,9 +217,9 @@ class NoETLAgent:
             )
         """)
 
-        # Transitions table for workflow control flow
+        # transition table for workflow control flow
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS transitions (
+            CREATE TABLE IF NOT EXISTS transition (
                 execution_id VARCHAR,
                 from_step VARCHAR,
                 to_step VARCHAR,
@@ -260,7 +260,7 @@ class NoETLAgent:
                                   json.dumps(step)
                               ))
 
-            # Load transitions
+            # Load transition
             next_steps = step.get('next', [])
             if not isinstance(next_steps, list):
                 next_steps = [next_steps]
@@ -282,7 +282,7 @@ class NoETLAgent:
                                 with_params = '{}'
 
                             self.conn.execute("""
-                                              INSERT INTO transitions
+                                              INSERT INTO transition
                                               VALUES (?, ?, ?, ?, ?)
                                               """, (
                                                   self.execution_id,
@@ -305,7 +305,7 @@ class NoETLAgent:
                                 with_params = '{}'
 
                             self.conn.execute("""
-                                              INSERT INTO transitions
+                                              INSERT INTO transition
                                               VALUES (?, ?, ?, ?, ?)
                                               """, (
                                                   self.execution_id,
@@ -316,7 +316,7 @@ class NoETLAgent:
                                               ))
                 elif isinstance(next_step, str):
                     self.conn.execute("""
-                                      INSERT INTO transitions
+                                      INSERT INTO transition
                                       VALUES (?, ?, ?, ?, ?)
                                       """, (
                                           self.execution_id,
@@ -329,7 +329,7 @@ class NoETLAgent:
                     to_step = next_step.get('step')
                     with_params = json.dumps(next_step.get('with', {}))
                     self.conn.execute("""
-                                      INSERT INTO transitions
+                                      INSERT INTO transition
                                       VALUES (?, ?, ?, ?, ?)
                                       """, (
                                           self.execution_id,
@@ -398,7 +398,7 @@ class NoETLAgent:
         serialized_data = json.dumps(data) if data is not None else None
 
         self.conn.execute("""
-                          INSERT INTO task_results
+                          INSERT INTO task_result
                           (execution_id, task_id, task_name, task_type, parent_id, timestamp, status, data, error)
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                           """, (
@@ -413,7 +413,7 @@ class NoETLAgent:
         serialized_data = json.dumps(data) if data is not None else None
 
         self.conn.execute("""
-                          INSERT INTO step_results
+                          INSERT INTO step_result
                           (execution_id, step_id, step_name, parent_id, timestamp, status, data, error)
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                           """, (
@@ -830,7 +830,7 @@ class NoETLAgent:
             })
 
             self.conn.execute("""
-                              UPDATE task_results
+                              UPDATE task_result
                               SET data = ?
                               WHERE execution_id = ?
                                 AND task_id = ?
@@ -1263,8 +1263,8 @@ class NoETLAgent:
         self.conn.execute("INSTALL postgres; LOAD postgres;")
         self.conn.execute(f"ATTACH '{noetl_pgdb}' AS pg (TYPE POSTGRES);")
         tables = [
-            'context', 'task_results', 'step_results', 'loop_state',
-            'event_log', 'workflow', 'workbook', 'transitions'
+            'context', 'task_result', 'step_result', 'loop_state',
+            'event_log', 'workflow', 'workbook', 'transition'
         ]
         for table in tables:
             logger.info(f"Syncing table: {table}")
@@ -1281,7 +1281,7 @@ class NoETLAgent:
                         WHERE execution_id = t.execution_id AND key = t.key
                     );
                 """)
-            elif table == 'task_results':
+            elif table == 'task_result':
                 self.conn.execute(f"""
                     INSERT INTO pg.public.{table} (execution_id, task_id, task_name, task_type, parent_id, timestamp, status, data, error)
                     SELECT t.execution_id, t.task_id, t.task_name, t.task_type, t.parent_id, t.timestamp, t.status, t.data, t.error 
@@ -1291,7 +1291,7 @@ class NoETLAgent:
                         WHERE execution_id = t.execution_id AND task_id = t.task_id
                     );
                 """)
-            elif table == 'step_results':
+            elif table == 'step_result':
                 self.conn.execute(f"""
                     INSERT INTO pg.public.{table} (execution_id, step_id, step_name, parent_id, timestamp, status, data, error)
                     SELECT t.execution_id, t.step_id, t.step_name, t.parent_id, t.timestamp, t.status, t.data, t.error 
@@ -1341,7 +1341,7 @@ class NoETLAgent:
                         WHERE execution_id = t.execution_id AND task_id = t.task_id
                     );
                 """)
-            elif table == 'transitions':
+            elif table == 'transition':
                 self.conn.execute(f"""
                     INSERT INTO pg.public.{table} (execution_id, from_step, to_step, condition, with_params)
                     SELECT t.execution_id, t.from_step, t.to_step, t.condition, t.with_params 
@@ -1424,19 +1424,19 @@ class NoETLAgent:
             {'playbook_path': self.playbook_path}, execution_start_event
         )
 
-        step_results = {}
+        step_result = {}
         rows = self.conn.execute("""
                                  SELECT step_name, data
-                                 FROM step_results
+                                 FROM step_result
                                  WHERE execution_id = ?
                                    AND status = 'success'
                                  """, (self.execution_id,)).fetchall()
 
         for row in rows:
             if row[1]:  # data exists
-                step_results[row[0]] = json.loads(row[1])
+                step_result[row[0]] = json.loads(row[1])
 
-        return step_results
+        return step_result
 
     def find_step(self, step_name: str) -> Optional[Dict]:
         for step in self.playbook.get('workflow', []):
