@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
 import duckdb
 import polars as pl
+import httpx
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -640,23 +641,66 @@ class NoETLAgent:
                     'data': response_data
                 }
             else:
-                # TODO update this for real call. Return mock data. Remove mock to separate test.
-                mock_response = {"data": "real http would be here"}
+                # Make real HTTP request using httpx
+                headers = render_template(self.jinja_env, task_config.get('headers', {}), context)
+                timeout = task_config.get('timeout', 30)
 
-                end_time = datetime.datetime.now()
-                duration = (end_time - start_time).total_seconds()
+                try:
+                    with httpx.Client(timeout=timeout) as client:
+                        if method == 'GET':
+                            response = client.get(endpoint, params=params, headers=headers)
+                        elif method == 'POST':
+                            response = client.post(endpoint, json=payload, params=params, headers=headers)
+                        elif method == 'PUT':
+                            response = client.put(endpoint, json=payload, params=params, headers=headers)
+                        elif method == 'DELETE':
+                            response = client.delete(endpoint, params=params, headers=headers)
+                        elif method == 'PATCH':
+                            response = client.patch(endpoint, json=payload, params=params, headers=headers)
+                        else:
+                            raise ValueError(f"Unsupported HTTP method: {method}")
 
-                self.log_event(
-                    'task_complete', task_id, task_name, 'http',
-                    'success', duration, context, mock_response,
-                    {'method': method, 'endpoint': endpoint}, event_id
-                )
+                        response.raise_for_status()  # Raise exception for 4XX/5XX responses
 
-                return {
-                    'id': task_id,
-                    'status': 'success',
-                    'data': mock_response
-                }
+                        # Try to parse as JSON, fallback to text if not JSON
+                        try:
+                            response_data = response.json()
+                        except ValueError:
+                            response_data = {"text": response.text}
+
+                        # Add status code to response data
+                        response_data = {
+                            "data": response_data,
+                            "status_code": response.status_code,
+                            "headers": dict(response.headers)
+                        }
+
+                        self.save_task_result(
+                            task_id, task_name, 'http', parent_id,
+                            'success', response_data, None
+                        )
+
+                        end_time = datetime.datetime.now()
+                        duration = (end_time - start_time).total_seconds()
+
+                        self.log_event(
+                            'task_complete', task_id, task_name, 'http',
+                            'success', duration, context, response_data,
+                            {'method': method, 'endpoint': endpoint}, event_id
+                        )
+
+                        return {
+                            'id': task_id,
+                            'status': 'success',
+                            'data': response_data
+                        }
+
+                except httpx.HTTPStatusError as e:
+                    error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
+                    raise Exception(error_msg)
+                except httpx.RequestError as e:
+                    error_msg = f"Request error: {str(e)}"
+                    raise Exception(error_msg)
 
         except Exception as e:
             error_msg = str(e)

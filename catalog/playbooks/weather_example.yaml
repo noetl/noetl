@@ -56,12 +56,27 @@ workflow:  # Defines workflow steps and transitions
         base_url: "{{ base_url }}"
         temperature_threshold: "{{ temperature_threshold }}"
     next:
-      - when: "{{ get_forecast.result.alert }}"  # Check if alert is needed
+      - step: evaluate_weather_step
+        with:
+          city: "{{ city }}"
+          forecast_data: "{{ get_forecast.result.data }}"
+          temperature_threshold: "{{ temperature_threshold }}"
+
+  - step: evaluate_weather_step
+    desc: "Evaluate weather data and determine if alert is needed"
+    call:
+      task: evaluate_weather
+      with:
+        forecast_data: "{{ forecast_data }}"
+        city: "{{ city }}"
+        threshold: "{{ temperature_threshold }}"
+    next:
+      - when: "{{ evaluate_weather.result.alert }}"  # Check if alert is needed
         then:
           - step: alert_step  # If alert needed
             with:
               city: "{{ city.name }}"
-              max_temp: "{{ get_forecast.result.max_temp }}"
+              max_temp: "{{ evaluate_weather.result.max_temp }}"
       - else:
           - step: log_step  # If no alert needed
             with:
@@ -133,7 +148,7 @@ workflow:  # Defines workflow steps and transitions
       - step: end_city_loop
         with:
           district_loop_output: "{{ district_loop_output }}"
-          
+
   - step: end_city_loop
     desc: "End of the city loop"
     end_loop: city_loop
@@ -143,7 +158,7 @@ workflow:  # Defines workflow steps and transitions
       - step: aggregate_alerts
         with:
           alerts: "{{ alerts }}"
-          
+
 
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
