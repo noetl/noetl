@@ -22,7 +22,7 @@ workload:  # Defines input parameters accessible throughout the workflow
       lat: 52.52
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
-  temperature_threshold: 10  # Threshold for alerting on temperature (lowered to ensure alerts are triggered)
+  temperature_threshold: 25  # Threshold for alerting on temperature (lowered to ensure alerts are triggered)
 
 workflow:  # Defines workflow steps and transitions
   - step: start  # Entry point of the workflow
@@ -49,7 +49,6 @@ workflow:  # Defines workflow steps and transitions
       - step: evaluate_weather_step  # Second step inside the loop
         with:
           city: "{{ city }}"
-          forecast_data: "{{ fetch_and_evaluate.forecast_data }}"
           temperature_threshold: "{{ temperature_threshold }}"
 
   - step: fetch_and_evaluate  # Step to fetch and evaluate weather
@@ -60,13 +59,10 @@ workflow:  # Defines workflow steps and transitions
         city: "{{ city }}"
         base_url: "{{ base_url }}"
         temperature_threshold: "{{ temperature_threshold }}"
-    return:
-      forecast_data: "{{ get_forecast.result.data }}"
     next:
       - step: evaluate_weather_step
         with:
           city: "{{ city }}"
-          forecast_data: "{{ get_forecast.result.data }}"
           temperature_threshold: "{{ temperature_threshold }}"
 
   - step: evaluate_weather_step
@@ -74,16 +70,15 @@ workflow:  # Defines workflow steps and transitions
     call:
       task: evaluate_weather
       with:
-        forecast_data: "{{ forecast_data }}"
         city: "{{ city }}"
         threshold: "{{ temperature_threshold }}"
     next:
-      - when: "{{ evaluate_weather.result.alert }}"  # Check if alert is needed
+      - when: "{{ evaluate_weather_step.alert }}"  # Check if alert is needed
         then:
           - step: alert_step  # If alert needed
             with:
               city: "{{ city.name }}"
-              max_temp: "{{ evaluate_weather.result.max_temp }}"
+              max_temp: "{{ evaluate_weather.max_temp }}"
       - else:
           - step: log_step  # If no alert needed
             with:
@@ -120,7 +115,7 @@ workflow:  # Defines workflow steps and transitions
       - step: district_loop
         with:
           city: "{{ city }}" # pass the current city down
-          districts: "{{ result }}" # pass an array of districts
+          districts: "{{ get_city_districts }}" # pass an array of districts
 
   - step: district_loop
     desc: "Iterate over districts of the city"
@@ -160,7 +155,7 @@ workflow:  # Defines workflow steps and transitions
     desc: "End of the city loop"
     end_loop: city_loop
     result:
-      alerts: "{{ city_loop_results | selectattr('alert_task', 'defined') | map(attribute='alert_task') | list }}" # extract alert_task results from city_loop_results
+      alerts: "{{ city_loop_results }}" # Return all city_loop_results for debugging
     next:
       - step: aggregate_alerts
         with:
@@ -199,18 +194,41 @@ workbook:  # Task definitions used in the workflow
   - task: evaluate_weather  # Evaluate weather after getting forecast
     type: python
     with:
-      forecast_data: "{{ result.data }}"
       city: "{{ city }}"
       threshold: "{{ temperature_threshold }}"
+      forecast_data: "{{ get_forecast }}"
     code: |
-      def main(forecast_data, city, threshold):
-          temps = forecast_data.get('hourly', {}).get('temperature_2m', [])
+      def main(city, threshold, forecast_data):
+          print(f"City: {city}")
+          print(f"Threshold: {threshold}")
+          print(f"Forecast data type: {type(forecast_data)}")
+          threshold = float(threshold) if threshold else 5
+          print(f"Threshold after conversion: {threshold}")
+          temps = []
+          if isinstance(forecast_data, dict):
+              print(f"Forecast data keys: {forecast_data.keys()}")
+              hourly = forecast_data.get('hourly', {})
+              if isinstance(hourly, dict) and 'temperature_2m' in hourly:
+                  temps = hourly['temperature_2m']
+                  print(f"Found temps in hourly.temperature_2m: {temps}")
+              elif 'data' in forecast_data and isinstance(forecast_data['data'], dict):
+                  data = forecast_data['data']
+                  print(f"Data keys: {data.keys()}")
+                  data_hourly = data.get('hourly', {})
+                  if isinstance(data_hourly, dict) and 'temperature_2m' in data_hourly:
+                      temps = data_hourly['temperature_2m']
+                      print(f"Found temps in data.hourly.temperature_2m: {temps}")
           max_temp = max(temps) if temps else 0
-          return {
+          print(f"Max temperature: {max_temp}")
+          alert = max_temp > threshold
+          print(f"Alert needed: {alert}")
+          result = {
               "city": city["name"],
               "max_temp": max_temp,
-              "alert": max_temp > threshold
+              "alert": alert
           }
+          print(f"Returning result: {result}")
+          return result
 
   - task: alert_task
     type: http  # Sends an HTTP POST to alert service

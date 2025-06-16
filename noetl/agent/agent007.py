@@ -642,7 +642,6 @@ class NoETLAgent:
                     'data': response_data
                 }
             else:
-                # Make real HTTP request using httpx
                 headers = render_template(self.jinja_env, task_config.get('headers', {}), context)
                 timeout = task_config.get('timeout', 30)
 
@@ -660,16 +659,12 @@ class NoETLAgent:
                             response = client.patch(endpoint, json=payload, params=params, headers=headers)
                         else:
                             raise ValueError(f"Unsupported HTTP method: {method}")
-
-                        response.raise_for_status()  # Raise exception for 4XX/5XX responses
-
-                        # Try to parse as JSON, fallback to text if not JSON
+                        response.raise_for_status() 
                         try:
                             response_data = response.json()
                         except ValueError:
                             response_data = {"text": response.text}
 
-                        # Add status code to response data
                         response_data = {
                             "data": response_data,
                             "status_code": response.status_code,
@@ -955,20 +950,10 @@ class NoETLAgent:
             task_with = render_template(self.jinja_env, call_config.get('with', {}), step_context)
             task_context = {**step_context, **task_with}
             result = self.execute_task(task_name, task_context, step_event)
-            self.update_context(task_name, {
-                'result': result.get('data'),
-                'status': result.get('status')
-            })
+            self.update_context(task_name, result.get('data'))
+            self.update_context(task_name + '.result', result.get('data'))
+            self.update_context(task_name + '.status', result.get('status'))
             self.update_context('result', result.get('data'))
-            if task_name == 'get_city_districts':
-                self.update_context('districts', result.get('data').get('data'))
-            if 'return' in step_config and result['status'] == 'success':
-                return_template = step_config['return']
-                return_context = {**self.get_context(), 'result': result.get('data')}
-                return_data = render_template(self.jinja_env, return_template, return_context)
-                self.save_step_result(step_id, step_name, None, 'success', return_data, None)
-                self.update_context(step_name, return_data)
-                result['data'] = return_data
         else:
             self.save_step_result(
                 step_id, step_name, None,
@@ -1035,6 +1020,11 @@ class NoETLAgent:
                 'status': 'error',
                 'error': error_msg
             }
+
+        loop_results = loop_info.get('results', [])
+        loop_results_var = f"{loop_name}_results"
+        self.update_context(loop_results_var, loop_results)
+
         result_config = step_config.get('result', {})
         aggregated_results = {}
 
@@ -1297,7 +1287,6 @@ class NoETLAgent:
         if not filepath:
             filepath = f"noetl_execution_{self.execution_id}.parquet"
 
-        # Get event log data to Polars DataFrame
         event_log = self.conn.execute("""
                                       SELECT *
                                       FROM event_log
@@ -1438,9 +1427,7 @@ class NoETLAgent:
 
                 break
 
-            # Pass the next_step_with parameters to execute_step
             step_result = self.execute_step(current_step, self.next_step_with)
-            # Reset next_step_with after using it
             self.next_step_with = None
 
             if step_result['status'] != 'success':
@@ -1461,7 +1448,6 @@ class NoETLAgent:
                 else:
                     break
             else:
-                # Check if the step result has a next_step field (for loop steps)
                 if 'next_step' in step_result:
                     current_step = step_result['next_step']
                     logger.info(f"Using next_step from step result: {current_step}")
@@ -1480,8 +1466,6 @@ class NoETLAgent:
                     {'from_step': step_config.get('step'), 'to_step': current_step, 'with': step_with},
                     execution_start_event
                 )
-
-                # Store step_with for the next iteration
                 self.next_step_with = step_with
 
         logger.info(f"Playbook execution completed")
