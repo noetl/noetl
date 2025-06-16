@@ -22,7 +22,7 @@ workload:  # Defines input parameters accessible throughout the workflow
       lat: 52.52
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
-  temperature_threshold: 25  # Threshold for alerting on temperature
+  temperature_threshold: 10  # Threshold for alerting on temperature (lowered to ensure alerts are triggered)
 
 workflow:  # Defines workflow steps and transitions
   - step: start  # Entry point of the workflow
@@ -41,10 +41,15 @@ workflow:  # Defines workflow steps and transitions
       iterator: city  # Name of the variable for current item in loop
       filter: "{{}}"
     next:
-      - step: fetch_and_evaluate  # Next step inside the loop
+      - step: fetch_and_evaluate  # First step inside the loop
         with:
           city: "{{ city }}"  # Pass the current city
           base_url: "{{ workload.base_url }}"  # Pass API base URL
+          temperature_threshold: "{{ temperature_threshold }}"
+      - step: evaluate_weather_step  # Second step inside the loop
+        with:
+          city: "{{ city }}"
+          forecast_data: "{{ fetch_and_evaluate.forecast_data }}"
           temperature_threshold: "{{ temperature_threshold }}"
 
   - step: fetch_and_evaluate  # Step to fetch and evaluate weather
@@ -55,6 +60,8 @@ workflow:  # Defines workflow steps and transitions
         city: "{{ city }}"
         base_url: "{{ base_url }}"
         temperature_threshold: "{{ temperature_threshold }}"
+    return:
+      forecast_data: "{{ get_forecast.result.data }}"
     next:
       - step: evaluate_weather_step
         with:
@@ -153,7 +160,7 @@ workflow:  # Defines workflow steps and transitions
     desc: "End of the city loop"
     end_loop: city_loop
     result:
-      alerts: "{{ alert }}" # need to decide how to pass alerts down or refer to `alert_step.result`
+      alerts: "{{ city_loop_results | selectattr('alert_task', 'defined') | map(attribute='alert_task') | list }}" # extract alert_task results from city_loop_results
     next:
       - step: aggregate_alerts
         with:

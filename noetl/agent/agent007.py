@@ -1211,6 +1211,20 @@ class NoETLAgent:
             {'item_count': len(items), 'processed_count': len(all_results)}, loop_start_event
         )
 
+        # Find the corresponding end_loop step for this loop
+        loop_name = step_config.get('step')
+        for step in self.playbook.get('workflow', []):
+            if 'end_loop' in step and step.get('end_loop') == loop_name:
+                # Found the end_loop step, set it as the next step
+                logger.info(f"Found end_loop step for {loop_name}: {step.get('step')}")
+                self.next_step_with = step.get('with', {})
+                return {
+                    'id': step_id,
+                    'status': 'success',
+                    'data': all_results,
+                    'next_step': step.get('step')
+                }
+
         return {
             'id': step_id,
             'status': 'success',
@@ -1447,12 +1461,17 @@ class NoETLAgent:
                 else:
                     break
             else:
-                next_steps = self.get_next_steps(step_config, self.context)
-                if not next_steps:
-                    logger.info(f"No next steps found for: {current_step}")
-                    break
+                # Check if the step result has a next_step field (for loop steps)
+                if 'next_step' in step_result:
+                    current_step = step_result['next_step']
+                    logger.info(f"Using next_step from step result: {current_step}")
+                else:
+                    next_steps = self.get_next_steps(step_config, self.context)
+                    if not next_steps:
+                        logger.info(f"No next steps found for: {current_step}")
+                        break
 
-                current_step, step_with = next_steps[0]
+                    current_step, step_with = next_steps[0]
 
                 self.log_event(
                     'step_transition', f"{self.execution_id}_transition_{current_step}",
