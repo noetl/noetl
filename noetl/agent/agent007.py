@@ -100,6 +100,7 @@ class NoETLAgent:
         self.jinja_env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self.jinja_env.filters['to_json'] = lambda obj: json.dumps(obj)
         self.jinja_env.globals['now'] = lambda: datetime.datetime.now().isoformat()
+        self.next_step_with = None
 
         if db_path is None or db_path == ":memory:":
             db_path = os.path.join(os.path.dirname(__file__), "agent007.duckdb")
@@ -1423,7 +1424,11 @@ class NoETLAgent:
 
                 break
 
-            step_result = self.execute_step(current_step)
+            # Pass the next_step_with parameters to execute_step
+            step_result = self.execute_step(current_step, self.next_step_with)
+            # Reset next_step_with after using it
+            self.next_step_with = None
+
             if step_result['status'] != 'success':
                 logger.error(f"Step failed: {current_step}, error: {step_result.get('error')}")
                 self.log_event(
@@ -1456,6 +1461,9 @@ class NoETLAgent:
                     {'from_step': step_config.get('step'), 'to_step': current_step, 'with': step_with},
                     execution_start_event
                 )
+
+                # Store step_with for the next iteration
+                self.next_step_with = step_with
 
         logger.info(f"Playbook execution completed")
 
