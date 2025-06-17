@@ -1,12 +1,11 @@
 # This is a NoETL DSL Playbook for iterating over cities to fetch and evaluate weather data.
 # It includes a loop to process each city, fetch weather data, evaluate conditions, and handle alerts or logging.
 # The playbook demonstrates nested loops for processing city districts, with conditions to skip certain districts.
-# Create agent to run this playbook using the NoETL DSL.
 
 apiVersion: noetl.io/v1  # Specifies the version of the NoETL DSL
-kind: Playbook  # Indicates this is a Playbook definition
-name: weather_iterator_example  # Human-readable name for the playbook
-path: workflows/weather/weather_iterator_example  # Unique path identifier for this playbook
+kind: Playbook  # Defines type - Playbook
+name: weather_example  # name for the playbook
+path: workflows/weather/weather_loop_example  # Unique path identifier for this playbook
 
 workload:  # Defines input parameters accessible throughout the workflow
   jobId: "{{ job.uuid }}"
@@ -22,7 +21,7 @@ workload:  # Defines input parameters accessible throughout the workflow
       lat: 52.52
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
-  temperature_threshold: 25  # Threshold for alerting on temperature (lowered to ensure alerts are triggered)
+  temperature_threshold: 26  # Threshold for alerting on temperature
 
 workflow:  # Defines workflow steps and transitions
   - step: start  # Entry point of the workflow
@@ -30,40 +29,48 @@ workflow:  # Defines workflow steps and transitions
     next:  # Transition rules based on condition
       - when: "{{ workload.state == 'ready' }}"  # Condition for transition
         then:
-          - step: city_loop  # If condition met, go to city_loop step
+          - step: city_loop  # If condition met, goto city_loop step
       - else:
           - step: end  # If not ready, end the workflow
 
-  - step: city_loop  # Step to iterate over the list of cities
+  - step: city_loop
     desc: "Iterate over cities"
     loop:
-      in: "{{ workload.cities }}"  # Input list for iteration
-      iterator: city  # Name of the variable for current item in loop
+      in: "{{ workload.cities }}"
+      iterator: city
       filter: "{{}}"
     next:
-      - step: fetch_and_evaluate  # First step inside the loop
-        with:
-          city: "{{ city }}"  # Pass the current city
-          base_url: "{{ workload.base_url }}"  # Pass API base URL
-          temperature_threshold: "{{ temperature_threshold }}"
-      - step: evaluate_weather_step  # Second step inside the loop
+      - step: fetch_and_evaluate
         with:
           city: "{{ city }}"
+          base_url: "{{ workload.base_url }}"
           temperature_threshold: "{{ temperature_threshold }}"
 
-  - step: fetch_and_evaluate  # Step to fetch and evaluate weather
+  - step: fetch_and_evaluate
     desc: "Fetch and evaluate weather for one city"
     call:
-      task: get_forecast  # Task to call
+      task: evaluate_weather_directly
       with:
         city: "{{ city }}"
         base_url: "{{ base_url }}"
-        temperature_threshold: "{{ temperature_threshold }}"
+        threshold: "{{ temperature_threshold }}"
     next:
-      - step: evaluate_weather_step
-        with:
-          city: "{{ city }}"
-          temperature_threshold: "{{ temperature_threshold }}"
+      - when: "{{ evaluate_weather_directly.alert }}"
+        then:
+          - step: alert_step
+            with:
+              city: "{{ city.name }}"
+              max_temp: "{{ evaluate_weather_directly.max_temp }}"
+          - step: get_city_districts
+            with:
+              city: "{{ city }}"
+      - else:
+          - step: log_step
+            with:
+              city: "{{ city.name }}"
+          - step: get_city_districts
+            with:
+              city: "{{ city }}"
 
   - step: evaluate_weather_step
     desc: "Evaluate weather data and determine if alert is needed"
@@ -72,56 +79,56 @@ workflow:  # Defines workflow steps and transitions
       with:
         city: "{{ city }}"
         threshold: "{{ temperature_threshold }}"
+        forecast_data: "{{ get_forecast }}"
     next:
-      - when: "{{ evaluate_weather_step.alerts }}"  # Check if alert is needed
+      - when: "{{ evaluate_weather.alert }}"
         then:
-          - step: alert_step  # If alert needed
+          - step: alert_step
             with:
               city: "{{ city.name }}"
               max_temp: "{{ evaluate_weather.max_temp }}"
       - else:
-          - step: log_step  # If no alert needed
+          - step: log_step
             with:
               city: "{{ city.name }}"
 
-  - step: alert_step  # Sends alert if temperature exceeds threshold
+  - step: alert_step
     desc: "Send alert if threshold exceeded"
     call:
-      task: alert_task  # Task to call
+      task: alert_task
       with:
         city: "{{ city }}"
         temperature: "{{ max_temp }}"
     next:
-      - step: get_city_districts
-        city: "{{ city }}"
+      - step: end_city_loop
 
-  - step: log_step  # Logs city without alert
+  - step: log_step
     desc: "Log result if no alert"
     call:
       task: log_task
       with:
         city: "{{ city }}"
     next:
-      - step: get_city_districts
-        city: "{{ city }}"
+      - step: end_city_loop
+
 
   - step: get_city_districts
     desc: "Fetch the districts of the city"
     call:
-      task: get_city_districts  # Task to call
+      task: get_city_districts
       with:
         city: "{{ city.name }}"
     next:
       - step: district_loop
         with:
-          city: "{{ city }}" # pass the current city down
-          districts: "{{ get_city_districts }}" # pass an array of districts
+          city: "{{ city }}"
+          districts: "{{ get_city_districts }}"
 
   - step: district_loop
     desc: "Iterate over districts of the city"
     loop:
-      in: "{{ districts }}"  # Input list for iteration
-      iterator: district  # Name of the variable for current item in loop
+      in: "{{ districts }}"
+      iterator: district
       filter: "{{ district.name != 'Mordor' }}" # Skip Mordor
     next:
       - step: process_district  # First step in the inner district loop
@@ -145,7 +152,7 @@ workflow:  # Defines workflow steps and transitions
     desc: "End of the district loop"
     end_loop: district_loop # The loop to monitor
     result:
-      district_loop_output: "{{ output }}" # The `output` is appended to the loop results variable called `district_loop_output`
+      district_loop_output: "{{ output }}" # The output is appended to the loop results variable called district_loop_output
     next:
       - step: end_city_loop
         with:
@@ -155,17 +162,45 @@ workflow:  # Defines workflow steps and transitions
     desc: "End of the city loop"
     end_loop: city_loop
     result:
-      alerts: "{{ city_loop_results }}" # Return all city_loop_results for debugging
+      alerts: "{{ city_loop_results | map(attribute='fetch_and_evaluate') | list }}"
     next:
       - step: aggregate_alerts
         with:
           alerts: "{{ alerts }}"
 
-
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
-    with:
-      alerts: "{{ alerts }}" 
+    call:
+      task: aggregate_alerts_task
+      with:
+        alerts: "{{ alerts }}"
+    next:
+      - step: log_aggregate_result
+        with:
+          summary: "{{ aggregate_alerts_task.summary }}"
+      - when: "{{ aggregate_alerts_task.global_alert }}"
+        then:
+          - step: global_alert_step
+            with:
+              summary: "{{ aggregate_alerts_task.summary }}"
+      - else:
+          - step: end
+
+  - step: log_aggregate_result
+    desc: "Log the aggregated alert summary"
+    call:
+      task: log_aggregate_result_task
+      with:
+        summary: "{{ summary }}"
+    next:
+      - step: end
+
+  - step: global_alert_step
+    desc: "Send a global alert if any city triggered an alert"
+    call:
+      task: global_alert_task
+      with:
+        summary: "{{ summary }}"
     next:
       - step: end
 
@@ -190,6 +225,51 @@ workbook:  # Task definitions used in the workflow
       longitude: "{{ city.lon }}"
       hourly: "temperature_2m"
       forecast_days: 1
+
+  - task: evaluate_weather_directly  # Evaluate weather directly
+    type: python
+    with:
+      city: "{{ city }}"
+      threshold: "{{ threshold }}"
+      base_url: "{{ base_url }}"
+    code: |
+      def main(city, threshold, base_url):
+          import httpx
+
+          # Convert threshold to float
+          threshold = float(threshold) if threshold else 25
+
+          # Fetch forecast data
+          url = f"{base_url}/forecast"
+          params = {
+              "latitude": city["lat"],
+              "longitude": city["lon"],
+              "hourly": "temperature_2m",
+              "forecast_days": 1
+          }
+
+          response = httpx.get(url, params=params)
+          forecast_data = response.json()
+
+          # Extract temperature data
+          temps = []
+          if isinstance(forecast_data, dict):
+              hourly = forecast_data.get('hourly', {})
+              if isinstance(hourly, dict) and 'temperature_2m' in hourly:
+                  temps = hourly['temperature_2m']
+
+          # Calculate max temperature and determine if alert is needed
+          max_temp = max(temps) if temps else 0
+          alert = max_temp > threshold
+
+          # Return result
+          result = {
+              "city": city["name"],
+              "max_temp": max_temp,
+              "alert": alert
+          }
+
+          return result
 
   - task: evaluate_weather  # Evaluate weather after getting forecast
     type: python
@@ -265,3 +345,38 @@ workbook:  # Task definitions used in the workflow
               "processed": True,
               "timestamp": "2024-01-01T12:00:00Z"
           }
+
+  - task: aggregate_alerts_task
+    type: python
+    with:
+      alerts: "{{ alerts }}"
+    code: |
+      def main(alerts):
+          import ast
+          if isinstance(alerts, str):
+              alerts = ast.literal_eval(alerts)
+          # Aggregate alerts and determine if a global alert is needed
+          alert_cities = [a for a in alerts if a and a.get('alert')]
+          global_alert = bool(alert_cities)
+          summary = {
+              "alert_cities": [a["city"] for a in alert_cities],
+              "count": len(alert_cities)
+          }
+          return {"global_alert": global_alert, "summary": summary}
+
+  - task: global_alert_task
+    type: http
+    method: POST
+    endpoint: "http://alert-service.local/global-alerts"
+    payload:
+      summary: "{{ summary }}"
+      message: "Global weather alert triggered."
+
+  - task: log_aggregate_result_task
+    type: python
+    with:
+      summary: "{{ summary }}"
+    code: |
+      def main(summary):
+          print(f"Aggregated weather alert summary: {summary}")
+          return {"logged": True, "summary": summary}

@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""
-NoETL agent with DuckDB persistence for tracking execution flow, and AI/ML control of execution through data analysis.
-"""
-
 import yaml
 import json
 import logging
 import os
+import sys
 import uuid
 import datetime
 from typing import Dict, List, Any, Optional, Tuple
@@ -15,19 +12,17 @@ import duckdb
 import polars as pl
 import httpx
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None) -> Any:
 
     if isinstance(template, str) and '{{' in template and '}}' in template:
-        logger.debug(f"RENDER_TEMPLATE: Rendering template: {template}")
-        logger.debug(f"RENDER_TEMPLATE: Context keys: {list(context.keys())}")
+        logger.debug(f"Render template: {template}")
+        logger.debug(f"Render template context keys: {list(context.keys())}")
         if 'city' in context:
-            logger.debug(f"RENDER_TEMPLATE: City value: {context['city']}, Type: {type(context['city'])}")
+            logger.debug(f"Render template city value: {context['city']}, Type: {type(context['city'])}")
         if rules:
-            logger.debug(f"RENDER_TEMPLATE: Rules: {rules}")
+            logger.debug(f"Render template rules: {rules}")
 
     render_ctx = dict(context)
     if rules:
@@ -88,8 +83,23 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
 
 class NoETLAgent:
-    """NoETLAgent to run playbooks with persistent execution tracking"""
-
+    """
+    NoETLAgent to run playbooks with persistent execution tracking using DuckDB.
+    This agent supports mock mode for testing and can execute tasks defined in the playbook.
+    It uses Jinja2 for templating and supports dynamic context updates.
+    It can execute HTTP tasks, Python tasks, and manage loops with state persistence.
+    It also provides methods to log events, save task results, and manage execution context.
+    Attributes:
+        playbook_path (str): Path to the YAML playbook file.
+        mock_mode (bool): If True, uses mock data for HTTP tasks.
+        db_path (str): Path to the DuckDB database file for persistence.
+        execution_id (str): Unique identifier for the current execution.
+        playbook (Dict): Parsed playbook data.
+        context (Dict): Execution context with initial workload data.
+        jinja_env (Environment): Jinja2 environment for templating.
+        next_step_with (Optional[Dict]): Parameters for the next step in the workflow.
+    """
+    # TODO add AI/ML control of execution through data analysis.
     def __init__(self, playbook_path: str, mock_mode: bool = True, db_path: str = None):
         self.playbook_path = playbook_path
         self.mock_mode = mock_mode
@@ -262,7 +272,6 @@ class NoETLAgent:
                                   json.dumps(step)
                               ))
 
-            # Load transition
             next_steps = step.get('next', [])
             if not isinstance(next_steps, list):
                 next_steps = [next_steps]
@@ -515,11 +524,6 @@ class NoETLAgent:
         return loops
 
     def find_loop(self, loop_name: str, include_completed: bool = False) -> Optional[Dict]:
-        """Find loop
-        Args:
-            loop_name: Name of the loop
-            include_completed: includes loops that are marked as completed, if true
-        """
         logger.debug(f"Finding loop by name: {loop_name}, include_completed: {include_completed}")
 
         # for debug anly
@@ -564,7 +568,6 @@ class NoETLAgent:
         return None
 
     def complete_loop(self, loop_id: str):
-        #Mark loop completed
         self.conn.execute("""
                           UPDATE loop_state
                           SET status    = 'completed',
@@ -593,7 +596,6 @@ class NoETLAgent:
             )
 
             if self.mock_mode:
-                # Mock HTTP response
                 response_data = {"data": "mocked_response", "status": "success"}
 
                 if 'forecast' in endpoint:
@@ -730,7 +732,6 @@ class NoETLAgent:
             code = task_config.get('code', '')
             task_with = render_template(self.jinja_env, task_config.get('with', {}), context)
 
-            # Log task start event
             event_id = self.log_event(
                 'task_start', task_id, task_name, 'python',
                 'in_progress', 0, context, None,
@@ -923,18 +924,18 @@ class NoETLAgent:
             }
 
         logger.info(f"Executing step: {step_name}")
-        logger.debug(f"EXECUTE_STEP: step_name={step_name}, step_with={step_with}")
-        logger.debug(f"EXECUTE_STEP: context before update: {self.context}")
+        logger.debug(f"Executing step: step_name={step_name}, step_with={step_with}")
+        logger.debug(f"Executing step: context before update: {self.context}")
         step_context = self.get_context()
         if step_with:
             rendered_with = render_template(self.jinja_env, step_with, step_context)
-            logger.debug(f"EXECUTE_STEP: rendered_with={rendered_with}")
+            logger.debug(f"Executing step: rendered_with={rendered_with}")
             if rendered_with:
                 step_context.update(rendered_with)
                 for key, value in rendered_with.items():
                     self.update_context(key, value)
 
-        logger.debug(f"EXECUTE_STEP: context after update: {step_context}")
+        logger.debug(f"Executing step: context after update: {step_context}")
         step_event = self.log_event(
             'step_start', step_id, step_name, 'step',
             'in_progress', 0, step_context, None,
@@ -975,7 +976,6 @@ class NoETLAgent:
         return result
 
     def end_loop_step(self, step_config: Dict, context: Dict, step_id: str) -> Dict:
-        """end_loop step with result aggregation"""
         start_time = datetime.datetime.now()
         loop_name = step_config.get('end_loop')
         if not loop_name:
@@ -1113,7 +1113,7 @@ class NoETLAgent:
             return {"value": item}
 
         logger.info(f"Starting loop step with {len(items)} items")
-        logger.debug(f"EXECUTE_LOOP_STEP: iterator={iterator}, items={items}")
+        logger.debug(f"Loop step iterator={iterator}, items={items}")
 
         loop_name = step_config.get('step', 'unnamed_loop')
         loop_id = self.create_loop_state(loop_name, iterator, items, step_id)
@@ -1166,12 +1166,11 @@ class NoETLAgent:
                     next_step_name = next_step
                     next_step_with = {}
 
-                # passing the iterator variable as a dict in rules for template rendering
                 rules = {iterator: iter_context[iterator]}
-                logger.debug(f"EXECUTE_LOOP_STEP: Next step: {next_step_name}, next_step_with={next_step_with}, rules={rules}")
+                logger.debug(f"Loop next step: {next_step_name}, next_step_with={next_step_with}, rules={rules}")
 
                 step_with = render_template(self.jinja_env, next_step_with, iter_context, rules)
-                logger.debug(f"EXECUTE_LOOP_STEP: Rendered step_with: {step_with}")
+                logger.debug(f"Loop step rendered with: {step_with}")
 
                 if not next_step_name:
                     continue
@@ -1201,11 +1200,9 @@ class NoETLAgent:
             {'item_count': len(items), 'processed_count': len(all_results)}, loop_start_event
         )
 
-        # Find the corresponding end_loop step for this loop
         loop_name = step_config.get('step')
         for step in self.playbook.get('workflow', []):
             if 'end_loop' in step and step.get('end_loop') == loop_name:
-                # Found the end_loop step, set it as the next step
                 logger.info(f"Found end_loop step for {loop_name}: {step.get('step')}")
                 self.next_step_with = step.get('with', {})
                 return {
@@ -1304,8 +1301,7 @@ class NoETLAgent:
 
     def postgres_sync(self, noetl_pgdb: str):
         """Sync agent tables to a remote NoETL Postgres database.
-        The connection string should be in the format:
-        'dbname=noetl user=noetl password=noetl host=localhost port=5434'
+        The connection string should be in the format: 'dbname=noetl user=noetl password=noetl host=localhost port=5434'
         """
         logger.info("Syncing DuckDB tables to Postgres.")
         self.conn.execute("INSTALL postgres; LOAD postgres;")
@@ -1405,14 +1401,17 @@ class NoETLAgent:
         logger.info("Sync to Postgres complete.")
 
     def run(self, mlflow: bool = False) -> Dict[str, Any]:
-        """Run the playbook end to end"""
         logger.info(f"Starting playbook: {self.playbook.get('name', 'Unnamed')}")
         self.update_context('workload', self.playbook.get('workload', {}))
         self.update_context('execution_start', datetime.datetime.now().isoformat())
         execution_start_event = self.log_event(
-            'execution_start', self.execution_id, self.playbook.get('name', 'Unnamed'), 'playbook',
-            'in_progress', 0, self.context, None,
-            {'playbook_path': self.playbook_path}, None
+            'execution_start', self.execution_id, self.playbook.get('name', 'Unnamed'),
+            'playbook',
+            'in_progress',
+            0, self.context,
+            None,
+            {'playbook_path': self.playbook_path},
+            None
         )
         current_step = 'start'
         while current_step and current_step != 'end':
@@ -1420,7 +1419,9 @@ class NoETLAgent:
             if not step_config:
                 logger.error(f"Step not found: {current_step}")
                 self.log_event(
-                    'execution_error', f"{self.execution_id}_error", self.playbook.get('name', 'Unnamed'), 'playbook',
+                    'execution_error',
+                    f"{self.execution_id}_error", self.playbook.get('name', 'Unnamed'),
+                    'playbook',
                     'error', 0, self.context, None,
                     {'error': f"Step not found: {current_step}"}, execution_start_event
                 )
@@ -1433,7 +1434,9 @@ class NoETLAgent:
             if step_result['status'] != 'success':
                 logger.error(f"Step failed: {current_step}, error: {step_result.get('error')}")
                 self.log_event(
-                    'execution_error', f"{self.execution_id}_error", self.playbook.get('name', 'Unnamed'), 'playbook',
+                    'execution_error',
+                    f"{self.execution_id}_error", self.playbook.get('name', 'Unnamed'),
+                    'playbook',
                     'error', 0, self.context, None,
                     {'error': f"Step failed: {current_step}", 'step_error': step_result.get('error')},
                     execution_start_event
@@ -1474,7 +1477,9 @@ class NoETLAgent:
             self.context.get('execution_start'))).total_seconds()
 
         self.log_event(
-            'execution_complete', f"{self.execution_id}_complete", self.playbook.get('name', 'Unnamed'), 'playbook',
+            'execution_complete',
+            f"{self.execution_id}_complete", self.playbook.get('name', 'Unnamed'),
+            'playbook',
             'success', execution_duration, self.context, None,
             {'playbook_path': self.playbook_path}, execution_start_event
         )
@@ -1488,7 +1493,7 @@ class NoETLAgent:
                                  """, (self.execution_id,)).fetchall()
 
         for row in rows:
-            if row[1]:  # data exists
+            if row[1]:
                 step_result[row[0]] = json.loads(row[1])
 
         return step_result
@@ -1512,15 +1517,19 @@ def main():
     parser.add_argument("-f", "--file", required=True, help="Path to playbook YAML file")
     parser.add_argument("--mock", action="store_true", help="Run in mock mode")
     parser.add_argument("-o", "--output", default="json", choices=["json", "plain"], help="Output format")
-    parser.add_argument("--duckdb", default=None, help="DuckDB database path (default: agent007.duckdb in script directory)")
+    parser.add_argument("--duckdb", default=None, help="DuckDB database path default: agent007.duckdb")
     parser.add_argument("--export", help="Export execution data to Parquet file")
     parser.add_argument("--mlflow", action="store_true", help="Use ML model for workflow control")
     parser.add_argument("--sync", action="store_true", help="Sync DuckDB tables to Postgres")
-    parser.add_argument("--pgdb", default=None, help="Postgres conn for DuckDB ATTACH (or set NOETL_PGDB env). Example: 'dbname=noetl user=noetl password=noetl host=localhost port=5434'")
-    parser.add_argument("--debug", action="store_true", help="Set debug logging level")
+    parser.add_argument("--pgdb", default=None, help="Pass Postgres conn string or set NOETL_PGDB env. \
+                                            Example: 'dbname=noetl user=noetl password=noetl host=localhost port=5434'")
+    parser.add_argument("--debug", action="store_true", help="Debug logging level")
     args, unknown = parser.parse_known_args()
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+    logging.basicConfig(
+        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
+        datefmt='%Y-%m-%dT%H:%M:%S',
+        level=logging.DEBUG if args.debug else logging.INFO
+    )
     if unknown:
         logger.warning(f"Ignoring unknown arguments: {unknown}")
 
@@ -1538,12 +1547,12 @@ def main():
                 logger.info(f"{step}: {result}")
 
         logger.info(f"DuckDB database file: {agent.db_path}")
-        logger.info(f"To validate result open the notebook notebook/agent007_mission_report.ipynb and set 'db_path' to {agent.db_path}")
+        logger.info(f"Open notebook/agent007_mission_report.ipynb and set 'db_path' to {agent.db_path}")
 
         if args.sync:
             noetl_pgdb = args.pgdb or os.environ.get("NOETL_PGDB")
             if not noetl_pgdb:
-                logger.error("--sync-postgres Postgres connection string missing (use --pgdb or NOETL_PGDB env var)")
+                logger.error("--sync Postgres connection string missing. Use --pgdb or NOETL_PGDB env variable.")
             else:
                 agent.postgres_sync(noetl_pgdb=noetl_pgdb)
 
