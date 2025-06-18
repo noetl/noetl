@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir \
     polars[pyarrow]>=1.30.0 \
     matplotlib>=3.10.3 \
     networkx>=3.5 \
+    pydot>=4.0.1 \
     jupysql>=0.11.1 \
     ipython-sql \
     psycopg[binary]>=3.2.7 \

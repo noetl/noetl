@@ -2,12 +2,12 @@
 # It includes a loop to process each city, fetch weather data, evaluate conditions, and handle alerts or logging.
 # The playbook demonstrates nested loops for processing city districts, with conditions to skip certain districts.
 
-apiVersion: noetl.io/v1  # Specifies the version of the NoETL DSL
-kind: Playbook  # Defines type - Playbook
-name: weather_example  # name for the playbook
+apiVersion: noetl.io/v1
+kind: Playbook
+name: weather_example
 path: workflows/weather/weather_loop_example  # Unique path identifier for this playbook
 
-workload:  # Defines input parameters accessible throughout the workflow
+workload:  # Input parameters section accessible throughout the workflow
   jobId: "{{ job.uuid }}"
   state: ready
   cities:  # List of cities to process in the loop
@@ -23,9 +23,9 @@ workload:  # Defines input parameters accessible throughout the workflow
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
   temperature_threshold: 26  # Threshold for alerting on temperature
 
-workflow:  # Defines workflow steps and transitions
+workflow:  # Workflow steps and transitions
   - step: start  # Entry point of the workflow
-    desc: "Start Weather Analysis Workflow"  # Description of the step
+    desc: "Start Weather Analysis Workflow"
     next:  # Transition rules based on condition
       - when: "{{ workload.state == 'ready' }}"  # Condition for transition
         then:
@@ -193,7 +193,9 @@ workflow:  # Defines workflow steps and transitions
       with:
         summary: "{{ summary }}"
     next:
-      - step: end
+      - step: store_aggregate_result
+        with:
+          summary: "{{ summary }}"
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
@@ -202,11 +204,23 @@ workflow:  # Defines workflow steps and transitions
       with:
         summary: "{{ summary }}"
     next:
+      - step: store_aggregate_result
+        with:
+          summary: "{{ summary }}"
+
+  - step: store_aggregate_result
+    desc: "Store the aggregated alert summary in DuckDB/Postgres"
+    call:
+      task: store_aggregate_result_task_postgres_pipeline
+      with:
+        summary: "{{ summary }}"
+    next:
       - step: end
 
-workbook:  # Task definitions used in the workflow
 
-  - task: log_forcast_request  # First subtask to log forecast request
+workbook:  # Tasks used in the workflow
+
+  - task: log_forcast_request
     type: http
     method: GET
     endpoint: "{{ base_url }}/forecast"
@@ -216,7 +230,7 @@ workbook:  # Task definitions used in the workflow
       hourly: "temperature_2m"
       forecast_days: 1
 
-  - task: get_forecast  # Second subtask to fetch weather data
+  - task: get_forecast
     type: http
     method: GET
     endpoint: "{{ base_url }}/forecast"
@@ -226,7 +240,7 @@ workbook:  # Task definitions used in the workflow
       hourly: "temperature_2m"
       forecast_days: 1
 
-  - task: evaluate_weather_directly  # Evaluate weather directly
+  - task: evaluate_weather_directly
     type: python
     with:
       city: "{{ city }}"
@@ -271,7 +285,7 @@ workbook:  # Task definitions used in the workflow
 
           return result
 
-  - task: evaluate_weather  # Evaluate weather after getting forecast
+  - task: evaluate_weather
     type: python
     with:
       city: "{{ city }}"
@@ -311,16 +325,16 @@ workbook:  # Task definitions used in the workflow
           return result
 
   - task: alert_task
-    type: http  # Sends an HTTP POST to alert service
+    type: http
     method: POST
     endpoint: "http://alert-service.local/alerts"
     payload:
       city: "{{ city }}"
       temperature: "{{ temperature }}"
-      message: "Alert! High temperature."
+      message: "High temperature alert."
 
   - task: log_task
-    type: http  # Sends an HTTP POST to log service
+    type: http
     method: POST
     endpoint: "http://log-service.local/logs"
     payload:
@@ -380,3 +394,65 @@ workbook:  # Task definitions used in the workflow
       def main(summary):
           print(f"Aggregated weather alert summary: {summary}")
           return {"logged": True, "summary": summary}
+
+  - task: store_aggregate_result_task_postgres_pipeline
+    type: python
+    with:
+      summary: "{{ summary }}"
+    code: |
+      def main(summary):
+          import duckdb
+          import json
+          import time
+          import os
+          # Connect to a isolated DuckDB database for the Postgres pipeline
+          duckdb_con = duckdb.connect('./data/noetldb/postgres_pipeline.duckdb')
+
+          # Install Postgres extension
+          duckdb_con.execute("INSTALL postgres;")
+          duckdb_con.execute("LOAD postgres;")
+
+          # Attach Postgres database
+          duckdb_con.execute("ATTACH 'dbname=noetl user=noetl password=noetl host=localhost port=5434' AS postgres_db (TYPE postgres);")
+
+          # Postgres database alias name for queries
+          pg_db = "postgres_db"
+
+          # Store the data in the DuckDB database
+          duckdb_con.execute("""
+              CREATE TABLE IF NOT EXISTS weather_alert_summary (
+                  id BIGINT,
+                  alert_cities TEXT,
+                  alert_count INTEGER,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+              )
+          """)
+
+          # Insert the summary into DuckDB
+          alert_cities = json.dumps(summary.get('alert_cities', []))
+          alert_count = summary.get('count', 0)
+          row_id = int(time.time() * 1000)
+          duckdb_con.execute(
+              "INSERT INTO weather_alert_summary (id, alert_cities, alert_count) VALUES (?, ?, ?)",
+              (row_id, alert_cities, alert_count)
+          )
+
+          # Create weather_alert_summary table in Postgres
+          duckdb_con.execute(f"""
+              CREATE TABLE IF NOT EXISTS {pg_db}.weather_alert_summary (
+                  id BIGINT PRIMARY KEY,
+                  alert_cities TEXT,
+                  alert_count INTEGER,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+              )
+          """)
+
+          # Insert the data into Postgres using DuckDB's Postgres extension
+          duckdb_con.execute(f"""
+              INSERT INTO {pg_db}.weather_alert_summary (id, alert_cities, alert_count)
+              VALUES ({row_id}, '{alert_cities}', {alert_count})
+          """)
+
+          duckdb_con.close()
+
+          return {'status': 'stored_in_postgres', 'summary': summary}
