@@ -35,23 +35,23 @@ VALUES
 ('Daisy', 35, '{"key_4": "value_4", "nested_key": {"inner_key": "value"}}'::jsonb, 'Another\nexample\nof multiline text.'),
 ('Eva', NULL, NULL, 'NULL JSON\nand AGE values.');
 
--- CREATE TABLE resource_type (
---     name TEXT PRIMARY KEY
--- );
+CREATE TABLE IF NOT EXISTS resource (
+    name TEXT PRIMARY KEY
+);
 
--- CREATE TABLE catalog (
---     resource_path     TEXT     NOT NULL,
---     resource_type     TEXT     NOT NULL REFERENCES resource_type(name),
---     resource_version  TEXT     NOT NULL,
---     source            TEXT     NOT NULL DEFAULT 'inline',
---     resource_location TEXT,
---     content           TEXT,
---     payload           JSONB    NOT NULL,
---     meta              JSONB,
---     template          TEXT,
---     timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
---     PRIMARY KEY (resource_path, resource_version)
--- );
+CREATE TABLE IF NOT EXISTS catalog (
+    resource_path     TEXT     NOT NULL,
+    resource_type     TEXT     NOT NULL REFERENCES resource(name),
+    resource_version  TEXT     NOT NULL,
+    source            TEXT     NOT NULL DEFAULT 'inline',
+    resource_location TEXT,
+    content           TEXT,
+    payload           JSONB    NOT NULL,
+    meta              JSONB,
+    template          TEXT,
+    timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (resource_path, resource_version)
+);
 
 -- CREATE TABLE event_type (
 --     name TEXT PRIMARY KEY,
@@ -153,95 +153,98 @@ VALUES
 
 -- NoETL Agent Tables
 -- TODO : Add DuckLake metadata tables
-CREATE TABLE IF NOT EXISTS context (
-    execution_id VARCHAR,
-    timestamp TIMESTAMP,
-    key VARCHAR,
-    value TEXT,
-    PRIMARY KEY (execution_id, key)
-);
-
-CREATE TABLE IF NOT EXISTS task_result (
-    execution_id VARCHAR,
-    task_id VARCHAR,
-    task_name VARCHAR,
-    task_type VARCHAR,
-    parent_id VARCHAR,
-    timestamp TIMESTAMP,
-    status VARCHAR,
-    data TEXT,
-    error TEXT,
-    PRIMARY KEY (execution_id, task_id)
-);
-
-CREATE TABLE IF NOT EXISTS step_result (
-    execution_id VARCHAR,
-    step_id VARCHAR,
-    step_name VARCHAR,
-    parent_id VARCHAR,
-    timestamp TIMESTAMP,
-    status VARCHAR,
-    data TEXT,
-    error TEXT,
-    PRIMARY KEY (execution_id, step_id)
-);
-
-CREATE TABLE IF NOT EXISTS loop_state (
-    execution_id VARCHAR,
-    loop_id VARCHAR,
-    loop_name VARCHAR,
-    parent_id VARCHAR,
-    iterator VARCHAR,
-    items TEXT,
-    current_index INTEGER,
-    current_item TEXT,
-    results TEXT,
-    timestamp TIMESTAMP,
-    status VARCHAR,
-    PRIMARY KEY (execution_id, loop_id)
-);
-
-CREATE TABLE IF NOT EXISTS event_log (
-    execution_id VARCHAR,
-    event_id VARCHAR,
-    parent_event_id VARCHAR,
-    timestamp TIMESTAMP,
-    event_type VARCHAR,
-    node_id VARCHAR,
-    node_name VARCHAR,
-    node_type VARCHAR,
-    status VARCHAR,
-    duration DOUBLE PRECISION,
-    input_context TEXT,
-    output_result TEXT,
-    metadata TEXT,
-    PRIMARY KEY (execution_id, event_id)
-);
-
-CREATE TABLE IF NOT EXISTS workflow (
-    execution_id VARCHAR,
-    step_id VARCHAR,
-    step_name VARCHAR,
-    step_type VARCHAR,
-    description TEXT,
-    raw_config TEXT,
-    PRIMARY KEY (execution_id, step_id)
-);
-
-CREATE TABLE IF NOT EXISTS workbook (
-    execution_id VARCHAR,
-    task_id VARCHAR,
-    task_name VARCHAR,
-    task_type VARCHAR,
-    raw_config TEXT,
-    PRIMARY KEY (execution_id, task_id)
-);
-
-CREATE TABLE IF NOT EXISTS transition (
-    execution_id VARCHAR,
-    from_step VARCHAR,
-    to_step VARCHAR,
-    condition TEXT,
-    with_params TEXT,
-    PRIMARY KEY (execution_id, from_step, to_step, condition)
-);
+-- CREATE TABLE IF NOT EXISTS context (
+--     execution_id VARCHAR,
+--     timestamp TIMESTAMP,
+--     key VARCHAR,
+--     value TEXT,
+--     PRIMARY KEY (execution_id, key)
+-- );
+--
+--
+-- CREATE TABLE IF NOT EXISTS step_result (
+--     execution_id VARCHAR,
+--     step_id VARCHAR,
+--     step_name VARCHAR,
+--     parent_id VARCHAR,
+--     timestamp TIMESTAMP,
+--     status VARCHAR,
+--     data TEXT,
+--     error TEXT,
+--     PRIMARY KEY (execution_id, step_id)
+-- );
+--
+-- CREATE TABLE IF NOT EXISTS loop_state (
+--     execution_id VARCHAR,
+--     loop_id VARCHAR,
+--     loop_name VARCHAR,
+--     parent_id VARCHAR,
+--     iterator VARCHAR,
+--     items TEXT,
+--     current_index INTEGER,
+--     current_item TEXT,
+--     results TEXT,
+--     timestamp TIMESTAMP,
+--     status VARCHAR,
+--     PRIMARY KEY (execution_id, loop_id)
+-- );
+--
+-- CREATE TABLE IF NOT EXISTS event_log (
+--     execution_id VARCHAR,
+--     event_id VARCHAR,
+--     parent_event_id VARCHAR,
+--     timestamp TIMESTAMP,
+--     event_type VARCHAR,
+--     node_id VARCHAR,
+--     node_name VARCHAR,
+--     node_type VARCHAR,
+--     status VARCHAR,
+--     duration DOUBLE PRECISION,
+--     input_context TEXT,
+--     output_result TEXT,
+--     metadata TEXT,
+--     error TEXT,
+--     -- Loop state fields
+--     loop_id VARCHAR,
+--     loop_name VARCHAR,
+--     iterator VARCHAR,
+--     items TEXT,
+--     current_index INTEGER,
+--     current_item TEXT,
+--     results TEXT,
+--     -- Distributed computation fields
+--     worker_id VARCHAR,
+--     distributed_state VARCHAR,
+--     -- Context fields
+--     context_key VARCHAR,
+--     context_value TEXT,
+--     PRIMARY KEY (execution_id, event_id)
+-- );
+--
+-- CREATE TABLE IF NOT EXISTS workflow (
+--     execution_id VARCHAR,
+--     step_id VARCHAR,
+--     step_name VARCHAR,
+--     step_type VARCHAR,
+--     description TEXT,
+--     raw_config TEXT,
+--     PRIMARY KEY (execution_id, step_id)
+-- );
+--
+-- CREATE TABLE IF NOT EXISTS workbook (
+--     execution_id VARCHAR,
+--     task_id VARCHAR,
+--     task_name VARCHAR,
+--     task_type VARCHAR,
+--     raw_config TEXT,
+--     PRIMARY KEY (execution_id, task_id)
+-- );
+--
+-- CREATE TABLE IF NOT EXISTS transition (
+--     execution_id VARCHAR,
+--     from_step VARCHAR,
+--     to_step VARCHAR,
+--     condition TEXT,
+--     with_params TEXT,
+--     PRIMARY KEY (execution_id, from_step, to_step, condition)
+-- );

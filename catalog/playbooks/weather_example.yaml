@@ -21,7 +21,7 @@ workload:  # Input parameters section accessible throughout the workflow
       lat: 52.52
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
-  temperature_threshold: 26  # Threshold for alerting on temperature
+  temperature_threshold: 20  # Threshold for alerting on temperature
 
 workflow:  # Workflow steps and transitions
   - step: start  # Entry point of the workflow
@@ -49,7 +49,8 @@ workflow:  # Workflow steps and transitions
   - step: fetch_and_evaluate
     desc: "Fetch and evaluate weather for one city"
     call:
-      task: evaluate_weather_directly
+      type: workbook
+      name: evaluate_weather_directly
       with:
         city: "{{ city }}"
         base_url: "{{ base_url }}"
@@ -75,7 +76,8 @@ workflow:  # Workflow steps and transitions
   - step: evaluate_weather_step
     desc: "Evaluate weather data and determine if alert is needed"
     call:
-      task: evaluate_weather
+      type: workbook
+      name: evaluate_weather
       with:
         city: "{{ city }}"
         threshold: "{{ temperature_threshold }}"
@@ -95,7 +97,8 @@ workflow:  # Workflow steps and transitions
   - step: alert_step
     desc: "Send alert if threshold exceeded"
     call:
-      task: alert_task
+      type: workbook
+      name: alert_task
       with:
         city: "{{ city }}"
         temperature: "{{ max_temp }}"
@@ -105,7 +108,8 @@ workflow:  # Workflow steps and transitions
   - step: log_step
     desc: "Log result if no alert"
     call:
-      task: log_task
+      type: workbook
+      name: log_task
       with:
         city: "{{ city }}"
     next:
@@ -115,7 +119,8 @@ workflow:  # Workflow steps and transitions
   - step: get_city_districts
     desc: "Fetch the districts of the city"
     call:
-      task: get_city_districts
+      type: workbook
+      name: get_city_districts
       with:
         city: "{{ city.name }}"
     next:
@@ -139,7 +144,8 @@ workflow:  # Workflow steps and transitions
   - step: process_district
     desc: "Do something with the district"
     call:
-      task: process_district
+      type: workbook
+      name: process_district
       with:
         city: "{{ city }}"
         district: "{{ district }}"
@@ -171,56 +177,60 @@ workflow:  # Workflow steps and transitions
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
     call:
-      task: aggregate_alerts_task
+      type: workbook
+      name: aggregate_alerts_task
       with:
         alerts: "{{ alerts }}"
     next:
       - step: log_aggregate_result
         with:
-          summary: "{{ aggregate_alerts_task.summary }}"
-      - when: "{{ aggregate_alerts_task.global_alert }}"
+          summary: "{{ aggregate_alerts.summary }}"
+      - when: "{{ aggregate_alerts.global_alert }}"
         then:
           - step: global_alert_step
             with:
-              summary: "{{ aggregate_alerts_task.summary }}"
+              summary: "{{ aggregate_alerts.summary }}"
       - else:
           - step: end
 
   - step: log_aggregate_result
     desc: "Log the aggregated alert summary"
     call:
-      task: log_aggregate_result_task
+      type: workbook
+      name: log_aggregate_result_task
       with:
-        summary: "{{ summary }}"
+        summary: "{{ aggregate_alerts.summary }}"
     next:
       - step: store_aggregate_result
         with:
-          summary: "{{ summary }}"
+          summary: "{{ aggregate_alerts.summary }}"
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
     call:
-      task: global_alert_task
+      type: workbook
+      name: global_alert_task
       with:
-        summary: "{{ summary }}"
+        summary: "{{ aggregate_alerts.summary }}"
     next:
       - step: store_aggregate_result
         with:
-          summary: "{{ summary }}"
+          summary: "{{ aggregate_alerts.summary }}"
 
   - step: store_aggregate_result
     desc: "Store the aggregated alert summary in DuckDB/Postgres"
     call:
-      task: store_aggregate_result_task_postgres_pipeline
+      type: workbook
+      name: store_aggregate_result_task_postgres_pipeline
       with:
-        summary: "{{ summary }}"
+        summary: "{{ aggregate_alerts.summary }}"
     next:
       - step: end
 
 
-workbook:  # Tasks used in the workflow
+workbook:  # Execution blocks used in the workflow
 
-  - task: log_forcast_request
+  - name: log_forcast_request
     type: http
     method: GET
     endpoint: "{{ base_url }}/forecast"
@@ -230,7 +240,7 @@ workbook:  # Tasks used in the workflow
       hourly: "temperature_2m"
       forecast_days: 1
 
-  - task: get_forecast
+  - name: get_forecast
     type: http
     method: GET
     endpoint: "{{ base_url }}/forecast"
@@ -240,7 +250,7 @@ workbook:  # Tasks used in the workflow
       hourly: "temperature_2m"
       forecast_days: 1
 
-  - task: evaluate_weather_directly
+  - name: evaluate_weather_directly
     type: python
     with:
       city: "{{ city }}"
@@ -285,7 +295,7 @@ workbook:  # Tasks used in the workflow
 
           return result
 
-  - task: evaluate_weather
+  - name: evaluate_weather
     type: python
     with:
       city: "{{ city }}"
@@ -324,7 +334,7 @@ workbook:  # Tasks used in the workflow
           print(f"Returning result: {result}")
           return result
 
-  - task: alert_task
+  - name: alert_task
     type: http
     method: POST
     endpoint: "http://alert-service.local/alerts"
@@ -333,7 +343,7 @@ workbook:  # Tasks used in the workflow
       temperature: "{{ temperature }}"
       message: "High temperature alert."
 
-  - task: log_task
+  - name: log_task
     type: http
     method: POST
     endpoint: "http://log-service.local/logs"
@@ -341,12 +351,12 @@ workbook:  # Tasks used in the workflow
       city: "{{ city }}"
       message: "No alert needed."
 
-  - task: get_city_districts
+  - name: get_city_districts
     type: http
     method: GET
     endpoint: "http://geo-service.local/cities/{{ city }}/districts"
 
-  - task: process_district
+  - name: process_district
     type: python
     with:
       city: "{{ city }}"
@@ -360,7 +370,7 @@ workbook:  # Tasks used in the workflow
               "timestamp": "2024-01-01T12:00:00Z"
           }
 
-  - task: aggregate_alerts_task
+  - name: aggregate_alerts_task
     type: python
     with:
       alerts: "{{ alerts }}"
@@ -378,7 +388,7 @@ workbook:  # Tasks used in the workflow
           }
           return {"global_alert": global_alert, "summary": summary}
 
-  - task: global_alert_task
+  - name: global_alert_task
     type: http
     method: POST
     endpoint: "http://alert-service.local/global-alerts"
@@ -386,7 +396,7 @@ workbook:  # Tasks used in the workflow
       summary: "{{ summary }}"
       message: "Global weather alert triggered."
 
-  - task: log_aggregate_result_task
+  - name: log_aggregate_result_task
     type: python
     with:
       summary: "{{ summary }}"
@@ -395,7 +405,7 @@ workbook:  # Tasks used in the workflow
           print(f"Aggregated weather alert summary: {summary}")
           return {"logged": True, "summary": summary}
 
-  - task: store_aggregate_result_task_postgres_pipeline
+  - name: store_aggregate_result_task_postgres_pipeline
     type: python
     with:
       summary: "{{ summary }}"
