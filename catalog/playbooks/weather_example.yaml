@@ -21,7 +21,7 @@ workload:  # Input parameters section accessible throughout the workflow
       lat: 52.52
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
-  temperature_threshold: 20  # Threshold for alerting on temperature
+  temperature_threshold: 26  # Threshold for alerting on temperature
 
 workflow:  # Workflow steps and transitions
   - step: start  # Entry point of the workflow
@@ -226,6 +226,9 @@ workflow:  # Workflow steps and transitions
         summary: "{{ aggregate_alerts.summary }}"
     next:
       - step: end
+
+  - step: end
+    desc: "End of workflow"
 
 
 workbook:  # Execution blocks used in the workflow

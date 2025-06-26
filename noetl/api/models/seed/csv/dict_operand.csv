@@ -1,7 +1,0 @@
-operand_name,description
-register,Registers an internal component.
-initialize,Initializes an internal component.
-trigger,Triggers execution within the system.
-persist,Persists data related to an internal component.
-process,Processes data or results.
-close,Closes or finalizes an internal component.

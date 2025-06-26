@@ -1,6 +1,0 @@
-name,description
-workflow,"A runtime instance of a playbook, executed within a workload context."
-step,"A logical sequence of tasks or actions, with optional conditions and transitions."
-task,A structural unit that groups related actions for modular execution.
-action,An atomic unit that performs a single external operation.
-cursor,A loop controller used for iterating over arrays or collections.

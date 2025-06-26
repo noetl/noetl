@@ -85,8 +85,6 @@ class NoETLAgent:
         self.mock_mode = mock_mode
         self.execution_id = str(uuid.uuid4())
         self.playbook = self.load_playbook()
-        self.context = {}
-        self.context.update(self.playbook.get('workload', {}))
         self.jinja_env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self.jinja_env.filters['to_json'] = lambda obj: json.dumps(obj)
         self.jinja_env.globals['now'] = lambda: datetime.datetime.now().isoformat()
@@ -101,86 +99,332 @@ class NoETLAgent:
         self.pgdb = pgdb
         self.conn = psycopg.connect(pgdb)
         self.init_database()
+        self.context = {}
+        db_workload = self.load_workload()
+        if db_workload:
+            logger.info(f"Using workload from database for execution {self.execution_id}")
+            self.context.update(db_workload)
+        else:
+            logger.info(f"Workload not found in database. Using default from playbook.")
+            self.context.update(self.playbook.get('workload', {}))
+
         self.parse_playbook()
 
     def init_database(self):
-        with self.conn.cursor() as cursor:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS context (
-                    execution_id VARCHAR,
-                    timestamp TIMESTAMP,
-                    key VARCHAR,
-                    value TEXT,
-                    PRIMARY KEY (execution_id, key)
-                )
-            """)
+        """Initialize the database by creating the necessary tables if they don't exist.
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS event_log (
-                    execution_id VARCHAR,
-                    event_id VARCHAR,
-                    parent_event_id VARCHAR,
-                    timestamp TIMESTAMP,
-                    event_type VARCHAR,
-                    node_id VARCHAR,
-                    node_name VARCHAR,
-                    node_type VARCHAR,
-                    status VARCHAR,
-                    duration DOUBLE PRECISION,
-                    input_context TEXT,
-                    output_result TEXT,
-                    metadata TEXT,
-                    error TEXT,
-                    loop_id VARCHAR,
-                    loop_name VARCHAR,
-                    iterator VARCHAR,
-                    items TEXT,
-                    current_index INTEGER,
-                    current_item TEXT,
-                    results TEXT,
-                    worker_id VARCHAR,
-                    distributed_state VARCHAR,
-                    context_key VARCHAR,
-                    context_value TEXT,
-                    PRIMARY KEY (execution_id, event_id)
-                )
-            """)
+        This method creates the following tables:
+        - workload: Stores the workload data for each execution
+        - event_log: Stores events that occur during execution
+        - workflow: Stores workflow step definitions
+        - workbook: Stores task definitions
+        - transition: Stores transitions between steps
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS workflow (
-                    execution_id VARCHAR,
-                    step_id VARCHAR,
-                    step_name VARCHAR,
-                    step_type VARCHAR,
-                    description TEXT,
-                    raw_config TEXT,
-                    PRIMARY KEY (execution_id, step_id)
-                )
-            """)
+        Raises:
+            Exception: If there's an error initializing the database
+        """
+        try:
+            logger.info("Initializing database tables")
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS workbook (
-                    execution_id VARCHAR,
-                    task_id VARCHAR,
-                    task_name VARCHAR,
-                    task_type VARCHAR,
-                    raw_config TEXT,
-                    PRIMARY KEY (execution_id, task_id)
-                )
-            """)
+            # Check database connection
+            try:
+                with self.conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    result = cursor.fetchone()
+                    if result and result[0] == 1:
+                        logger.info("Database connection is working")
+                    else:
+                        logger.error("Database connection test failed")
+            except Exception as e:
+                logger.error(f"Error testing database connection: {e}", exc_info=True)
+                raise
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS transition (
-                    execution_id VARCHAR,
-                    from_step VARCHAR,
-                    to_step VARCHAR,
-                    condition TEXT,
-                    with_params TEXT,
-                    PRIMARY KEY (execution_id, from_step, to_step, condition)
-                )
-            """)
+            with self.conn.cursor() as cursor:
+                # Create workload table
+                logger.info("Creating workload table if it doesn't exist")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS workload (
+                        execution_id VARCHAR,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        data TEXT,
+                        PRIMARY KEY (execution_id)
+                    )
+                """)
 
-            self.conn.commit()
+                # Verify that the workload table was created
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'workload'
+                    )
+                """)
+                table_exists = cursor.fetchone()[0]
+                if not table_exists:
+                    logger.error("Failed to create workload table")
+                else:
+                    logger.info("Workload table exists or was created successfully")
+
+                    # Check if we can insert and retrieve data from the workload table
+                    try:
+                        test_id = f"test_{uuid.uuid4()}"
+                        test_data = json.dumps({"test": "data"})
+                        logger.info(f"Testing workload table with test_id: {test_id}")
+
+                        # Insert test data
+                        cursor.execute("""
+                            INSERT INTO workload (execution_id, data)
+                            VALUES (%s, %s)
+                            ON CONFLICT (execution_id) DO UPDATE
+                            SET data = EXCLUDED.data
+                        """, (test_id, test_data))
+                        self.conn.commit()
+
+                        # Verify that the test data was stored
+                        cursor.execute("""
+                            SELECT data FROM workload WHERE execution_id = %s
+                        """, (test_id,))
+                        row = cursor.fetchone()
+                        if row and row[0] == test_data:
+                            logger.info("Successfully tested workload table insert and select")
+                        else:
+                            logger.error(f"Failed to verify test data in workload table. Expected: {test_data}, Got: {row[0] if row else None}")
+
+                        # Clean up test data
+                        cursor.execute("""
+                            DELETE FROM workload WHERE execution_id = %s
+                        """, (test_id,))
+                        self.conn.commit()
+                        logger.info("Cleaned up test data from workload table")
+                    except Exception as e:
+                        logger.error(f"Error testing workload table: {e}", exc_info=True)
+
+                # Create event_log table
+                logger.info("Creating event_log table if it doesn't exist")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS event_log (
+                        execution_id VARCHAR,
+                        event_id VARCHAR,
+                        parent_event_id VARCHAR,
+                        timestamp TIMESTAMP,
+                        event_type VARCHAR,
+                        node_id VARCHAR,
+                        node_name VARCHAR,
+                        node_type VARCHAR,
+                        status VARCHAR,
+                        duration DOUBLE PRECISION,
+                        input_context TEXT,
+                        output_result TEXT,
+                        metadata TEXT,
+                        error TEXT,
+                        loop_id VARCHAR,
+                        loop_name VARCHAR,
+                        iterator VARCHAR,
+                        items TEXT,
+                        current_index INTEGER,
+                        current_item TEXT,
+                        results TEXT,
+                        worker_id VARCHAR,
+                        distributed_state VARCHAR,
+                        context_key VARCHAR,
+                        context_value TEXT,
+                        PRIMARY KEY (execution_id, event_id)
+                    )
+                """)
+
+                # Create workflow table
+                logger.info("Creating workflow table if it doesn't exist")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS workflow (
+                        execution_id VARCHAR,
+                        step_id VARCHAR,
+                        step_name VARCHAR,
+                        step_type VARCHAR,
+                        description TEXT,
+                        raw_config TEXT,
+                        PRIMARY KEY (execution_id, step_id)
+                    )
+                """)
+
+                # Create workbook table
+                logger.info("Creating workbook table if it doesn't exist")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS workbook (
+                        execution_id VARCHAR,
+                        task_id VARCHAR,
+                        task_name VARCHAR,
+                        task_type VARCHAR,
+                        raw_config TEXT,
+                        PRIMARY KEY (execution_id, task_id)
+                    )
+                """)
+
+                # Create transition table
+                logger.info("Creating transition table if it doesn't exist")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS transition (
+                        execution_id VARCHAR,
+                        from_step VARCHAR,
+                        to_step VARCHAR,
+                        condition TEXT,
+                        with_params TEXT,
+                        PRIMARY KEY (execution_id, from_step, to_step, condition)
+                    )
+                """)
+
+                # Commit the changes
+                self.conn.commit()
+                logger.info("Database tables initialized successfully")
+
+                # List all tables to verify
+                cursor.execute("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public'
+                """)
+                tables = [row[0] for row in cursor.fetchall()]
+                logger.info(f"Tables in database: {tables}")
+        except Exception as e:
+            logger.error(f"Error initializing database: {e}", exc_info=True)
+            raise
+
+    def store_workload(self, data: Dict):
+        """Store workload data in the database.
+
+        Args:
+            data: The workload data to store
+
+        Raises:
+            Exception: If there's an error storing the workload data
+        """
+        if not isinstance(data, dict):
+            logger.error(f"Invalid workload data type: {type(data)}. Expected dict.")
+            return
+
+        try:
+            # Convert data to JSON string
+            data_json = json.dumps(data)
+            logger.info(f"Storing workload data for execution {self.execution_id}: {data_json[:100]}...")
+
+            # Check if the workload table exists
+            with self.conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'workload'
+                    )
+                """)
+                table_exists = cursor.fetchone()[0]
+                if not table_exists:
+                    logger.error("Workload table does not exist in the database. Creating it now.")
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS workload (
+                            execution_id VARCHAR,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            data TEXT,
+                            PRIMARY KEY (execution_id)
+                        )
+                    """)
+                    self.conn.commit()
+                    logger.info("Workload table created successfully.")
+
+            with self.conn.cursor() as cursor:
+                # Insert or update the workload data
+                logger.info(f"Executing INSERT INTO workload for execution_id: {self.execution_id}")
+                cursor.execute("""
+                    INSERT INTO workload (execution_id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (execution_id) DO UPDATE
+                    SET data = EXCLUDED.data
+                """, (self.execution_id, data_json))
+                self.conn.commit()
+                logger.info(f"INSERT INTO workload completed and committed for execution_id: {self.execution_id}")
+
+                # Verify that the data was stored
+                logger.info(f"Verifying data was stored for execution_id: {self.execution_id}")
+                cursor.execute("""
+                    SELECT COUNT(*) FROM workload WHERE execution_id = %s
+                """, (self.execution_id,))
+                count = cursor.fetchone()[0]
+                if count == 0:
+                    logger.error(f"Failed to store workload data for execution {self.execution_id}. No rows affected.")
+                else:
+                    logger.info(f"Successfully stored workload data for execution {self.execution_id}. Found {count} rows.")
+
+                    # Double-check by retrieving the data
+                    cursor.execute("""
+                        SELECT data FROM workload WHERE execution_id = %s
+                    """, (self.execution_id,))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        logger.info(f"Retrieved workload data for execution {self.execution_id}: {row[0][:100]}...")
+                    else:
+                        logger.error(f"Failed to retrieve workload data for execution {self.execution_id} even though count was {count}.")
+        except Exception as e:
+            logger.error(f"Error storing workload data: {e}", exc_info=True)
+            # Don't raise the exception, as it would break the workflow
+            # But log the full stack trace for debugging
+
+    def load_workload(self) -> Dict:
+        """Load workload data from the database.
+
+        Returns:
+            Dict: The workload data or an empty dict if not found
+        """
+        try:
+            logger.info(f"Loading workload data for execution {self.execution_id}")
+            with self.conn.cursor() as cursor:
+                # Check if the workload table exists
+                logger.info("Checking if workload table exists")
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'workload'
+                    )
+                """)
+                table_exists = cursor.fetchone()[0]
+                if not table_exists:
+                    logger.error("Workload table does not exist in the database")
+                    return {}
+                else:
+                    logger.info("Workload table exists in the database")
+
+                # Check if there are any rows in the workload table
+                logger.info("Checking if workload table has any rows")
+                cursor.execute("SELECT COUNT(*) FROM workload")
+                total_count = cursor.fetchone()[0]
+                logger.info(f"Total rows in workload table: {total_count}")
+
+                # Query the workload data
+                logger.info(f"Querying workload data for execution_id: {self.execution_id}")
+                cursor.execute("""
+                    SELECT data
+                    FROM workload
+                    WHERE execution_id = %s
+                """, (self.execution_id,))
+                row = cursor.fetchone()
+
+                if row and row[0]:
+                    logger.info(f"Found workload data for execution {self.execution_id}")
+                    try:
+                        workload_data = json.loads(row[0])
+                        logger.info(f"Successfully parsed workload data for execution {self.execution_id}: {str(workload_data)[:100]}...")
+                        return workload_data
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Error decoding workload data: {e}")
+                        logger.error(f"Raw data: {row[0][:100]}...")
+                        return {}
+                else:
+                    logger.info(f"No workload data found for execution {self.execution_id}")
+
+                    # List all execution_ids in the workload table to help diagnose the issue
+                    cursor.execute("SELECT execution_id FROM workload")
+                    all_execution_ids = [r[0] for r in cursor.fetchall()]
+                    logger.info(f"All execution_ids in workload table: {all_execution_ids}")
+
+                    return {}
+        except Exception as e:
+            logger.error(f"Error loading workload data: {e}", exc_info=True)
+            return {}
 
     def load_playbook(self) -> Dict:
         if not os.path.exists(self.playbook_path):
@@ -501,7 +745,7 @@ class NoETLAgent:
         return loops
 
     def find_loop(self, loop_name: str, include_completed: bool = False) -> Optional[Dict]:
-        logger.debug(f"Finding loop by name: {loop_name}, include_completed: {include_completed}")
+        logger.debug(f"Loop name: {loop_name}, include_completed: {include_completed}")
 
         with self.conn.cursor() as cursor:
             cursor.execute("""
@@ -511,7 +755,7 @@ class NoETLAgent:
                            AND loop_id IS NOT NULL
                          """, (self.execution_id,))
             all_loops = cursor.fetchall()
-        logger.debug(f"All loops in database: {all_loops}")
+        logger.debug(f"Loops in database: {all_loops}")
 
         if include_completed:
             query = """
@@ -869,7 +1113,7 @@ class NoETLAgent:
         return result
 
     def execute_loop_task(self, task_config: Dict, context: Dict, parent_id: str = None) -> Dict:
-        error_msg = "Nested loop task execution is not supported. Use step-level loops only."
+        error_msg = "Nested loop task execution not supported. Use step-level loops only."
         logger.error(error_msg)
         return {
             'id': str(uuid.uuid4()),
@@ -1309,12 +1553,13 @@ class NoETLAgent:
                 logger.info(f"Execution data exported to {filepath}")
                 return filepath
 
-        logger.warning("No execution data to export")
+        logger.warning("No data to export")
         return None
 
     def run(self, mlflow: bool = False) -> Dict[str, Any]:
         logger.info(f"Starting playbook: {self.playbook.get('name', 'Unnamed')}")
-        self.update_context('workload', self.playbook.get('workload', {}))
+        # Don't override the workload that was set in main.py
+        # self.update_context('workload', self.playbook.get('workload', {}))
         self.update_context('execution_start', datetime.datetime.now().isoformat())
         execution_start_event = self.log_event(
             'execution_start', self.execution_id, self.playbook.get('name', 'Unnamed'),
@@ -1550,8 +1795,7 @@ def main():
             for step, result in results.items():
                 logger.info(f"{step}: {result}")
 
-        logger.info(f"PostgreSQL connection: {agent.pgdb}")
-        logger.info(f"Open notebook/agent_mission_report.ipynb and set 'pgdb' to {agent.pgdb}")
+        logger.info(f"Postgres connection: {agent.pgdb}")
 
     except Exception as e:
         logger.error(f"Error executing playbook: {e}", exc_info=True)

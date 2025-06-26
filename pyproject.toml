@@ -58,7 +58,7 @@ dev = [
 ]
 
 [project.scripts]
-noetl = "noetl.main:main"
+noetl = "noetl.main:app"
 
 [tool.setuptools.package-data]
 "noetl.migrations" = ["alembic.ini", "*.py", "**/*.py", "**/versions/*.py"]

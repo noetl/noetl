@@ -2,8 +2,7 @@ import base64
 import json
 import yaml
 from typing import Any, List, Optional, Union
-from noetl.config.const import AppConst
-from noetl.util.serialization import SafeEncoder
+from noetl.common import SafeEncoder
 
 
 class KeyVal(dict):
@@ -90,7 +89,7 @@ class KeyVal(dict):
         return self
 
     def to_json(self) -> bytes:
-        return json.dumps(self.get_value(), cls=SafeEncoder).encode(AppConst.UTF_8)
+        return json.dumps(self.get_value(), cls=SafeEncoder).encode('utf-8')
 
     def as_json(self, path: Optional[str] = None, indent: Optional[int] = None) -> str:
         value = self.get_value(path)
@@ -107,23 +106,23 @@ class KeyVal(dict):
             data = {k: self.get_value(k) for k in keys if self.get_value(k) is not None}
         else:
             data = self.get_value()
-        return base64.b64encode(json.dumps(data, cls=SafeEncoder).encode(AppConst.UTF_8))
+        return base64.b64encode(json.dumps(data, cls=SafeEncoder).encode('utf-8'))
 
     @classmethod
     def decode(cls, encoded_payload: bytes) -> 'KeyVal':
         try:
-            payload = base64.b64decode(encoded_payload).decode(AppConst.UTF_8)
+            payload = base64.b64decode(encoded_payload).decode('utf-8')
             return cls(**json.loads(payload))
         except (ValueError, json.JSONDecodeError) as e:
             raise ValueError(f"Failed to decode payload: {e}.")
 
     @staticmethod
     def str_to_base64(source: str) -> str:
-        return base64.b64encode(source.encode(AppConst.UTF_8)).decode(AppConst.UTF_8)
+        return base64.b64encode(source.encode('utf-8')).decode('utf-8')
 
     @staticmethod
     def base64_to_str(source: str) -> str:
-        return base64.b64decode(source.encode(AppConst.UTF_8)).decode(AppConst.UTF_8)
+        return base64.b64decode(source.encode('utf-8')).decode('utf-8')
 
     @staticmethod
     def base64_to_yaml(source: str) -> Any:
@@ -137,9 +136,9 @@ class KeyVal(dict):
     def yaml_dump(source: dict) -> str:
         return yaml.safe_dump(source, sort_keys=False, allow_unicode=True)
 
-    def base64_value(self, path: str = AppConst.VALUE) -> str:
-        value = self.get_value(path, AppConst.VALUE_NOT_FOUND)
-        if value in (None, AppConst.VALUE_NOT_FOUND):
+    def base64_value(self, path: str = "value") -> str:
+        value = self.get_value(path, "valueNotFound")
+        if value in (None, "valueNotFound"):
             raise ValueError(f"Value not found for path: {path}.")
         if isinstance(value, str):
             return self.base64_str(value)
@@ -148,13 +147,13 @@ class KeyVal(dict):
     def base64_str(self, source: str) -> str:
         return KeyVal.str_to_base64(source)
 
-    def yaml_value(self, path: str = AppConst.VALUE) -> Any:
-        value = self.get_value(path, AppConst.VALUE_NOT_FOUND)
-        if isinstance(value, str) and value not in (AppConst.VALUE_NOT_FOUND, None):
+    def yaml_value(self, path: str = "value") -> Any:
+        value = self.get_value(path, "valueNotFound")
+        if isinstance(value, str) and value not in ("valueNotFound", None):
             return KeyVal.base64_to_yaml(value)
         return value
 
-    def yaml_value_dump(self, path: str = AppConst.VALUE) -> str:
+    def yaml_value_dump(self, path: str = "value") -> str:
         return KeyVal.yaml_dump(self.yaml_value(path))
 
 

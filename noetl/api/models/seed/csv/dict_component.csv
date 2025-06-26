@@ -1,6 +1,0 @@
-component_name,route_module,schema_module,service_module,model_module,table_name,description
-catalog,noetl.api.routes.catalog,noetl.api.schemas.catalog,noetl.api.services.catalog,noetl.api.models.catalog,catalog,Catalog of playbooks and definitions.
-workload,noetl.api.routes.workload,noetl.api.schemas.workload,noetl.api.services.workload,noetl.api.models.workload,workload,Context for executing workloads.
-runtime,noetl.api.routes.runtime,noetl.api.schemas.runtime,noetl.api.services.runtime,noetl.api.models.runtime,runtime,Runtime execution environment.
-context,noetl.api.routes.context,noetl.api.schemas.context,noetl.api.services.context,noetl.api.models.context,context,Execution context management.
-result,noetl.api.routes.result,noetl.api.schemas.result,noetl.api.services.result,noetl.api.models.result,result,Management and persistence of execution results.

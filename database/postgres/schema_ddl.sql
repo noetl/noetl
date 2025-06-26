@@ -53,198 +53,67 @@ CREATE TABLE IF NOT EXISTS catalog (
     PRIMARY KEY (resource_path, resource_version)
 );
 
--- CREATE TABLE event_type (
---     name TEXT PRIMARY KEY,
---     template TEXT NOT NULL,
---     description TEXT
--- );
---
--- CREATE TABLE event (
---     event_id VARCHAR(36) PRIMARY KEY,
---     parent_id VARCHAR(36),
---     execution_id VARCHAR(36),
---     event_scope JSONB DEFAULT '{}'::jsonb,
---     status TEXT NOT NULL DEFAULT 'UNPROCESSED',
---     resource_path TEXT NOT NULL,
---     resource_version TEXT NOT NULL,
---     event_type TEXT NOT NULL,
---     event_message TEXT,
---     content TEXT,
---     payload JSONB DEFAULT '{}'::jsonb,
---     context JSONB DEFAULT '{}'::jsonb,
---     meta JSONB DEFAULT '{}'::jsonb,
---     timestamp TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC'),
---
---     CONSTRAINT fk_event_catalog FOREIGN KEY (resource_path, resource_version)
---         REFERENCES catalog(resource_path, resource_version),
---
---     CONSTRAINT fk_event_type FOREIGN KEY (event_type)
---         REFERENCES event_type(name)
--- );
---
--- -- Indexes for performance
--- CREATE INDEX idx_event_parent_id ON event(parent_id);
--- CREATE INDEX idx_event_execution_id ON event(execution_id);
 
+CREATE TABLE IF NOT EXISTS event_log (
+    execution_id VARCHAR,
+    event_id VARCHAR,
+    parent_event_id VARCHAR,
+    timestamp TIMESTAMP,
+    event_type VARCHAR,
+    node_id VARCHAR,
+    node_name VARCHAR,
+    node_type VARCHAR,
+    status VARCHAR,
+    duration DOUBLE PRECISION,
+    input_context TEXT,
+    output_result TEXT,
+    metadata TEXT,
+    error TEXT,
+    loop_id VARCHAR,
+    loop_name VARCHAR,
+    iterator VARCHAR,
+    items TEXT,
+    current_index INTEGER,
+    current_item TEXT,
+    results TEXT,
+    worker_id VARCHAR,
+    distributed_state VARCHAR,
+    context_key VARCHAR,
+    context_value TEXT,
+    PRIMARY KEY (execution_id, event_id)
+);
 
--- CREATE TABLE event_claim (
---     event_id TEXT NOT NULL,          -- The event being claimed
---     job_id TEXT NOT NULL,            -- The job to which the event belongs
---     worker_id TEXT NOT NULL,         -- Unique identifier for the worker making the claim
---     meta             JSONB,
---     timestamp TIMESTAMPTZ NOT NULL,  -- Claim creation time
---     PRIMARY KEY (event_id, worker_id)
--- );
+CREATE TABLE IF NOT EXISTS workflow (
+    execution_id VARCHAR,
+    step_id VARCHAR,
+    step_name VARCHAR,
+    step_type VARCHAR,
+    description TEXT,
+    raw_config TEXT,
+    PRIMARY KEY (execution_id, step_id)
+);
 
--- CREATE TABLE runtime (
---     id SERIAL PRIMARY KEY,                      -- Auto-incrementing unique ID
---     job_id TEXT NOT NULL,                       -- Unique job identifier (foreign key to jobs or events)
---     step_id TEXT,                               -- Current step being processed (nullable)
---     task_id TEXT,                               -- Current task being processed (nullable)
---     worker_id TEXT NOT NULL,                    -- Worker processing this runtime execution
---     status TEXT NOT NULL DEFAULT 'PENDING',     -- State: PENDING, RUNNING, COMPLETED, FAILED
---     context JSONB,                              -- Execution context (e.g. variables, metadata)
---     last_updated TIMESTAMPTZ DEFAULT now()      -- Timestamp for tracking activity
--- );
+CREATE TABLE IF NOT EXISTS workbook (
+    execution_id VARCHAR,
+    task_id VARCHAR,
+    task_name VARCHAR,
+    task_type VARCHAR,
+    raw_config TEXT,
+    PRIMARY KEY (execution_id, task_id)
+);
 
+CREATE TABLE IF NOT EXISTS workload (
+    execution_id VARCHAR,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    data TEXT,
+    PRIMARY KEY (execution_id)
+);
 
--- CREATE TABLE event_2025_04 PARTITION OF event
--- FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');
-
--- CREATE TABLE event_2025_05 PARTITION OF event
--- FOR VALUES FROM ('2025-05-01') TO ('2025-06-01');
-
--- CREATE TABLE event_2025_06 PARTITION OF event
--- FOR VALUES FROM ('2025-06-01') TO ('2025-07-01');
-
--- CREATE TABLE event_2025_07 PARTITION OF event
--- FOR VALUES FROM ('2025-07-01') TO ('2025-08-01');
-
--- CREATE TABLE event_2025_08 PARTITION OF event
--- FOR VALUES FROM ('2025-08-01') TO ('2025-09-01');
-
--- CREATE TABLE event_2025_09 PARTITION OF event
--- FOR VALUES FROM ('2025-09-01') TO ('2025-10-01');
-
--- CREATE TABLE event_2025_10 PARTITION OF event
--- FOR VALUES FROM ('2025-10-01') TO ('2025-11-01');
-
--- CREATE TABLE event_2025_11 PARTITION OF event
--- FOR VALUES FROM ('2025-11-01') TO ('2025-12-01');
-
--- CREATE TABLE event_2025_12 PARTITION OF event
--- FOR VALUES FROM ('2025-12-01') TO ('2026-01-01');
-
--- INSERT INTO resource_type (name) VALUES
---     ('Playbook'),
---     ('Workflow'),
---     ('Target'),
---     ('Step'),
---     ('Task'),
---     ('Action');
-
--- INSERT INTO event_type (name, template) VALUES
---     ('REGISTERED',          'Resource {{ resource_path }} version {{ resource_version }} was registered.'),
---     ('UPDATED',             'Resource {{ resource_path }} version {{ resource_version }} was updated.'),
---     ('UNCHANGED',           'Resource {{ resource_path }} already registered.'),
---     ('EXECUTION_STARTED',   'Execution started for {{ resource_path }}.'),
---     ('EXECUTION_FAILED',    'Execution failed for {{ resource_path }}.'),
---     ('EXECUTION_COMPLETED', 'Execution completed for {{ resource_path }}.');
-
--- NoETL Agent Tables
--- TODO : Add DuckLake metadata tables
--- CREATE TABLE IF NOT EXISTS context (
---     execution_id VARCHAR,
---     timestamp TIMESTAMP,
---     key VARCHAR,
---     value TEXT,
---     PRIMARY KEY (execution_id, key)
--- );
---
---
--- CREATE TABLE IF NOT EXISTS step_result (
---     execution_id VARCHAR,
---     step_id VARCHAR,
---     step_name VARCHAR,
---     parent_id VARCHAR,
---     timestamp TIMESTAMP,
---     status VARCHAR,
---     data TEXT,
---     error TEXT,
---     PRIMARY KEY (execution_id, step_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS loop_state (
---     execution_id VARCHAR,
---     loop_id VARCHAR,
---     loop_name VARCHAR,
---     parent_id VARCHAR,
---     iterator VARCHAR,
---     items TEXT,
---     current_index INTEGER,
---     current_item TEXT,
---     results TEXT,
---     timestamp TIMESTAMP,
---     status VARCHAR,
---     PRIMARY KEY (execution_id, loop_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS event_log (
---     execution_id VARCHAR,
---     event_id VARCHAR,
---     parent_event_id VARCHAR,
---     timestamp TIMESTAMP,
---     event_type VARCHAR,
---     node_id VARCHAR,
---     node_name VARCHAR,
---     node_type VARCHAR,
---     status VARCHAR,
---     duration DOUBLE PRECISION,
---     input_context TEXT,
---     output_result TEXT,
---     metadata TEXT,
---     error TEXT,
---     -- Loop state fields
---     loop_id VARCHAR,
---     loop_name VARCHAR,
---     iterator VARCHAR,
---     items TEXT,
---     current_index INTEGER,
---     current_item TEXT,
---     results TEXT,
---     -- Distributed computation fields
---     worker_id VARCHAR,
---     distributed_state VARCHAR,
---     -- Context fields
---     context_key VARCHAR,
---     context_value TEXT,
---     PRIMARY KEY (execution_id, event_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS workflow (
---     execution_id VARCHAR,
---     step_id VARCHAR,
---     step_name VARCHAR,
---     step_type VARCHAR,
---     description TEXT,
---     raw_config TEXT,
---     PRIMARY KEY (execution_id, step_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS workbook (
---     execution_id VARCHAR,
---     task_id VARCHAR,
---     task_name VARCHAR,
---     task_type VARCHAR,
---     raw_config TEXT,
---     PRIMARY KEY (execution_id, task_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS transition (
---     execution_id VARCHAR,
---     from_step VARCHAR,
---     to_step VARCHAR,
---     condition TEXT,
---     with_params TEXT,
---     PRIMARY KEY (execution_id, from_step, to_step, condition)
--- );
+CREATE TABLE IF NOT EXISTS transition (
+    execution_id VARCHAR,
+    from_step VARCHAR,
+    to_step VARCHAR,
+    condition TEXT,
+    with_params TEXT,
+    PRIMARY KEY (execution_id, from_step, to_step, condition)
+);
