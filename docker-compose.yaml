@@ -1,0 +1,82 @@
+networks:
+  noetl-network:
+    name: noetl-network
+
+services:
+  db:
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    container_name: noetl-database
+    environment:
+      TZ: America/Chicago
+      POSTGRES_USER: noetl
+      POSTGRES_PASSWORD: noetl
+      POSTGRES_SCHEMA: public
+      POSTGRES_DB: noetl
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command: "postgres -c port=5432 -c config_file=/etc/postgresql/postgresql.conf"
+    volumes:
+      - ./database/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./database/postgres/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
+      - ./database/postgres/schema_ddl.sql:/schema_ddl.sql
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noetl -d noetl -p 5432"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+    networks:
+      - noetl-network
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/noetl/Dockerfile
+    container_name: noetl-api
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./secrets/application_default_credentials.json:/app/secrets/application_default_credentials.json
+    environment:
+      TZ: America/Chicago
+      LOG_LEVEL: INFO
+      PYTHONPATH: "/app"
+      NOETL_DATA_DIR: "/usr/data/"
+      POSTGRES_USER: noetl
+      POSTGRES_DB: noetl
+      POSTGRES_PASSWORD: noetl
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_SCHEMA: public
+      GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/application_default_credentials.json
+    networks:
+      - noetl-network
+
+  jupyter:
+    build:
+      context: .
+      dockerfile: docker/jupyter/Dockerfile
+    container_name: noetl-jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./data/work:/home/jovyan/work
+      - ./data/jupyter:/home/jovyan/data
+      - .secrets/noetl-demo.json:/app/secrets/noetl-demo.json
+    environment:
+      - JUPYTER_TOKEN=noetl
+      - TZ=America/Chicago
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/noetl-demo.json
+    networks:
+      - noetl-network

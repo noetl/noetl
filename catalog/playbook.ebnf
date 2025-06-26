@@ -1,0 +1,148 @@
+(* NoETL Playbook Grammar *)
+
+playbook =
+    metadata,
+    workload,
+    workbook,
+    workflow
+    ;
+
+metadata =
+    "apiVersion", ":", string_literal,
+    "kind", ":", "Playbook",
+    "name", ":", string_literal,
+    "path", ":", string_literal
+    ;
+
+workload =
+    "workload", ":", mapping_literal
+    ;
+
+workbook =
+    "workbook", ":", "[", {task_definition}, "]"
+    ;
+
+task_definition =
+    "task", ":", identifier_literal,
+    "type", ":", identifier_literal,
+    ["desc", ":", string_literal],
+    ["in", ":", quoted_template_literal],
+    ["iterator", ":", identifier_literal],
+    ["method", ":", identifier_literal],
+    ["endpoint", ":", quoted_template_literal],
+    ["params", ":", mapping_literal],
+    ["payload", ":", (quoted_template_literal | mapping_literal)],
+    ["code", ":", string_literal],
+    ["retry", ":", number_literal],
+    ["retry_delay", ":", number_literal],
+    ["on_error", ":", ("continue" | "fail")],
+    ["with", ":", mapping_literal],
+    ["when", ":", quoted_template_literal],
+    ["run", ":", "[", {task_definition}, "]"]
+    ;
+
+workflow =
+    "workflow", ":", "[", {step_definition}, "]"
+    ;
+
+step_definition =
+    "step", ":", identifier_literal,
+    ["desc", ":", string_literal],
+    ["run", ":", "[", {task_invocation}, "]"],
+    ["with", ":", mapping_literal],
+    ["next", ":", "[", {transition}, "]"]
+    ;
+
+task_invocation =
+    "task", ":", identifier_literal,
+    ["with", ":", mapping_literal]
+    ;
+
+transition =
+    ["when", ":", quoted_template_literal],
+    "then", ":", "[", {step_reference}, "]"
+    | "else", ":", "[", {step_reference}, "]"
+    ;
+
+step_reference =
+    "step", ":", identifier_literal,
+    ["with", ":", mapping_literal]
+    ;
+
+mapping_literal =
+    "{", [key_value_entry, {",", key_value_entry}], "}"
+    ;
+
+key_value_entry =
+    identifier_literal, ":", value_literal
+    ;
+
+value_literal =
+    string_literal
+    | number_literal
+    | boolean_literal
+    | null_literal
+    | quoted_template_literal
+    | list_literal
+    | mapping_literal
+    ;
+
+quoted_template_literal =
+    '"', "{{", {template_char}, "}}", '"'
+    ;
+
+list_literal =
+    "[", [value_literal, {",", value_literal}], "]"
+    ;
+
+string_literal =
+    '"', {character}, '"'
+    ;
+
+number_literal =
+    ["-"], digit, {digit}, [".", digit, {digit}]
+    ;
+
+boolean_literal =
+    "true" | "false"
+    ;
+
+null_literal =
+    "null"
+    ;
+
+identifier_literal =
+    letter, {letter | digit | "_"}
+    ;
+
+letter =
+    "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+    | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+    | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
+    | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z"
+    ;
+
+digit =
+    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+    ;
+
+character =
+    unicode_safe_char
+    | "\", '"'  (* escaped double-quote *)
+    | "\", "n"  (* newline *)
+    | "\", "t"  (* tab *)
+    | "\", "r"  (* carriage return *)
+    | "\", "b"  (* backspace *)
+    | "\", "f"  (* form feed *)
+    ;
+
+template_char =
+    unicode_safe_char
+    | "{" | "}" | "." | "_" | "[" | "]" | "(" | ")"
+    | "+" | "-" | "/" | "*" | " " | "=" | "!" | "<" | ">"
+    | ":" | "," | "'" | '"' | "%" | "|" | "&" | "\t" | "\n"
+    ;
+
+unicode_safe_char =
+    ? any Unicode character except double-quote (") and control characters U+0000 to U+001F and U+007F ?
+    ;

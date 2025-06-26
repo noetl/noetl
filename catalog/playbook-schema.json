@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noetl.io/schemas/playbook.schema.json",
+  "title": "NoETL Playbook",
+  "type": "object",
+  "required": ["apiVersion", "kind", "name", "path", "context", "workbook", "workflow"],
+  "properties": {
+    "apiVersion": { "const": "noetl.io/v1" },
+    "kind": { "const": "Playbook" },
+    "name": { "type": "string" },
+    "path": { "type": "string" },
+
+    "environment": {
+      "type": "object",
+      "additionalProperties": true
+    },
+
+    "context": {
+      "type": "object",
+      "required": ["jobId", "state"],
+      "properties": {
+        "jobId": { "type": "string" },
+        "state": { "type": "string" },
+        "results": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+
+    "workbook": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task", "type", "desc"],
+        "properties": {
+          "task": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["python", "http", "runner"]
+          },
+          "desc": { "type": "string" },
+          "code": { "type": "string" },
+          "method": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]
+          },
+          "endpoint": { "type": "string" },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "loop": {
+            "type": "object",
+            "properties": {
+              "in": { "type": ["string", "array"] },
+              "iterator": { "type": "string" },
+              "mode": {
+                "type": "string",
+                "enum": ["parallel", "sequential"]
+              }
+            },
+            "required": ["in", "iterator"]
+          },
+          "run": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/task" }
+          }
+        },
+        "dependencies": {
+          "method": ["endpoint"],
+          "endpoint": ["method"]
+        }
+      }
+    },
+
+    "workflow": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step", "desc"],
+        "properties": {
+          "step": { "type": "string" },
+          "desc": { "type": "string" },
+          "run": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["task"],
+              "properties": {
+                "task": { "type": "string" },
+                "until": { "type": "string" }
+              }
+            }
+          },
+          "next": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "required": ["when", "then"],
+                  "properties": {
+                    "when": { "type": "string" },
+                    "then": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                },
+                {
+                  "required": ["then"],
+                  "properties": {
+                    "then": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": ["type", "desc"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["python", "http", "runner"]
+        },
+        "desc": { "type": "string" },
+        "code": { "type": "string" },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        },
+        "endpoint": { "type": "string" },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "loop": {
+          "type": "object",
+          "properties": {
+            "in": { "type": ["string", "array"] },
+            "iterator": { "type": "string" }
+          },
+          "required": ["in", "iterator"]
+        }
+      },
+      "dependencies": {
+        "method": ["endpoint"],
+        "endpoint": ["method"]
+      }
+    }
+  }
+}

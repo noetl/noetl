@@ -1,116 +1,206 @@
 GHCR_USERNAME=noetl
-VERSION="0.1.0"
+VERSION="0.1.17"
 K8S_DIR=k8s
+COMPOSE_FILE = docker-compose.yaml
+PROJECT_NAME = noetl
+PYPI_USER = noetl
+VENV = .venv
+PYTHON = $(VENV)/bin/python
+UV = uv
 
-# define get_nats_port
-# $(shell kubectl get svc nats -n nats -o=jsonpath='{.spec.ports[0].nodePort}')
-# endef
-# NATS_URL=nats://localhost:$(call get_nats_port)
+#   export PAT=<PERSONAL_ACCESS_TOKEN>
+#   export GIT_USER=<GITHUB_USERNAME>
+#   make docker-login PAT=<git_pat_token> GIT_USER=<git_username>
+#   PAT := <PERSONAL_ACCESS_TOKEN>
+#   GIT_USER := <GITHUB_USERNAME>
 
-NATS_URL=nats://localhost:32222
-
-PYTHON := python3.11
-VENV_NAME := .venv
-REQUIREMENTS := requirements.txt
-
-
-.PHONY: venv requirements activate
-
-venv:
-	@echo "Creating Python virtual environment..."
-	$(PYTHON) -m venv $(VENV_NAME)
-	@. $(VENV_NAME)/bin/activate; \
-	pip3 install --upgrade pip; \
-	deactivate
-	@echo "Virtual environment created."
-
-requirements:
-	@echo "Installing python requirements..."
-	@. $(VENV_NAME)/bin/activate; \
-	pip3 install -r $(REQUIREMENTS); \
-	$(PYTHON) -m spacy download en_core_web_sm; \
-	echo "Requirements installed."
-
-activate-venv:
-	@. $(VENV_NAME)/bin/activate;
-
-activate-help:
-	@echo "To activate the virtual environment:"
-	@echo "source $(VENV_NAME)/bin/activate"
-
-install-helm:
-	@echo "Installing Helm..."
-	@brew install helm
-	@echo "Helm installation complete."
-
-
-install-nats-tools:
-	@echo "Tapping nats-io/nats-tools..."
-	@brew tap nats-io/nats-tools
-	@echo "Installing nats from nats-io/nats-tools..."
-	@brew install nats-io/nats-tools/nats
-	@echo "NATS installation complete."
-
-#all: build-all push-all delete-all deploy-all
-
-.PHONY: venv requirements activate-venv activate-help install-helm install-nats-tools
-
-
-
-#[BUILD]#######################################################################
-.PHONY: build-cli remove-cli-image rebuild-cli
-
-build-cli:
-	@echo "Building CLI image..."
-	docker build --build-arg PRJ_PATH=../../ -f $(CLI_DOCKERFILE) -t $(CLI_SERVICE_TAG) .
-
-remove-cli-image:
-	@echo "Removing CLI image..."
-	docker rmi $(CLI_SERVICE_TAG)
-
-rebuild-cli: remove-cli-image build-cli
-
-
-clean:
-	docker rmi $$(docker images -f "dangling=true" -q)
-
-
-#[TAG]#######################################################################
-.PHONY: tag-cli
-
-tag-cli:
-	@echo "Tagging CLI image"
-	docker tag $(CLI_SERVICE_TAG) ghcr.io/$(GHCR_USERNAME)/noetl-cli:$(CLI_VERSION)
-
-
-#[PUSH]#######################################################################
-.PHONY: push-cli
-.PHONY: docker-login push-all
-
-push-all: push-cli
+.PHONY: help
+help:
+	@echo "Commands:"
+	@echo "  make build           Build containers"
+	@echo "  make rebuild         Rebuild containers"
+	@echo "  make up              Start containers"
+	@echo "  make down            Stop containers"
+	@echo "  make restart         Restart services"
+	@echo "  make logs            View logs"
+	@echo "  make clean           Clean up"
+	@echo ""
+	@echo "Development Commands:"
+	@echo "  make install-uv      Install uv package manager"
+	@echo "  make create-venv     Create virtual environment"
+	@echo "  make install-dev     Install development dependencies"
+	@echo "  make install         Install package"
+	@echo "  make run             Run the server"
+	@echo ""
+	@echo "Test Commands:"
+	@echo "  make test-setup      Set up test environment (create required directories)"
+	@echo "  make test            Run all tests with coverage"
+	@echo "  make test-server-api Run server API tests"
+	@echo "  make test-server-api-unit Run server API unit tests"
+	@echo "  make test-parquet-export Run Parquet export tests"
+	@echo "  make test-keyval     Run key-value tests"
+	@echo "  make test-payload    Run payload tests"
+	@echo "  make test-playbook   Run playbook tests"
+	@echo ""
+	@echo "API Commands:"
+	@echo "  make encode-playbook  Encode playbook to base64"
+	@echo "  make register-playbook Register playbook with NoETL server"
+	@echo "  make execute-playbook Execute playbook on NoETL server"
 
 docker-login:
-	@echo "Logging in to GitHub Container Registry"
-	@echo $$PAT | docker login ghcr.io -u noetl --password-stdin
+	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
 
-push-cli: tag-cli docker-login
-	@echo "Pushing CLI image to GitHub Container Registry"
-	docker push ghcr.io/$(GHCR_USERNAME)/noetl-cli:$(CLI_VERSION)
+#docker-login:
+#	@echo "Logging in to GitHub Container Registry"
+#	@echo $$PAT | docker login ghcr.io -u noetl --password-stdin
 
-#[NATS]#######################################################################
-.PHONY: nats-create-noetl nats-delete-noetl nats-reset-noetl purge-noetl stream-ls
+.PHONY: build
+build:
+	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build
+
+.PHONY: rebuild
+rebuild:
+	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build --no-cache
+
+.PHONY: up
+up:
+	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) up -d
+
+.PHONY: down
+down:
+	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) down
+
+.PHONY: restart
+restart: down up
+
+.PHONY: logs
+logs:
+	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) logs -f
+
+.PHONY: clean install-uv create-venv install-dev run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-setup build-uv publish encode-playbook register-playbook execute-playbook
+
+clean:
+	docker system prune -af --volumes
+
+install-uv:
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "Installing uv"; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		echo "uv installed to $$HOME/.local/bin"; \
+	}
+
+create-venv:
+	$(UV) venv
+	. $(VENV)/bin/activate
+
+install-dev:
+	$(UV) pip install -e ".[dev]"
+
+install:
+	$(UV) pip install -e .
+
+uninstall:
+	$(UV) pip uninstall noetl
+
+run:
+	$(VENV)/bin/noetl server --host 0.0.0.0 --port 8082
+
+test: test-setup
+	$(VENV)/bin/pytest -v --cov=noetl tests/
+
+test-server-api: test-setup
+	$(VENV)/bin/python tests/test_server_api.py
+
+test-server-api-unit: test-setup
+	$(VENV)/bin/python tests/test_server_api_unit.py
+
+test-parquet-export: test-setup
+	$(VENV)/bin/python tests/test_parquet_export.py
+
+test-keyval: test-setup
+	$(VENV)/bin/pytest -v tests/test_keyval.py
+
+test-payload: test-setup
+	$(VENV)/bin/pytest -v tests/test_payload.py
+
+test-playbook: test-setup
+	$(VENV)/bin/pytest -v tests/test_playbook.py
+
+test-setup:
+	@echo "Setting up test environment..."
+	@mkdir -p data/input data/exports
+	@echo "Test environment setup complete."
+
+build-uv:
+	$(UV) build
+
+publish:
+	$(UV) publish --username $(PYPI_USER)
+
+clean-dist:
+	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv
+
+# API Commands
+encode-playbook:
+	@echo "Encoding playbook to base64..."
+	@# Use different base64 options based on platform (Linux vs macOS)
+	@if [ "$$(uname)" = "Linux" ]; then \
+		echo "export PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 -w 0)"; \
+		cat ./catalog/playbooks/weather_example.yaml | base64 -w 0 > /tmp/playbook_base64.txt; \
+	else \
+		echo "export PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 | tr -d '\n')"; \
+		cat ./catalog/playbooks/weather_example.yaml | base64 | tr -d '\n' > /tmp/playbook_base64.txt; \
+	fi
+	@echo "Playbook encoded and saved to /tmp/playbook_base64.txt"
+	@echo "You can use: export PLAYBOOK_BASE64=\$$(cat /tmp/playbook_base64.txt)"
+
+register-playbook:
+	@echo "Registering playbook with NoETL server..."
+	@# Use different base64 options based on platform (Linux vs macOS)
+	@if [ "$$(uname)" = "Linux" ]; then \
+		PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 -w 0); \
+	else \
+		PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 | tr -d '\n'); \
+	fi; \
+	curl -X POST "http://localhost:8082/catalog/register" \
+	  -H "Content-Type: application/json" \
+	  -d "{\"content_base64\": \"$$PLAYBOOK_BASE64\"}"
+
+execute-playbook:
+	@echo "Executing playbook on NoETL server..."
+	@curl -X POST "http://localhost:8082/agent/execute" \
+	  -H "Content-Type: application/json" \
+	  -d '{ \
+	    "path": "weather_example", \
+	    "version": "0.1.0", \
+	    "input_payload": { \
+	      "city": "New York" \
+	    }, \
+	    "sync_to_postgres": true \
+	  }'
+
+
+
+#[NATS]#################################################################################################################
+
+.PHONY: install-nats-tools nats-create-noetl nats-delete-noetl nats-reset-noetl purge-noetl stream-ls
+
+install-nats-tools:
+	@echo "Tapping nats-io/nats-tools"
+	@brew tap nats-io/nats-tools
+	@echo "Installing nats from nats-io/nats-tools"
+	@brew install nats-io/nats-tools/nats
+	@echo "NATS installation complete."
 
 nats-create-noetl:
 	@echo "Creating NATS noetl stream"
 	kubectl config use-context docker-desktop
 	kubectl apply -f $(K8S_DIR)/nats/noetl/noetl-stream.yaml -n nats
 
-
 nats-delete-noetl:
 	@echo "Deleting NATS noetl stream"
 	kubectl config use-context docker-desktop
 	kubectl delete -f $(K8S_DIR)/nats/noetl/noetl-stream.yaml -n nats
-
 
 nats-reset-noetl: nats-delete-noetl nats-create-noetl
 	@echo "Reset NATS noetl stream in Kubernetes"
@@ -129,61 +219,12 @@ nats_account_info:
 nats_kv_ls:
 	@nats kv ls -s $(NATS_URL)
 
-#[WORKFLOW COMMANDS]######################################################################
 
-register-plugin: activate-venv
-    ifeq ($(PLUGIN_NAME),)
-	    @echo "Usage: make register-plugin PLUGIN_NAME=\"http-handler:0_1_0\" IMAGE_URL=\"local/noetl-http-handler:latest\""
-    else
-	    $(PYTHON) noetl/cli.py register plugin  $(PLUGIN_NAME) $(IMAGE_URL)
-    endif
-
-list-plugins: activate-venv
-	$(PYTHON) noetl/cli.py list plugins
-
-describe-plugin: activate-venv
-	$(PYTHON) noetl/cli.py describe plugin $(filter-out $@,$(MAKECMDGOALS))
-
-register-playbook: activate-venv
-    ifeq ($(WORKFLOW),)
-	    @echo "Usage: make register-playbook WORKFLOW=playbooks/time/fetch-world-time.yaml"
-    else
-	    $(PYTHON) noetl/cli.py register playbook $(WORKFLOW)
-    endif
-
-list-playbooks: activate-venv
-	$(PYTHON) noetl/cli.py list playbooks
-
-%:
-	@:
-describe-playbook: activate-venv %
-	$(PYTHON) noetl/cli.py describe playbook $(filter-out $@,$(MAKECMDGOALS))
-
-run-playbook-fetch-time-and-notify-slack: activate-venv
-	$(PYTHON) noetl/cli.py run playbook fetch-time-and-notify-slack '{"TIMEZONE":"$(TIMEZONE)","NOTIFICATION_CHANNEL":"$(NOTIFICATION_CHANNEL)"}'
-
-
-.PHONY: register-playbook list-playbooks list-plugins describe-playbook describe-plugin run-playbook-fetch-time-and-notify-slack
-
-.PHONY: show-events show-commands
-show-events:
-	$(PYTHON) noetl/cli.py show events
-
-show-commands:
-	$(PYTHON) noetl/cli.py show commands
-
-
-#[KUBECTL COMMANDS]######################################################################
-
-.PHONY: logs
-logs:
-	kubectl logs -f -l 'app in (noetl-api, noetl-dispatcher, noetl-http-handler, noetl-registrar)'
-
-
-#[PIP UPLOAD]############################################################################
-.PHONY: pip-upload
-
-pip-upload:
-	rm -rf dist/*
-	$(PYTHON) setup.py sdist bdist_wheel
-	$(PYTHON) -m twine upload dist/*
+#[GCP]##################################################################################################################
+.PHONY: gcp-credentials
+gcp-credentials:
+	@mkdir -p ./secrets
+	@gcloud auth application-default login
+	@rmdir ./secrets/application_default_credentials.json
+	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
+	@echo "Credentials copied to ./secrets/application_default_credentials.json"

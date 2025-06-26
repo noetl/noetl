@@ -1,195 +1,201 @@
 import base64
-import yaml
 import json
-from noetl.const import AppConst
-
-
-class SafeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        return None
+import yaml
+from typing import Any, List, Optional, Union
+from noetl.common import SafeEncoder
 
 
 class KeyVal(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._info: any = None
+        self._info: Optional[Any] = None
+
+    @staticmethod
+    def builder() -> 'KeyValBuilder':
+        return KeyValBuilder()
 
     @property
-    def info(self):
+    def info(self) -> Optional[Any]:
         return self._info
 
     @info.setter
-    def info(self, value: any):
+    def info(self, value: Any):
         self._info = value
 
-    def get_keys(self, path=None) -> list:
-        paths = []
+    def get_keys(self, path: Optional[str] = None) -> List[str]:
         base = self.get_value(path) if path else self
-        if isinstance(base, dict):
-            for k in base.keys():
-                key_path = f"{path}.{k}" if path else k
-                paths.append(key_path)
-        return paths
+        if not isinstance(base, dict):
+            return []
+        return [f"{path}.{k}" if path else k for k in base.keys()]
 
-    def get_value(self, path: str = None, default: any = None, exclude: list[str] = None):
-        exclude = exclude if exclude else []
+    def get_value(self, path: Optional[str] = None, default: Any = None, exclude: Optional[List[str]] = None) -> Any:
+        exclude = exclude or []
 
-        def to_dict(obj):
+        def prune(obj: Any) -> Any:
             if isinstance(obj, dict):
-                return {k: to_dict(v) for k, v in obj.items() if k not in exclude}
-            elif isinstance(obj, list):
-                return [to_dict(v) for v in obj]
-            else:
-                return obj
+                return {k: prune(v) for k, v in obj.items() if k not in exclude}
+            if isinstance(obj, list):
+                return [prune(v) for v in obj]
+            return obj
 
-        if path is None:
-            value = to_dict(self)
-            return value
-
-        try:
-            value = self
+        target = self
+        if path:
             for key in path.split("."):
-                if isinstance(value, dict):
-                    value = value.get(key)
-                elif hasattr(value, key):
-                    value = getattr(value, key)
+                if isinstance(target, dict):
+                    target = target.get(key)
+                elif hasattr(target, key):
+                    target = getattr(target, key)
                 else:
-                    raise TypeError(f"Value for '{key}' is not a dict or does not have attribute '{key}'")
-                value = to_dict(value)
-                if value is None:
                     return default
-            return value
-        except Exception as e:
-            raise ValueError(f"Error getting value for '{path}': {e}")
+                if target is None:
+                    return default
 
-    def get_keyval(self, path: str = None, default: any = None, exclude: list[str] = None):
-        value = self.get_value(path, default, exclude)
-        return KeyVal(value) if isinstance(value, dict) else value
+        return prune(target)
 
-    def add(self, path: str, value: str):
+    def set_value(self, path: str, value: Any):
+        if not path:
+            raise ValueError("Path cannot be None or empty.")
+
+        keys = path.split(".")
+        target = self
+        for key in keys[:-1]:
+            target = target.setdefault(key, {})
+
+        if isinstance(value, dict) and isinstance(target.get(keys[-1]), dict):
+            target[keys[-1]].update(value)
+        else:
+            target[keys[-1]] = value
+
+    def delete_value(self, path: str):
+        keys = path.split(".")
+        current = self
+        for key in keys[:-1]:
+            current = current.get(key)
+            if current is None:
+                return  # Path does not exist
+        current.pop(keys[-1], None)
+
+    def delete_keys(self, keys: List[str]):
+        for key in keys:
+            self.delete_value(key)
+
+    def retain_keys(self, keys: List[str]):
+        existing = set(self.get_keys())
+        for key in existing - set(keys):
+            self.delete_value(key)
+
+    def add(self, path: str, value: Any) -> 'KeyVal':
         self.set_value(path, value)
         return self
 
-    def set_value(self, path: str, value):
-        if path is None:
-            raise TypeError("Path cannot be None")
+    def to_json(self) -> bytes:
+        return json.dumps(self.get_value(), cls=SafeEncoder).encode('utf-8')
 
-        if not value:
-            raise ValueError("Value cannot be None or empty")
+    def as_json(self, path: Optional[str] = None, indent: Optional[int] = None) -> str:
+        value = self.get_value(path)
+        if value is None:
+            raise ValueError(f"Invalid path: {path}")
+        return json.dumps(value, indent=indent, cls=SafeEncoder)
 
-        try:
-            keys = path.split(".")
-            target = self
-            for key in keys[:-1]:
-                if key not in target or not isinstance(target[key], dict):
-                    target[key] = {}
-                target = target[key]
+    def get_keyval(self, path: Optional[str] = None, default: Any = None, exclude: Optional[List[str]] = None) -> Union['KeyVal', Any]:
+        value = self.get_value(path, default, exclude)
+        return KeyVal(value) if isinstance(value, dict) else value
 
-            if isinstance(value, dict) and isinstance(target.get(keys[-1]), dict):
-                target[keys[-1]].update(value)
-            else:
-                target[keys[-1]] = value
-        except Exception as e:
-            raise ValueError(f"Error setting value for '{path}': {e}")
-
-    def delete_value(self, path: str):
-        keys = path.split('.')
-        current_key = keys.pop()
-        current_dict = self
-        for key in keys:
-            if key in current_dict:
-                current_dict = current_dict[key]
-            else:
-                return
-        if current_key in current_dict:
-            del current_dict[current_key]
-
-    def delete_keys(self, keys=None):
+    def encode(self, keys: Optional[List[str]] = None) -> bytes:
         if keys:
-            candidates = [k for k in self.get_keys() if k in keys]
-            for key in candidates:
-                self.delete_value(key)
-
-    def retain_keys(self, keys=None):
-        if keys:
-            self.delete_keys(keys=[k for k in self.get_keys() if k not in keys])
-
-    def to_json(self):
-        try:
-            return json.dumps(self.get_value()).encode(AppConst.UTF_8)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"Error converting to JSON: {e}")
-
-    def as_json(self, path: str = None, indent: any = None):
-        try:
-            value = self.get_value(path=path)
-            if value is None:
-                raise ValueError("Invalid path.")
-            return json.dumps(value, indent=indent)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"Converting error: {e}")
-
-    def base64_path(self, path: str = AppConst.PAYLOAD_BASE64):
-        base64_value = self.get_value(path)
-        if base64_value is None:
-            raise ValueError(f"No base64 string found at {path}")
-        if not isinstance(base64_value, str):
-            raise TypeError(f"Expected string at '{path}', got {type(base64_value).__name__}")
-        return KeyVal.str_base64(base64_value)
-
-    def encode(self, keys=None):
-        return base64.b64encode(json.dumps(
-            self if keys is None else {key: self[key] for key in keys if key in self.get_value()}, cls=SafeEncoder
-        ).encode(AppConst.UTF_8))
-
-    def base64_value(self, path: str = AppConst.VALUE):
-        value = self.get_value(path=path, default=AppConst.VALUE_NOT_FOUND)
-        if value is None or value == AppConst.VALUE_NOT_FOUND:
-            raise ValueError(f"No value found for key {path}")
-        elif isinstance(value, str):
-            return self.base64_str(value)
-        return value
-
-    def yaml_value(self, path: str = AppConst.VALUE):
-        value = self.get_value(path=path, default=AppConst.VALUE_NOT_FOUND)
-        if isinstance(value, str) and value not in [AppConst.VALUE_NOT_FOUND, None]:
-            return self.base64_yaml(value)
-        return value
-
-    def yaml_value_dump(self, path: str = AppConst.VALUE):
-        return self.yaml_dump(self.yaml_value(path=path))
+            data = {k: self.get_value(k) for k in keys if self.get_value(k) is not None}
+        else:
+            data = self.get_value()
+        return base64.b64encode(json.dumps(data, cls=SafeEncoder).encode('utf-8'))
 
     @classmethod
-    def decode(cls, encoded_payload):
+    def decode(cls, encoded_payload: bytes) -> 'KeyVal':
         try:
-            payload_data = json.loads(base64.b64decode(encoded_payload).decode(AppConst.UTF_8))
-            return cls(**payload_data)
-        except Exception as e:
-            raise ValueError(f"Error decoding payload: {e}")
+            payload = base64.b64decode(encoded_payload).decode('utf-8')
+            return cls(**json.loads(payload))
+        except (ValueError, json.JSONDecodeError) as e:
+            raise ValueError(f"Failed to decode payload: {e}.")
 
     @staticmethod
-    def yaml_dump(source: dict):
+    def str_to_base64(source: str) -> str:
+        return base64.b64encode(source.encode('utf-8')).decode('utf-8')
+
+    @staticmethod
+    def base64_to_str(source: str) -> str:
+        return base64.b64decode(source.encode('utf-8')).decode('utf-8')
+
+    @staticmethod
+    def base64_to_yaml(source: str) -> Any:
+        try:
+            decoded = KeyVal.base64_to_str(source)
+            return yaml.safe_load(decoded)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Failed to decode YAML: {e}.")
+
+    @staticmethod
+    def yaml_dump(source: dict) -> str:
         return yaml.safe_dump(source, sort_keys=False, allow_unicode=True)
 
-    @staticmethod
-    def str_base64(source: str):
-        return base64.b64encode(source.encode()).decode(AppConst.UTF_8)
+    def base64_value(self, path: str = "value") -> str:
+        value = self.get_value(path, "valueNotFound")
+        if value in (None, "valueNotFound"):
+            raise ValueError(f"Value not found for path: {path}.")
+        if isinstance(value, str):
+            return self.base64_str(value)
+        raise TypeError(f"Expected string at path '{path}', got {type(value).__name__}.")
 
-    @staticmethod
-    def base64_str(source: str):
-        return base64.b64decode(source.encode()).decode(AppConst.UTF_8)
+    def base64_str(self, source: str) -> str:
+        return KeyVal.str_to_base64(source)
 
-    @staticmethod
-    def base64_yaml(source: str):
-        try:
-            return yaml.safe_load(base64.b64decode(source.encode()).decode(AppConst.UTF_8))
-        except yaml.YAMLError as e:
-            raise ValueError(f"Error decoding YAML from base64: {e}")
+    def yaml_value(self, path: str = "value") -> Any:
+        value = self.get_value(path, "valueNotFound")
+        if isinstance(value, str) and value not in ("valueNotFound", None):
+            return KeyVal.base64_to_yaml(value)
+        return value
 
-    @classmethod
-    def from_json(cls, json_value: str):
-        try:
-            data = json.loads(json_value)
-            return cls(data)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Error loading from JSON: {e}")
+    def yaml_value_dump(self, path: str = "value") -> str:
+        return KeyVal.yaml_dump(self.yaml_value(path))
+
+
+class KeyValBuilder:
+    def __init__(self):
+        self._store = KeyVal()
+
+    def add(self, path: str, value: Any) -> 'KeyValBuilder':
+        self._store.set_value(path, value)
+        return self
+
+    def remove(self, path: str) -> 'KeyValBuilder':
+        self._store.delete_value(path)
+        return self
+
+    def info(self, metadata: Any) -> 'KeyValBuilder':
+        self._store.info = metadata
+        return self
+
+    def build(self) -> KeyVal:
+        return self._store
+
+
+if __name__ == "__main__":
+    def check_keyval_builder():
+        payload = (
+            KeyVal.builder()
+            .add("user.name", "Kadyapam")
+            .add("user.age", 52)
+            .add("account.active", True)
+            .info({"created_by": "Maidu people"})
+            .build()
+        )
+        print("Account info:", payload.get_keys("account"))
+        print("User info:", payload.get_keys("user"))
+        print("User name:", payload.get_value("user.name"))
+        print("User age:", payload.get_value("user.age"))
+        print("Account active:", payload.get_value("account.active"))
+        print("Account info:", payload.get_value("account.info"))
+        print("Metadata info:", payload.get_value("info"))
+        print("Encoded payload:", payload.encode(["user.name", "user.age"]))
+        print("Decoded payload:", KeyVal.decode(payload.encode(["user.name", "user.age"])))
+        print("Encoded full payload:", payload.encode())
+        print("Metadata info:", payload.info)
+    check_keyval_builder()
