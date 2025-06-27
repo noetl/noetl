@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "noetl = noetl.main:app",
+            "noetl-port-killer = noetl.killer:main",
         ],
     },
 )

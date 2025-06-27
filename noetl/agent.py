@@ -91,7 +91,7 @@ class NoETLAgent:
         self.next_step_with = None
 
         if pgdb is None:
-            pgdb = "dbname=noetl user=noetl password=noetl host=localhost port=5434"
+            pgdb = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
             logger.info(f"Default Postgres: {pgdb}")
         else:
             logger.info(f"Modified Postgres: {pgdb}")
@@ -458,83 +458,83 @@ class NoETLAgent:
                                   json.dumps(step)
                               ))
 
-            next_steps = step.get('next', [])
-            if not isinstance(next_steps, list):
-                next_steps = [next_steps]
+                next_steps = step.get('next', [])
+                if not isinstance(next_steps, list):
+                    next_steps = [next_steps]
 
-            for next_step in next_steps:
-                if isinstance(next_step, dict):
-                    if 'when' in next_step and 'then' in next_step:
-                        condition = next_step.get('when')
-                        then_steps = next_step.get('then', [])
-                        if not isinstance(then_steps, list):
-                            then_steps = [then_steps]
+                for next_step in next_steps:
+                    if isinstance(next_step, dict):
+                        if 'when' in next_step and 'then' in next_step:
+                            condition = next_step.get('when')
+                            then_steps = next_step.get('then', [])
+                            if not isinstance(then_steps, list):
+                                then_steps = [then_steps]
 
-                        for then_step in then_steps:
-                            if isinstance(then_step, dict):
-                                to_step = then_step.get('step')
-                                with_params = json.dumps(then_step.get('with', {}))
-                            else:
-                                to_step = then_step
-                                with_params = '{}'
+                            for then_step in then_steps:
+                                if isinstance(then_step, dict):
+                                    to_step = then_step.get('step')
+                                    with_params = json.dumps(then_step.get('with', {}))
+                                else:
+                                    to_step = then_step
+                                    with_params = '{}'
 
-                            cursor.execute("""
-                                              INSERT INTO transition
-                                              VALUES (%s, %s, %s, %s, %s)
-                                              """, (
-                                                  self.execution_id,
-                                                  step_name,
-                                                  to_step,
-                                                  condition,
-                                                  with_params
-                                              ))
-                    elif 'else' in next_step:
-                        else_steps = next_step.get('else', [])
-                        if not isinstance(else_steps, list):
-                            else_steps = [else_steps]
+                                cursor.execute("""
+                                                  INSERT INTO transition
+                                                  VALUES (%s, %s, %s, %s, %s)
+                                                  """, (
+                                                      self.execution_id,
+                                                      step_name,
+                                                      to_step,
+                                                      condition,
+                                                      with_params
+                                                  ))
+                        elif 'else' in next_step:
+                            else_steps = next_step.get('else', [])
+                            if not isinstance(else_steps, list):
+                                else_steps = [else_steps]
 
-                        for else_step in else_steps:
-                            if isinstance(else_step, dict):
-                                to_step = else_step.get('step')
-                                with_params = json.dumps(else_step.get('with', {}))
-                            else:
-                                to_step = else_step
-                                with_params = '{}'
+                            for else_step in else_steps:
+                                if isinstance(else_step, dict):
+                                    to_step = else_step.get('step')
+                                    with_params = json.dumps(else_step.get('with', {}))
+                                else:
+                                    to_step = else_step
+                                    with_params = '{}'
 
-                            cursor.execute("""
-                                              INSERT INTO transition
-                                              VALUES (%s, %s, %s, %s, %s)
-                                              """, (
-                                                  self.execution_id,
-                                                  step_name,
-                                                  to_step,
-                                                  'else',
-                                                  with_params
-                                              ))
-                elif isinstance(next_step, str):
-                    cursor.execute("""
-                                      INSERT INTO transition
-                                      VALUES (%s, %s, %s, %s, %s)
-                                      """, (
-                                          self.execution_id,
-                                          step_name,
-                                          next_step,
-                                          '',
-                                          '{}'
-                                      ))
-                else:
-                    to_step = next_step.get('step')
-                    with_params = json.dumps(next_step.get('with', {}))
-                    cursor.execute("""
-                                      INSERT INTO transition
-                                      VALUES (%s, %s, %s, %s, %s)
-                                      """, (
-                                          self.execution_id,
-                                          step_name,
-                                          to_step,
-                                          '',
-                                          with_params
-                                      ))
+                                cursor.execute("""
+                                                  INSERT INTO transition
+                                                  VALUES (%s, %s, %s, %s, %s)
+                                                  """, (
+                                                      self.execution_id,
+                                                      step_name,
+                                                      to_step,
+                                                      'else',
+                                                      with_params
+                                                  ))
+                    elif isinstance(next_step, str):
+                        cursor.execute("""
+                                          INSERT INTO transition
+                                          VALUES (%s, %s, %s, %s, %s)
+                                          """, (
+                                              self.execution_id,
+                                              step_name,
+                                              next_step,
+                                              '',
+                                              '{}'
+                                          ))
+                    else:
+                        to_step = next_step.get('step')
+                        with_params = json.dumps(next_step.get('with', {}))
+                        cursor.execute("""
+                                          INSERT INTO transition
+                                          VALUES (%s, %s, %s, %s, %s)
+                                          """, (
+                                              self.execution_id,
+                                              step_name,
+                                              to_step,
+                                              '',
+                                              with_params
+                                          ))
 
             for task in self.playbook.get('workbook', []):
                 task_id = str(uuid.uuid4())
@@ -1775,7 +1775,7 @@ def main():
 
         pgdb = args.pgdb or os.environ.get("NOETL_PGDB")
         if not pgdb:
-            pgdb = "dbname=noetl user=noetl password=noetl host=localhost port=5434"
+            pgdb = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
             logger.info(f"Using default PostgreSQL connection string: {pgdb}")
 
         agent = NoETLAgent(args.file, mock_mode=args.mock, pgdb=pgdb)

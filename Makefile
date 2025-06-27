@@ -41,11 +41,6 @@ help:
 	@echo "  make test-keyval     Run key-value tests"
 	@echo "  make test-payload    Run payload tests"
 	@echo "  make test-playbook   Run playbook tests"
-	@echo ""
-	@echo "API Commands:"
-	@echo "  make encode-playbook  Encode playbook to base64"
-	@echo "  make register-playbook Register playbook with NoETL server"
-	@echo "  make execute-playbook Execute playbook on NoETL server"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -126,6 +121,12 @@ test-payload: test-setup
 test-playbook: test-setup
 	$(VENV)/bin/pytest -v tests/test_playbook.py
 
+.PHONY: test-killer
+test-killer: test-setup
+	$(VENV)/bin/pytest -v tests/test_killer.py
+	@echo "  make test-kill      Run process termination tests"
+
+
 test-setup:
 	@echo "Setting up test environment..."
 	@mkdir -p data/input data/exports
@@ -139,85 +140,6 @@ publish:
 
 clean-dist:
 	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv
-
-# API Commands
-encode-playbook:
-	@echo "Encoding playbook to base64..."
-	@# Use different base64 options based on platform (Linux vs macOS)
-	@if [ "$$(uname)" = "Linux" ]; then \
-		echo "export PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 -w 0)"; \
-		cat ./catalog/playbooks/weather_example.yaml | base64 -w 0 > /tmp/playbook_base64.txt; \
-	else \
-		echo "export PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 | tr -d '\n')"; \
-		cat ./catalog/playbooks/weather_example.yaml | base64 | tr -d '\n' > /tmp/playbook_base64.txt; \
-	fi
-	@echo "Playbook encoded and saved to /tmp/playbook_base64.txt"
-	@echo "You can use: export PLAYBOOK_BASE64=\$$(cat /tmp/playbook_base64.txt)"
-
-register-playbook:
-	@echo "Registering playbook with NoETL server..."
-	@# Use different base64 options based on platform (Linux vs macOS)
-	@if [ "$$(uname)" = "Linux" ]; then \
-		PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 -w 0); \
-	else \
-		PLAYBOOK_BASE64=$$(cat ./catalog/playbooks/weather_example.yaml | base64 | tr -d '\n'); \
-	fi; \
-	curl -X POST "http://localhost:8082/catalog/register" \
-	  -H "Content-Type: application/json" \
-	  -d "{\"content_base64\": \"$$PLAYBOOK_BASE64\"}"
-
-execute-playbook:
-	@echo "Executing playbook on NoETL server..."
-	@curl -X POST "http://localhost:8082/agent/execute" \
-	  -H "Content-Type: application/json" \
-	  -d '{ \
-	    "path": "weather_example", \
-	    "version": "0.1.0", \
-	    "input_payload": { \
-	      "city": "New York" \
-	    }, \
-	    "sync_to_postgres": true \
-	  }'
-
-
-
-#[NATS]#################################################################################################################
-
-.PHONY: install-nats-tools nats-create-noetl nats-delete-noetl nats-reset-noetl purge-noetl stream-ls
-
-install-nats-tools:
-	@echo "Tapping nats-io/nats-tools"
-	@brew tap nats-io/nats-tools
-	@echo "Installing nats from nats-io/nats-tools"
-	@brew install nats-io/nats-tools/nats
-	@echo "NATS installation complete."
-
-nats-create-noetl:
-	@echo "Creating NATS noetl stream"
-	kubectl config use-context docker-desktop
-	kubectl apply -f $(K8S_DIR)/nats/noetl/noetl-stream.yaml -n nats
-
-nats-delete-noetl:
-	@echo "Deleting NATS noetl stream"
-	kubectl config use-context docker-desktop
-	kubectl delete -f $(K8S_DIR)/nats/noetl/noetl-stream.yaml -n nats
-
-nats-reset-noetl: nats-delete-noetl nats-create-noetl
-	@echo "Reset NATS noetl stream in Kubernetes"
-
-purge-noetl:
-	@echo "Purged NATS noetl stream"
-	@nats stream purge noetl --force -s $(NATS_URL)
-	@make stream-ls
-
-stream-ls:
-	@nats stream ls -s $(NATS_URL)
-
-nats_account_info:
-	@nats account info -s $(NATS_URL)
-
-nats_kv_ls:
-	@nats kv ls -s $(NATS_URL)
 
 
 #[GCP]##################################################################################################################

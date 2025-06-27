@@ -11,11 +11,15 @@ import json
 import logging
 import base64
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 from noetl.server import router as server_router
 from noetl.common import deep_merge
 from noetl.agent import NoETLAgent
+import pathlib
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -27,112 +31,13 @@ def main_callback(
     host: str = typer.Option(None, help="Server host."),
     port: int = typer.Option(None, help="Server port."),
     reload: bool = typer.Option(None, help="Server auto-reload (development)."),
-    force: bool = typer.Option(None, help="Force start by killing any process using the port.")
-):
+ ):
     if ctx.invoked_subcommand is None and (host is not None or port is not None or reload is not None or force is not None):
         host = host or "0.0.0.0"
         port = port or 8082
         reload = reload or False
-        force = force or False
-        create_server(host=host, port=port, reload=reload, force=force)
+        create_server(host=host, port=port, reload=reload)
 
-def is_port_available(port, host='0.0.0.0'):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind((host, port))
-        return True
-    except socket.error:
-        return False
-    finally:
-        sock.close()
-
-def kill_process_on_port(port):
-    logger.info(f"Checking for processes using port {port}...")
-    if is_port_available(port):
-        logger.info(f"Port {port} is already available")
-        return True
-
-    logger.info(f"Port {port} is in use. Attempting to kill the process...")
-
-    try:
-        if sys.platform.startswith('darwin') or sys.platform.startswith('linux'):
-            cmd = f"lsof -i :{port} -t"
-            try:
-                output = subprocess.check_output(cmd, shell=True).decode().strip()
-
-                if output:
-                    pids = output.split('\n')
-                    killed = False
-
-                    for pid in pids:
-                        if pid.strip():
-                            logger.info(f"Killing process {pid} using port {port}")
-                            try:
-                                os.kill(int(pid), signal.SIGTERM)
-                                time.sleep(1)
-                                try:
-                                    os.kill(int(pid), 0)
-                                    logger.info(f"Process {pid} did not terminate, sending SIGKILL")
-                                    os.kill(int(pid), signal.SIGKILL)
-                                except OSError:
-                                    logger.info(f"Process {pid} terminated successfully")
-
-                                killed = True
-                            except OSError as e:
-                                logger.warning(f"Error killing process {pid}: {e}")
-
-                    if is_port_available(port):
-                        logger.info(f"Port {port} is now available")
-                        return True
-                    else:
-                        logger.warning(f"Port {port} is still in use after killing processes")
-                        return False
-            except subprocess.CalledProcessError as e:
-                logger.warning(f"Error running lsof command: {e}. lsof might not be installed.")
-                time.sleep(2)
-                if is_port_available(port):
-                    logger.info(f"Port {port} is now available")
-                    return True
-        elif sys.platform.startswith('win'):
-            cmd = f"netstat -ano | findstr :{port}"
-            output = subprocess.check_output(cmd, shell=True).decode()
-
-            if output:
-                lines = output.strip().split('\n')
-                killed = False
-
-                for line in lines:
-                    if f":{port}" in line and "LISTENING" in line:
-                        pid = line.strip().split()[-1]
-                        logger.info(f"Killing process {pid} using port {port}")
-                        try:
-                            result = subprocess.call(f"taskkill /F /PID {pid}", shell=True)
-                            if result == 0:
-                                logger.info(f"Process {pid} terminated successfully")
-                                killed = True
-                            else:
-                                logger.warning(f"Failed to kill process {pid}")
-                        except Exception as e:
-                            logger.warning(f"Error killing process {pid}: {e}")
-
-                if is_port_available(port):
-                    logger.info(f"Port {port} is now available")
-                    return True
-                else:
-                    logger.warning(f"Port {port} is still in use after killing processes")
-                    return False
-
-        logger.warning(f"Could not find or kill process using port {port}")
-        if is_port_available(port):
-            logger.info(f"Port {port} is now available")
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"Error killing process on port {port}: {e}")
-        if is_port_available(port):
-            logger.info(f"Port {port} is now available despite errors")
-            return True
-        return False
 
 def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
     app = FastAPI(
@@ -149,11 +54,44 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Get the project root directory
+    project_root = pathlib.Path(__file__).parent.parent.absolute()
+
+    # Set up templates
+    templates = Jinja2Templates(directory=str(project_root / "ui" / "templates"))
+
+    # Mount static files
+    app.mount("/static", StaticFiles(directory=str(project_root / "ui" / "static")), name="static")
+
     app.include_router(server_router)
 
-    @app.get("/")
-    async def root():
-        return {"message": "Welcome to NoETL API"}
+    @app.get("/", response_class=HTMLResponse)
+    async def root(request: Request):
+        return templates.TemplateResponse("index.html", {"request": request})
+
+    @app.get("/editor", response_class=HTMLResponse)
+    async def editor(request: Request):
+        return templates.TemplateResponse("editor.html", {"request": request})
+
+    @app.get("/editor/{path:path}", response_class=HTMLResponse)
+    async def editor_with_path(request: Request, path: str):
+        return templates.TemplateResponse("editor.html", {"request": request})
+
+    @app.get("/editor/{path:path}/{version}", response_class=HTMLResponse)
+    async def editor_with_path_version(request: Request, path: str, version: str):
+        return templates.TemplateResponse("editor.html", {"request": request})
+
+    @app.get("/playbook/{path:path}", response_class=HTMLResponse)
+    async def playbook_with_path(request: Request, path: str):
+        return templates.TemplateResponse("editor.html", {"request": request})
+
+    @app.get("/playbook/{path:path}/{version}", response_class=HTMLResponse)
+    async def playbook_with_path_version(request: Request, path: str, version: str):
+        return templates.TemplateResponse("editor.html", {"request": request})
+
+    @app.get("/execution/{execution_id}", response_class=HTMLResponse)
+    async def execution(request: Request, execution_id: str):
+        return templates.TemplateResponse("execution.html", {"request": request})
 
     @app.get("/health")
     async def health():
@@ -165,20 +103,8 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
 def create_server(
     host: str = typer.Option("0.0.0.0", help="Server host."),
     port: int = typer.Option(8082, help="Server port."),
-    reload: bool = typer.Option(False, help="Server auto-reload (development)."),
-    force: bool = typer.Option(False, help="Force start by killing any process using the port.")
+    reload: bool = typer.Option(False, help="Server auto-reload.")
 ):
-    if not is_port_available(port, host):
-        if force:
-            logger.warning(f"Port {port} is already in use. Attempting to kill the process...")
-            if not kill_process_on_port(port):
-                logger.error(f"Failed to free up port {port}. Cannot start server.")
-                logger.error(f"Try using a different port with --port option.")
-                return
-        else:
-            logger.error(f"Port {port} is already in use. Use --force to kill the process or try a different port.")
-            return
-
     app = create_app(host=host, port=port)
     logger.info(f"Starting NoETL API server at http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, reload=reload)
@@ -222,7 +148,7 @@ def run_agent(
 
         pgdb_conn = pgdb or os.environ.get("NOETL_PGDB")
         if not pgdb_conn:
-            pgdb_conn = "dbname=noetl user=noetl password=noetl host=localhost port=5434"
+            pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
             logger.info(f"Using default PostgreSQL connection string: {pgdb_conn}")
 
         agent = NoETLAgent(file, mock_mode=mock, pgdb=pgdb_conn)
