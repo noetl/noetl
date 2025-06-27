@@ -91,7 +91,7 @@ class NoETLAgent:
         self.next_step_with = None
 
         if pgdb is None:
-            pgdb = "dbname=noetl user=noetl password=noetl host=localhost port=5434"
+            pgdb = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
             logger.info(f"Default Postgres: {pgdb}")
         else:
             logger.info(f"Modified Postgres: {pgdb}")
@@ -111,22 +111,8 @@ class NoETLAgent:
         self.parse_playbook()
 
     def init_database(self):
-        """Initialize the database by creating the necessary tables if they don't exist.
-
-        This method creates the following tables:
-        - workload: Stores the workload data for each execution
-        - event_log: Stores events that occur during execution
-        - workflow: Stores workflow step definitions
-        - workbook: Stores task definitions
-        - transition: Stores transitions between steps
-
-        Raises:
-            Exception: If there's an error initializing the database
-        """
         try:
             logger.info("Initializing database tables")
-
-            # Check database connection
             try:
                 with self.conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
@@ -140,7 +126,6 @@ class NoETLAgent:
                 raise
 
             with self.conn.cursor() as cursor:
-                # Create workload table
                 logger.info("Creating workload table if it doesn't exist")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS workload (
@@ -151,7 +136,6 @@ class NoETLAgent:
                     )
                 """)
 
-                # Verify that the workload table was created
                 cursor.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables 
@@ -162,15 +146,13 @@ class NoETLAgent:
                 if not table_exists:
                     logger.error("Failed to create workload table")
                 else:
-                    logger.info("Workload table exists or was created successfully")
+                    logger.info("Workload table created")
 
-                    # Check if we can insert and retrieve data from the workload table
                     try:
                         test_id = f"test_{uuid.uuid4()}"
                         test_data = json.dumps({"test": "data"})
                         logger.info(f"Testing workload table with test_id: {test_id}")
 
-                        # Insert test data
                         cursor.execute("""
                             INSERT INTO workload (execution_id, data)
                             VALUES (%s, %s)
@@ -179,17 +161,15 @@ class NoETLAgent:
                         """, (test_id, test_data))
                         self.conn.commit()
 
-                        # Verify that the test data was stored
                         cursor.execute("""
                             SELECT data FROM workload WHERE execution_id = %s
                         """, (test_id,))
                         row = cursor.fetchone()
                         if row and row[0] == test_data:
-                            logger.info("Successfully tested workload table insert and select")
+                            logger.info("Tested workload table insert and select")
                         else:
                             logger.error(f"Failed to verify test data in workload table. Expected: {test_data}, Got: {row[0] if row else None}")
 
-                        # Clean up test data
                         cursor.execute("""
                             DELETE FROM workload WHERE execution_id = %s
                         """, (test_id,))
@@ -198,8 +178,7 @@ class NoETLAgent:
                     except Exception as e:
                         logger.error(f"Error testing workload table: {e}", exc_info=True)
 
-                # Create event_log table
-                logger.info("Creating event_log table if it doesn't exist")
+                logger.info("Creating event_log table")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS event_log (
                         execution_id VARCHAR,
@@ -231,8 +210,7 @@ class NoETLAgent:
                     )
                 """)
 
-                # Create workflow table
-                logger.info("Creating workflow table if it doesn't exist")
+                logger.info("Creating workflow table")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS workflow (
                         execution_id VARCHAR,
@@ -245,8 +223,7 @@ class NoETLAgent:
                     )
                 """)
 
-                # Create workbook table
-                logger.info("Creating workbook table if it doesn't exist")
+                logger.info("Creating workbook table")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS workbook (
                         execution_id VARCHAR,
@@ -258,8 +235,7 @@ class NoETLAgent:
                     )
                 """)
 
-                # Create transition table
-                logger.info("Creating transition table if it doesn't exist")
+                logger.info("Creating transition table")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS transition (
                         execution_id VARCHAR,
@@ -271,11 +247,9 @@ class NoETLAgent:
                     )
                 """)
 
-                # Commit the changes
                 self.conn.commit()
-                logger.info("Database tables initialized successfully")
+                logger.info("Database tables initialized")
 
-                # List all tables to verify
                 cursor.execute("""
                     SELECT table_name 
                     FROM information_schema.tables 
@@ -288,24 +262,13 @@ class NoETLAgent:
             raise
 
     def store_workload(self, data: Dict):
-        """Store workload data in the database.
-
-        Args:
-            data: The workload data to store
-
-        Raises:
-            Exception: If there's an error storing the workload data
-        """
         if not isinstance(data, dict):
             logger.error(f"Invalid workload data type: {type(data)}. Expected dict.")
             return
 
         try:
-            # Convert data to JSON string
             data_json = json.dumps(data)
             logger.info(f"Storing workload data for execution {self.execution_id}: {data_json[:100]}...")
-
-            # Check if the workload table exists
             with self.conn.cursor() as cursor:
                 cursor.execute("""
                     SELECT EXISTS (
@@ -315,7 +278,7 @@ class NoETLAgent:
                 """)
                 table_exists = cursor.fetchone()[0]
                 if not table_exists:
-                    logger.error("Workload table does not exist in the database. Creating it now.")
+                    logger.error("Workload table does not exist in the database.")
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS workload (
                             execution_id VARCHAR,
@@ -328,7 +291,6 @@ class NoETLAgent:
                     logger.info("Workload table created successfully.")
 
             with self.conn.cursor() as cursor:
-                # Insert or update the workload data
                 logger.info(f"Executing INSERT INTO workload for execution_id: {self.execution_id}")
                 cursor.execute("""
                     INSERT INTO workload (execution_id, data)
@@ -339,18 +301,16 @@ class NoETLAgent:
                 self.conn.commit()
                 logger.info(f"INSERT INTO workload completed and committed for execution_id: {self.execution_id}")
 
-                # Verify that the data was stored
                 logger.info(f"Verifying data was stored for execution_id: {self.execution_id}")
                 cursor.execute("""
                     SELECT COUNT(*) FROM workload WHERE execution_id = %s
                 """, (self.execution_id,))
                 count = cursor.fetchone()[0]
                 if count == 0:
-                    logger.error(f"Failed to store workload data for execution {self.execution_id}. No rows affected.")
+                    logger.error(f"Failed to store workload data for execution {self.execution_id}.")
                 else:
-                    logger.info(f"Successfully stored workload data for execution {self.execution_id}. Found {count} rows.")
+                    logger.info(f"Stored workload data for execution {self.execution_id}. Found {count} rows.")
 
-                    # Double-check by retrieving the data
                     cursor.execute("""
                         SELECT data FROM workload WHERE execution_id = %s
                     """, (self.execution_id,))
@@ -358,22 +318,14 @@ class NoETLAgent:
                     if row and row[0]:
                         logger.info(f"Retrieved workload data for execution {self.execution_id}: {row[0][:100]}...")
                     else:
-                        logger.error(f"Failed to retrieve workload data for execution {self.execution_id} even though count was {count}.")
+                        logger.error(f"Failed to retrieve workload data for execution {self.execution_id} count: {count}.")
         except Exception as e:
             logger.error(f"Error storing workload data: {e}", exc_info=True)
-            # Don't raise the exception, as it would break the workflow
-            # But log the full stack trace for debugging
 
     def load_workload(self) -> Dict:
-        """Load workload data from the database.
-
-        Returns:
-            Dict: The workload data or an empty dict if not found
-        """
         try:
             logger.info(f"Loading workload data for execution {self.execution_id}")
             with self.conn.cursor() as cursor:
-                # Check if the workload table exists
                 logger.info("Checking if workload table exists")
                 cursor.execute("""
                     SELECT EXISTS (
@@ -387,14 +339,10 @@ class NoETLAgent:
                     return {}
                 else:
                     logger.info("Workload table exists in the database")
-
-                # Check if there are any rows in the workload table
-                logger.info("Checking if workload table has any rows")
+                logger.info("Checking if workload table has rows")
                 cursor.execute("SELECT COUNT(*) FROM workload")
                 total_count = cursor.fetchone()[0]
                 logger.info(f"Total rows in workload table: {total_count}")
-
-                # Query the workload data
                 logger.info(f"Querying workload data for execution_id: {self.execution_id}")
                 cursor.execute("""
                     SELECT data
@@ -407,16 +355,14 @@ class NoETLAgent:
                     logger.info(f"Found workload data for execution {self.execution_id}")
                     try:
                         workload_data = json.loads(row[0])
-                        logger.info(f"Successfully parsed workload data for execution {self.execution_id}: {str(workload_data)[:100]}...")
+                        logger.info(f"Parsed workload data for execution {self.execution_id}: {str(workload_data)[:100]}...")
                         return workload_data
                     except json.JSONDecodeError as e:
                         logger.error(f"Error decoding workload data: {e}")
-                        logger.error(f"Raw data: {row[0][:100]}...")
+                        logger.error(f"Raw data: {row[0][:100]}.")
                         return {}
                 else:
                     logger.info(f"No workload data found for execution {self.execution_id}")
-
-                    # List all execution_ids in the workload table to help diagnose the issue
                     cursor.execute("SELECT execution_id FROM workload")
                     all_execution_ids = [r[0] for r in cursor.fetchall()]
                     logger.info(f"All execution_ids in workload table: {all_execution_ids}")
@@ -458,83 +404,83 @@ class NoETLAgent:
                                   json.dumps(step)
                               ))
 
-            next_steps = step.get('next', [])
-            if not isinstance(next_steps, list):
-                next_steps = [next_steps]
+                next_steps = step.get('next', [])
+                if not isinstance(next_steps, list):
+                    next_steps = [next_steps]
 
-            for next_step in next_steps:
-                if isinstance(next_step, dict):
-                    if 'when' in next_step and 'then' in next_step:
-                        condition = next_step.get('when')
-                        then_steps = next_step.get('then', [])
-                        if not isinstance(then_steps, list):
-                            then_steps = [then_steps]
+                for next_step in next_steps:
+                    if isinstance(next_step, dict):
+                        if 'when' in next_step and 'then' in next_step:
+                            condition = next_step.get('when')
+                            then_steps = next_step.get('then', [])
+                            if not isinstance(then_steps, list):
+                                then_steps = [then_steps]
 
-                        for then_step in then_steps:
-                            if isinstance(then_step, dict):
-                                to_step = then_step.get('step')
-                                with_params = json.dumps(then_step.get('with', {}))
-                            else:
-                                to_step = then_step
-                                with_params = '{}'
+                            for then_step in then_steps:
+                                if isinstance(then_step, dict):
+                                    to_step = then_step.get('step')
+                                    with_params = json.dumps(then_step.get('with', {}))
+                                else:
+                                    to_step = then_step
+                                    with_params = '{}'
 
-                            cursor.execute("""
-                                              INSERT INTO transition
-                                              VALUES (%s, %s, %s, %s, %s)
-                                              """, (
-                                                  self.execution_id,
-                                                  step_name,
-                                                  to_step,
-                                                  condition,
-                                                  with_params
-                                              ))
-                    elif 'else' in next_step:
-                        else_steps = next_step.get('else', [])
-                        if not isinstance(else_steps, list):
-                            else_steps = [else_steps]
+                                cursor.execute("""
+                                                  INSERT INTO transition
+                                                  VALUES (%s, %s, %s, %s, %s)
+                                                  """, (
+                                                      self.execution_id,
+                                                      step_name,
+                                                      to_step,
+                                                      condition,
+                                                      with_params
+                                                  ))
+                        elif 'else' in next_step:
+                            else_steps = next_step.get('else', [])
+                            if not isinstance(else_steps, list):
+                                else_steps = [else_steps]
 
-                        for else_step in else_steps:
-                            if isinstance(else_step, dict):
-                                to_step = else_step.get('step')
-                                with_params = json.dumps(else_step.get('with', {}))
-                            else:
-                                to_step = else_step
-                                with_params = '{}'
+                            for else_step in else_steps:
+                                if isinstance(else_step, dict):
+                                    to_step = else_step.get('step')
+                                    with_params = json.dumps(else_step.get('with', {}))
+                                else:
+                                    to_step = else_step
+                                    with_params = '{}'
 
-                            cursor.execute("""
-                                              INSERT INTO transition
-                                              VALUES (%s, %s, %s, %s, %s)
-                                              """, (
-                                                  self.execution_id,
-                                                  step_name,
-                                                  to_step,
-                                                  'else',
-                                                  with_params
-                                              ))
-                elif isinstance(next_step, str):
-                    cursor.execute("""
-                                      INSERT INTO transition
-                                      VALUES (%s, %s, %s, %s, %s)
-                                      """, (
-                                          self.execution_id,
-                                          step_name,
-                                          next_step,
-                                          '',
-                                          '{}'
-                                      ))
-                else:
-                    to_step = next_step.get('step')
-                    with_params = json.dumps(next_step.get('with', {}))
-                    cursor.execute("""
-                                      INSERT INTO transition
-                                      VALUES (%s, %s, %s, %s, %s)
-                                      """, (
-                                          self.execution_id,
-                                          step_name,
-                                          to_step,
-                                          '',
-                                          with_params
-                                      ))
+                                cursor.execute("""
+                                                  INSERT INTO transition
+                                                  VALUES (%s, %s, %s, %s, %s)
+                                                  """, (
+                                                      self.execution_id,
+                                                      step_name,
+                                                      to_step,
+                                                      'else',
+                                                      with_params
+                                                  ))
+                    elif isinstance(next_step, str):
+                        cursor.execute("""
+                                          INSERT INTO transition
+                                          VALUES (%s, %s, %s, %s, %s)
+                                          """, (
+                                              self.execution_id,
+                                              step_name,
+                                              next_step,
+                                              '',
+                                              '{}'
+                                          ))
+                    else:
+                        to_step = next_step.get('step')
+                        with_params = json.dumps(next_step.get('with', {}))
+                        cursor.execute("""
+                                          INSERT INTO transition
+                                          VALUES (%s, %s, %s, %s, %s)
+                                          """, (
+                                              self.execution_id,
+                                              step_name,
+                                              to_step,
+                                              '',
+                                              with_params
+                                          ))
 
             for task in self.playbook.get('workbook', []):
                 task_id = str(uuid.uuid4())
@@ -1042,6 +988,243 @@ class NoETLAgent:
                 'error': error_msg
             }
 
+    def execute_duckdb_task(self, task_config: Dict, context: Dict, parent_id: str = None) -> Dict:
+        task_id = str(uuid.uuid4())
+        task_name = task_config.get('task', 'duckdb_task')
+        start_time = datetime.datetime.now()
+
+        try:
+            commands = task_config.get('commands', [])
+            if isinstance(commands, str):
+                commands_rendered = render_template(self.jinja_env, commands, {**context, **task_config.get('with', {})})
+                cmd_lines = []
+                for line in commands_rendered.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('--'):
+                        cmd_lines.append(line)
+                commands_text = ' '.join(cmd_lines)
+                commands = [cmd.strip() for cmd in commands_text.split(';') if cmd.strip()]
+            task_with = render_template(self.jinja_env, task_config.get('with', {}), context)
+            bucket = task_with.get('bucket', context.get('bucket', ''))
+            blob_path = task_with.get('blob', '')
+            file_path = task_with.get('file', '')
+            table = task_with.get('table', '')
+
+            event_id = self.log_event(
+                'task_start', task_id, task_name, 'duckdb',
+                'in_progress', 0, context, None,
+                {'with_params': task_with}, parent_id
+            )
+            import duckdb
+            import json
+            import time
+            import os
+            duckdb_data_dir = os.environ.get('NOETL_DATA_DIR', './data')
+            duckdb_file = os.path.join(duckdb_data_dir, 'noetldb', 'postgres_pipeline.duckdb')
+            logger.info(f"Connecting to DuckDB at {duckdb_file}")
+            duckdb_con = duckdb.connect(duckdb_file)
+            db_type = task_with.get('db_type', 'postgres')
+            db_alias = task_with.get('db_alias', 'postgres_db')
+            if db_type.lower() == 'postgres':
+                logger.info("Installing and loading PostgreSQL extension")
+                duckdb_con.execute("INSTALL postgres;")
+                duckdb_con.execute("LOAD postgres;")
+            elif db_type.lower() == 'mysql':
+                logger.info("Installing and loading MySQL extension")
+                duckdb_con.execute("INSTALL mysql;")
+                duckdb_con.execute("LOAD mysql;")
+            elif db_type.lower() == 'sqlite':
+                logger.info("SQLite support is built-in to DuckDB, no extension needed")
+            else:
+                logger.info(f"Using custom database type: {db_type}, no specific extension loaded")
+            duckdb_con.execute("INSTALL httpfs;")
+            duckdb_con.execute("LOAD httpfs;")
+            if db_type.lower() == 'postgres':
+                pg_host = task_with.get('db_host', os.environ.get('POSTGRES_HOST', 'localhost'))
+                pg_port = task_with.get('db_port', os.environ.get('POSTGRES_PORT', '5434'))
+                pg_user = task_with.get('db_user', os.environ.get('POSTGRES_USER', 'noetl'))
+                pg_password = task_with.get('db_password', os.environ.get('POSTGRES_PASSWORD', 'noetl'))
+                pg_db = task_with.get('db_name', os.environ.get('POSTGRES_DB', 'noetl'))
+                pg_conn_string = f"dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}"
+                conn_string = pg_conn_string
+            elif db_type.lower() == 'sqlite':
+                sqlite_path = task_with.get('db_path', os.path.join(duckdb_data_dir, 'sqlite', 'noetl.db'))
+                conn_string = sqlite_path
+            elif db_type.lower() == 'mysql':
+                mysql_host = task_with.get('db_host', os.environ.get('MYSQL_HOST', 'localhost'))
+                mysql_port = task_with.get('db_port', os.environ.get('MYSQL_PORT', '3306'))
+                mysql_user = task_with.get('db_user', os.environ.get('MYSQL_USER', 'noetl'))
+                mysql_password = task_with.get('db_password', os.environ.get('MYSQL_PASSWORD', 'noetl'))
+                mysql_db = task_with.get('db_name', os.environ.get('MYSQL_DB', 'noetl'))
+                mysql_conn_string = f"host={mysql_host} port={mysql_port} user={mysql_user} password={mysql_password} dbname={mysql_db}"
+                conn_string = mysql_conn_string
+            else:
+                conn_string = task_with.get('db_conn_string', '')
+                if not conn_string:
+                    logger.warning(f"No connection string provided for database type: {db_type}")
+                    conn_string = "memory"
+            read_only = task_with.get('db_read_only', False)
+            attach_options = ""
+            if read_only:
+                attach_options += " (READ_ONLY)"
+            elif db_type.lower() in ['postgres', 'mysql']:
+                attach_options += f" (TYPE {db_type.lower()})"
+            try:
+                test_query = f"SELECT 1 FROM {db_alias}.sqlite_master LIMIT 1" if db_type.lower() == 'sqlite' else f"SELECT 1 FROM {db_alias}.information_schema.tables LIMIT 1"
+                duckdb_con.execute(test_query)
+                logger.info(f"Database '{db_alias}' is already attached")
+            except Exception as e:
+                try:
+                    logger.info(f"Attaching {db_type} database as '{db_alias}'")
+                    attach_sql = f"ATTACH '{conn_string}' AS {db_alias}{attach_options};"
+                    logger.debug(f"ATTACH SQL: {attach_sql}")
+                    duckdb_con.execute(attach_sql)
+                except Exception as attach_error:
+                    logger.error(f"Error attaching database: {attach_error}")
+                    raise
+            results = {}
+            if commands:
+                for i, cmd in enumerate(commands):
+                    logger.info(f"Executing DuckDB command: {cmd}")
+                    if cmd.strip().upper().startswith("ATTACH"):
+                        try:
+                            attach_parts = cmd.strip().split(" AS ")
+                            if len(attach_parts) >= 2:
+                                db_alias_with_options = attach_parts[1].strip()
+                                db_alias = db_alias_with_options.split()[0].rstrip(';')
+                                try:
+                                    test_query = f"SELECT 1 FROM {db_alias}.information_schema.tables LIMIT 1"
+                                    duckdb_con.execute(test_query)
+                                    logger.info(f"Database '{db_alias}' is already attached, skipping ATTACH command")
+                                    results[f"command_{i}"] = {"status": "skipped", "message": f"Database '{db_alias}' is already attached"}
+                                    continue
+                                except Exception:
+                                    logger.info(f"Attaching database as '{db_alias}'")
+                            result = duckdb_con.execute(cmd).fetchall()
+                            results[f"command_{i}"] = {"status": "success", "message": f"Database attached"}
+                        except Exception as attach_error:
+                            logger.error(f"Error in ATTACH command: {attach_error}")
+                            results[f"command_{i}"] = {"status": "error", "message": f"ATTACH operation failed: {str(attach_error)}"}
+                    elif cmd.strip().upper().startswith("DETACH"):
+                        try:
+                            detach_parts = cmd.strip().split()
+                            if len(detach_parts) >= 2:
+                                detach_alias = detach_parts[1].rstrip(';')
+                                logger.info(f"Detaching database '{detach_alias}'")
+
+                            result = duckdb_con.execute(cmd).fetchall()
+                            results[f"command_{i}"] = {"status": "success", "message": f"Database detached"}
+                        except Exception as detach_error:
+                            logger.warning(f"Error in DETACH command: {detach_error}")
+                            results[f"command_{i}"] = {"status": "warning", "message": f"DETACH operation failed: {str(detach_error)}"}
+                    else:
+                        result = duckdb_con.execute(cmd).fetchall()
+                        results[f"command_{i}"] = result
+
+            elif bucket and blob_path and table:
+                temp_table = f"temp_{table}_{int(time.time())}"
+                if bucket and blob_path:
+                    logger.info(f"Reading data from bucket {bucket}, blob {blob_path}")
+                    duckdb_con.execute("INSTALL httpfs;")
+                    duckdb_con.execute("LOAD httpfs;")
+                    if bucket.startswith('gs://') or blob_path.startswith('gs://'):
+                        full_path = f"{bucket}/{blob_path}" if not bucket.startswith('gs://') else f"{blob_path}"
+                        if not full_path.startswith('gs://'):
+                            full_path = f"gs://{full_path}"
+                        logger.info(f"Reading from GCS: {full_path}")
+                        duckdb_con.execute("INSTALL gcs;")
+                        duckdb_con.execute("LOAD gcs;")
+                    elif bucket.startswith('s3://') or blob_path.startswith('s3://'):
+                        full_path = f"{bucket}/{blob_path}" if not bucket.startswith('s3://') else f"{blob_path}"
+                        if not full_path.startswith('s3://'):
+                            full_path = f"s3://{full_path}"
+                        logger.info(f"Reading from S3: {full_path}")
+                        duckdb_con.execute("INSTALL s3;")
+                        duckdb_con.execute("LOAD s3;")
+                    else:
+                        full_path = file_path if file_path else os.path.join(duckdb_data_dir, blob_path)
+                        logger.info(f"Reading from local file: {full_path}")
+                    header = task_with.get('header', False)
+                    header_option = "TRUE" if header else "FALSE"
+
+                    duckdb_con.execute(f"""
+                        CREATE TABLE {temp_table} AS 
+                        SELECT * FROM read_csv('{full_path}', header={header_option}, auto_detect=TRUE);
+                    """)
+
+                    row_count = duckdb_con.execute(f"SELECT COUNT(*) FROM {temp_table}").fetchone()[0]
+                    logger.info(f"Read {row_count} rows from {full_path} into {temp_table}")
+                    schema_info = duckdb_con.execute(f"DESCRIBE {temp_table}").fetchall()
+                    columns = []
+                    for col_info in schema_info:
+                        col_name = col_info[0]
+                        col_type = col_info[1]
+                        if col_type in ('INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT'):
+                            pg_type = 'INTEGER'
+                        elif col_type in ('DOUBLE', 'REAL', 'FLOAT'):
+                            pg_type = 'DOUBLE PRECISION'
+                        elif col_type == 'VARCHAR':
+                            pg_type = 'TEXT'
+                        elif col_type == 'BOOLEAN':
+                            pg_type = 'BOOLEAN'
+                        elif col_type.startswith('TIMESTAMP'):
+                            pg_type = 'TIMESTAMP'
+                        elif col_type.startswith('DATE'):
+                            pg_type = 'DATE'
+                        else:
+                            pg_type = 'TEXT'
+                        columns.append(f'"{col_name}" {pg_type}')
+
+                    columns_str = ', '.join(columns)
+                    duckdb_con.execute(f"""
+                        CREATE TABLE IF NOT EXISTS postgres_db.{table} ({columns_str})
+                    """)
+                    duckdb_con.execute(f"""
+                        INSERT INTO postgres_db.{table}
+                        SELECT * FROM {temp_table}
+                    """)
+                    pg_row_count = duckdb_con.execute(f"SELECT COUNT(*) FROM postgres_db.{table}").fetchone()[0]
+                    logger.info(f"Inserted {pg_row_count} rows into PostgreSQL table {table}")
+                    duckdb_con.execute(f"DROP TABLE IF EXISTS {temp_table}")
+
+                    results = {
+                        "source": full_path,
+                        "rows_read": row_count,
+                        "rows_inserted": pg_row_count,
+                        "target_table": table
+                    }
+            duckdb_con.close()
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            self.log_event(
+                'task_complete', task_id, task_name, 'duckdb',
+                'success', duration, context, results,
+                {'with_params': task_with}, event_id
+            )
+
+            return {
+                'id': task_id,
+                'status': 'success',
+                'data': results
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"DuckDB task execution error: {error_msg}", exc_info=True)
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            self.log_event(
+                'task_error', task_id, task_name, 'duckdb',
+                'error', duration, context, None,
+                {'error': error_msg}, parent_id
+            )
+
+            return {
+                'id': task_id,
+                'status': 'error',
+                'error': error_msg
+            }
+
     def execute_task(self, task_name: str, context: Dict, parent_id: str = None) -> Dict:
         task_config = self.find_task(task_name)
         if not task_config:
@@ -1078,6 +1261,8 @@ class NoETLAgent:
             result = self.execute_python_task(task_config, context, event_id)
         elif task_type == 'loop':
             result = self.execute_loop_task(task_config, context, event_id)
+        elif task_type == 'duckdb':
+            result = self.execute_duckdb_task(task_config, context, event_id)
         else:
             error_msg = f"Unsupported task type: {task_type}"
             self.log_event(
@@ -1558,8 +1743,6 @@ class NoETLAgent:
 
     def run(self, mlflow: bool = False) -> Dict[str, Any]:
         logger.info(f"Starting playbook: {self.playbook.get('name', 'Unnamed')}")
-        # Don't override the workload that was set in main.py
-        # self.update_context('workload', self.playbook.get('workload', {}))
         self.update_context('execution_start', datetime.datetime.now().isoformat())
         execution_start_event = self.log_event(
             'execution_start', self.execution_id, self.playbook.get('name', 'Unnamed'),
@@ -1775,7 +1958,7 @@ def main():
 
         pgdb = args.pgdb or os.environ.get("NOETL_PGDB")
         if not pgdb:
-            pgdb = "dbname=noetl user=noetl password=noetl host=localhost port=5434"
+            pgdb = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
             logger.info(f"Using default PostgreSQL connection string: {pgdb}")
 
         agent = NoETLAgent(args.file, mock_mode=args.mock, pgdb=pgdb)

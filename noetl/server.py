@@ -17,7 +17,7 @@ logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
 
-DEFAULT_PGDB = "dbname=noetl user=noetl password=noetl host=localhost port=5434"
+DEFAULT_PGDB = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
 
 class CatalogService:
 
@@ -451,7 +451,7 @@ async def list_resources(
             detail=f"Error listing resources: {e}"
         )
 
-@router.get("/catalog/{path}/{version}", response_class=JSONResponse)
+@router.get("/catalog/{path:path}/{version}", response_class=JSONResponse)
 async def get_resource(
     request: Request,
     path: str,
@@ -482,6 +482,36 @@ async def get_event(
     request: Request,
     event_id: str
 ):
+    try:
+        event_service = get_event_service()
+        event = event_service.get_event(event_id)
+        if not event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Event '{event_id}' not found."
+            )
+        return event
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching event: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching event: {e}"
+        )
+
+@router.get("/events/query", response_class=JSONResponse)
+async def get_event_by_query(
+    request: Request,
+    event_id: str = None
+):
+    if not event_id:
+        raise HTTPException(
+            status_code=400,
+            detail="event_id query parameter is required"
+        )
+
     try:
         event_service = get_event_service()
         event = event_service.get_event(event_id)

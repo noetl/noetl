@@ -129,7 +129,7 @@ The event ID is returned when executing a playbook asynchronously.
 
 view the events in the web interface at:
 ```
-http://localhost:8082/events/?event_id=<event_id>
+http://localhost:8082/events/query?event_id=<event_id>
 ```
 
 ## 1. Running the NoETL Agent
@@ -607,12 +607,27 @@ If you see an error like `[Errno 48] error while attempting to bind on address (
    noetl server --port 8083
    ```
 
-2. force start the server by killing the process using the port:
+2. Force start the server by killing the process using the port:
    ```bash
    noetl server --port 8082 --force
    ```
 
-3. kill the process:
+3. Use the standalone killer.py script:
+   ```bash
+   # Using the module directly
+   python -m noetl.killer 8082
+
+   # Using the installed command (after pip install)
+   noetl-port-killer 8082
+
+   # With verbose output
+   noetl-port-killer 8082 --verbose
+
+   # After freeing the port, start the server
+   noetl server --port 8082
+   ```
+
+4. Manually kill the process:
    ```bash
    # mac/linux
    lsof -i :8082 
