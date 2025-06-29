@@ -366,6 +366,27 @@ class Broker:
                         'data': playbook_result.get('data'),
                         'error': playbook_result.get('error')
                     }
+            elif call_type in ['http', 'python', 'duckdb', 'postgres', 'secrets']:
+                task_config = {
+                    'type': call_type,
+                    'with': call_config.get('with', {})
+                }
+                fields = ['name', 'params', 'commands', 'return', 'headers', 'url', 'method', 'body', 'code']
+                task_config.update({
+                    field: call_config.get(field)
+                    for field in fields
+                    if field in call_config
+                })
+
+                result = execute_task(
+                    task_config,
+                    task_name or f"step_{call_type}_task",
+                    task_context,
+                    self.agent.jinja_env,
+                    self.agent.secret_manager,
+                    self.agent.mock_mode,
+                    self.agent.log_event
+                )
             else:
                 error_msg = f"Unsupported call type: {call_type}"
                 logger.error(error_msg)
@@ -695,7 +716,7 @@ class Broker:
                     next_step_name = next_step
                     next_step_with = {}
 
-                rules = {iterator: iter_context[iterator]}
+                rules = {iterator: iter_context.get(iterator)}
                 logger.debug(f"Loop next step: {next_step_name}, next_step_with={next_step_with}, rules={rules}")
 
                 step_with = render_template(self.agent.jinja_env, next_step_with, iter_context, rules)
@@ -800,7 +821,7 @@ class Broker:
         result_steps = []
         for next_step in next_steps:
             if isinstance(next_step, dict) and 'when' in next_step:
-                condition_text = next_step['when']
+                condition_text = next_step.get('when')
                 condition = render_template(self.agent.jinja_env, condition_text, context)
                 if condition:
                     then_steps = next_step.get('then', [])
