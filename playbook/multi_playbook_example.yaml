@@ -1,0 +1,169 @@
+# NoETL DSL Playbook that calls multiple playbooks and passes data between them.
+# 1. Call other playbooks
+# 2. Pass data between playbooks
+# 3. Store results in a DuckDB and Postgres database
+# noetl playbook --execute --path "workflows/examples/multi_playbook_example" --payload '{"GOOGLE_CLOUD_PROJECT": "xxx", "secret_name": "projects/xxx/secrets/postgres-dev-password"}'
+apiVersion: noetl.io/v1
+kind: Playbook
+name: multi_playbook_example
+path: workflows/examples/multi_playbook_example
+
+workload:
+  jobId: "{{ job.uuid }}"
+  secret_name: "{{ env.GOOGLE_SECRET_POSTGRES_PASSWORD | default('test-secret') }}"
+  environment: "{{ env.ENVIRONMENT | default('dev') }}"
+  GOOGLE_CLOUD_PROJECT: "{{ env.GOOGLE_CLOUD_PROJECT | default('noetl-demo') }}"
+
+
+  cities:
+    - name: "London"
+      lat: 51.51
+      lon: -0.13
+  base_url: "https://api.open-meteo.com/v1"
+  temperature_threshold: 26
+
+  baseFilePath: "/opt/noetl/data/test"
+  bucket: "test-bucket"
+  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5434') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('noetl') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('noetl') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
+
+workflow:
+  - step: start
+    desc: "Start Multiple Playbook Example Workflow"
+    next:
+      - step: run_secrets_test
+
+  - step: run_secrets_test
+    desc: "Run the secrets_test playbook"
+    call:
+      type: playbook
+      path: workflows/examples/secrets_test
+      with:
+        secret_name: "{{ workload.secret_name }}"
+        GOOGLE_CLOUD_PROJECT: "{{ workload.GOOGLE_CLOUD_PROJECT }}"
+    next:
+      - step: run_weather_example
+        with:
+          secret_result: "{{ run_secrets_test }}"
+
+  - step: run_weather_example
+    desc: "Run the weather_example playbook"
+    call:
+      type: playbook
+      path: workflows/examples/weather_example
+      with:
+        cities: "{{ workload.cities }}"
+        base_url: "{{ workload.base_url }}"
+        temperature_threshold: "{{ workload.temperature_threshold }}"
+        secret_from_previous: "{{ secret_result }}"
+    next:
+      - step: run_load_dict_test
+        with:
+          weather_result: "{{ run_weather_example }}"
+
+  - step: run_load_dict_test
+    desc: "Run the load_dict_test playbook"
+    call:
+      type: playbook
+      path: workflows/data/load_dict_test
+      with:
+        baseFilePath: "{{ workload.baseFilePath }}"
+        bucket: "{{ workload.bucket }}"
+        pg_host: "{{ workload.pg_host }}"
+        pg_port: "{{ workload.pg_port }}"
+        pg_user: "{{ workload.pg_user }}"
+        pg_password: "{{ workload.pg_password }}"
+        pg_db: "{{ workload.pg_db }}"
+        weather_data: "{{ weather_result }}"
+    next:
+      - step: store_results
+
+  - step: store_results
+    desc: "Store the results from all playbooks"
+    call:
+      type: workbook
+      name: store_results_task
+      with:
+        secrets_result: "{{ run_secrets_test }}"
+        weather_result: "{{ run_weather_example }}"
+        load_dict_result: "{{ run_load_dict_test }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of workflow"
+
+workbook:
+  - name: store_results_task
+    type: duckdb
+    with:
+      secrets_result: "{{ secrets_result }}"
+      weather_result: "{{ weather_result }}"
+      load_dict_result: "{{ load_dict_result }}"
+      pg_host: "{{ workload.pg_host }}"
+      pg_port: "{{ workload.pg_port }}"
+      pg_user: "{{ workload.pg_user }}"
+      pg_password: "{{ workload.pg_password }}"
+      pg_db: "{{ workload.pg_db }}"
+    commands: |
+      -- Install and load DuckDB extensions
+      INSTALL postgres;
+      LOAD postgres;
+      INSTALL json;
+      LOAD json;
+      ATTACH 'dbname={{ pg_db }} user={{ pg_user }} password={{ pg_password }} host={{ pg_host }} port={{ pg_port }}' AS postgres_db (TYPE postgres);
+
+      -- Create a table in DuckDB with JSON columns
+      CREATE TABLE IF NOT EXISTS playbook_results (
+          id BIGINT,
+          execution_id VARCHAR,
+          secrets_result JSON,
+          weather_result JSON,
+          load_dict_result JSON,
+          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Insert the results into DuckDB
+      INSERT INTO playbook_results (
+          id, 
+          execution_id, 
+          secrets_result, 
+          weather_result, 
+          load_dict_result
+      )
+      VALUES (
+          CAST(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000 AS BIGINT),
+          '{{ job.uuid }}',
+          JSON('{{ secrets_result | to_json }}'),
+          JSON('{{ weather_result | to_json }}'),
+          JSON('{{ load_dict_result | to_json }}')
+      );
+
+      -- Create a table in Postgres
+      CREATE TABLE IF NOT EXISTS postgres_db.playbook_results (
+          id BIGINT PRIMARY KEY,
+          execution_id VARCHAR,
+          secrets_result JSON,
+          weather_result JSON,
+          load_dict_result JSON,
+          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Insert the data into Postgres
+      INSERT INTO postgres_db.playbook_results (
+          id, 
+          execution_id, 
+          secrets_result, 
+          weather_result, 
+          load_dict_result
+      )
+      VALUES (
+          CAST(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000 AS BIGINT),
+          '{{ job.uuid }}',
+          '{{ secrets_result | to_json }}'::JSON, 
+          '{{ weather_result | to_json }}'::JSON, 
+          '{{ load_dict_result | to_json }}'::JSON
+      );
