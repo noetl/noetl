@@ -3,7 +3,8 @@ import uuid
 import datetime
 import httpx
 import duckdb
-from typing import Dict
+import psycopg
+from typing import Dict, List, Any
 from jinja2 import Environment
 from noetl.common import render_template, setup_logger
 
@@ -251,6 +252,8 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
             'status': 'error',
             'error': error_msg
         }
+
+
 
 def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment, log_event_callback=None) -> Dict:
     """
@@ -507,6 +510,158 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             'error': error_msg
         }
 
+def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environment, log_event_callback=None) -> Dict:
+    """
+    Execute a Postgres task.
+
+    Args:
+        task_config: The task configuration
+        context: The context for rendering templates
+        jinja_env: The Jinja2 environment for template rendering
+        log_event_callback: A callback function to log events
+
+    Returns:
+        A dictionary of the task result
+    """
+    task_id = str(uuid.uuid4())
+    task_name = task_config.get('task', 'postgres_task')
+    start_time = datetime.datetime.now()
+
+    try:
+        commands = task_config.get('commands', [])
+        if isinstance(commands, str):
+            commands_rendered = render_template(jinja_env, commands, {**context, **task_config.get('with', {})})
+            cmd_lines = []
+            for line in commands_rendered.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('--'):
+                    cmd_lines.append(line)
+            commands_text = ' '.join(cmd_lines)
+            commands = [cmd.strip() for cmd in commands_text.split(';') if cmd.strip()]
+
+        task_with = render_template(jinja_env, task_config.get('with', {}), context)
+
+        event_id = None
+        if log_event_callback:
+            event_id = log_event_callback(
+                'task_start', task_id, task_name, 'postgres',
+                'in_progress', 0, context, None,
+                {'with_params': task_with}, None
+            )
+
+        pg_host_raw = task_with.get('db_host', os.environ.get('POSTGRES_HOST', 'localhost'))
+        pg_port_raw = task_with.get('db_port', os.environ.get('POSTGRES_PORT', '5434'))
+        pg_user_raw = task_with.get('db_user', os.environ.get('POSTGRES_USER', 'noetl'))
+        pg_password_raw = task_with.get('db_password', os.environ.get('POSTGRES_PASSWORD', 'noetl'))
+        pg_db_raw = task_with.get('db_name', os.environ.get('POSTGRES_DB', 'noetl'))
+        pg_host = render_template(jinja_env, pg_host_raw, context) if isinstance(pg_host_raw, str) and '{{' in pg_host_raw else pg_host_raw
+        pg_port = render_template(jinja_env, pg_port_raw, context) if isinstance(pg_port_raw, str) and '{{' in pg_port_raw else pg_port_raw
+        pg_user = render_template(jinja_env, pg_user_raw, context) if isinstance(pg_user_raw, str) and '{{' in pg_user_raw else pg_user_raw
+        pg_password = render_template(jinja_env, pg_password_raw, context) if isinstance(pg_password_raw, str) and '{{' in pg_password_raw else pg_password_raw
+        pg_db = render_template(jinja_env, pg_db_raw, context) if isinstance(pg_db_raw, str) and '{{' in pg_db_raw else pg_db_raw
+
+        if 'db_conn_string' in task_with:
+            conn_string_raw = task_with.get('db_conn_string')
+            pg_conn_string = render_template(jinja_env, conn_string_raw, context) if isinstance(conn_string_raw, str) and '{{' in conn_string_raw else conn_string_raw
+        else:
+            pg_conn_string = f"dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}"
+
+        logger.info(f"Connecting to Postgres at {pg_host}:{pg_port}/{pg_db}")
+
+        try:
+            conn = psycopg.connect(pg_conn_string)
+        except Exception as e:
+            safe_conn_string = pg_conn_string.replace(f"password={pg_password}", "password=***")
+            logger.error(f"Failed to connect to PostgreSQL with connection string: {safe_conn_string}")
+            raise
+
+        results = {}
+
+        if commands:
+            for i, cmd in enumerate(commands):
+                logger.info(f"Executing Postgres command: {cmd}")
+                is_select = cmd.strip().upper().startswith("SELECT")
+                is_call = cmd.strip().upper().startswith("CALL")
+                returns_data = is_select or "RETURNING" in cmd.upper() or is_call
+
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute(cmd)
+
+                        if returns_data:
+                            column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                            rows = cursor.fetchall()
+                            result_data = []
+                            for row in rows:
+                                row_dict = {}
+                                for i, col_name in enumerate(column_names):
+                                    if isinstance(row[i], dict) or (isinstance(row[i], str) and (row[i].startswith('{') or row[i].startswith('['))):
+                                        try:
+                                            row_dict[col_name] = row[i]
+                                        except:
+                                            row_dict[col_name] = row[i]
+                                    else:
+                                        row_dict[col_name] = row[i]
+                                result_data.append(row_dict)
+
+                            results[f"command_{i}"] = {
+                                "status": "success",
+                                "rows": result_data,
+                                "row_count": len(rows),
+                                "columns": column_names
+                            }
+                        else:
+                            conn.commit()
+                            results[f"command_{i}"] = {
+                                "status": "success",
+                                "row_count": cursor.rowcount,
+                                "message": f"Command executed. {cursor.rowcount} rows affected."
+                            }
+                except Exception as cmd_error:
+                    logger.error(f"Error executing Postgres command: {cmd_error}")
+                    results[f"command_{i}"] = {
+                        "status": "error",
+                        "message": str(cmd_error)
+                    }
+        conn.close()
+
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        if log_event_callback:
+            log_event_callback(
+                'task_complete', task_id, task_name, 'postgres',
+                'success', duration, context, results,
+                {'with_params': task_with}, event_id
+            )
+
+        return {
+            'id': task_id,
+            'status': 'success',
+            'data': results
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Postgres task execution error: {error_msg}", exc_info=True)
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        if log_event_callback:
+            log_event_callback(
+                'task_error', task_id, task_name, 'postgres',
+                'error', duration, context, None,
+                {'error': error_msg}, None
+            )
+
+        return {
+            'id': task_id,
+            'status': 'error',
+            'error': error_msg
+        }
+
+
+
 def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_event_callback=None) -> Dict:
     """
     Execute a secret's task.
@@ -520,7 +675,7 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_e
     Returns:
         A dictionary of the task result
     """
-    def log_event_wrapper(event_type, task_id, task_name, node_type, status, duration, 
+    def log_event_wrapper(event_type, task_id, task_name, node_type, status, duration,
                           context, output_result, metadata, parent_event_id):
         if log_event_callback:
             return log_event_callback(
@@ -532,7 +687,7 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_e
 
     return secret_manager.get_secret(task_config, context, log_event_wrapper)
 
-def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: Environment, 
+def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: Environment,
                  secret_manager=None, mock_mode: bool = False, log_event_callback=None) -> Dict:
     """
     Execute a task type.
@@ -590,6 +745,8 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         result = execute_python_task(task_config, context, jinja_env, log_event_callback)
     elif task_type == 'duckdb':
         result = execute_duckdb_task(task_config, context, jinja_env, log_event_callback)
+    elif task_type == 'postgres':
+        result = execute_postgres_task(task_config, context, jinja_env, log_event_callback)
     elif task_type == 'secrets':
         if not secret_manager:
             error_msg = "SecretManager is required for secrets tasks."

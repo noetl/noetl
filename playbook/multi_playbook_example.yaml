@@ -2,6 +2,7 @@
 # 1. Call other playbooks
 # 2. Pass data between playbooks
 # 3. Store results in a DuckDB and Postgres database
+# noetl playbook --register playbook/multi_playbook_example.yaml --port 8080
 # noetl playbook --execute --path "workflows/examples/multi_playbook_example" --payload '{"GOOGLE_CLOUD_PROJECT": "xxx", "secret_name": "projects/xxx/secrets/postgres-dev-password"}'
 apiVersion: noetl.io/v1
 kind: Playbook
