@@ -1,6 +1,3 @@
-"""
-shared shit
-"""
 import os
 import asyncio
 import re
@@ -10,12 +7,11 @@ import logging
 import base64
 import yaml
 from collections import OrderedDict
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import random
 import string
 from typing import Dict, Any, Optional, List, Union
-
+from jinja2 import Environment, StrictUndefined, BaseLoader
 
 # logger = setup_logger(__name__, include_location=True)
 #===================================
@@ -128,6 +124,115 @@ def setup_logger(name: str, include_location=False, use_json=False):
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
     return logger
+
+
+
+logger = setup_logger(__name__, include_location=True)
+
+#===================================
+#  jinja2 template rendering
+#===================================
+
+def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None) -> Any:
+    """
+    Render a template using the Jinja2 environment.
+
+    Args:
+        env: The Jinja2 environment
+        template: The template to render
+        context: The context to use for rendering
+        rules: Additional rules for rendering
+
+    Returns:
+        The rendered template
+    """
+    if isinstance(template, str) and '{{' in template and '}}' in template:
+        logger.debug(f"Render template: {template}")
+        logger.debug(f"Render template context keys: {list(context.keys())}")
+        if 'city' in context:
+            logger.debug(f"Render template city value: {context['city']}, Type: {type(context['city'])}")
+        if rules:
+            logger.debug(f"Render template rules: {rules}")
+
+    render_ctx = dict(context)
+    if rules:
+        render_ctx.update(rules)
+
+    if isinstance(template, str) and '{{' in template and '}}' in template:
+        try:
+            expr = template.strip()
+            if expr == '{{}}':
+                return ""
+            if expr.startswith('{{') and expr.endswith('}}'):
+                var_path = expr[2:-2].strip()
+                if not any(op in var_path for op in ['==', '!=', '<', '>', '+', '-', '*', '/', '|', ' if ', ' else ']):
+                    if '.' not in var_path and var_path.strip() in render_ctx:
+                        return render_ctx.get(var_path.strip())
+                    elif '.' in var_path:
+                        parts = var_path.split('.')
+                        value = render_ctx
+                        valid_path = True
+                        for part in parts:
+                            part = part.strip()
+                            if isinstance(value, dict) and part in value:
+                                value = value.get(part)
+                            else:
+                                valid_path = False
+                                break
+                        if valid_path:
+                            return value
+
+            template_obj = env.from_string(template)
+            try:
+                rendered = template_obj.render(**render_ctx)
+            except Exception as e:
+                logger.error(f"Template rendering error: {e}, template: {template}")
+                return None
+
+            if (rendered.startswith('[') and rendered.endswith(']')) or \
+                    (rendered.startswith('{') and rendered.endswith('}')):
+                try:
+                    return json.loads(rendered)
+                except json.JSONDecodeError:
+                    pass
+
+            if rendered.strip() == "":
+                return ""
+
+            return rendered
+        except Exception as e:
+            logger.error(f"Template rendering error: {e}, template: {template}")
+            return ""
+    elif isinstance(template, dict):
+        if not template:
+            return template
+        return {k: render_template(env, v, render_ctx, rules) for k, v in template.items()}
+    elif isinstance(template, list):
+        return [render_template(env, item, render_ctx, rules) for item in template]
+    return template
+
+def quote_jinja2_expressions(yaml_text):
+    """
+    Jinja2 expressions to double quotes.
+    """
+    jinja_expr_pattern = re.compile(r'''
+        ^(\s*[^:\n]+:\s*)         # YAML key and colon with optional indent
+        (?!["'])                  # Not already quoted
+        (.*{{.*}}.*?)             # Contains Jinja2 template
+        (?<!["'])\s*$             # Not ending with a quote
+    ''', re.VERBOSE)
+
+    def replacer(match):
+        key_part = match.group(1)
+        value_part = match.group(2).strip()
+        return f'{key_part}"{value_part}"'
+
+    fixed_lines = []
+    for line in yaml_text.splitlines():
+        fixed_line = jinja_expr_pattern.sub(replacer, line)
+        fixed_lines.append(fixed_line)
+    return "\n".join(fixed_lines)
+
 
 #===================================
 #  time calendar (დრო)
@@ -288,7 +393,7 @@ def increment_version(version: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 #===================================
-# merge
+# merging dictionaries and lists
 #===================================
 
 def deep_merge(dest: Union[Dict, List, Any], source: Union[Dict, List, Any]) -> Union[Dict, List, Any]:
@@ -301,29 +406,21 @@ def deep_merge(dest: Union[Dict, List, Any], source: Union[Dict, List, Any]) -> 
                 result[key] = value
         return result
     elif isinstance(dest, list) and isinstance(source, list):
-        # For lists of dictionaries, try to merge based on a common key if possible
         if all(isinstance(item, dict) for item in dest + source):
-            # Try to find a common key to use for merging
             common_keys = set()
             for item in dest + source:
                 common_keys.update(item.keys())
-
-            # Check if 'name' is a common key, as it's often used as an identifier
             if 'name' in common_keys:
                 result = dest.copy()
                 source_names = {item.get('name'): item for item in source if 'name' in item}
-
-                # Update existing items or add new ones
                 for i, item in enumerate(result):
                     if 'name' in item and item['name'] in source_names:
                         result[i] = deep_merge(item, source_names[item['name']])
                         del source_names[item['name']]
 
-                # Add remaining items from source
                 result.extend(source_names.values())
                 return result
 
-        # Default behavior: just extend the list
         result = dest.copy()
         result.extend(source)
         return result
@@ -333,28 +430,7 @@ def deep_merge(dest: Union[Dict, List, Any], source: Union[Dict, List, Any]) -> 
 #===================================
 # quote expressions
 #===================================
-def quote_unquoted_jinja2_expressions(yaml_text):
-    """
-    Wraps unquoted Jinja2 expressions in double quotes.
-    """
-    logger = setup_logger(__name__, include_location=True)
-    jinja_expr_pattern = re.compile(r'''
-        ^(\s*[^:\n]+:\s*)         # YAML key and colon (with optional indent)
-        (?!["'])                  # Not already quoted
-        (.*{{.*}}.*?)             # Contains Jinja2 template
-        (?<!["'])\s*$             # Not ending with a quote
-    ''', re.VERBOSE)
 
-    def replacer(match):
-        key_part = match.group(1)
-        value_part = match.group(2).strip()
-        return f'{key_part}"{value_part}"'
-
-    fixed_lines = []
-    for line in yaml_text.splitlines():
-        fixed_line = jinja_expr_pattern.sub(replacer, line)
-        fixed_lines.append(fixed_line)
-    return "\n".join(fixed_lines)
 
 
 # def main_quote_exprs(filepath):
