@@ -126,6 +126,9 @@ class SecretManager:
                                 secret_name = parts[3]
 
                         if not project_id:
+                            project_id = context.get('GOOGLE_CLOUD_PROJECT', '')
+
+                        if not project_id:
                             project_id = os.environ.get('GOOGLE_CLOUD_PROJECT', '')
                             if not project_id:
                                 try:
