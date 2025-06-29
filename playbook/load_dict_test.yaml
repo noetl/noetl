@@ -47,7 +47,9 @@ workbook:
       CREATE TABLE IF NOT EXISTS test_table AS 
       SELECT 1 AS id, 'test1' AS name
       UNION ALL
-      SELECT 2 AS id, 'test2' AS name;
+      SELECT 2 AS id, 'test2' AS name
+      UNION ALL
+      SELECT 3 AS id, 'test3' AS name;
 
       -- Query the test table
       SELECT * FROM test_table;

@@ -1,12 +1,6 @@
-from noetl.common import setup_logger
 import uvicorn
 import typer
 import os
-import sys
-import time
-import socket
-import signal
-import subprocess
 import json
 import logging
 import base64
@@ -18,9 +12,9 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from noetl.server import router as server_router
 from noetl.common import deep_merge
-from noetl.agent import NoETLAgent
+from noetl.worker import NoETLAgent
 import pathlib
-
+from noetl.common import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 app = typer.Typer()
@@ -30,9 +24,9 @@ def main_callback(
     ctx: typer.Context,
     host: str = typer.Option(None, help="Server host."),
     port: int = typer.Option(None, help="Server port."),
-    reload: bool = typer.Option(None, help="Server auto-reload (development)."),
+    reload: bool = typer.Option(None, help="Server auto-reload."),
  ):
-    if ctx.invoked_subcommand is None and (host is not None or port is not None or reload is not None or force is not None):
+    if ctx.invoked_subcommand is None and (host is not None or port is not None or reload is not None):
         host = host or "0.0.0.0"
         port = port or 8082
         reload = reload or False
@@ -54,15 +48,9 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Get the project root directory
     project_root = pathlib.Path(__file__).parent.parent.absolute()
-
-    # Set up templates
     templates = Jinja2Templates(directory=str(project_root / "ui" / "templates"))
-
-    # Mount static files
     app.mount("/static", StaticFiles(directory=str(project_root / "ui" / "static")), name="static")
-
     app.include_router(server_router)
 
     @app.get("/", response_class=HTMLResponse)
@@ -111,16 +99,17 @@ def create_server(
 
 @app.command("agent")
 def run_agent(
-    file: str = typer.Option(..., "--file", "-f", help="Path to playbook YAML file"),
+    file: str = typer.Option(..., "--file", "-f", help="Path to playbook YAML file."),
     mock: bool = typer.Option(False, help="Run in mock mode"),
-    output: str = typer.Option("json", "--output", "-o", help="Output format (json or plain)"),
-    export: str = typer.Option(None, help="Export execution data to Parquet file"),
+    output: str = typer.Option("json", "--output", "-o", help="Output format, json or plain."),
+    export: str = typer.Option(None, help="Export execution data to Parquet file."),
     mlflow: bool = typer.Option(False, help="Use ML model for workflow control"),
-    pgdb: str = typer.Option(None, help="PostgreSQL connection string"),
-    input: str = typer.Option(None, help="Path to JSON file with input payload for the playbook"),
-    payload: str = typer.Option(None, help="JSON string with input payload for the playbook"),
-    merge: bool = typer.Option(False, help="Whether to merge the input payload with the workload section (default: False, which means override)"),
-    debug: bool = typer.Option(False, help="Debug logging level")
+    postgres: str = typer.Option(None, help="Postgres connection string."),
+    duckdb: str = typer.Option(None, help="Path to Duckdb database file for business logic in playbooks."),
+    input: str = typer.Option(None, help="Path to JSON file with input payload for the playbook."),
+    payload: str = typer.Option(None, help="JSON string with input payload for the playbook."),
+    merge: bool = typer.Option(False, help="merge the input payload with the workload section."),
+    debug: bool = typer.Option(False, help="Debug logging mode.")
 ):
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
@@ -145,25 +134,28 @@ def run_agent(
             except Exception as e:
                 logger.error(f"Error parsing payload JSON: {e}")
                 raise typer.Exit(code=1)
-
-        pgdb_conn = pgdb or os.environ.get("NOETL_PGDB")
+        pgdb_conn = postgres or os.environ.get("NOETL_PGDB")
         if not pgdb_conn:
             pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
             logger.info(f"Using default PostgreSQL connection string: {pgdb_conn}")
+
+        if duckdb:
+            os.environ['DUCKDB_PATH'] = duckdb
+            logger.info(f"Using Duckdb database file for business logic: {duckdb}")
 
         agent = NoETLAgent(file, mock_mode=mock, pgdb=pgdb_conn)
         workload = agent.playbook.get('workload', {})
 
         if input_payload:
             if merge:
-                logger.info("Merge mode: deep merging input payload with workload")
+                logger.info("Merge mode: deep merging input payload with workload.")
                 merged_workload = deep_merge(workload, input_payload)
                 for key, value in merged_workload.items():
                     agent.update_context(key, value)
                 agent.update_context('workload', merged_workload)
                 agent.store_workload(merged_workload)
             else:
-                logger.info("Override mode: replacing specific workload keys with input payload")
+                logger.info("Override mode: replacing specific workload keys with input payload.")
                 new_workload = workload.copy()
                 for key, value in input_payload.items():
                     new_workload[key] = value
@@ -199,16 +191,16 @@ def run_agent(
 
 @app.command("playbook")
 def manage_playbook(
-    register: str = typer.Option(None, "--register", "-r", help="Path to playbook YAML file to register"),
-    execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbook by path"),
-    path: str = typer.Option(None, "--path", help="Path of the playbook to execute"),
-    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute (if omitted, latest version will be used)"),
-    input: str = typer.Option(None, "--input", "-i", help="Path to JSON file with input payload for the playbook"),
-    payload: str = typer.Option(None, "--payload", help="JSON string with input payload for the playbook"),
-    host: str = typer.Option("localhost", "--host", help="NoETL server host"),
-    port: int = typer.Option(8082, "--port", "-p", help="NoETL server port"),
-    sync_to_postgres: bool = typer.Option(True, "--sync-to-postgres", help="Whether to sync execution data to PostgreSQL"),
-    merge: bool = typer.Option(False, "--merge", help="Whether to merge the input payload with the workload section (default: False, which means override)")
+    register: str = typer.Option(None, "--register", "-r", help="Path to playbook YAML file to register."),
+    execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbook by path."),
+    path: str = typer.Option(None, "--path", help="Path of the playbook to execute."),
+    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
+    input: str = typer.Option(None, "--input", "-i", help="Path to payload JSON file."),
+    payload: str = typer.Option(None, "--payload", help="Payload JSON string."),
+    host: str = typer.Option("localhost", "--host", help="NoETL server host."),
+    port: int = typer.Option(8082, "--port", "-p", help="NoETL server port."),
+    sync: bool = typer.Option(True, "--sync", help="Whether to sync execution data to Postgres."),
+    merge: bool = typer.Option(False, "--merge", help="Whether to merge the input payload with the workload section of playbook.")
 ):
     if register:
         try:
@@ -266,7 +258,7 @@ def manage_playbook(
             data = {
                 "path": path,
                 "input_payload": input_payload,
-                "sync_to_postgres": sync_to_postgres,
+                "sync_to_postgres": sync,
                 "merge": merge
             }
 
@@ -281,21 +273,21 @@ def manage_playbook(
 
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Playbook executed successfully")
+                logger.info(f"Playbook executed.")
 
                 if result.get("status") == "success":
                     logger.info(f"Execution ID: {result.get('execution_id')}")
                     logger.info(f"Result: {json.dumps(result.get('result'), indent=2)}")
                 else:
-                    logger.error(f"Execution failed: {result.get('error')}")
+                    logger.error(f"Execution failed: {result.get('error')}.")
                     raise typer.Exit(code=1)
             else:
-                logger.error(f"Failed to execute playbook: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"Failed to execute playbook: {response.status_code}.")
+                logger.error(f"Response: {response.text}.")
                 raise typer.Exit(code=1)
 
         except Exception as e:
-            logger.error(f"Error executing playbook: {e}")
+            logger.error(f"Error executing playbook: {e}.")
             raise typer.Exit(code=1)
     else:
         logger.info("No action specified. Use --register to register a playbook or --execute to execute a playbook.")

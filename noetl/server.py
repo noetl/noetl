@@ -1,7 +1,6 @@
 import os
 import json
 import yaml
-import logging
 import tempfile
 import asyncio
 import subprocess
@@ -10,7 +9,8 @@ from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from noetl.common import setup_logger, deep_merge
-from noetl.agent import NoETLAgent
+from noetl.worker import NoETLAgent
+from noetl.broker import Broker
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -119,7 +119,7 @@ class CatalogService:
                 while count > 0 and attempt <= max_attempts:
                     logger.warning(f"Version '{resource_version}' already exists for resource_path '{resource_path}', incrementing again (attempt {attempt}/{max_attempts})")
                     resource_version = self.increment_version(resource_version)
-                    logger.debug(f"New incremented version: '{resource_version}'")
+                    logger.debug(f"Incremented version: '{resource_version}'")
 
                     cursor.execute(
                         "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
@@ -129,10 +129,10 @@ class CatalogService:
                     attempt += 1
 
                 if attempt > max_attempts:
-                    logger.error(f"Failed to find an available version after {max_attempts} attempts")
+                    logger.error(f"Failed to find version after {max_attempts} attempts")
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Failed to find an available version after {max_attempts} attempts"
+                        detail=f"Failed to find version after {max_attempts} attempts"
                     )
 
             logger.info(f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
@@ -161,31 +161,31 @@ class CatalogService:
 
             return {
                 "status": "success",
-                "message": f"Resource '{resource_path}' version '{resource_version}' registered successfully.",
+                "message": f"Resource '{resource_path}' version '{resource_version}' registered.",
                 "resource_path": resource_path,
                 "resource_version": resource_version,
                 "resource_type": resource_type
             }
 
         except Exception as e:
-            logger.exception(f"Error registering resource: {e}")
+            logger.exception(f"Error registering resource: {e}.")
             if conn:
                 try:
                     conn.rollback()
-                    logger.info("Transaction rolled back due to error")
+                    logger.info("Transaction rolled back due to error.")
                 except Exception as rollback_error:
-                    logger.exception(f"Error rolling back transaction: {rollback_error}")
+                    logger.exception(f"Error rolling back transaction: {rollback_error}.")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error registering resource: {e}"
+                detail=f"Error registering resource: {e}."
             )
         finally:
             if conn:
                 try:
                     conn.close()
-                    logger.debug("Connection closed")
+                    logger.debug("Connection closed.")
                 except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
+                    logger.exception(f"Error closing connection: {close_error}.")
 
     def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
         conn = None
@@ -206,7 +206,7 @@ class CatalogService:
 
                 if not result and '/' in path:
                     filename = path.split('/')[-1]
-                    logger.info(f"Exact path not found, trying to match filename: {filename}")
+                    logger.info(f"Path not found. Trying to match filename: {filename}")
 
                     cursor.execute(
                         """
@@ -231,7 +231,7 @@ class CatalogService:
             return None
 
         except Exception as e:
-            logger.exception(f"Error fetching catalog entry: {e}")
+            logger.exception(f"Error fetching catalog entry: {e}.")
             return None
         finally:
             if conn:
@@ -329,6 +329,28 @@ class AgentService:
 
     def __init__(self, pgdb_conn_string: str = DEFAULT_PGDB):
         self.pgdb_conn_string = pgdb_conn_string
+        self.agent = None
+
+    def store_transition(self, params: tuple):
+        """
+        Store the transition in the database.
+
+        Args:
+            params: A tuple containing the transition parameters
+        """
+        if self.agent:
+            self.agent.store_transition(params)
+
+    def get_step_results(self) -> Dict[str, Any]:
+        """
+        Get the results of all steps.
+
+        Returns:
+            A dictionary mapping the step names to results
+        """
+        if self.agent:
+            return self.agent.get_step_results()
+        return {}
 
     def execute_agent(
         self, 
@@ -345,18 +367,19 @@ class AgentService:
                 temp_file_path = temp_file.name
             try:
                 pgdb_conn = self.pgdb_conn_string if sync_to_postgres else None
-                agent = NoETLAgent(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
+                self.agent = NoETLAgent(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
+                agent = self.agent
                 workload = agent.playbook.get('workload', {})
                 if input_payload:
                     if merge:
-                        logger.info("Merge mode: deep merging input payload with workload")
+                        logger.info("Merge mode: deep merging input payload with workload.")
                         merged_workload = deep_merge(workload, input_payload)
                         for key, value in merged_workload.items():
                             agent.update_context(key, value)
                         agent.update_context('workload', merged_workload)
                         agent.store_workload(merged_workload)
                     else:
-                        logger.info("Override mode: replacing workload keys with input payload")
+                        logger.info("Override mode: replacing workload keys with input payload.")
                         merged_workload = workload.copy()
                         for key, value in input_payload.items():
                             merged_workload[key] = value
@@ -365,19 +388,20 @@ class AgentService:
                         agent.update_context('workload', merged_workload)
                         agent.store_workload(merged_workload)
                 else:
-                    logger.info("No input payload provided, using default workload from playbook")
+                    logger.info("No input payload provided. Default workload from playbook is used.")
                     for key, value in workload.items():
                         agent.update_context(key, value)
                     agent.update_context('workload', workload)
                     agent.store_workload(workload)
-
-                results = agent.run()
+                server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
+                daemon = Broker(agent, server_url=server_url)
+                results = daemon.run()
 
                 export_path = None
 
                 return {
                     "status": "success",
-                    "message": f"Agent executed successfully for playbook '{playbook_path}' version '{playbook_version}'.",
+                    "message": f"Agent executed for playbook '{playbook_path}' version '{playbook_version}'.",
                     "result": results,
                     "execution_id": agent.execution_id,
                     "export_path": export_path
@@ -387,10 +411,10 @@ class AgentService:
                     os.unlink(temp_file_path)
 
         except Exception as e:
-            logger.exception(f"Error executing agent: {e}")
+            logger.exception(f"Error executing agent: {e}.")
             return {
                 "status": "error",
-                "message": f"Error executing agent for playbook '{playbook_path}' version '{playbook_version}': {e}",
+                "message": f"Error executing agent for playbook '{playbook_path}' version '{playbook_version}': {e}.",
                 "error": str(e)
             }
 
@@ -420,7 +444,7 @@ async def register_resource(
         elif not content:
             raise HTTPException(
                 status_code=400,
-                detail="Either content or content_base64 must be provided."
+                detail="The content or content_base64 must be provided."
             )
 
         catalog_service = get_catalog_service()
@@ -428,10 +452,10 @@ async def register_resource(
         return result
 
     except Exception as e:
-        logger.exception(f"Error registering resource: {e}")
+        logger.exception(f"Error registering resource: {e}.")
         raise HTTPException(
             status_code=500,
-            detail=f"Error registering resource: {e}"
+            detail=f"Error registering resource: {e}."
         )
 
 @router.get("/catalog/list", response_class=JSONResponse)
@@ -470,10 +494,10 @@ async def get_resource(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error fetching resource: {e}")
+        logger.exception(f"Error fetching resource: {e}.")
         raise HTTPException(
             status_code=500,
-            detail=f"Error fetching resource: {e}"
+            detail=f"Error fetching resource: {e}."
         )
 
 
@@ -509,7 +533,7 @@ async def get_event_by_query(
     if not event_id:
         raise HTTPException(
             status_code=400,
-            detail="event_id query parameter is required"
+            detail="event_id query parameter is required."
         )
 
     try:
@@ -525,10 +549,26 @@ async def get_event_by_query(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error fetching event: {e}")
+        logger.exception(f"Error fetching event: {e}.")
         raise HTTPException(
             status_code=500,
-            detail=f"Error fetching event: {e}"
+            detail=f"Error fetching event: {e}."
+        )
+
+@router.post("/events", response_class=JSONResponse)
+async def create_event(
+    request: Request
+):
+    try:
+        body = await request.json()
+        event_service = get_event_service()
+        result = event_service.emit(body)
+        return result
+    except Exception as e:
+        logger.exception(f"Error creating event: {e}.")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creating event: {e}."
         )
 
 
@@ -587,7 +627,7 @@ async def execute_agent(
         logger.exception(f"Error executing agent: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error executing agent for playbook '{path}' version '{version}': {e}"
+            detail=f"Error executing agent for playbook '{path}' version '{version}': {e}."
         )
 
 @router.post("/agent/execute-async", response_class=JSONResponse)
@@ -657,7 +697,7 @@ async def execute_agent_async(
                     workload = agent.playbook.get('workload', {})
                     if input_payload:
                         if merge:
-                            logger.info("Merge mode: deep merging input payload with workload")
+                            logger.info("Merge mode: deep merging input payload with workload.")
                             merged_workload = deep_merge(workload, input_payload)
 
                             for key, value in merged_workload.items():
@@ -666,7 +706,7 @@ async def execute_agent_async(
                             agent.update_context('workload', merged_workload)
                             agent.store_workload(merged_workload)
                         else:
-                            logger.info("Override mode: replacing workload keys with input payload")
+                            logger.info("Override mode: replacing workload keys with input payload.")
                             merged_workload = workload.copy()
                             for key, value in input_payload.items():
                                 merged_workload[key] = value
@@ -675,7 +715,7 @@ async def execute_agent_async(
                             agent.update_context('workload', merged_workload)
                             agent.store_workload(merged_workload)
                     else:
-                        logger.info("No input payload provided, using default workload from playbook")
+                        logger.info("No input payload provided. Default workload from playbook is used.")
 
                         for key, value in workload.items():
                             agent.update_context(key, value)
@@ -688,27 +728,27 @@ async def execute_agent_async(
                     event_id = initial_event.get("event_id")
 
                     initial_event["state"] = "COMPLETED"
-                    initial_event["event_type"] = "AgentExecutionCompleted"
+                    initial_event["event_type"] = "agent_execution_completed"
                     initial_event["payload"] = results
                     initial_event["meta"]["execution_id"] = agent.execution_id
 
                     event_service.events[event_id] = initial_event
 
-                    logger.info(f"Event updated: {event_id} - AgentExecutionCompleted - COMPLETED")
+                    logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
 
                 finally:
                     if os.path.exists(temp_file_path):
                         os.unlink(temp_file_path)
 
             except Exception as e:
-                logger.exception(f"Error in background agent execution: {e}")
+                logger.exception(f"Error in background agent execution: {e}.")
                 event_id = initial_event.get("event_id")
                 initial_event["state"] = "ERROR"
-                initial_event["event_type"] = "AgentExecutionError"
+                initial_event["event_type"] = "agent_execution_error"
                 initial_event["meta"]["error"] = str(e)
                 initial_event["payload"] = {"error": str(e)}
                 event_service.events[event_id] = initial_event
-                logger.info(f"Event updated: {event_id} - AgentExecutionError - ERROR")
+                logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
 
         background_tasks.add_task(execute_agent_task)
 
@@ -719,7 +759,7 @@ async def execute_agent_async(
         }
 
     except Exception as e:
-        logger.exception(f"Error starting agent execution: {e}")
+        logger.exception(f"Error starting agent execution: {e}.")
         raise HTTPException(
             status_code=500,
             detail=f"Error starting agent execution for playbook '{path}' version '{version}': {e}"

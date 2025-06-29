@@ -5,7 +5,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: weather_example
-path: workflows/weather/weather_loop_example  # Unique path identifier for this playbook
+path: workflows/weather/weather_example  # Unique path identifier for this playbook
 
 workload:  # Input parameters section accessible throughout the workflow
   jobId: "{{ job.uuid }}"
@@ -426,7 +426,7 @@ workbook:  # Execution blocks used in the workflow
           duckdb_con.execute("LOAD postgres;")
 
           # Attach Postgres database
-          duckdb_con.execute("ATTACH 'dbname=noetl user=noetl password=noetl host=db port=5432' AS postgres_db (TYPE postgres);")
+          duckdb_con.execute("ATTACH 'dbname=noetl user=noetl password=noetl host=localhost port=5434' AS postgres_db (TYPE postgres);")
 
           # Postgres database alias name for queries
           pg_db = "postgres_db"
