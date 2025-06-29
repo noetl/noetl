@@ -4,7 +4,7 @@ import datetime
 import httpx
 import duckdb
 import psycopg
-from typing import Dict, List, Any
+from typing import Dict
 from jinja2 import Environment
 from noetl.common import render_template, setup_logger
 
@@ -531,13 +531,47 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         commands = task_config.get('commands', [])
         if isinstance(commands, str):
             commands_rendered = render_template(jinja_env, commands, {**context, **task_config.get('with', {})})
+            commands = []
+            current_command = []
+            dollar_quote = False
+            dollar_quote_tag = ""
+
             cmd_lines = []
             for line in commands_rendered.split('\n'):
                 line = line.strip()
                 if line and not line.startswith('--'):
                     cmd_lines.append(line)
+
             commands_text = ' '.join(cmd_lines)
-            commands = [cmd.strip() for cmd in commands_text.split(';') if cmd.strip()]
+            i = 0
+            while i < len(commands_text):
+                char = commands_text[i]
+                if char == '$' and (i + 1 < len(commands_text)) and (commands_text[i+1].isalnum() or commands_text[i+1] == '$'):
+                    j = i + 1
+                    while j < len(commands_text) and (commands_text[j].isalnum() or commands_text[j] == '_' or commands_text[j] == '$'):
+                        j += 1
+                    optional_tag = commands_text[i:j]
+                    if dollar_quote and optional_tag == dollar_quote_tag:
+                        dollar_quote = False
+                        dollar_quote_tag = ""
+                    elif not dollar_quote:
+                        dollar_quote = True
+                        dollar_quote_tag = optional_tag
+
+                    current_command.append(commands_text[i:j])
+                    i = j
+                    continue
+                if char == ';' and not dollar_quote:
+                    current_cmd = ''.join(current_command).strip()
+                    if current_cmd:
+                        commands.append(current_cmd)
+                    current_command = []
+                else:
+                    current_command.append(char)
+                i += 1
+            current_cmd = ''.join(current_command).strip()
+            if current_cmd:
+                commands.append(current_cmd)
 
         task_with = render_template(jinja_env, task_config.get('with', {}), context)
 
