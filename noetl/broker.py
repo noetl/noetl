@@ -2,12 +2,138 @@ import json
 import os
 import uuid
 import datetime
+import tempfile
 import httpx
-from typing import Dict, List, Any, Tuple
+import psycopg
+from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
-from noetl.common import render_template, setup_logger
+from noetl.common import render_template, setup_logger, deep_merge
+from noetl.worker import NoETLAgent
 
 logger = setup_logger(__name__, include_location=True)
+
+DEFAULT_PGDB = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
+
+class CatalogService:
+    def __init__(self, pgdb_conn_string: str = DEFAULT_PGDB):
+        self.pgdb_conn_string = pgdb_conn_string
+
+    def get_latest_version(self, resource_path: str) -> str:
+        conn = None
+        try:
+            conn = psycopg.connect(self.pgdb_conn_string)
+
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
+                    (resource_path,)
+                )
+                count = cursor.fetchone()[0]
+                logger.debug(f"Found {count} entries for resource_path '{resource_path}'")
+
+                if count == 0:
+                    logger.debug(f"No entries found for resource_path '{resource_path}', returning default version '0.1.0'")
+                    return "0.1.0"
+
+                cursor.execute(
+                    "SELECT resource_version FROM catalog WHERE resource_path = %s",
+                    (resource_path,)
+                )
+                versions = [row[0] for row in cursor.fetchall()]
+                logger.debug(f"All versions for resource_path '{resource_path}': {versions}")
+
+                cursor.execute(
+                    """
+                    WITH parsed_versions AS (
+                        SELECT 
+                            resource_version,
+                            CAST(SPLIT_PART(resource_version, '.', 1) AS INTEGER) AS major,
+                            CAST(SPLIT_PART(resource_version, '.', 2) AS INTEGER) AS minor,
+                            CAST(SPLIT_PART(resource_version, '.', 3) AS INTEGER) AS patch
+                        FROM catalog
+                        WHERE resource_path = %s
+                    )
+                    SELECT resource_version
+                    FROM parsed_versions
+                    ORDER BY major DESC, minor DESC, patch DESC
+                    LIMIT 1
+                    """,
+                    (resource_path,)
+                )
+                result = cursor.fetchone()
+
+                if result:
+                    latest_version = result[0]
+                    logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
+                    return latest_version
+
+                logger.debug(f"No valid version found for resource_path '{resource_path}', returning default version '0.1.0'")
+                return "0.1.0"
+        except Exception as e:
+            logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
+            return "0.1.0"
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
+
+    def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
+        conn = None
+        try:
+            conn = psycopg.connect(self.pgdb_conn_string)
+
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT resource_path, resource_type, resource_version, content, payload, meta
+                    FROM catalog
+                    WHERE resource_path = %s AND resource_version = %s
+                    """,
+                    (path, version)
+                )
+
+                result = cursor.fetchone()
+
+                if not result and '/' in path:
+                    filename = path.split('/')[-1]
+                    logger.info(f"Path not found. Trying to match filename: {filename}")
+
+                    cursor.execute(
+                        """
+                        SELECT resource_path, resource_type, resource_version, content, payload, meta
+                        FROM catalog
+                        WHERE resource_path = %s AND resource_version = %s
+                        """,
+                        (filename, version)
+                    )
+
+                    result = cursor.fetchone()
+
+            if result:
+                return {
+                    "resource_path": result[0],
+                    "resource_type": result[1],
+                    "resource_version": result[2],
+                    "content": result[3],
+                    "payload": result[4],
+                    "meta": result[5]
+                }
+            return None
+
+        except Exception as e:
+            logger.exception(f"Error fetching catalog entry: {e}.")
+            return None
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
+
+def get_catalog_service() -> CatalogService:
+    return CatalogService(DEFAULT_PGDB)
 
 class Broker:
 
@@ -22,9 +148,9 @@ class Broker:
         self.agent = agent
         self.server_url = server_url or os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
         self.event_reporting_enabled = True
-        self._validate_server_url()
+        self.validate_server_url()
 
-    def _validate_server_url(self):
+    def validate_server_url(self):
         """
         Validates the server URL.
         Disables event reporting if the server is not reachable.
@@ -48,6 +174,87 @@ class Broker:
             logger.warning(f"Server at {self.server_url} is not reachable: {e}")
             logger.warning("Disabling event reporting to prevent hanging")
             self.event_reporting_enabled = False
+
+    def execute_playbook_call(self, path: str, version: str = None, input_payload: Dict = None, merge: bool = True) -> Dict:
+        """
+        Execute a playbook call.
+
+        Args:
+            path: The path of the playbook to execute
+            version: The version of the playbook to execute (optional, uses latest if not provided)
+            input_payload: The input payload to pass to the playbook (optional)
+            merge: Whether to merge the input payload with the workload (default: True)
+
+        Returns:
+            A dictionary containing the results of the playbook execution
+        """
+        try:
+            catalog_service = get_catalog_service()
+
+            if not version:
+                version = catalog_service.get_latest_version(path)
+                logger.info(f"Version not specified for playbook '{path}', using latest version: {version}")
+
+            entry = catalog_service.fetch_entry(path, version)
+            if not entry:
+                error_msg = f"Playbook '{path}' with version '{version}' not found in catalog."
+                logger.error(error_msg)
+                return {
+                    'status': 'error',
+                    'error': error_msg
+                }
+
+            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
+                temp_file.write(entry.get("content").encode('utf-8'))
+                temp_file_path = temp_file.name
+
+            try:
+                pgdb_conn = self.agent.pgdb
+                child_agent = NoETLAgent(temp_file_path, mock_mode=self.agent.mock_mode, pgdb=pgdb_conn)
+                workload = child_agent.playbook.get('workload', {})
+                if input_payload:
+                    if merge:
+                        logger.info(f"Merge mode: merging input payload with workload for playbook '{path}'")
+                        merged_workload = deep_merge(workload, input_payload)
+                        for key, value in merged_workload.items():
+                            child_agent.update_context(key, value)
+                        child_agent.update_context('workload', merged_workload)
+                        child_agent.store_workload(merged_workload)
+                    else:
+                        logger.info(f"Override mode: replacing workload keys with input payload for playbook '{path}'")
+                        merged_workload = workload.copy()
+                        for key, value in input_payload.items():
+                            merged_workload[key] = value
+                        for key, value in merged_workload.items():
+                            child_agent.update_context(key, value)
+                        child_agent.update_context('workload', merged_workload)
+                        child_agent.store_workload(merged_workload)
+                else:
+                    logger.info(f"No input payload provided for playbook '{path}'. Using default workload.")
+                    for key, value in workload.items():
+                        child_agent.update_context(key, value)
+                    child_agent.update_context('workload', workload)
+                    child_agent.store_workload(workload)
+
+                child_broker = Broker(child_agent, server_url=self.server_url)
+                results = child_broker.run()
+
+                return {
+                    'status': 'success',
+                    'data': results,
+                    'execution_id': child_agent.execution_id
+                }
+            finally:
+                if os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
+
+        except Exception as e:
+            error_msg = f"Error executing playbook '{path}': {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {
+                'status': 'error',
+                'error': error_msg
+            }
 
     def execute_step(self, step_name: str, step_with: Dict = None) -> Dict:
         """
@@ -133,6 +340,32 @@ class Broker:
                     self.agent.mock_mode,
                     self.agent.log_event
                 )
+            elif call_type == 'playbook':
+                path = call_config.get('path')
+                version = call_config.get('version')
+
+                if not path:
+                    error_msg = "Missing 'path' parameter in playbook call."
+                    logger.error(error_msg)
+                    result = {
+                        'id': str(uuid.uuid4()),
+                        'status': 'error',
+                        'error': error_msg
+                    }
+                else:
+                    playbook_result = self.execute_playbook_call(
+                        path=path,
+                        version=version,
+                        input_payload=task_with,
+                        merge=True
+                    )
+
+                    result = {
+                        'id': str(uuid.uuid4()),
+                        'status': playbook_result.get('status', 'error'),
+                        'data': playbook_result.get('data'),
+                        'error': playbook_result.get('error')
+                    }
             else:
                 error_msg = f"Unsupported call type: {call_type}"
                 logger.error(error_msg)
