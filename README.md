@@ -84,7 +84,10 @@ NoETL provides a command-line interface.
 
 Register a playbook in the catalog:
 ```bash
-noetl catalog register path/to/playbook.yaml
+# noetl playbook --register path/to/playbook.yaml
+noetl playbook --register playbook/secrets_test.yaml --host localhost --port 8080
+noetl playbook --register playbook/load_dict_test.yaml --port 8080
+noetl playbook --register playbook/weather_example.yaml --port 8080
 ```
 
 #### Executing Playbooks
