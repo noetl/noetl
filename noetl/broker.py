@@ -371,7 +371,7 @@ class Broker:
                     'type': call_type,
                     'with': call_config.get('with', {})
                 }
-                fields = ['name', 'params', 'commands', 'return', 'headers', 'url', 'method', 'body', 'code']
+                fields = ['name', 'params', 'commands', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name']
                 task_config.update({
                     field: call_config.get(field)
                     for field in fields

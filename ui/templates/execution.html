@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoETL Execution View</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.12.2/dist/reset.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="ant-layout">
+        <div class="ant-layout-header" style="background: linear-gradient(to right, #001529, #003a70); color: white; display: flex; align-items: center; padding: 0 24px;">
+            <div style="font-size: 20px; margin-right: 24px; font-weight: 600;">
+                <a href="/" style="color: white; text-decoration: none; display: flex; align-items: center;">
+                    <i class="fas fa-project-diagram" style="margin-right: 10px; font-size: 24px;"></i>
+                    NoETL Playbook Editor
+                </a>
+            </div>
+            <div class="ant-menu ant-menu-dark ant-menu-root ant-menu-horizontal" style="line-height: 64px; flex: 1; background: transparent; border-bottom: none;">
+                <div class="ant-menu-item" style="margin: 0 4px; border-radius: 4px; transition: all 0.3s;">
+                    <a href="/" style="color: rgba(255, 255, 255, 0.85); padding: 0 16px;">
+                        <i class="fas fa-th-list" style="margin-right: 8px;"></i>Catalog
+                    </a>
+                </div>
+                <div class="ant-menu-item" style="margin: 0 4px; border-radius: 4px; transition: all 0.3s;">
+                    <a href="/editor" style="color: rgba(255, 255, 255, 0.85); padding: 0 16px;">
+                        <i class="fas fa-edit" style="margin-right: 8px;"></i>Editor
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ant-layout-content" style="padding: 32px; background: linear-gradient(135deg, #f5f7fa 0%, #f0f2f5 100%);">
+        <div class="ant-row" style="margin-bottom: 24px;">
+            <div class="ant-col ant-col-md-16">
+                <h1 id="execution-title" style="font-size: 28px; margin-bottom: 8px; color: #003a70;">Execution View</h1>
+                <p id="execution-subtitle" style="color: rgba(0, 0, 0, 0.45); font-size: 16px;">Monitoring execution of playbook</p>
+            </div>
+            <div class="ant-col ant-col-md-8" style="text-align: right; display: flex; justify-content: flex-end; align-items: center;">
+                <button id="refresh-execution" class="ant-btn ant-btn-primary" style="margin-right: 12px; height: 40px; padding: 0 20px; display: flex; align-items: center; justify-content: center; background: linear-gradient(to right, #1890ff, #096dd9); border: none; border-radius: 6px;">
+                    <i class="fas fa-sync-alt" style="margin-right: 8px;"></i> Refresh
+                </button>
+                <button id="back-to-catalog" class="ant-btn" style="height: 40px; padding: 0 20px; border: 1px solid #d9d9d9; display: flex; align-items: center; justify-content: center; border-radius: 6px;">
+                    <i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Back to Catalog
+                </button>
+            </div>
+        </div>
+
+        <div class="ant-row">
+            <div class="ant-col ant-col-24">
+                <div class="ant-card ant-card-bordered" style="margin-bottom: 24px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px -2px rgba(0, 0, 0, 0.16), 0 3px 6px 0 rgba(0, 0, 0, 0.12), 0 5px 12px 4px rgba(0, 0, 0, 0.09);">
+                    <div class="ant-card-head" style="background: linear-gradient(to right, #fafafa, #f5f5f5); padding: 16px 24px; border-bottom: 1px solid #f0f0f0;">
+                        <div class="ant-card-head-wrapper">
+                            <div class="ant-card-head-title" style="font-size: 18px; font-weight: 600; color: rgba(0, 0, 0, 0.85);">
+                                <i class="fas fa-info-circle" style="margin-right: 10px; color: #1890ff;"></i>Execution Status
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-card-body" style="padding: 24px;">
+                        <div id="execution-status" class="execution-status" style="border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);">
+                            <div style="display: flex; align-items: center;">
+                                <div class="ant-spin ant-spin-spinning" style="margin-right: 16px;" id="execution-spinner">
+                                    <span class="ant-spin-dot">
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                    </span>
+                                </div>
+                                <div>
+                                    <h5 id="status-text" style="font-size: 16px; font-weight: 600; margin-bottom: 4px; color: rgba(0, 0, 0, 0.85);">Loading execution status...</h5>
+                                    <p id="status-details" style="margin-bottom: 0; color: rgba(0, 0, 0, 0.65);"></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ant-row" style="margin-top: 24px;">
+                            <div class="ant-col ant-col-md-12">
+                                <div style="margin-bottom: 16px; display: flex; align-items: center;">
+                                    <span style="font-weight: 600; color: rgba(0, 0, 0, 0.85); width: 120px;">Execution ID:</span> 
+                                    <span id="execution-id" style="color: rgba(0, 0, 0, 0.65);"></span>
+                                </div>
+                                <div style="margin-bottom: 16px; display: flex; align-items: center;">
+                                    <span style="font-weight: 600; color: rgba(0, 0, 0, 0.85); width: 120px;">Playbook:</span> 
+                                    <span id="playbook-path" style="color: rgba(0, 0, 0, 0.65);"></span>
+                                </div>
+                                <div style="margin-bottom: 16px; display: flex; align-items: center;">
+                                    <span style="font-weight: 600; color: rgba(0, 0, 0, 0.85); width: 120px;">Version:</span> 
+                                    <span id="playbook-version" style="color: rgba(0, 0, 0, 0.65);"></span>
+                                </div>
+                            </div>
+                            <div class="ant-col ant-col-md-12">
+                                <div style="margin-bottom: 16px; display: flex; align-items: center;">
+                                    <span style="font-weight: 600; color: rgba(0, 0, 0, 0.85); width: 120px;">Start Time:</span> 
+                                    <span id="start-time" style="color: rgba(0, 0, 0, 0.65);"></span>
+                                </div>
+                                <div style="margin-bottom: 16px; display: flex; align-items: center;">
+                                    <span style="font-weight: 600; color: rgba(0, 0, 0, 0.85); width: 120px;">End Time:</span> 
+                                    <span id="end-time" style="color: rgba(0, 0, 0, 0.65);"></span>
+                                </div>
+                                <div style="margin-bottom: 16px; display: flex; align-items: center;">
+                                    <span style="font-weight: 600; color: rgba(0, 0, 0, 0.85); width: 120px;">Duration:</span> 
+                                    <span id="duration" style="color: rgba(0, 0, 0, 0.65);"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ant-card ant-card-bordered" style="margin-bottom: 24px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px -2px rgba(0, 0, 0, 0.16), 0 3px 6px 0 rgba(0, 0, 0, 0.12), 0 5px 12px 4px rgba(0, 0, 0, 0.09);">
+                    <div class="ant-card-head" style="background: linear-gradient(to right, #fafafa, #f5f5f5); padding: 16px 24px; border-bottom: 1px solid #f0f0f0;">
+                        <div class="ant-card-head-wrapper">
+                            <div class="ant-card-head-title" style="font-size: 18px; font-weight: 600; color: rgba(0, 0, 0, 0.85);">
+                                <i class="fas fa-tasks" style="margin-right: 10px; color: #1890ff;"></i>Execution Steps
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-card-body" style="padding: 24px;">
+                        <div id="steps-container">
+                            <div style="text-align: center; padding: 32px 0;">
+                                <div class="ant-spin ant-spin-spinning">
+                                    <span class="ant-spin-dot">
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                    </span>
+                                </div>
+                                <p style="margin-top: 16px; color: rgba(0, 0, 0, 0.45);">Loading execution steps...</p>
+                            </div>
+                        </div>
+
+                        <!-- Template for execution steps (hidden) -->
+                        <template id="execution-steps-template">
+                            <div class="ant-list ant-list-split">
+                                <div class="ant-list-item step-status" style="border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); transition: all 0.3s;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                                        <div>
+                                            <i class="fas fa-spinner fa-spin" style="margin-right: 12px; font-size: 16px;"></i> 
+                                            <strong style="font-size: 16px; color: rgba(0, 0, 0, 0.85);">Step Name</strong>
+                                        </div>
+                                        <span class="ant-tag" style="font-size: 14px; padding: 4px 8px; border-radius: 4px;">Status</span>
+                                    </div>
+                                    <div style="margin-top: 12px; color: rgba(0, 0, 0, 0.65);">
+                                        <small style="display: block; margin-bottom: 4px;"><i class="fas fa-clock" style="margin-right: 8px;"></i>Started: Time</small>
+                                        <small style="display: block;"><i class="fas fa-flag-checkered" style="margin-right: 8px;"></i>Ended: Time</small>
+                                    </div>
+                                    <div style="margin-top: 12px; color: #f5222d; background-color: #fff1f0; padding: 8px 12px; border-radius: 4px; border-left: 4px solid #ff4d4f;">Error message</div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="ant-card ant-card-bordered" style="border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px -2px rgba(0, 0, 0, 0.16), 0 3px 6px 0 rgba(0, 0, 0, 0.12), 0 5px 12px 4px rgba(0, 0, 0, 0.09);">
+                    <div class="ant-card-head" style="background: linear-gradient(to right, #fafafa, #f5f5f5); padding: 16px 24px; border-bottom: 1px solid #f0f0f0;">
+                        <div class="ant-card-head-wrapper">
+                            <div class="ant-card-head-title" style="font-size: 18px; font-weight: 600; color: rgba(0, 0, 0, 0.85);">
+                                <i class="fas fa-clipboard-check" style="margin-right: 10px; color: #1890ff;"></i>Execution Results
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-card-body" style="padding: 24px;">
+                        <div id="results-container">
+                            <div style="text-align: center; padding: 32px 0;">
+                                <div class="ant-spin ant-spin-spinning">
+                                    <span class="ant-spin-dot">
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                        <i class="ant-spin-dot-item"></i>
+                                    </span>
+                                </div>
+                                <p style="margin-top: 16px; color: rgba(0, 0, 0, 0.45);">Loading execution results...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/antd@5.12.2/dist/antd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ant-design/icons@5.2.6/dist/index.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <script src="/static/js/execution.js"></script>
+</body>
+</html>

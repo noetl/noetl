@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoETL Playbook Editor</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.12.2/dist/reset.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reactflow/11.7.0/reactflow.min.css">
+</head>
+<body>
+    <div class="ant-layout">
+        <div class="ant-layout-header" style="background: linear-gradient(to right, #001529, #003a70); color: white; display: flex; align-items: center; padding: 0 24px;">
+            <div style="font-size: 20px; margin-right: 24px; font-weight: 600;">
+                <a href="/" style="color: white; text-decoration: none; display: flex; align-items: center;">
+                    <i class="fas fa-project-diagram" style="margin-right: 10px; font-size: 24px;"></i>
+                    NoETL Playbook Editor
+                </a>
+            </div>
+            <div class="ant-menu ant-menu-dark ant-menu-root ant-menu-horizontal" style="line-height: 64px; flex: 1; background: transparent; border-bottom: none;">
+                <div class="ant-menu-item" style="margin: 0 4px; border-radius: 4px; transition: all 0.3s;">
+                    <a href="/" style="color: rgba(255, 255, 255, 0.85); padding: 0 16px;">
+                        <i class="fas fa-th-list" style="margin-right: 8px;"></i>Catalog
+                    </a>
+                </div>
+                <div class="ant-menu-item ant-menu-item-selected" style="margin: 0 4px; border-radius: 4px; background-color: rgba(255, 255, 255, 0.15); transition: all 0.3s;">
+                    <a href="/editor" style="color: white; padding: 0 16px;">
+                        <i class="fas fa-edit" style="margin-right: 8px;"></i>Editor
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ant-layout-content" style="padding: 32px; background: linear-gradient(135deg, #f5f7fa 0%, #f0f2f5 100%);">
+        <div class="ant-row" style="margin-bottom: 24px;">
+            <div class="ant-col ant-col-md-12">
+                <h1 id="editor-title" style="font-size: 28px; margin-bottom: 8px; color: #003a70;">Playbook Editor</h1>
+                <p style="color: rgba(0, 0, 0, 0.45); font-size: 16px;">Design, configure, and execute your data workflows</p>
+            </div>
+            <div class="ant-col ant-col-md-12" style="text-align: right; display: flex; justify-content: flex-end; align-items: center;">
+                <button id="save-playbook" class="ant-btn ant-btn-primary" style="margin-right: 12px; height: 40px; padding: 0 20px; display: flex; align-items: center; justify-content: center;">
+                    <i class="fas fa-save" style="margin-right: 8px;"></i> Save
+                </button>
+                <button id="execute-playbook" class="ant-btn" style="margin-right: 12px; height: 40px; padding: 0 20px; background: linear-gradient(to right, #52c41a, #389e0d); border: none; color: white; display: flex; align-items: center; justify-content: center;">
+                    <i class="fas fa-play" style="margin-right: 8px;"></i> Execute
+                </button>
+                <button id="export-yaml" class="ant-btn" style="margin-right: 12px; height: 40px; padding: 0 20px; background: linear-gradient(to right, #1890ff, #096dd9); border: none; color: white; display: flex; align-items: center; justify-content: center;">
+                    <i class="fas fa-file-export" style="margin-right: 8px;"></i> Export YAML
+                </button>
+                <button id="import-yaml" class="ant-btn" style="height: 40px; padding: 0 20px; border: 1px solid #d9d9d9; display: flex; align-items: center; justify-content: center;">
+                    <i class="fas fa-file-import" style="margin-right: 8px;"></i> Import YAML
+                </button>
+            </div>
+        </div>
+
+        <!-- Information Panel -->
+        <div class="ant-row" style="margin-bottom: 24px;">
+            <div class="ant-col ant-col-24">
+                <div id="info-panel" class="ant-alert ant-alert-info ant-alert-with-description ant-alert-closable" style="margin-bottom: 16px; display: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);" role="alert">
+                    <span class="ant-alert-message" style="font-weight: 600;"></span>
+                    <span id="info-message" class="ant-alert-description"></span>
+                    <button type="button" class="ant-alert-close-icon" aria-label="Close">
+                        <span class="anticon anticon-close"><i class="fas fa-times"></i></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="ant-row" style="gap: 24px;">
+            <div class="ant-col ant-col-md-18">
+                <div class="ant-card ant-card-bordered" style="margin-bottom: 24px; border-radius: 12px; overflow: hidden;">
+                    <div class="ant-card-head" style="background: linear-gradient(to right, #fafafa, #f0f0f0);">
+                        <div class="ant-tabs ant-tabs-top ant-tabs-card" id="editor-tabs">
+                            <div class="ant-tabs-nav">
+                                <div class="ant-tabs-nav-list" style="margin-left: 8px;">
+                                    <div class="ant-tabs-tab ant-tabs-tab-active" id="workflow-tab" style="border-radius: 8px 8px 0 0; margin-right: 4px; padding: 8px 16px; transition: all 0.3s;">
+                                        <div class="ant-tabs-tab-btn" role="tab" aria-selected="true" data-tab-id="workflow" style="font-weight: 500;">
+                                            <i class="fas fa-project-diagram" style="margin-right: 8px;"></i>Workflow
+                                        </div>
+                                    </div>
+                                    <div class="ant-tabs-tab" id="workload-tab" style="border-radius: 8px 8px 0 0; margin-right: 4px; padding: 8px 16px; transition: all 0.3s;">
+                                        <div class="ant-tabs-tab-btn" role="tab" aria-selected="false" data-tab-id="workload" style="font-weight: 500;">
+                                            <i class="fas fa-cogs" style="margin-right: 8px;"></i>Workload
+                                        </div>
+                                    </div>
+                                    <div class="ant-tabs-tab" id="yaml-tab" style="border-radius: 8px 8px 0 0; padding: 8px 16px; transition: all 0.3s;">
+                                        <div class="ant-tabs-tab-btn" role="tab" aria-selected="false" data-tab-id="yaml" style="font-weight: 500;">
+                                            <i class="fas fa-code" style="margin-right: 8px;"></i>YAML
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-card-body" style="padding: 0;">
+                        <div class="ant-tabs-content" id="editor-tab-content">
+                            <div class="ant-tabs-tabpane ant-tabs-tabpane-active" id="workflow" role="tabpanel" aria-labelledby="workflow-tab">
+                                <div class="editor-container" style="border: none; border-radius: 0; margin-bottom: 0;">
+                                    <div id="workflow-editor" class="workflow-canvas"></div>
+                                </div>
+                            </div>
+                            <div class="ant-tabs-tabpane" id="workload" role="tabpanel" aria-labelledby="workload-tab" style="display: none; padding: 24px;">
+                                <div class="ant-form-item">
+                                    <label for="workload-editor" class="ant-form-item-label" style="font-weight: 500; margin-bottom: 8px;">Workload JSON:</label>
+                                    <div id="workload-editor" style="height: 500px; border: 1px solid #d9d9d9; border-radius: 8px; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);"></div>
+                                </div>
+                            </div>
+                            <div class="ant-tabs-tabpane" id="yaml" role="tabpanel" aria-labelledby="yaml-tab" style="display: none; padding: 24px;">
+                                <div class="ant-form-item">
+                                    <label for="yaml-editor" class="ant-form-item-label" style="font-weight: 500; margin-bottom: 8px;">Playbook YAML:</label>
+                                    <div id="yaml-editor" style="height: 500px; border: 1px solid #d9d9d9; border-radius: 8px; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="ant-col ant-col-md-6">
+                <div class="ant-card ant-card-bordered" style="border-radius: 12px; overflow: hidden; margin-bottom: 24px;">
+                    <div class="ant-card-head" style="background: linear-gradient(to right, #fafafa, #f0f0f0);">
+                        <div class="ant-card-head-wrapper">
+                            <div class="ant-card-head-title" style="font-weight: 600;">
+                                <i class="fas fa-sliders-h" style="margin-right: 8px;"></i>Properties
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-card-body properties-panel" id="properties-panel" style="padding: 24px;">
+                        <div style="text-align: center; color: rgba(0, 0, 0, 0.45);">
+                            <i class="fas fa-mouse-pointer" style="font-size: 24px; margin-bottom: 12px; opacity: 0.5;"></i>
+                            <p>Select a node to edit its properties</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ant-card ant-card-bordered" style="border-radius: 12px; overflow: hidden;">
+                    <div class="ant-card-head" style="background: linear-gradient(to right, #fafafa, #f0f0f0);">
+                        <div class="ant-card-head-wrapper">
+                            <div class="ant-card-head-title" style="font-weight: 600;">
+                                <i class="fas fa-plus" style="margin-right: 8px;"></i>Add Components
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-card-body" style="padding: 24px;">
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                            <button class="ant-btn" id="add-step" style="height: 40px; background: linear-gradient(to right, #e6f7ff, #ffffff); border-color: #91d5ff; color: #1890ff; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: all 0.3s;">
+                                <i class="fas fa-plus-circle" style="margin-right: 8px;"></i> Add Step
+                            </button>
+                            <button class="ant-btn" id="add-task" style="height: 40px; background: linear-gradient(to right, #f6ffed, #ffffff); border-color: #b7eb8f; color: #52c41a; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: all 0.3s;">
+                                <i class="fas fa-plus-circle" style="margin-right: 8px;"></i> Add Task
+                            </button>
+                            <button class="ant-btn" id="add-condition" style="height: 40px; background: linear-gradient(to right, #fffbe6, #ffffff); border-color: #ffe58f; color: #faad14; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: all 0.3s;">
+                                <i class="fas fa-plus-circle" style="margin-right: 8px;"></i> Add Condition
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for importing YAML -->
+    <div class="ant-modal-root" id="import-modal" style="display: none;">
+        <div class="ant-modal-mask" style="background-color: rgba(0, 0, 0, 0.45);"></div>
+        <div class="ant-modal-wrap">
+            <div class="ant-modal" style="width: 800px; transform: translateX(-50%);">
+                <div class="ant-modal-content" style="border-radius: 12px; box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 9px 28px 8px rgba(0, 0, 0, 0.05);">
+                    <div class="ant-modal-header" style="border-radius: 12px 12px 0 0; background: linear-gradient(to right, #fafafa, #f5f5f5); padding: 16px 24px;">
+                        <div class="ant-modal-title" id="import-modal-label" style="font-size: 18px; font-weight: 600; color: rgba(0, 0, 0, 0.85);">
+                            <i class="fas fa-file-import" style="margin-right: 10px; color: #1890ff;"></i>Import Playbook YAML
+                        </div>
+                    </div>
+                    <button type="button" class="ant-modal-close" aria-label="Close" style="color: rgba(0, 0, 0, 0.45); transition: color 0.3s;">
+                        <span class="ant-modal-close-x" style="width: 54px; height: 54px; line-height: 54px;">
+                            <span class="anticon anticon-close"><i class="fas fa-times"></i></span>
+                        </span>
+                    </button>
+                    <div class="ant-modal-body" style="padding: 24px;">
+                        <div class="ant-form-item" style="margin-bottom: 24px;">
+                            <label for="import-yaml-content" class="ant-form-item-label" style="font-weight: 500; margin-bottom: 8px;">
+                                <i class="fas fa-code" style="margin-right: 8px; color: #1890ff;"></i>Paste YAML content:
+                            </label>
+                            <div class="ant-form-item-control">
+                                <div class="ant-form-item-control-input">
+                                    <textarea class="ant-input" id="import-yaml-content" rows="15" style="resize: vertical; border-radius: 8px; padding: 12px; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);"></textarea>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ant-form-item">
+                            <label for="import-yaml-file" class="ant-form-item-label" style="font-weight: 500; margin-bottom: 8px;">
+                                <i class="fas fa-upload" style="margin-right: 8px; color: #1890ff;"></i>Or upload a YAML file:
+                            </label>
+                            <div class="ant-form-item-control">
+                                <div class="ant-form-item-control-input">
+                                    <input class="ant-input" type="file" id="import-yaml-file" accept=".yaml,.yml" style="padding: 8px; border-radius: 8px;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-modal-footer" style="border-top: 1px solid #f0f0f0; padding: 16px 24px; border-radius: 0 0 12px 12px; display: flex; justify-content: flex-end;">
+                        <button type="button" class="ant-btn" id="modal-cancel" style="margin-right: 12px; height: 38px; padding: 0 16px; border-radius: 6px; display: flex; align-items: center; justify-content: center;">
+                            <i class="fas fa-times" style="margin-right: 8px;"></i>Cancel
+                        </button>
+                        <button type="button" class="ant-btn ant-btn-primary" id="confirm-import" style="height: 38px; padding: 0 16px; background: linear-gradient(to right, #1890ff, #096dd9); border: none; border-radius: 6px; display: flex; align-items: center; justify-content: center;">
+                            <i class="fas fa-check" style="margin-right: 8px;"></i>Import
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <!-- YAML Parser (load BEFORE Monaco) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+
+    <!-- React and ReactFlow -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/antd@5.12.2/dist/antd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ant-design/icons@5.2.6/dist/index.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reactflow/11.7.0/reactflow.umd.min.js"></script>
+
+    <!-- Monaco Editor -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.36.1/min/vs/loader.min.js"></script>
+
+    <!-- Custom Scripts -->
+    <script src="/static/js/editor.js"></script>
+</body>
+</html>
