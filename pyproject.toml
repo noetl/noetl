@@ -1,10 +1,25 @@
 [project]
 name = "noetl"
-version = "0.0.2"
-description = "notOnlyNoCodeExtractTransformLoadFramework"
+version = "0.1.18"
+description = "Not Only Extract Transform Load Automation"
 authors = [
     { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" }
 ]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+keywords = ["etl", "data-pipeline", "workflow", "automation"]
 dependencies = [
     "fastapi>=0.115.6",
     "pydantic>=2.11.4",
@@ -63,8 +78,20 @@ dev = [
 [project.scripts]
 noetl = "noetl.main:app"
 
+[project.urls]
+Homepage = "https://noetl.io"
+Repository = "https://github.com/noetl/noetl"
+Issues = "https://github.com/noetl/noetl/issues"
+
+[tool.hatchling.build.targets.wheel]
+packages = ["noetl", "ui"]
+
+[tool.hatchling.build.targets.wheel.sources]
+"noetl" = "noetl"
+"ui" = "ui"
+
 [tool.setuptools.package-data]
-"noetl.migrations" = ["alembic.ini", "*.py", "**/*.py", "**/versions/*.py"]
+"ui" = ["**/*"]
 
 [build-system]
 requires = ["hatchling"]

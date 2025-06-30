@@ -16,13 +16,33 @@ def read_readme():
 
 setup(
     name="noetl",
-    version="0.1.17",
+    version="0.1.18",
     author="NoETL Team",
-    description="NoETL: A Python package for managing workflows",
+    author_email="182583029+kadyapam@users.noreply.github.com",
+    description="notOnlyExtractTransformLoadFramework",
     long_description=read_readme(),
     long_description_content_type='text/markdown',
+    url="https://github.com/noetl/noetl",
     packages=find_packages(),
+    package_data={
+        'ui': ['**/*'],
+    },
+    include_package_data=True,
     install_requires=read_requirements(),
+    python_requires=">=3.8",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Operating System :: OS Independent",
+    ],
+    keywords=["etl", "data-pipeline", "workflow", "automation"],
     entry_points={
         "console_scripts": [
             "noetl = noetl.main:app",

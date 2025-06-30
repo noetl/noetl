@@ -15,14 +15,6 @@ logger = setup_logger(__name__, include_location=True)
 class NoETLAgent:
 
     def __init__(self, playbook_path: str, mock_mode: bool = True, pgdb: str = None):
-        """
-        Initialize NoETLAgent.
-
-        Args:
-            playbook_path: Path to the playbook YAML file
-            mock_mode: Flag to use mock mode for testing
-            pgdb: Postgres connection string
-        """
         self.playbook_path = playbook_path
         self.mock_mode = mock_mode
         self.execution_id = str(uuid.uuid4())

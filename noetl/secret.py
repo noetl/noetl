@@ -151,7 +151,8 @@ class SecretManager:
                     import google.auth.transport.requests
 
                     try:
-                        credentials, _ = google.auth.default()
+                        scopes = ['https://www.googleapis.com/auth/cloud-platform']
+                        credentials, _ = google.auth.default(scopes=scopes)
                         auth_req = google.auth.transport.requests.Request()
                         credentials.refresh(auth_req)
                         headers["Authorization"] = f"Bearer {credentials.token}"

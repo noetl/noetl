@@ -2,6 +2,7 @@ let workflowEditor;
 let workloadEditor;
 let yamlEditor;
 let selectedNode = null;
+let isUpdating = false;
 let playbook = {
     apiVersion: "noetl.io/v1",
     kind: "Playbook",
@@ -12,8 +13,20 @@ let playbook = {
 };
 
 document.addEventListener('DOMContentLoaded', function() {
-    initMonacoEditors();
-    initReactFlow();
+    setTimeout(function() {
+        if (window.React && window.ReactDOM && window.ReactFlow) {
+            console.log("Libraries loaded successfully, initializing editor");
+            initReactFlow();
+        } else {
+            console.error("Required libraries not loaded:", {
+                React: !!window.React,
+                ReactDOM: !!window.ReactDOM,
+                ReactFlow: !!window.ReactFlow
+            });
+            showInfoMessage('Error: Required libraries not loaded properly. Check console for details.', 'danger');
+        }
+    }, 2000); // Increased timeout to 2 seconds
+
     document.getElementById('save-playbook').addEventListener('click', savePlaybook);
     document.getElementById('execute-playbook').addEventListener('click', executePlaybook);
     document.getElementById('export-yaml').addEventListener('click', exportYaml);
@@ -23,22 +36,22 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('add-step').addEventListener('click', () => addNode('step'));
     document.getElementById('add-task').addEventListener('click', () => addNode('task'));
     document.getElementById('add-condition').addEventListener('click', () => addNode('condition'));
-    document.querySelector('#info-panel .btn-close').addEventListener('click', function() {
+    document.querySelector('#info-panel .ant-alert-close-icon').addEventListener('click', function() {
         hideInfoMessage();
     });
 
-    const pathParts = window.location.pathname.split('/');
-    if (pathParts.length >= 3 && (pathParts[1] === 'editor' || pathParts[1] === 'playbook') && pathParts[2] !== 'new') {
-        // Load existing playbook
-        const path = decodeURIComponent(pathParts[2]);
-        const version = pathParts.length >= 4 ? decodeURIComponent(pathParts[3]) : 'latest';
-        loadPlaybook(path, version);
-    }
+    // Setup Ant Design tabs
+    setupAntTabs();
+
+    // Initialize Monaco editors and then load the playbook if needed
+    initMonacoEditors();
 });
 
 function initMonacoEditors() {
     require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.36.1/min/vs' }});
     require(['vs/editor/editor.main'], function() {
+        console.log('Monaco editor loaded');
+
         workloadEditor = monaco.editor.create(document.getElementById('workload-editor'), {
             value: JSON.stringify(playbook.workload, null, 2),
             language: 'json',
@@ -54,26 +67,46 @@ function initMonacoEditors() {
         });
 
         workloadEditor.onDidChangeModelContent(() => {
+            if (isUpdating) return;
             try {
+                isUpdating = true;
                 playbook.workload = JSON.parse(workloadEditor.getValue());
                 updateYamlEditor();
+                isUpdating = false;
             } catch (e) {
                 console.error('Invalid JSON in workload editor:', e);
+                showInfoMessage('Error parsing JSON. The JSON might contain invalid syntax or be too complex.', 'danger');
+                isUpdating = false;
             }
         });
 
         yamlEditor.onDidChangeModelContent(() => {
+            if (isUpdating) return;
             try {
+                isUpdating = true;
                 const newPlaybook = jsyaml.load(yamlEditor.getValue());
                 if (newPlaybook && typeof newPlaybook === 'object') {
                     playbook = newPlaybook;
                     updateWorkloadEditor();
                     updateWorkflowEditor();
                 }
+                isUpdating = false;
             } catch (e) {
                 console.error('Invalid YAML in YAML editor:', e);
+                showInfoMessage('Error parsing YAML. The YAML might contain invalid syntax, circular references, or be too complex.', 'danger');
+                isUpdating = false;
             }
         });
+
+        // Load playbook after editors are initialized
+        const pathParts = window.location.pathname.split('/');
+        if (pathParts.length >= 3 && (pathParts[1] === 'editor' || pathParts[1] === 'playbook') && pathParts[2] !== 'new') {
+            // Load existing playbook
+            const path = decodeURIComponent(pathParts[2]);
+            const version = pathParts.length >= 4 ? decodeURIComponent(pathParts[3]) : 'latest';
+            console.log('Loading playbook:', path, version);
+            loadPlaybook(path, version);
+        }
     });
 }
 
@@ -202,13 +235,29 @@ function initReactFlow() {
 
 function updateYamlEditor() {
     if (yamlEditor) {
-        yamlEditor.setValue(jsyaml.dump(playbook));
+        isUpdating = true;
+        try {
+            yamlEditor.setValue(jsyaml.dump(playbook));
+        } catch (e) {
+            console.error('Error converting playbook to YAML:', e);
+            showInfoMessage('Error converting playbook to YAML. The playbook might contain circular references or be too complex.', 'danger');
+        } finally {
+            isUpdating = false;
+        }
     }
 }
 
 function updateWorkloadEditor() {
     if (workloadEditor) {
-        workloadEditor.setValue(JSON.stringify(playbook.workload || {}, null, 2));
+        isUpdating = true;
+        try {
+            workloadEditor.setValue(JSON.stringify(playbook.workload || {}, null, 2));
+        } catch (e) {
+            console.error('Error converting workload to JSON:', e);
+            showInfoMessage('Error converting workload to JSON. The workload might contain circular references or be too complex.', 'danger');
+        } finally {
+            isUpdating = false;
+        }
     }
 }
 
@@ -225,14 +274,24 @@ function showInfoMessage(message, type = 'info') {
     const infoMessage = document.getElementById('info-message');
 
     infoMessage.textContent = message;
-    infoPanel.className = `alert alert-${type} alert-dismissible fade show mb-3`;
-    infoPanel.classList.remove('d-none');
+
+    // Map Bootstrap alert types to Ant Design alert types
+    const typeMap = {
+        'info': 'info',
+        'success': 'success',
+        'warning': 'warning',
+        'danger': 'error'
+    };
+
+    const antType = typeMap[type] || 'info';
+    infoPanel.className = `ant-alert ant-alert-${antType} ant-alert-with-description ant-alert-closable`;
+    infoPanel.style.display = 'block';
 }
 
 
 function hideInfoMessage() {
     const infoPanel = document.getElementById('info-panel');
-    infoPanel.classList.add('d-none');
+    infoPanel.style.display = 'none';
 }
 
 
@@ -297,45 +356,69 @@ function showNodeProperties(node) {
     if (node.data.type === 'step') {
         html = `
             <h4>Step Properties</h4>
-            <div class="mb-3">
-                <label for="step-name" class="form-label">Step Name:</label>
-                <input type="text" class="form-control" id="step-name" value="${escapeHtml(node.data.label)}">
+            <div class="ant-form-item" style="margin-bottom: 16px;">
+                <label for="step-name" class="ant-form-item-label">Step Name:</label>
+                <div class="ant-form-item-control">
+                    <div class="ant-form-item-control-input">
+                        <input type="text" class="ant-input" id="step-name" value="${escapeHtml(node.data.label)}">
+                    </div>
+                </div>
             </div>
-            <div class="mb-3">
-                <label for="step-desc" class="form-label">Description:</label>
-                <textarea class="form-control" id="step-desc" rows="3">${escapeHtml(node.data.desc)}</textarea>
+            <div class="ant-form-item" style="margin-bottom: 16px;">
+                <label for="step-desc" class="ant-form-item-label">Description:</label>
+                <div class="ant-form-item-control">
+                    <div class="ant-form-item-control-input">
+                        <textarea class="ant-input" id="step-desc" rows="3" style="resize: vertical;">${escapeHtml(node.data.desc)}</textarea>
+                    </div>
+                </div>
             </div>
-            <button class="btn btn-primary" onclick="updateNodeProperties()">Update</button>
+            <button class="ant-btn ant-btn-primary" onclick="updateNodeProperties()">Update</button>
         `;
     } else if (node.data.type === 'task') {
         html = `
             <h4>Task Properties</h4>
-            <div class="mb-3">
-                <label for="task-name" class="form-label">Task Name:</label>
-                <input type="text" class="form-control" id="task-name" value="${escapeHtml(node.data.label)}">
+            <div class="ant-form-item" style="margin-bottom: 16px;">
+                <label for="task-name" class="ant-form-item-label">Task Name:</label>
+                <div class="ant-form-item-control">
+                    <div class="ant-form-item-control-input">
+                        <input type="text" class="ant-input" id="task-name" value="${escapeHtml(node.data.label)}">
+                    </div>
+                </div>
             </div>
-            <div class="mb-3">
-                <label for="task-desc" class="form-label">Description:</label>
-                <textarea class="form-control" id="task-desc" rows="3">${escapeHtml(node.data.desc)}</textarea>
+            <div class="ant-form-item" style="margin-bottom: 16px;">
+                <label for="task-desc" class="ant-form-item-label">Description:</label>
+                <div class="ant-form-item-control">
+                    <div class="ant-form-item-control-input">
+                        <textarea class="ant-input" id="task-desc" rows="3" style="resize: vertical;">${escapeHtml(node.data.desc)}</textarea>
+                    </div>
+                </div>
             </div>
-            <div class="mb-3">
-                <label for="task-type" class="form-label">Type:</label>
-                <select class="form-control" id="task-type">
-                    <option value="python" ${node.data.config.type === 'python' ? 'selected' : ''}>Python</option>
-                    <option value="http" ${node.data.config.type === 'http' ? 'selected' : ''}>HTTP</option>
-                    <option value="runner" ${node.data.config.type === 'runner' ? 'selected' : ''}>Runner</option>
-                </select>
+            <div class="ant-form-item" style="margin-bottom: 16px;">
+                <label for="task-type" class="ant-form-item-label">Type:</label>
+                <div class="ant-form-item-control">
+                    <div class="ant-form-item-control-input">
+                        <select class="ant-select" id="task-type" style="width: 100%;">
+                            <option value="python" ${node.data.config.type === 'python' ? 'selected' : ''}>Python</option>
+                            <option value="http" ${node.data.config.type === 'http' ? 'selected' : ''}>HTTP</option>
+                            <option value="runner" ${node.data.config.type === 'runner' ? 'selected' : ''}>Runner</option>
+                        </select>
+                    </div>
+                </div>
             </div>
-            <button class="btn btn-primary" onclick="updateNodeProperties()">Update</button>
+            <button class="ant-btn ant-btn-primary" onclick="updateNodeProperties()">Update</button>
         `;
     } else if (node.data.type === 'condition') {
         html = `
             <h4>Condition Properties</h4>
-            <div class="mb-3">
-                <label for="condition-when" class="form-label">When:</label>
-                <input type="text" class="form-control" id="condition-when" value="${escapeHtml(node.data.label)}">
+            <div class="ant-form-item" style="margin-bottom: 16px;">
+                <label for="condition-when" class="ant-form-item-label">When:</label>
+                <div class="ant-form-item-control">
+                    <div class="ant-form-item-control-input">
+                        <input type="text" class="ant-input" id="condition-when" value="${escapeHtml(node.data.label)}">
+                    </div>
+                </div>
             </div>
-            <button class="btn btn-primary" onclick="updateNodeProperties()">Update</button>
+            <button class="ant-btn ant-btn-primary" onclick="updateNodeProperties()">Update</button>
         `;
     }
 
@@ -475,7 +558,9 @@ function updateNodeProperties() {
         });
     }
 
+    isUpdating = true;
     updateYamlEditor();
+    isUpdating = false;
 }
 
 function addNode(type) {
@@ -560,7 +645,9 @@ function addNode(type) {
         showInfoMessage('Error adding node.', 'danger');
     }
 
+    isUpdating = true;
     updateYamlEditor();
+    isUpdating = false;
 }
 
 
@@ -658,8 +745,26 @@ function exportYaml() {
 
 
 function showImportModal() {
-    const modal = new bootstrap.Modal(document.getElementById('import-modal'));
-    modal.show();
+    const modal = document.getElementById('import-modal');
+    modal.style.display = 'block';
+
+    // Add event listener to close button
+    const closeButton = modal.querySelector('.ant-modal-close');
+    closeButton.addEventListener('click', function() {
+        hideImportModal();
+    });
+
+    // Add event listener to cancel button
+    const cancelButton = document.getElementById('modal-cancel');
+    cancelButton.addEventListener('click', function() {
+        hideImportModal();
+    });
+}
+
+
+function hideImportModal() {
+    const modal = document.getElementById('import-modal');
+    modal.style.display = 'none';
 }
 
 
@@ -669,19 +774,23 @@ function importYaml() {
 
     if (yamlContent) {
         try {
+            isUpdating = true;
             const importedPlaybook = jsyaml.load(yamlContent);
             if (importedPlaybook && typeof importedPlaybook === 'object') {
                 playbook = importedPlaybook;
                 updateYamlEditor();
                 updateWorkloadEditor();
                 updateWorkflowEditor();
-                bootstrap.Modal.getInstance(document.getElementById('import-modal')).hide();
+                hideImportModal();
+                isUpdating = false;
             } else {
                 showInfoMessage('Invalid YAML content.', 'danger');
+                isUpdating = false;
             }
         } catch (e) {
             console.error('Error parsing YAML:', e);
-            showInfoMessage('Error parsing YAML. Please check the content and try again.', 'danger');
+            showInfoMessage('Error parsing YAML. The YAML might contain invalid syntax, circular references, or be too complex. Please check the content and try again.', 'danger');
+            isUpdating = false;
         }
     } else if (fileInput.files.length > 0) {
         const file = fileInput.files[0];
@@ -689,19 +798,23 @@ function importYaml() {
 
         reader.onload = function(e) {
             try {
+                isUpdating = true;
                 const importedPlaybook = jsyaml.load(e.target.result);
                 if (importedPlaybook && typeof importedPlaybook === 'object') {
                     playbook = importedPlaybook;
                     updateYamlEditor();
                     updateWorkloadEditor();
                     updateWorkflowEditor();
-                    bootstrap.Modal.getInstance(document.getElementById('import-modal')).hide();
+                    hideImportModal();
+                    isUpdating = false;
                 } else {
                     showInfoMessage('Invalid YAML file.', 'danger');
+                    isUpdating = false;
                 }
             } catch (e) {
                 console.error('Error parsing YAML file:', e);
-                showInfoMessage('Error parsing YAML file. Please check the file and try again.', 'danger');
+                showInfoMessage('Error parsing YAML file. The YAML might contain invalid syntax, circular references, or be too complex. Please check the file and try again.', 'danger');
+                isUpdating = false;
             }
         };
 
@@ -722,14 +835,17 @@ function loadPlaybook(path, version) {
         .then(data => {
             if (data.content) {
                 try {
+                    isUpdating = true;
                     playbook = jsyaml.load(data.content);
                     document.getElementById('editor-title').textContent = `Editing: ${playbook.name || path}`;
                     updateYamlEditor();
                     updateWorkloadEditor();
                     updateWorkflowEditor();
+                    isUpdating = false;
                 } catch (e) {
                     console.error('Error parsing playbook YAML:', e);
-                    showInfoMessage('Error parsing playbook YAML.', 'danger');
+                    showInfoMessage('Error parsing playbook YAML. The playbook might contain invalid YAML syntax or be too complex.', 'danger');
+                    isUpdating = false;
                 }
             } else {
                 showInfoMessage('Playbook content not found.', 'warning');
@@ -752,4 +868,39 @@ function escapeHtml(unsafe) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+function setupAntTabs() {
+    // Get all tab buttons
+    const tabButtons = document.querySelectorAll('.ant-tabs-tab');
+
+    // Add click event listeners to each tab button
+    tabButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            // Get the tab ID from the data attribute
+            const tabId = this.querySelector('.ant-tabs-tab-btn').getAttribute('data-tab-id');
+
+            // Remove active class from all tab buttons
+            tabButtons.forEach(btn => {
+                btn.classList.remove('ant-tabs-tab-active');
+            });
+
+            // Add active class to the clicked tab button
+            this.classList.add('ant-tabs-tab-active');
+
+            // Hide all tab panes
+            const tabPanes = document.querySelectorAll('.ant-tabs-tabpane');
+            tabPanes.forEach(pane => {
+                pane.style.display = 'none';
+                pane.classList.remove('ant-tabs-tabpane-active');
+            });
+
+            // Show the selected tab pane
+            const selectedPane = document.getElementById(tabId);
+            if (selectedPane) {
+                selectedPane.style.display = 'block';
+                selectedPane.classList.add('ant-tabs-tabpane-active');
+            }
+        });
+    });
 }

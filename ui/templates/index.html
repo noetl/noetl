@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoETL Playbook Editor</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.12.2/dist/reset.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="ant-layout">
+        <div class="ant-layout-header" style="background: linear-gradient(to right, #001529, #003a70); color: white; display: flex; align-items: center; padding: 0 24px;">
+            <div style="font-size: 20px; margin-right: 24px; font-weight: 600;">
+                <a href="/" style="color: white; text-decoration: none; display: flex; align-items: center;">
+                    <i class="fas fa-project-diagram" style="margin-right: 10px; font-size: 24px;"></i>
+                    NoETL Playbook Editor
+                </a>
+            </div>
+            <div class="ant-menu ant-menu-dark ant-menu-root ant-menu-horizontal" style="line-height: 64px; flex: 1; background: transparent; border-bottom: none;">
+                <div class="ant-menu-item ant-menu-item-selected" style="margin: 0 4px; border-radius: 4px; background-color: rgba(255, 255, 255, 0.15); transition: all 0.3s;">
+                    <a href="/" style="color: white; padding: 0 16px;">
+                        <i class="fas fa-th-list" style="margin-right: 8px;"></i>Catalog
+                    </a>
+                </div>
+                <div class="ant-menu-item" style="margin: 0 4px; border-radius: 4px; transition: all 0.3s;">
+                    <a href="/editor" style="color: rgba(255, 255, 255, 0.85); padding: 0 16px;">
+                        <i class="fas fa-edit" style="margin-right: 8px;"></i>Editor
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ant-layout-content" style="padding: 32px; background: linear-gradient(135deg, #f5f7fa 0%, #f0f2f5 100%);">
+        <div class="ant-row">
+            <div class="ant-col ant-col-24">
+                <h1 style="font-size: 28px; margin-bottom: 8px; color: #003a70;">Playbook Catalog</h1>
+                <p style="color: rgba(0, 0, 0, 0.45); font-size: 16px; margin-bottom: 24px;">View, edit, and execute playbooks from the catalog.</p>
+
+                <!-- Information Panel -->
+                <div id="info-panel" class="ant-alert ant-alert-info ant-alert-with-description ant-alert-closable" style="margin-bottom: 24px; display: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);" role="alert">
+                    <span class="ant-alert-message" style="font-weight: 600;"></span>
+                    <span id="info-message" class="ant-alert-description"></span>
+                    <button type="button" class="ant-alert-close-icon" aria-label="Close">
+                        <span class="anticon anticon-close"><i class="fas fa-times"></i></span>
+                    </button>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-bottom: 24px;">
+                    <a href="/editor/new" class="ant-btn ant-btn-primary" style="height: 40px; padding: 0 20px; background-color: #1890ff; border: 1px solid #1890ff; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-weight: 600; text-shadow: none;">
+                        <i class="fas fa-plus" style="margin-right: 8px;"></i>Create New Playbook
+                    </a>
+                </div>
+
+                <div class="ant-card ant-card-bordered" style="border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px -2px rgba(0, 0, 0, 0.16), 0 3px 6px 0 rgba(0, 0, 0, 0.12), 0 5px 12px 4px rgba(0, 0, 0, 0.09);">
+                    <div class="ant-card-head" style="background: linear-gradient(to right, #fafafa, #f5f5f5); padding: 16px 24px; border-bottom: 1px solid #f0f0f0;">
+                        <div class="ant-card-head-wrapper">
+                            <div class="ant-card-head-title" style="font-size: 18px; font-weight: 600; color: rgba(0, 0, 0, 0.85);">
+                                <i class="fas fa-list" style="margin-right: 10px; color: #1890ff;"></i>Available Playbooks
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-card-body" style="padding: 0;">
+                        <div class="ant-table-wrapper">
+                            <div class="ant-table">
+                                <div class="ant-table-container">
+                                    <div class="ant-table-content">
+                                        <table style="table-layout: auto;">
+                                            <thead class="ant-table-thead">
+                                                <tr>
+                                                    <th class="ant-table-cell" style="background-color: #fafafa; padding: 16px; font-weight: 600;">Name</th>
+                                                    <th class="ant-table-cell" style="background-color: #fafafa; padding: 16px; font-weight: 600;">Path</th>
+                                                    <th class="ant-table-cell" style="background-color: #fafafa; padding: 16px; font-weight: 600;">Version</th>
+                                                    <th class="ant-table-cell" style="background-color: #fafafa; padding: 16px; font-weight: 600;">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="ant-table-tbody" id="playbook-list">
+                                                <!-- Playbooks will be loaded here dynamically -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/antd@5.12.2/dist/antd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ant-design/icons@5.2.6/dist/index.umd.min.js"></script>
+    <script src="/static/js/catalog.js"></script>
+</body>
+</html>

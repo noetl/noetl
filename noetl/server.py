@@ -293,24 +293,90 @@ def get_catalog_service() -> CatalogService:
     return CatalogService(DEFAULT_PGDB)
 
 class EventService:
-    _events = {}
-
     def __init__(self, pgdb_conn_string: str = DEFAULT_PGDB):
         self.pgdb_conn_string = pgdb_conn_string
-        self.events = EventService._events
 
     def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        conn = None
         try:
             event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id
             event_type = event_data.get("event_type", "UNKNOWN")
-            state = event_data.get("state", "CREATED")
-            parent_id = event_data.get("parent_id")
-            meta = event_data.get("meta", {})
-            payload = event_data.get("payload", {})
-            self.events[event_id] = event_data
-            logger.info(f"Event emitted: {event_id} - {event_type} - {state}")
+            status = event_data.get("status", "CREATED")
+            parent_event_id = event_data.get("parent_id") or event_data.get("parent_event_id")
+            execution_id = event_data.get("execution_id", event_id)  # Use event_id as execution_id if not provided
+            node_id = event_data.get("node_id", event_id)
+            node_name = event_data.get("node_name", event_type)
+            node_type = event_data.get("node_type", "event")
+            duration = event_data.get("duration", 0.0)
+            metadata = event_data.get("meta", {})
+            error = event_data.get("error")
+            input_context = json.dumps(event_data.get("context", {}))
+            output_result = json.dumps(event_data.get("result", {}))
+            metadata_str = json.dumps(metadata)
 
+            conn = psycopg.connect(self.pgdb_conn_string)
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM event_log 
+                    WHERE execution_id = %s AND event_id = %s
+                """, (execution_id, event_id))
+
+                exists = cursor.fetchone()[0] > 0
+
+                if exists:
+                    cursor.execute("""
+                        UPDATE event_log SET
+                            event_type = %s,
+                            status = %s,
+                            duration = %s,
+                            input_context = %s,
+                            output_result = %s,
+                            metadata = %s,
+                            error = %s,
+                            timestamp = CURRENT_TIMESTAMP
+                        WHERE execution_id = %s AND event_id = %s
+                    """, (
+                        event_type,
+                        status,
+                        duration,
+                        input_context,
+                        output_result,
+                        metadata_str,
+                        error,
+                        execution_id,
+                        event_id
+                    ))
+                else:
+                    cursor.execute("""
+                        INSERT INTO event_log (
+                            execution_id, event_id, parent_event_id, timestamp, event_type,
+                            node_id, node_name, node_type, status, duration,
+                            input_context, output_result, metadata, error
+                        ) VALUES (
+                            %s, %s, %s, CURRENT_TIMESTAMP, %s,
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
+                    """, (
+                        execution_id,
+                        event_id,
+                        parent_event_id,
+                        event_type,
+                        node_id,
+                        node_name,
+                        node_type,
+                        status,
+                        duration,
+                        input_context,
+                        output_result,
+                        metadata_str,
+                        error
+                    ))
+
+                conn.commit()
+
+            logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
             return event_data
 
         except Exception as e:
@@ -319,9 +385,216 @@ class EventService:
                 status_code=500,
                 detail=f"Error emitting event: {e}"
             )
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
 
-    def get_event(self, event_id: str) -> Optional[Dict[str, Any]]:
-        return self.events.get(event_id)
+    def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get all events for a specific execution.
+
+        Args:
+            execution_id: The ID of the execution
+
+        Returns:
+            A dictionary containing events or None if not found
+        """
+        conn = None
+        try:
+            conn = psycopg.connect(self.pgdb_conn_string)
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        event_id, 
+                        event_type, 
+                        node_id, 
+                        node_name, 
+                        node_type, 
+                        status, 
+                        duration, 
+                        timestamp, 
+                        input_context, 
+                        output_result, 
+                        metadata, 
+                        error
+                    FROM event_log 
+                    WHERE execution_id = %s
+                    ORDER BY timestamp
+                """, (execution_id,))
+
+                rows = cursor.fetchall()
+                if rows:
+                    events = []
+                    for row in rows:
+                        event_data = {
+                            "event_id": row[0],
+                            "event_type": row[1],
+                            "node_id": row[2],
+                            "node_name": row[3],
+                            "node_type": row[4],
+                            "status": row[5],
+                            "duration": row[6],
+                            "timestamp": row[7].isoformat() if row[7] else None,
+                            "input_context": json.loads(row[8]) if row[8] else None,
+                            "output_result": json.loads(row[9]) if row[9] else None,
+                            "metadata": json.loads(row[10]) if row[10] else None,
+                            "error": row[11],
+                            "execution_id": execution_id,
+                            "resource_path": None,
+                            "resource_version": None
+                        }
+
+                        # Try to extract resource_path and resource_version from metadata or input_context
+                        if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
+                            event_data["resource_path"] = event_data["metadata"]["playbook_path"]
+
+                        if event_data["input_context"] and "path" in event_data["input_context"]:
+                            event_data["resource_path"] = event_data["input_context"]["path"]
+
+                        if event_data["input_context"] and "version" in event_data["input_context"]:
+                            event_data["resource_version"] = event_data["input_context"]["version"]
+
+                        events.append(event_data)
+
+                    return {"events": events}
+
+                return None
+        except Exception as e:
+            logger.exception(f"Error getting events by execution_id: {e}")
+            return None
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
+
+    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a single event by its ID.
+
+        Args:
+            event_id: The ID of the event
+
+        Returns:
+            A dictionary containing the event or None if not found
+        """
+        conn = None
+        try:
+            conn = psycopg.connect(self.pgdb_conn_string)
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        event_id, 
+                        event_type, 
+                        node_id, 
+                        node_name, 
+                        node_type, 
+                        status, 
+                        duration, 
+                        timestamp, 
+                        input_context, 
+                        output_result, 
+                        metadata, 
+                        error,
+                        execution_id
+                    FROM event_log 
+                    WHERE event_id = %s
+                """, (event_id,))
+
+                row = cursor.fetchone()
+                if row:
+                    event_data = {
+                        "event_id": row[0],
+                        "event_type": row[1],
+                        "node_id": row[2],
+                        "node_name": row[3],
+                        "node_type": row[4],
+                        "status": row[5],
+                        "duration": row[6],
+                        "timestamp": row[7].isoformat() if row[7] else None,
+                        "input_context": json.loads(row[8]) if row[8] else None,
+                        "output_result": json.loads(row[9]) if row[9] else None,
+                        "metadata": json.loads(row[10]) if row[10] else None,
+                        "error": row[11],
+                        "execution_id": row[12],
+                        "resource_path": None,
+                        "resource_version": None
+                    }
+                    if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
+                        event_data["resource_path"] = event_data["metadata"]["playbook_path"]
+
+                    if event_data["input_context"] and "path" in event_data["input_context"]:
+                        event_data["resource_path"] = event_data["input_context"]["path"]
+
+                    if event_data["input_context"] and "version" in event_data["input_context"]:
+                        event_data["resource_version"] = event_data["input_context"]["version"]
+                    return {"events": [event_data]}
+
+                return None
+        except Exception as e:
+            logger.exception(f"Error getting event by ID: {e}")
+            return None
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
+
+    def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
+        """
+        Get events by execution_id or event_id (legacy method for backward compatibility).
+
+        Args:
+            id_param: Either an execution_id or an event_id
+
+        Returns:
+            A dictionary containing events or None if not found
+        """
+        conn = None
+        try:
+            conn = psycopg.connect(self.pgdb_conn_string)
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM event_log WHERE execution_id = %s
+                """, (id_param,))
+                count = cursor.fetchone()[0]
+
+                if count > 0:
+                    events = self.get_events_by_execution_id(id_param)
+                    if events:
+                        return events
+
+            event = self.get_event_by_id(id_param)
+            if event:
+                return event
+
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT DISTINCT execution_id FROM event_log 
+                    WHERE event_id = %s
+                """, (id_param,))
+                execution_ids = [row[0] for row in cursor.fetchall()]
+
+                if execution_ids:
+                    events = self.get_events_by_execution_id(execution_ids[0])
+                    if events:
+                        return events
+
+            return None
+        except Exception as e:
+            logger.exception(f"Error in get_event: {e}")
+            return None
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
 
 def get_event_service() -> EventService:
     return EventService(DEFAULT_PGDB)
@@ -501,11 +774,69 @@ async def get_resource(
         )
 
 
+@router.get("/events/by-execution/{execution_id}", response_class=JSONResponse)
+async def get_events_by_execution(
+    request: Request,
+    execution_id: str
+):
+    """
+    Get all events for a specific execution.
+    """
+    try:
+        event_service = get_event_service()
+        events = event_service.get_events_by_execution_id(execution_id)
+        if not events:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No events found for execution '{execution_id}'."
+            )
+        return events
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching events by execution: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching events by execution: {e}"
+        )
+
+@router.get("/events/by-id/{event_id}", response_class=JSONResponse)
+async def get_event_by_id(
+    request: Request,
+    event_id: str
+):
+    """
+    Get a single event by its ID.
+    """
+    try:
+        event_service = get_event_service()
+        event = event_service.get_event_by_id(event_id)
+        if not event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Event with ID '{event_id}' not found."
+            )
+        return event
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching event by ID: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching event by ID: {e}"
+        )
+
 @router.get("/events/{event_id}", response_class=JSONResponse)
 async def get_event(
     request: Request,
     event_id: str
 ):
+    """
+    Legacy endpoint for getting events by either execution_id or event_id.
+    Use /events/by-execution/{execution_id} or /events/by-id/{event_id} instead.
+    """
     try:
         event_service = get_event_service()
         event = event_service.get_event(event_id)
@@ -553,6 +884,30 @@ async def get_event_by_query(
         raise HTTPException(
             status_code=500,
             detail=f"Error fetching event: {e}."
+        )
+
+@router.get("/execution/data/{execution_id}", response_class=JSONResponse)
+async def get_execution_data(
+    request: Request,
+    execution_id: str
+):
+    try:
+        event_service = get_event_service()
+        event = event_service.get_event(execution_id)
+        if not event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Execution '{execution_id}' not found."
+            )
+        return event
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching execution data: {e}.")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching execution data: {e}."
         )
 
 @router.post("/events", response_class=JSONResponse)
@@ -675,12 +1030,14 @@ async def execute_agent_async(
         event_service = get_event_service()
         initial_event_data = {
             "event_type": "AgentExecutionRequested",
-            "state": "REQUESTED",
+            "status": "REQUESTED",
             "meta": {
                 "resource_path": path,
                 "resource_version": version,
             },
-            "payload": input_payload
+            "result": input_payload,
+            "node_type": "playbook",
+            "node_name": path
         }
 
         initial_event = event_service.emit(initial_event_data)
@@ -727,12 +1084,23 @@ async def execute_agent_async(
 
                     event_id = initial_event.get("event_id")
 
-                    initial_event["state"] = "COMPLETED"
-                    initial_event["event_type"] = "agent_execution_completed"
-                    initial_event["payload"] = results
-                    initial_event["meta"]["execution_id"] = agent.execution_id
+                    # Update the event with execution results
+                    update_event = {
+                        "event_id": event_id,
+                        "execution_id": agent.execution_id,
+                        "event_type": "agent_execution_completed",
+                        "status": "COMPLETED",
+                        "result": results,
+                        "meta": {
+                            "resource_path": path,
+                            "resource_version": version,
+                            "execution_id": agent.execution_id
+                        },
+                        "node_type": "playbook",
+                        "node_name": path
+                    }
 
-                    event_service.events[event_id] = initial_event
+                    event_service.emit(update_event)
 
                     logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
 
@@ -743,11 +1111,25 @@ async def execute_agent_async(
             except Exception as e:
                 logger.exception(f"Error in background agent execution: {e}.")
                 event_id = initial_event.get("event_id")
-                initial_event["state"] = "ERROR"
-                initial_event["event_type"] = "agent_execution_error"
-                initial_event["meta"]["error"] = str(e)
-                initial_event["payload"] = {"error": str(e)}
-                event_service.events[event_id] = initial_event
+
+                # Update the event with error information
+                error_event = {
+                    "event_id": event_id,
+                    "execution_id": event_id,  # Use event_id as execution_id since agent might not be initialized
+                    "event_type": "agent_execution_error",
+                    "status": "ERROR",
+                    "error": str(e),
+                    "result": {"error": str(e)},
+                    "meta": {
+                        "resource_path": path,
+                        "resource_version": version,
+                        "error": str(e)
+                    },
+                    "node_type": "playbook",
+                    "node_name": path
+                }
+
+                event_service.emit(error_event)
                 logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
 
         background_tasks.add_task(execute_agent_task)

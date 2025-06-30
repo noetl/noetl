@@ -50,7 +50,21 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
 
     project_root = pathlib.Path(__file__).parent.parent.absolute()
     templates = Jinja2Templates(directory=str(project_root / "ui" / "templates"))
-    app.mount("/static", StaticFiles(directory=str(project_root / "ui" / "static")), name="static")
+
+    class NoCacheStaticFiles(StaticFiles):
+        async def __call__(self, scope, receive, send):
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    headers = dict(message.get("headers", []))
+                    headers[b"Cache-Control"] = b"no-cache, no-store, must-revalidate"
+                    headers[b"Pragma"] = b"no-cache"
+                    headers[b"Expires"] = b"0"
+                    message["headers"] = [(k, v) for k, v in headers.items()]
+                await send(message)
+
+            return await super().__call__(scope, receive, send_wrapper)
+
+    app.mount("/static", NoCacheStaticFiles(directory=str(project_root / "ui" / "static")), name="static")
     app.include_router(server_router)
 
     @app.get("/", response_class=HTMLResponse)
@@ -89,12 +103,13 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
 
 @app.command("server")
 def create_server(
-    host: str = typer.Option("0.0.0.0", help="Server host."),
+    host: str = typer.Option("0.0.0.0", help="Server host (binds to all interfaces by default)."),
     port: int = typer.Option(8082, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload.")
 ):
     app = create_app(host=host, port=port)
     logger.info(f"Starting NoETL API server at http://{host}:{port}")
+    logger.info(f"You can access the server at http://localhost:{port} or http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, reload=reload)
 
 @app.command("agent")
@@ -197,7 +212,7 @@ def manage_playbook(
     version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload JSON file."),
     payload: str = typer.Option(None, "--payload", help="Payload JSON string."),
-    host: str = typer.Option("localhost", "--host", help="NoETL server host."),
+    host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
     port: int = typer.Option(8082, "--port", "-p", help="NoETL server port."),
     sync: bool = typer.Option(True, "--sync", help="Whether to sync execution data to Postgres."),
     merge: bool = typer.Option(False, "--merge", help="Whether to merge the input payload with the workload section of playbook.")
