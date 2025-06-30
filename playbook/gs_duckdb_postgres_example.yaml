@@ -1,0 +1,500 @@
+# NoETL DSL Playbook for demonstrating file operations with Google Storage, DuckDB, and PostgreSQL.
+# This playbook demonstrates DuckDB's native file handling capabilities:
+# - Reading CSV files directly from the local filesystem
+# - Uploading files to Google Storage using DuckDB
+# - Reading files from Google Storage
+# - Converting between file formats (CSV to Parquet)
+# - Reading multiple files using list parameters
+# - Reading compressed files
+# - Using glob patterns to read multiple files
+# - Creating tables in Postgres and loading data
+# - Auto-detecting CSV format with read_csv_auto
+# - Specifying CSV options (delimiters, quote characters, etc.)
+# - Handling NULL values and type conversion
+# - Parallel CSV reading for performance
+#
+# Usage:
+# noetl playbook --register playbook/gs_duckdb_postgres_example.yaml --port 8080
+# noetl playbook --execute --path "workflows/examples/gs_duckdb_postgres_example"
+
+apiVersion: noetl.io/v1
+kind: Playbook
+name: gs_duckdb_postgres_example
+path: workflows/examples/gs_duckdb_postgres_example
+
+workload:
+  jobId: "{{ job.uuid }}"
+  # Google Storage configuration
+  gs_project_id: "{{ env.GOOGLE_CLOUD_PROJECT | default('noetl-demo-19700101') }}"
+  gs_bucket: "noetl-demo-19700101"
+  # Secret names in Google Secret Manager
+  gcs_key_id_secret: "{{ env.GCS_KEY_ID_SECRET | default('s3_access_key_id') }}"
+  gcs_secret_key_secret: "{{ env.GCS_SECRET_KEY_SECRET | default('s3_secret_access_key') }}"
+  # File paths
+  source_csv_path: "data/test/test_data.csv"
+  local_csv_path: "/tmp/test_data.csv"
+  local_parquet_path: "/tmp/test_data.parquet"
+  gs_csv_path: "uploads/test_data.csv"
+  gs_parquet_path: "uploads/test_data.parquet"
+  # PostgreSQL configuration
+  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5434') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('noetl') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('noetl') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
+  # Table name
+  table_name: "test_data"
+
+workflow:
+  - step: start
+    desc: "Start GS DuckDB Postgres Example Workflow"
+    next:
+      - step: get_gcs_key_id
+
+  - step: get_gcs_key_id
+    desc: "Retrieve GCS HMAC Key ID from Google Secret Manager"
+    call:
+      type: secrets
+      provider: google
+      secret_name: "{{ workload.gcs_key_id_secret }}"
+    next:
+      - step: get_gcs_secret_key
+
+  - step: get_gcs_secret_key
+    desc: "Retrieve GCS HMAC Secret Key from Google Secret Manager"
+    call:
+      type: secrets
+      provider: google
+      secret_name: "{{ workload.gcs_secret_key_secret }}"
+    next:
+      - step: create_gcs_secret
+
+  - step: create_gcs_secret
+    desc: "Create Duckdb secret for GCS authentication"
+    call:
+      type: workbook
+      name: create_gcs_secret_task
+      with:
+        key_id: "{{ get_gcs_key_id.secret_value }}"
+        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: upload_csv_to_gs
+
+  - step: upload_csv_to_gs
+    desc: "Upload CSV file to Google Storage bucket"
+    call:
+      type: workbook
+      name: upload_csv_task
+    next:
+      - step: download_and_convert
+
+  - step: download_and_convert
+    desc: "Download CSV from GS and convert to Parquet"
+    call:
+      type: workbook
+      name: download_convert_task
+    next:
+      - step: create_postgres_table
+
+  - step: create_postgres_table
+    desc: "Create table in Postgres"
+    call:
+      type: workbook
+      name: create_table_task
+    next:
+      - step: load_data_to_postgres
+
+  - step: load_data_to_postgres
+    desc: "Load data from Parquet to Postgres"
+    call:
+      type: workbook
+      name: load_data_task
+    next:
+      - step: upload_parquet_to_gs
+
+  - step: upload_parquet_to_gs
+    desc: "Upload Parquet file to Google Storage bucket"
+    call:
+      type: workbook
+      name: upload_parquet_task
+    next:
+      - step: advanced_file_operations
+
+  - step: advanced_file_operations
+    desc: "Advanced file operations with Duckdb"
+    call:
+      type: workbook
+      name: advanced_file_operations_task
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of workflow"
+
+workbook:
+  - name: create_gcs_secret_task
+    type: duckdb
+    with:
+      key_id: "{{ key_id }}"
+      secret_key: "{{ secret_key }}"
+    commands: |
+      -- Install and load necessary extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+
+      -- Create a DuckDB secret for GCS authentication
+      CREATE OR REPLACE SECRET gcs_secret (
+          TYPE gcs,
+          KEY_ID '{{ key_id }}',
+          SECRET '{{ secret_key }}'
+      );
+
+      -- Configure GCS endpoint
+      SET s3_endpoint='storage.googleapis.com';
+      SET s3_region='auto';
+      SET s3_url_style='path';
+
+      -- Test the secret by listing files in the bucket
+      SELECT 'Secret created successfully' AS message;
+
+  - name: upload_csv_task
+    type: duckdb
+    commands: |
+      -- Install and load necessary extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+
+      -- Configure GCS endpoint (the authentication is handled by the secret)
+      SET s3_endpoint='storage.googleapis.com';
+      SET s3_region='auto';
+      SET s3_url_style='path';
+
+      -- Read CSV file directly from local filesystem using auto-detection
+      -- read_csv_auto automatically detects CSV format, including delimiters, headers, and types
+      DROP TABLE IF EXISTS temp_csv;
+      CREATE TABLE temp_csv AS 
+      SELECT * FROM read_csv_auto('{{ workload.source_csv_path }}', 
+                                 all_varchar=false,  
+                                 sample_size=-1);    
+      -- all_varchar=false: Try to detect column types
+      -- sample_size=-1: Use all rows for type detection
+
+      -- Alternative method using direct file reading infers the format from extension
+      -- CREATE TABLE temp_csv AS 
+      -- SELECT * FROM '{{ workload.source_csv_path }}';
+
+      -- Show the data and inferred types
+      SELECT * FROM temp_csv;
+      DESCRIBE temp_csv;
+
+      -- Upload to Google Storage
+      COPY temp_csv TO 's3://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}' (FORMAT CSV, HEADER);
+
+      -- Clean up
+      DROP TABLE temp_csv;
+
+  - name: download_convert_task
+    type: duckdb
+    commands: |
+      -- Install and load necessary extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+      INSTALL parquet;
+      LOAD parquet;
+
+      -- Configure GCS endpoint (the authentication is handled by the secret)
+      SET s3_endpoint='storage.googleapis.com';
+      SET s3_region='auto';
+      SET s3_url_style='path';
+
+      -- Download CSV from Google Storage using read_csv_auto for best format detection
+      DROP TABLE IF EXISTS temp_csv;
+      CREATE TABLE temp_csv AS 
+      SELECT * FROM read_csv_auto('s3://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}', 
+                                 sample_size=1000,    
+                                 all_varchar=false);  
+      -- sample_size=1000: Sample first 1000 rows for type detection
+      -- all_varchar=false: Try to detect column types
+
+      -- Alternative method using direct file reading (DuckDB infers the format from extension)
+      -- CREATE TABLE temp_csv AS 
+      -- SELECT * FROM 's3://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}';
+
+      -- Alternative method using read_csv function with explicit options
+      -- CREATE TABLE temp_csv AS 
+      -- SELECT * FROM read_csv('s3://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}',
+      --                       header = true,
+      --                       auto_detect = true,
+      --                       sample_size = 1000,
+      --                       ignore_errors = false,
+      --                       columns = {
+      --                         'id': 'INTEGER',
+      --                         'name': 'VARCHAR',
+      --                         'age': 'INTEGER',
+      --                         'meta_data': 'JSON',
+      --                         'description': 'VARCHAR'
+      --                       });
+
+      -- Show the data and inferred schema
+      SELECT * FROM temp_csv;
+      DESCRIBE temp_csv;
+
+      -- Convert to Parquet and save locally with compression
+      COPY temp_csv TO '{{ workload.local_parquet_path }}' (
+        FORMAT PARQUET, 
+        COMPRESSION ZSTD,
+        ROW_GROUP_SIZE 100000
+      );
+
+      -- Clean up
+      DROP TABLE temp_csv;
+
+  - name: create_table_task
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    commands: |
+      -- Drop table if it exists
+      DROP TABLE IF EXISTS {{ workload.table_name }};
+
+      -- Create table with appropriate columns
+      CREATE TABLE {{ workload.table_name }} (
+        id INTEGER,
+        name VARCHAR(100),
+        age INTEGER,
+        meta_data JSONB,
+        description TEXT
+      );
+
+  - name: load_data_task
+    type: duckdb
+    with:
+      db_type: postgres
+      db_alias: pg_db
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    commands: |
+      -- Install and load parquet extension if not already loaded
+      INSTALL parquet;
+      LOAD parquet;
+
+      -- Load Parquet file into DuckDB using read_parquet with advanced options
+      DROP TABLE IF EXISTS temp_parquet;
+      CREATE TABLE temp_parquet AS 
+      SELECT * FROM read_parquet('{{ workload.local_parquet_path }}',
+                                binary_as_string=true,  
+                                file_row_number=true);  
+      -- binary_as_string=true: Convert binary data to strings
+      -- file_row_number=true: Add file row number as a column
+
+      -- Alternative method using direct file reading (DuckDB infers the format from extension)
+      -- CREATE TABLE temp_parquet AS 
+      -- SELECT * FROM '{{ workload.local_parquet_path }}';
+
+      -- Show the data and schema
+      SELECT * FROM temp_parquet;
+      DESCRIBE temp_parquet;
+
+      -- Get Parquet file metadata
+      SELECT * FROM parquet_metadata('{{ workload.local_parquet_path }}');
+
+      -- Get Parquet schema
+      SELECT * FROM parquet_schema('{{ workload.local_parquet_path }}');
+
+      -- Insert data into PostgreSQL with proper type handling
+      INSERT INTO pg_db.{{ workload.table_name }}
+      SELECT 
+        id::INTEGER,
+        name,
+        CASE WHEN age IS NULL OR age = '' THEN NULL ELSE age::INTEGER END,
+        CASE WHEN meta_data IS NULL OR meta_data = '' THEN NULL ELSE meta_data::JSON END,
+        description
+      FROM temp_parquet;
+
+      -- Verify data in PostgreSQL
+      SELECT * FROM pg_db.{{ workload.table_name }};
+
+      -- Clean up
+      DROP TABLE temp_parquet;
+
+  - name: upload_parquet_task
+    type: duckdb
+    commands: |
+      -- Install and load necessary extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+      INSTALL parquet;
+      LOAD parquet;
+
+      -- Configure GCS endpoint (the authentication is handled by the secret)
+      SET s3_endpoint='storage.googleapis.com';
+      SET s3_region='auto';
+      SET s3_url_style='path';
+
+      -- Read the local Parquet file
+      DROP TABLE IF EXISTS temp_parquet;
+      CREATE TABLE temp_parquet AS 
+      SELECT * FROM '{{ workload.local_parquet_path }}';
+
+      -- Show the data and schema
+      SELECT * FROM temp_parquet;
+      DESCRIBE temp_parquet;
+
+      -- Upload the Parquet file to Google Storage with advanced options
+      COPY temp_parquet TO 's3://{{ workload.gs_bucket }}/{{ workload.gs_parquet_path }}' (
+        FORMAT PARQUET,
+        COMPRESSION ZSTD,        
+        ROW_GROUP_SIZE 100000,   
+        PARTITION_BY (id),       
+        OVERWRITE_OR_IGNORE      
+      );
+      -- COMPRESSION ZSTD: Use ZSTD compression (alternatives: SNAPPY, GZIP, NONE)
+      -- ROW_GROUP_SIZE 100000: Set row group size for better performance
+      -- PARTITION_BY (id): Partition data by id column (creates multiple files)
+      -- OVERWRITE_OR_IGNORE: Overwrite if file exists
+
+      -- Show confirmation message
+      SELECT 'Parquet file uploaded to s3://{{ workload.gs_bucket }}/{{ workload.gs_parquet_path }}' AS message;
+
+      -- Demonstrate reading partitioned Parquet files
+      -- This would read all partitioned files created above
+      CREATE TABLE partitioned_read AS
+      SELECT * FROM read_parquet('s3://{{ workload.gs_bucket }}/{{ workload.gs_parquet_path }}*');
+
+      -- Show count of rows from partitioned files
+      SELECT COUNT(*) AS total_rows FROM partitioned_read;
+
+      -- Clean up
+      DROP TABLE temp_parquet;
+      DROP TABLE partitioned_read;
+
+  - name: advanced_file_operations_task
+    type: duckdb
+    commands: |
+      -- Install and load necessary extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+      INSTALL parquet;
+      LOAD parquet;
+
+      -- Example 1: Reading multiple files of the same type
+      -- Create a table with sample data
+      DROP TABLE IF EXISTS sample_data;
+      CREATE TABLE sample_data AS
+      SELECT 1 AS id, 'Example 1' AS name
+      UNION ALL
+      SELECT 2 AS id, 'Example 2' AS name;
+
+      -- Save as multiple CSV files
+      COPY (SELECT * FROM sample_data WHERE id = 1) TO '/tmp/sample1.csv' (FORMAT CSV, HEADER);
+      COPY (SELECT * FROM sample_data WHERE id = 2) TO '/tmp/sample2.csv' (FORMAT CSV, HEADER);
+
+      -- Read multiple files using a list
+      DROP TABLE IF EXISTS multi_file_read;
+      CREATE TABLE multi_file_read AS
+      SELECT * FROM read_csv(['/tmp/sample1.csv', '/tmp/sample2.csv'], header = true);
+
+      -- Show the combined data
+      SELECT 'Reading multiple files:' AS operation, * FROM multi_file_read;
+
+      -- Example 2: Reading compressed files
+      -- Create a compressed CSV file
+      COPY sample_data TO '/tmp/sample_compressed.csv.gz' (FORMAT CSV, HEADER);
+
+      -- Read directly from compressed file
+      DROP TABLE IF EXISTS compressed_file_read;
+      CREATE TABLE compressed_file_read AS
+      SELECT * FROM '/tmp/sample_compressed.csv.gz';
+
+      -- Show the data from compressed file
+      SELECT 'Reading compressed file:' AS operation, * FROM compressed_file_read;
+
+      -- Example 3: Using glob patterns to read multiple files
+      -- Read using glob pattern (would work if there were multiple matching files)
+      DROP TABLE IF EXISTS glob_pattern_read;
+      CREATE TABLE glob_pattern_read AS
+      SELECT * FROM read_csv('/tmp/sample*.csv', header = true);
+
+      -- Show the data from glob pattern
+      SELECT 'Reading with glob pattern:' AS operation, * FROM glob_pattern_read;
+
+      -- Example 4: Auto-detecting CSV format with read_csv_auto
+      -- Create a CSV file with different format
+      DROP TABLE IF EXISTS complex_data;
+      CREATE TABLE complex_data AS
+      SELECT 1 AS id, 'Data with, comma' AS text_with_comma, NULL AS null_value
+      UNION ALL
+      SELECT 2, 'Line with "quotes"', 42
+      UNION ALL
+      SELECT 3, 'Special chars: ;|', -1;
+
+      -- Save as CSV with different format
+      COPY complex_data TO '/tmp/complex_data.csv' (FORMAT CSV, HEADER, DELIMITER '|', NULL 'NA');
+
+      -- Use read_csv_auto to automatically detect format
+      DROP TABLE IF EXISTS auto_detect_read;
+      CREATE TABLE auto_detect_read AS
+      SELECT * FROM read_csv_auto('/tmp/complex_data.csv');
+
+      -- Show the auto-detected data
+      SELECT 'Auto-detected CSV:' AS operation, * FROM auto_detect_read;
+
+      -- Example 5: Specifying CSV options
+      -- Create table with custom CSV options
+      DROP TABLE IF EXISTS custom_options_read;
+      CREATE TABLE custom_options_read AS
+      SELECT * FROM read_csv('/tmp/complex_data.csv', 
+                            header = true, 
+                            delim = '|', 
+                            nullstr = 'NA',
+                            columns = {
+                              'id': 'INTEGER',
+                              'text_with_comma': 'VARCHAR',
+                              'null_value': 'INTEGER'
+                            });
+      -- header = true: File has a header row
+      -- delim = '|': Use pipe as delimiter
+      -- nullstr = 'NA': Interpret 'NA' as NULL values
+      -- columns: Specify column types explicitly
+
+      -- Show the data with custom options
+      SELECT 'Custom CSV options:' AS operation, * FROM custom_options_read;
+
+      -- Example 6: Parallel CSV reading for performance
+      -- Create a larger dataset
+      DROP TABLE IF EXISTS large_data;
+      CREATE TABLE large_data AS
+      SELECT * FROM range(1, 10000) t(id);
+
+      -- Save as CSV
+      COPY large_data TO '/tmp/large_data.csv' (FORMAT CSV, HEADER);
+
+      -- Read with parallel processing
+      DROP TABLE IF EXISTS parallel_read;
+      CREATE TABLE parallel_read AS
+      SELECT * FROM read_csv('/tmp/large_data.csv', 
+                            header = true,
+                            parallel = true);
+      -- header = true: File has a header row
+      -- parallel = true: Enable parallel processing for better performance
+
+      -- Show count of parallel read
+      SELECT 'Parallel read count:' AS operation, COUNT(*) AS row_count FROM parallel_read;
+
+      -- Clean up
+      DROP TABLE sample_data;
+      DROP TABLE multi_file_read;
+      DROP TABLE compressed_file_read;
+      DROP TABLE glob_pattern_read;
+      DROP TABLE complex_data;
+      DROP TABLE auto_detect_read;
+      DROP TABLE custom_options_read;
+      DROP TABLE large_data;
+      DROP TABLE parallel_read;
