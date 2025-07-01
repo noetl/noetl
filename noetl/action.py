@@ -4,9 +4,13 @@ import datetime
 import httpx
 import duckdb
 import psycopg
-from typing import Dict
+import json
+from typing import Dict, Any
 from jinja2 import Environment
 from noetl.common import render_template, setup_logger
+from noetl.common import DateTimeEncoder
+
+
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -478,21 +482,73 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
 
-        if log_event_callback:
-            log_event_callback(
-                'task_complete', task_id, task_name, 'duckdb',
-                'success', duration, context, results,
-                {'with_params': task_with}, event_id
-            )
+        # Handle datetime objects in results by serializing with custom encoder
+        try:
+            # Convert any datetime objects in the results to strings
+            json_results = json.dumps(results, cls=DateTimeEncoder)
+            parsed_results = json.loads(json_results)
 
-        return {
-            'id': task_id,
-            'status': 'success',
-            'data': results
-        }
+            if log_event_callback:
+                log_event_callback(
+                    'task_complete', task_id, task_name, 'duckdb',
+                    'success', duration, context, parsed_results,
+                    {'with_params': task_with}, event_id
+                )
+
+            return {
+                'id': task_id,
+                'status': 'success',
+                'data': parsed_results
+            }
+        except Exception as json_error:
+            logger.warning(f"Error serializing results with DateTimeEncoder: {str(json_error)}. Returning original results.")
+
+            if log_event_callback:
+                log_event_callback(
+                    'task_complete', task_id, task_name, 'duckdb',
+                    'success', duration, context, str(results),
+                    {'with_params': task_with}, event_id
+                )
+
+            return {
+                'id': task_id,
+                'status': 'success',
+                'data': str(results)
+            }
 
     except Exception as e:
-        error_msg = str(e)
+        # Handle datetime serialization errors
+        if "Object of type datetime is not JSON serializable" in str(e):
+            try:
+                # Try to serialize the results with the custom encoder
+                error_msg = "Original error: datetime serialization issue. Using custom encoder to handle datetime objects."
+                logger.warning(error_msg)
+
+                # Convert any datetime objects in the results to strings
+                json_results = json.dumps(results, cls=DateTimeEncoder)
+                parsed_results = json.loads(json_results)
+
+                end_time = datetime.datetime.now()
+                duration = (end_time - start_time).total_seconds()
+
+                if log_event_callback:
+                    log_event_callback(
+                        'task_complete', task_id, task_name, 'duckdb',
+                        'success', duration, context, parsed_results,
+                        {'with_params': task_with}, event_id
+                    )
+
+                return {
+                    'id': task_id,
+                    'status': 'success',
+                    'data': parsed_results
+                }
+            except Exception as json_error:
+                error_msg = f"Failed to handle datetime serialization: {str(json_error)}"
+                logger.error(error_msg, exc_info=True)
+        else:
+            error_msg = str(e)
+
         logger.error(f"DuckDB task execution error: {error_msg}.", exc_info=True)
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()

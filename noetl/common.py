@@ -7,7 +7,7 @@ import logging
 import base64
 import yaml
 from collections import OrderedDict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 import random
 import string
 from typing import Dict, Any, Optional, List, Union
@@ -343,6 +343,13 @@ class SafeEncoder(json.JSONEncoder):
     def default(self, obj):
         return None
 
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, date):
+            return obj.isoformat()
+        return super().default(obj)
 
 def ordered_yaml_dump(data):
     def convert_ordered_dict(obj):

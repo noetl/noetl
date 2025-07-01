@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 from noetl.server import router as server_router
 from noetl.common import deep_merge
 from noetl.worker import NoETLAgent
+from noetl.schema import DatabaseSchema
 import pathlib
 from noetl.common import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -34,6 +35,15 @@ def main_callback(
 
 
 def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
+    try:
+        logger.info("Initializing database schema...")
+        db_schema = DatabaseSchema()
+        db_schema.init_database()
+        logger.info("Database schema initialized successfully.")
+    except Exception as e:
+        logger.error(f"Error initializing database schema: {e}", exc_info=True)
+        logger.warning("Continuing with server startup despite database initialization error.")
+
     app = FastAPI(
         title="NoETL API",
         description="API for NoETL operations",

@@ -522,124 +522,98 @@ Command-line options:
 
 ## Example Playbooks
 
-The project includes example in the `catalog/playbooks` directory:
+The project includes several example playbooks in the `playbook/` directory to demonstrate different NoETL capabilities:
 
-`weather_example.yaml`: A simple playbook that fetches weather data for given cities and checks if the temperature exceeds a threshold.
+### Core Examples
 
-## Testing
+#### 1. Weather Example (`weather_example.yaml`)
+A simple playbook that fetches weather data for given cities and checks if the temperature exceeds a threshold. Great for learning basic NoETL concepts.
 
-Several test scripts to verify that the functionality works correctly:
+#### 2. Load Dict Test (`load_dict_test.yaml`)
+Demonstrates DuckDB integration with PostgreSQL, including table creation, data manipulation, and cross-database operations.
+- **Documentation**: [load_dict_test_example.md](docs/examples/load_dict_test_example.md)
+- **Purpose**: Testing DuckDB PostgreSQL extension functionality
+- **Use Cases**: Database integration, data transfer workflows, testing setups
 
-### Running the Tests
+#### 3. GCS Secrets Example (`gcs_secrets_example.yaml`)
+Shows Google Cloud Storage authentication using Google Secret Manager with secure HMAC credential handling.
+- **Documentation**: [gcp_secrets_example.md](docs/examples/gcp_secrets_example.md)
+- **Purpose**: Secure cloud storage operations with secrets management
+- **Use Cases**: GCS file uploads, secure credential handling, cloud data workflows
 
-run the tests using the Makefile or Python:
+### Additional Examples
 
-#### Using the Makefile
+#### Database Examples
+- `postgres_test.yaml`: PostgreSQL database operations and testing
+- `gs_duckdb_postgres_example.yaml`: Google Storage with DuckDB and PostgreSQL integration
 
+#### Secrets Management
+- `secrets_example.yaml`: Basic secrets handling demonstration
+- `secrets_test.yaml`: Secrets functionality testing
+- `test_secrets.yaml`: Additional secrets testing scenarios
+
+#### Advanced Workflows
+- `multi_playbook_example.yaml`: Demonstrates complex multi-step workflows
+- `load_ng_v2.yaml`: Next-generation data loading patterns
+- `attach_example.yaml`: File attachment and processing examples
+
+### Quick Start with Examples
+
+#### Running the Weather Example
 ```bash
-make test-setup
-make test
-make test-server-api
-make test-server-api-unit
-make test-parquet-export
-make test-keyval
+# Register the playbook
+noetl playbook --register playbook/weather_example.yaml --port 8080
+
+# Execute with custom cities
+noetl playbook --execute --path "workflows/weather/weather_loop_example" \
+  --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}], "temperature_threshold": 20}'
 ```
 
-#### Using Python Directly
-
+#### Running the DuckDB Test Example
 ```bash
-pytest -v --cov=noetl tests/
-python tests/test_server_api.py
-python tests/test_server_api_unit.py
-python tests/test_parquet_export.py
+# Register the playbook
+noetl playbook --register playbook/load_dict_test.yaml --port 8080
+
+# Execute (requires PostgreSQL running)
+noetl playbook --execute --path "workflows/data/load_dict_test"
 ```
 
-### Test Descriptions
+#### Running the GCS Secrets Example
+```bash
+# Register the playbook
+noetl playbook --register playbook/gcs_secrets_example.yaml --port 8080
 
-1. **Server API Tests** (`test_server_api.py`):
-   - Starts the server in a separate process on port 8083 (different from the default 8082 to avoid conflicts)
-   - Tests uploading a playbook to the catalog
-   - Tests listing playbooks from the catalog
-   - Tests executing a playbook synchronously
-   - Tests executing a playbook asynchronously
-   - Cleans up after the tests
+# Execute with your GCP project
+noetl playbook --execute --path "workflows/examples/gcs_secrets_example" \
+  --payload '{"GOOGLE_CLOUD_PROJECT": "your-project-id"}'
+```
 
-2. **Server API Unit Tests** (`test_server_api_unit.py`):
-   - Tests the catalog service functions (register, fetch, list)
-   - Tests the agent service functions (execute)
-   - Uses mocking to isolate the functionality being tested
+### Documentation Structure
 
-3. **Parquet Export Tests** (`test_parquet_export.py`):
-   - Runs the agent with the `--export` option to generate a Parquet file
-   - Tries to read the generated Parquet file using DuckDB
-   - Verifies that the file can be read without errors
+Each major example includes comprehensive documentation:
+- **Overview**: Purpose and use cases
+- **Prerequisites**: Required setup and dependencies
+- **Configuration**: Environment variables and parameters
+- **Workflow Steps**: Detailed step-by-step execution
+- **Troubleshooting**: Common issues and solutions
+- **Security Considerations**: Best practices (for cloud examples)
 
-4. **Key-Value Tests** (`test_keyval.py`):
-   - Tests the key-value storage functionality
-   - Verifies that keys can be set, retrieved, and deleted
+### Example Categories
 
-5. **Payload Tests** (`test_payload.py`):
-   - Tests the payload handling functionality
-   - Verifies that payloads can be properly processed
+| Category | Examples | Purpose |
+|----------|----------|---------|
+| **Basic Workflows** | `weather_example.yaml` | Learning NoETL fundamentals |
+| **Database Integration** | `load_dict_test.yaml`, `postgres_test.yaml` | Database operations and testing |
+| **Cloud Storage** | `gcs_secrets_example.yaml`, `gs_duckdb_postgres_example.yaml` | Cloud data operations |
+| **Secrets Management** | `secrets_example.yaml`, `secrets_test.yaml` | Secure credential handling |
+| **Advanced Patterns** | `multi_playbook_example.yaml`, `load_ng_v2.yaml` | Complex workflow patterns |
 
-6. **Playbook Tests** (`test_playbook.py`):
-   - Tests the playbook execution functionality
-   - Verifies that playbooks can be loaded and executed correctly
+### Getting Help
 
-## Troubleshooting
-
-1. Check that Postgres is running and accessible
-2. Check that the playbook YAML file is valid
-3. Check the log files for error messages
-4. Make sure the environment variables are set correctly
-5. Ensure the required directories exist:
-   - `data/input` - for input payload files
-   - `data/exports` - for exported execution data
-   ```bash
-   mkdir -p data/input data/exports
-   ```
-6. If using the `--input` option, make sure the payload.json file exists and has the correct format
-7. If using the `--export` option, make sure the exports directory exists and is writable
-
-### Port Already in Use
-
-If you see an error like `[Errno 48] error while attempting to bind on address ('0.0.0.0', 8082): [errno 48] address already in use` when starting the server, there are several options:
-
-1. Use a different port:
-   ```bash
-   noetl server --port 8083
-   ```
-
-2. Force start the server by killing the process using the port:
-   ```bash
-   noetl server --port 8082 --force
-   ```
-
-3. Use the standalone killer.py script:
-   ```bash
-   # Using the module directly
-   python -m noetl.killer 8082
-
-   # Using the installed command (after pip install)
-   noetl-port-killer 8082
-
-   # With verbose output
-   noetl-port-killer 8082 --verbose
-
-   # After freeing the port, start the server
-   noetl server --port 8082
-   ```
-
-4. Manually kill the process:
-   ```bash
-   # mac/linux
-   lsof -i :8082 
-   kill -9 <PID> 
-
-   # windows
-   netstat -ano | findstr :8082  
-   taskkill /F /PID <PID> 
-   ```
-
-## License
-NoETL is available under the MIT License.
+For detailed information about any specific playbook:
+1. Check the individual README files in the `playbook/` directory
+2. Review the HOW_TO_RUN guides:
+   - [HOW_TO_RUN.md](playbook/HOW_TO_RUN.md) - General execution guide
+   - [HOW_TO_RUN_GCS_SECRETS.md](playbook/HOW_TO_RUN_GCS_SECRETS.md) - GCS-specific guide
+   - [HOW_TO_RUN_SUMMARY.md](playbook/HOW_TO_RUN_SUMMARY.md) - Quick reference
+3. Consult the main [playbook README](playbook/README.md) for an overview
