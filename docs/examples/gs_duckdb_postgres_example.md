@@ -226,7 +226,16 @@ noetl playbook --register playbook/gs_duckdb_postgres_example.yaml --port 8080
 
 ### 2. Execute the Workflow
 ```bash
-noetl playbook --execute --path "workflows/examples/gs_duckdb_postgres_example"
+noetl playbook --execute --path "workflows/examples/gs_duckdb_postgres_example" --port 8080 --payload '{
+  "GOOGLE_CLOUD_PROJECT": "noetl-demo-19700101",
+  "GCS_KEY_ID_SECRET": "s3_access_key_id",
+  "GCS_SECRET_KEY_SECRET": "s3_secret_access_key",
+  "POSTGRES_HOST": "db",
+  "POSTGRES_PORT": "5432",
+  "POSTGRES_USER": "noetl",
+  "POSTGRES_PASSWORD": "noetl",
+  "POSTGRES_DB": "noetl"
+}'
 ```
 
 ### 3. Monitor Execution
