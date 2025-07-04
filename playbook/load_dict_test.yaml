@@ -10,10 +10,10 @@ workload:
   baseFilePath: "/opt/noetl/data/test"
   bucket: "test-bucket"
   pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-  pg_port: "{{ env.POSTGRES_PORT | default('5434') }}"
-  pg_user: "{{ env.POSTGRES_USER | default('noetl') }}"
-  pg_password: "{{ env.POSTGRES_PASSWORD | default('noetl') }}"
-  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
 
 workflow:
   - step: start

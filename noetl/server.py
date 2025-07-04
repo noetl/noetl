@@ -2,13 +2,11 @@ import os
 import json
 import yaml
 import tempfile
-import asyncio
-import subprocess
 import psycopg
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
-from noetl.common import setup_logger, deep_merge
+from noetl.common import setup_logger, deep_merge, get_pgdb_connection
 from noetl.worker import NoETLAgent
 from noetl.broker import Broker
 
@@ -16,13 +14,9 @@ logger = setup_logger(__name__, include_location=True)
 
 router = APIRouter()
 
-
-DEFAULT_PGDB = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
-
 class CatalogService:
-
-    def __init__(self, pgdb_conn_string: str = DEFAULT_PGDB):
-        self.pgdb_conn_string = pgdb_conn_string
+    def __init__(self, pgdb_conn_string: str | None = None):
+        self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
 
     def get_latest_version(self, resource_path: str) -> str:
         conn = None
@@ -78,6 +72,59 @@ class CatalogService:
         except Exception as e:
             logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
             return "0.1.0"
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
+
+    def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
+        conn = None
+        try:
+            conn = psycopg.connect(self.pgdb_conn_string)
+
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT resource_path, resource_type, resource_version, content, payload, meta
+                    FROM catalog
+                    WHERE resource_path = %s AND resource_version = %s
+                    """,
+                    (path, version)
+                )
+
+                result = cursor.fetchone()
+
+                if not result and '/' in path:
+                    filename = path.split('/')[-1]
+                    logger.info(f"Path not found. Trying to match filename: {filename}")
+
+                    cursor.execute(
+                        """
+                        SELECT resource_path, resource_type, resource_version, content, payload, meta
+                        FROM catalog
+                        WHERE resource_path = %s AND resource_version = %s
+                        """,
+                        (filename, version)
+                    )
+
+                    result = cursor.fetchone()
+
+            if result:
+                return {
+                    "resource_path": result[0],
+                    "resource_type": result[1],
+                    "resource_version": result[2],
+                    "content": result[3],
+                    "payload": result[4],
+                    "meta": result[5]
+                }
+            return None
+
+        except Exception as e:
+            logger.exception(f"Error fetching catalog entry: {e}.")
+            return None
         finally:
             if conn:
                 try:
@@ -187,59 +234,6 @@ class CatalogService:
                 except Exception as close_error:
                     logger.exception(f"Error closing connection: {close_error}.")
 
-    def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
-        conn = None
-        try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT resource_path, resource_type, resource_version, content, payload, meta
-                    FROM catalog
-                    WHERE resource_path = %s AND resource_version = %s
-                    """,
-                    (path, version)
-                )
-
-                result = cursor.fetchone()
-
-                if not result and '/' in path:
-                    filename = path.split('/')[-1]
-                    logger.info(f"Path not found. Trying to match filename: {filename}")
-
-                    cursor.execute(
-                        """
-                        SELECT resource_path, resource_type, resource_version, content, payload, meta
-                        FROM catalog
-                        WHERE resource_path = %s AND resource_version = %s
-                        """,
-                        (filename, version)
-                    )
-
-                    result = cursor.fetchone()
-
-            if result:
-                return {
-                    "resource_path": result[0],
-                    "resource_type": result[1],
-                    "resource_version": result[2],
-                    "content": result[3],
-                    "payload": result[4],
-                    "meta": result[5]
-                }
-            return None
-
-        except Exception as e:
-            logger.exception(f"Error fetching catalog entry: {e}.")
-            return None
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
-
     def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
         conn = None
         try:
@@ -289,12 +283,14 @@ class CatalogService:
                 except Exception as close_error:
                     logger.exception(f"Error closing connection: {close_error}")
 
+
+
 def get_catalog_service() -> CatalogService:
-    return CatalogService(DEFAULT_PGDB)
+    return CatalogService()
 
 class EventService:
-    def __init__(self, pgdb_conn_string: str = DEFAULT_PGDB):
-        self.pgdb_conn_string = pgdb_conn_string
+    def __init__(self, pgdb_conn_string: str | None = None):
+        self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
 
     def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         conn = None
@@ -597,11 +593,13 @@ class EventService:
                     logger.exception(f"Error closing connection: {close_error}")
 
 def get_event_service() -> EventService:
-    return EventService(DEFAULT_PGDB)
+    return EventService(get_pgdb_connection())
+
+
 class AgentService:
 
-    def __init__(self, pgdb_conn_string: str = DEFAULT_PGDB):
-        self.pgdb_conn_string = pgdb_conn_string
+    def __init__(self, pgdb_conn_string: str | None = None):
+        self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
         self.agent = None
 
     def store_transition(self, params: tuple):
@@ -692,7 +690,7 @@ class AgentService:
             }
 
 def get_agent_service() -> AgentService:
-    return AgentService(DEFAULT_PGDB)
+    return AgentService(get_pgdb_connection())
 
 @router.post("/catalog/register", response_class=JSONResponse)
 async def register_resource(
@@ -834,7 +832,7 @@ async def get_event(
     event_id: str
 ):
     """
-    Legacy endpoint for getting events by either execution_id or event_id.
+    Legacy endpoint for getting events by execution_id or event_id.
     Use /events/by-execution/{execution_id} or /events/by-id/{event_id} instead.
     """
     try:
@@ -1049,7 +1047,7 @@ async def execute_agent_async(
                     temp_file_path = temp_file.name
 
                 try:
-                    pgdb_conn = DEFAULT_PGDB if sync_to_postgres else None
+                    pgdb_conn = get_pgdb_connection() if sync_to_postgres else None
                     agent = NoETLAgent(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
                     workload = agent.playbook.get('workload', {})
                     if input_payload:
@@ -1081,10 +1079,7 @@ async def execute_agent_async(
                         agent.store_workload(workload)
 
                     results = agent.run()
-
                     event_id = initial_event.get("event_id")
-
-                    # Update the event with execution results
                     update_event = {
                         "event_id": event_id,
                         "execution_id": agent.execution_id,
@@ -1101,7 +1096,6 @@ async def execute_agent_async(
                     }
 
                     event_service.emit(update_event)
-
                     logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
 
                 finally:
@@ -1112,10 +1106,9 @@ async def execute_agent_async(
                 logger.exception(f"Error in background agent execution: {e}.")
                 event_id = initial_event.get("event_id")
 
-                # Update the event with error information
                 error_event = {
                     "event_id": event_id,
-                    "execution_id": event_id,  # Use event_id as execution_id since agent might not be initialized
+                    "execution_id": event_id,
                     "event_type": "agent_execution_error",
                     "status": "ERROR",
                     "error": str(e),

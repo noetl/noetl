@@ -136,7 +136,7 @@ workflow:  # Workflow steps and transitions
     loop:
       in: "{{ districts }}"
       iterator: district
-      filter: "{{ district.name != 'Mordor' }}" # Skip Mordor
+      filter: "{{ district.name != 'Mordor' }}"
     next:
       - step: process_district  # First step in the inner district loop
         with:
@@ -233,7 +233,7 @@ workflow:  # Workflow steps and transitions
     desc: "End of workflow"
 
 
-workbook:  # Execution blocks used in the workflow
+workbook:
 
   - name: log_forcast_request
     type: http
@@ -427,8 +427,8 @@ workbook:  # Execution blocks used in the workflow
           duckdb_con.execute("INSTALL postgres;")
           duckdb_con.execute("LOAD postgres;")
 
-          # Attach Postgres database
-          duckdb_con.execute("ATTACH 'dbname=noetl user=noetl password=noetl host=db port=5432' AS postgres_db (TYPE postgres);")
+          # Attach Postgres database using demo credentials instead of noetl
+          duckdb_con.execute("ATTACH 'dbname=demo_noetl user=demo password=demo host=db port=5432' AS postgres_db (TYPE postgres);")
 
           # Postgres database alias name for queries
           pg_db = "postgres_db"

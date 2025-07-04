@@ -36,17 +36,18 @@ def main_callback(
 
 def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
     try:
-        logger.info("Initializing database schema...")
-        db_schema = DatabaseSchema()
+        logger.info("Initializing NoETL system metadata.")
+        db_schema = DatabaseSchema(auto_setup=False)
+        db_schema.create_noetl_metadata()
         db_schema.init_database()
-        logger.info("Database schema initialized successfully.")
+        logger.info("NoETL user and database schema initialized.")
     except Exception as e:
-        logger.error(f"Error initializing database schema: {e}", exc_info=True)
+        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
         logger.warning("Continuing with server startup despite database initialization error.")
 
     app = FastAPI(
         title="NoETL API",
-        description="API for NoETL operations",
+        description="NoETL API server",
         version="0.1.0"
     )
 
@@ -113,13 +114,13 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
 
 @app.command("server")
 def create_server(
-    host: str = typer.Option("0.0.0.0", help="Server host (binds to all interfaces by default)."),
+    host: str = typer.Option("0.0.0.0", help="Server host."),
     port: int = typer.Option(8082, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload.")
 ):
     app = create_app(host=host, port=port)
     logger.info(f"Starting NoETL API server at http://{host}:{port}")
-    logger.info(f"You can access the server at http://localhost:{port} or http://{host}:{port}")
+    logger.info(f"Access the server at http://localhost:{port} or http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, reload=reload)
 
 @app.command("agent")
@@ -128,12 +129,12 @@ def run_agent(
     mock: bool = typer.Option(False, help="Run in mock mode"),
     output: str = typer.Option("json", "--output", "-o", help="Output format, json or plain."),
     export: str = typer.Option(None, help="Export execution data to Parquet file."),
-    mlflow: bool = typer.Option(False, help="Use ML model for workflow control"),
+    mlflow: bool = typer.Option(False, help="Use ML model for workflow control."),
     postgres: str = typer.Option(None, help="Postgres connection string."),
-    duckdb: str = typer.Option(None, help="Path to Duckdb database file for business logic in playbooks."),
-    input: str = typer.Option(None, help="Path to JSON file with input payload for the playbook."),
-    payload: str = typer.Option(None, help="JSON string with input payload for the playbook."),
-    merge: bool = typer.Option(False, help="merge the input payload with the workload section."),
+    duckdb: str = typer.Option(None, help="Path to DuckDB file for business logic in playbooks."),
+    input: str = typer.Option(None, help="Path to the input payload JSON file for the playbook."),
+    payload: str = typer.Option(None, help="JSON input payload string for the playbook."),
+    merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
     debug: bool = typer.Option(False, help="Debug logging mode.")
 ):
     logging.basicConfig(
@@ -161,12 +162,12 @@ def run_agent(
                 raise typer.Exit(code=1)
         pgdb_conn = postgres or os.environ.get("NOETL_PGDB")
         if not pgdb_conn:
-            pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
-            logger.info(f"Using default PostgreSQL connection string: {pgdb_conn}")
+            pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'demo_noetl')} user={os.environ.get('POSTGRES_USER', 'demo')} password={os.environ.get('POSTGRES_PASSWORD', 'demo')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
+            logger.info(f"Using default Postgres connection string: {pgdb_conn}")
 
         if duckdb:
             os.environ['DUCKDB_PATH'] = duckdb
-            logger.info(f"Using Duckdb database file for business logic: {duckdb}")
+            logger.info(f"Using DuckDB for business logic: {duckdb}")
 
         agent = NoETLAgent(file, mock_mode=mock, pgdb=pgdb_conn)
         workload = agent.playbook.get('workload', {})
@@ -180,7 +181,7 @@ def run_agent(
                 agent.update_context('workload', merged_workload)
                 agent.store_workload(merged_workload)
             else:
-                logger.info("Override mode: replacing specific workload keys with input payload.")
+                logger.info("Override mode: replacing the matching workload keys with input payload.")
                 new_workload = workload.copy()
                 for key, value in input_payload.items():
                     new_workload[key] = value
@@ -189,7 +190,7 @@ def run_agent(
                 agent.update_context('workload', new_workload)
                 agent.store_workload(new_workload)
         else:
-            logger.info("Using default workload from playbook")
+            logger.info("Using default workload from playbook.")
             for key, value in workload.items():
                 agent.update_context(key, value)
             agent.update_context('workload', workload)
@@ -206,7 +207,7 @@ def run_agent(
             for step, result in results.items():
                 logger.info(f"{step}: {result}")
 
-        logger.info(f"PostgreSQL connection: {agent.pgdb}")
+        logger.info(f"Postgres connection: {agent.pgdb}")
         logger.info(f"Open notebook/agent_mission_report.ipynb and set 'pgdb' to {agent.pgdb}")
 
     except Exception as e:
@@ -216,16 +217,16 @@ def run_agent(
 
 @app.command("playbook")
 def manage_playbook(
-    register: str = typer.Option(None, "--register", "-r", help="Path to playbook YAML file to register."),
+    register: str = typer.Option(None, "--register", "-r", help="Path to playbook file to register."),
     execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbook by path."),
     path: str = typer.Option(None, "--path", help="Path of the playbook to execute."),
     version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
-    input: str = typer.Option(None, "--input", "-i", help="Path to payload JSON file."),
-    payload: str = typer.Option(None, "--payload", help="Payload JSON string."),
+    input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
+    payload: str = typer.Option(None, "--payload", help="Payload string."),
     host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
     port: int = typer.Option(8082, "--port", "-p", help="NoETL server port."),
-    sync: bool = typer.Option(True, "--sync", help="Whether to sync execution data to Postgres."),
-    merge: bool = typer.Option(False, "--merge", help="Whether to merge the input payload with the workload section of playbook.")
+    sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
+    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
 ):
     if register:
         try:

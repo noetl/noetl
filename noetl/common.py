@@ -435,31 +435,22 @@ def deep_merge(dest: Union[Dict, List, Any], source: Union[Dict, List, Any]) -> 
         return source
 
 #===================================
-# quote expressions
+# connections
 #===================================
 
+def get_pgdb_connection(
+    db_name: str = None,
+    user: str = None,
+    password: str = None,
+    host: str = None,
+    port: str = None,
+    schema: str = None
+) -> str:
+    db_name = db_name or os.environ.get('POSTGRES_DB', 'noetl')
+    user = user or os.environ.get('NOETL_USER', 'noetl')
+    password = password or os.environ.get('NOETL_PASSWORD', 'noetl')
+    host = host or os.environ.get('POSTGRES_HOST', 'localhost')
+    port = port or os.environ.get('POSTGRES_PORT', '5434')
+    schema = schema or os.environ.get('NOETL_SCHEMA', 'noetl')
 
-
-# def main_quote_exprs(filepath):
-#     logger = setup_logger(__name__, include_location=True)
-#     filepath = Path(filepath)
-#     original = filepath.read_text(encoding="utf-8")
-#
-#     fixed = quote_unquoted_jinja2_expressions(original)
-#
-#     if original == fixed:
-#         logger.success("Jinja2 unquoted expressions not found.")
-#     else:
-#         backup_path = filepath.with_suffix(".bak.yaml")
-#         filepath.write_text(fixed, encoding="utf-8")
-#         backup_path.write_text(original, encoding="utf-8")
-#         logger.success(f"Fixed unquoted Jinja2 expressions.")
-#         logger.success(f"Backup created at: {backup_path}")
-#
-# if __name__ == "__main__":
-#     logger = setup_logger(__name__, include_location=True)
-#     if len(sys.argv) != 2:
-#         logger.info("Usage: python quote_exprs.py <playbook.yaml>")
-#         sys.exit(1)
-#
-#     main_quote_exprs(sys.argv[1])
+    return f"dbname={db_name} user={user} password={password} host={host} port={port} options='-c search_path={schema}'"

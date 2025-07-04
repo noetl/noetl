@@ -304,14 +304,18 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             )
 
         import time
-        duckdb_data_dir = os.environ.get('NOETL_DATA_DIR', './data')
-        duckdb_file = os.path.join(duckdb_data_dir, 'noetldb', 'postgres_pipeline.duckdb')
-        logger.info(f"Connecting to DuckDB at {duckdb_file}")
+        duckdb_data_dir = os.environ.get("NOETL_DATA_DIR", "./data")
+        execution_id = context.get("execution_id") or context.get("jobId") or (context.get("job", {}).get("uuid") if isinstance(context.get("job"), dict) else None) or "default"
+        if isinstance(execution_id, str) and ('{{' in execution_id or '}}' in execution_id):
+            execution_id = render_template(jinja_env, execution_id, context)
+        duckdb_file = os.path.join(duckdb_data_dir, "noetldb", f"duckdb_{execution_id}.duckdb")
+        os.makedirs(os.path.dirname(duckdb_file), exist_ok=True)
+        logger.info(f"Connecting to DuckDB at {duckdb_file} for execution {execution_id}")
         duckdb_con = duckdb.connect(duckdb_file)
         db_type = task_with.get('db_type', 'postgres')
         db_alias = task_with.get('db_alias', 'postgres_db')
         if db_type.lower() == 'postgres':
-            logger.info("Installing and loading PostgreSQL extension")
+            logger.info("Installing and loading Postgres extension")
             duckdb_con.execute("INSTALL postgres;")
             duckdb_con.execute("LOAD postgres;")
         elif db_type.lower() == 'mysql':
@@ -324,6 +328,50 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             logger.info(f"Using custom database type: {db_type}, no specific extension loaded")
         duckdb_con.execute("INSTALL httpfs;")
         duckdb_con.execute("LOAD httpfs;")
+        key_id = task_with.get('key_id')
+        secret_key = task_with.get('secret_key')
+        if key_id and secret_key:
+            logger.info("Setting up S3 credentials for GCS operations")
+            try:
+                duckdb_con.execute(f"""
+                    CREATE OR REPLACE CHAIN gcs_chain (
+                        TYPE S3,
+                        ENDPOINT 'storage.googleapis.com',
+                        REGION 'auto',
+                        URL_STYLE 'path',
+                        USE_SSL true,
+                        KEY_ID '{key_id}',
+                        SECRET_KEY '{secret_key}'
+                    );
+                """)
+                logger.info("Successfully created GCS configuration chain")
+                try:
+                    secrets_list = duckdb_con.execute("SELECT * FROM duckdb_secrets();").fetchall()
+                    gcs_secret_exists = any(secret[0] == 'gcs_secret' for secret in secrets_list)
+
+                    if not gcs_secret_exists:
+                        logger.info("Creating persistent GCS secret")
+                        duckdb_con.execute(f"CREATE PERSISTENT SECRET gcs_secret (TYPE S3, KEY_ID '{key_id}', SECRET '{secret_key}');")
+                except Exception as e:
+                    logger.warning(f"Error checking or creating GCS secret: {e}. Will continue with chain configuration.")
+            except Exception as e:
+                logger.warning(f"Error creating GCS chain: {e}. Falling back to individual parameter configuration.")
+                duckdb_con.execute("set s3_endpoint='storage.googleapis.com';")
+                duckdb_con.execute("set s3_region='auto';")
+                duckdb_con.execute("set s3_url_style='path';")
+                duckdb_con.execute("set s3_use_ssl=true;")
+                duckdb_con.execute(f"set s3_access_key_id='{key_id}';")
+                duckdb_con.execute(f"set s3_secret_access_key='{secret_key}';")
+                try:
+                    secrets_list = duckdb_con.execute("SELECT * FROM duckdb_secrets();").fetchall()
+                    gcs_secret_exists = any(secret[0] == 'gcs_secret' for secret in secrets_list)
+
+                    if not gcs_secret_exists:
+                        logger.info("Creating persistent GCS secret")
+                        duckdb_con.execute(f"CREATE PERSISTENT SECRET gcs_secret (TYPE S3, KEY_ID '{key_id}', SECRET '{secret_key}');")
+                except Exception as secret_e:
+                    logger.warning(f"Error checking or creating GCS secret: {secret_e}. Will continue with session credentials.")
+
         if db_type.lower() == 'postgres':
             pg_host = task_with.get('db_host', os.environ.get('POSTGRES_HOST', 'localhost'))
             pg_port = task_with.get('db_port', os.environ.get('POSTGRES_PORT', '5434'))
@@ -370,6 +418,13 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
         results = {}
         if commands:
             for i, cmd in enumerate(commands):
+                if isinstance(cmd, str) and ('{{' in cmd or '}}' in cmd):
+                    cmd = render_template(jinja_env, cmd, context)
+                    if "CREATE SECRET" in cmd or "CREATE OR REPLACE CHAIN" in cmd:
+                        import re
+                        cmd = re.sub(r"{{[^}]*\|\s*default\(['\"]([^'\"]*)['\"].*?}}", r"\1", cmd)
+                        cmd = re.sub(r"default\('([^']*)'\)", r'default("\1")', cmd)
+                        cmd = re.sub(r"(HOST|DATABASE|USER|PASSWORD|ENDPOINT|REGION|URL_STYLE|KEY_ID|SECRET_KEY) '([^']*)'", r'\1 "\2"', cmd)
                 logger.info(f"Executing DuckDB command: {cmd}")
                 if cmd.strip().upper().startswith("ATTACH"):
                     try:
@@ -381,7 +436,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                                 test_query = f"SELECT 1 FROM {db_alias}.information_schema.tables LIMIT 1"
                                 duckdb_con.execute(test_query)
                                 logger.info(f"Database '{db_alias}' is already attached, skipping ATTACH command.")
-                                results[f"command_{i}"] = {"status": "skipped", "message": f"Database '{db_alias}' is already attached"}
+                                results[f"command_{i}"] = {"status": "skipped", "message": f"Database '{db_alias}' is already attached."}
                                 continue
                             except Exception:
                                 logger.info(f"Attaching database as '{db_alias}'.")
@@ -481,13 +536,9 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
         duckdb_con.close()
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
-
-        # Handle datetime objects in results by serializing with custom encoder
         try:
-            # Convert any datetime objects in the results to strings
             json_results = json.dumps(results, cls=DateTimeEncoder)
             parsed_results = json.loads(json_results)
-
             if log_event_callback:
                 log_event_callback(
                     'task_complete', task_id, task_name, 'duckdb',
@@ -517,14 +568,10 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             }
 
     except Exception as e:
-        # Handle datetime serialization errors
         if "Object of type datetime is not JSON serializable" in str(e):
             try:
-                # Try to serialize the results with the custom encoder
                 error_msg = "Original error: datetime serialization issue. Using custom encoder to handle datetime objects."
                 logger.warning(error_msg)
-
-                # Convert any datetime objects in the results to strings
                 json_results = json.dumps(results, cls=DateTimeEncoder)
                 parsed_results = json.loads(json_results)
 

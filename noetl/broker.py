@@ -9,131 +9,7 @@ from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
 from noetl.common import render_template, setup_logger, deep_merge
 from noetl.worker import NoETLAgent
-
 logger = setup_logger(__name__, include_location=True)
-
-DEFAULT_PGDB = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
-
-class CatalogService:
-    def __init__(self, pgdb_conn_string: str = DEFAULT_PGDB):
-        self.pgdb_conn_string = pgdb_conn_string
-
-    def get_latest_version(self, resource_path: str) -> str:
-        conn = None
-        try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
-                    (resource_path,)
-                )
-                count = cursor.fetchone()[0]
-                logger.debug(f"Found {count} entries for resource_path '{resource_path}'")
-
-                if count == 0:
-                    logger.debug(f"No entries found for resource_path '{resource_path}', returning default version '0.1.0'")
-                    return "0.1.0"
-
-                cursor.execute(
-                    "SELECT resource_version FROM catalog WHERE resource_path = %s",
-                    (resource_path,)
-                )
-                versions = [row[0] for row in cursor.fetchall()]
-                logger.debug(f"All versions for resource_path '{resource_path}': {versions}")
-
-                cursor.execute(
-                    """
-                    WITH parsed_versions AS (
-                        SELECT 
-                            resource_version,
-                            CAST(SPLIT_PART(resource_version, '.', 1) AS INTEGER) AS major,
-                            CAST(SPLIT_PART(resource_version, '.', 2) AS INTEGER) AS minor,
-                            CAST(SPLIT_PART(resource_version, '.', 3) AS INTEGER) AS patch
-                        FROM catalog
-                        WHERE resource_path = %s
-                    )
-                    SELECT resource_version
-                    FROM parsed_versions
-                    ORDER BY major DESC, minor DESC, patch DESC
-                    LIMIT 1
-                    """,
-                    (resource_path,)
-                )
-                result = cursor.fetchone()
-
-                if result:
-                    latest_version = result[0]
-                    logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
-                    return latest_version
-
-                logger.debug(f"No valid version found for resource_path '{resource_path}', returning default version '0.1.0'")
-                return "0.1.0"
-        except Exception as e:
-            logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
-            return "0.1.0"
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
-
-    def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
-        conn = None
-        try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT resource_path, resource_type, resource_version, content, payload, meta
-                    FROM catalog
-                    WHERE resource_path = %s AND resource_version = %s
-                    """,
-                    (path, version)
-                )
-
-                result = cursor.fetchone()
-
-                if not result and '/' in path:
-                    filename = path.split('/')[-1]
-                    logger.info(f"Path not found. Trying to match filename: {filename}")
-
-                    cursor.execute(
-                        """
-                        SELECT resource_path, resource_type, resource_version, content, payload, meta
-                        FROM catalog
-                        WHERE resource_path = %s AND resource_version = %s
-                        """,
-                        (filename, version)
-                    )
-
-                    result = cursor.fetchone()
-
-            if result:
-                return {
-                    "resource_path": result[0],
-                    "resource_type": result[1],
-                    "resource_version": result[2],
-                    "content": result[3],
-                    "payload": result[4],
-                    "meta": result[5]
-                }
-            return None
-
-        except Exception as e:
-            logger.exception(f"Error fetching catalog entry: {e}.")
-            return None
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
-
-def get_catalog_service() -> CatalogService:
-    return CatalogService(DEFAULT_PGDB)
 
 class Broker:
 
@@ -189,6 +65,7 @@ class Broker:
             A dictionary containing the results of the playbook execution
         """
         try:
+            from noetl.server import get_catalog_service
             catalog_service = get_catalog_service()
 
             if not version:

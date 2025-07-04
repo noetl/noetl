@@ -10,10 +10,10 @@ services:
     container_name: noetl-database
     environment:
       TZ: America/Chicago
-      POSTGRES_USER: noetl
-      POSTGRES_PASSWORD: noetl
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
       POSTGRES_SCHEMA: public
-      POSTGRES_DB: noetl
+      POSTGRES_DB: demo_noetl
       PGDATA: /var/lib/postgresql/data/pgdata
     command: "postgres -c port=5432 -c config_file=/etc/postgresql/postgresql.conf"
     volumes:
@@ -23,7 +23,7 @@ services:
     ports:
       - "5434:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noetl -d noetl -p 5432"]
+      test: ["CMD-SHELL", "pg_isready -U demo -d demodb -p 5432"]
       interval: 5s
       timeout: 5s
       retries: 3
@@ -47,19 +47,22 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./secrets/application_default_credentials.json:/opt/noetl/secrets/application_default_credentials.json
+      - ./.secrets/noetl-service-account.json:/opt/noetl/secrets/application_default_credentials.json
       - ./data:/opt/noetl/data
     environment:
       TZ: America/Chicago
       LOG_LEVEL: INFO
       PYTHONPATH: "/opt/noetl"
       NOETL_DATA_DIR: "/opt/noetl/data"
-      POSTGRES_USER: noetl
-      POSTGRES_DB: noetl
-      POSTGRES_PASSWORD: noetl
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo_noetl
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_SCHEMA: public
+      NOETL_USER: noetl
+      NOETL_PASSWORD: noetl
+      NOETL_SCHEMA: noetl
       GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
     networks:
       - noetl-network
@@ -81,31 +84,3 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/home/jovyan/secrets/noetl-demo.json
     networks:
       - noetl-network
-
-#  agent:
-#    build:
-#      context: .
-#      dockerfile: docker/noetl/Dockerfile
-#    container_name: noetl-agent
-#    depends_on:
-#      db:
-#        condition: service_healthy
-#    volumes:
-#      - ./playbook:/opt/noetl/playbook
-#      - ./secrets/application_default_credentials.json:/opt/noetl/secrets/application_default_credentials.json
-#      - ./data:/opt/noetl/data
-#    environment:
-#      TZ: America/Chicago
-#      LOG_LEVEL: INFO
-#      PYTHONPATH: "/opt/noetl"
-#      NOETL_DATA_DIR: "/opt/noetl/data"
-#      POSTGRES_USER: noetl
-#      POSTGRES_DB: noetl
-#      POSTGRES_PASSWORD: noetl
-#      POSTGRES_HOST: db
-#      POSTGRES_PORT: 5432
-#      POSTGRES_SCHEMA: public
-#      GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
-#    command: ["python", "-m", "noetl.main", "agent", "--file", "/opt/noetl/playbook/default.yaml"]
-#    networks:
-#      - noetl-network

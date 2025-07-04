@@ -1,0 +1,10 @@
+{
+  "GOOGLE_CLOUD_PROJECT": "noetl-demo-19700101",
+  "GCS_KEY_ID_SECRET": "s3_access_key_id",
+  "GCS_SECRET_KEY_SECRET": "s3_secret_access_key",
+  "POSTGRES_HOST": "db",
+  "POSTGRES_PORT": "5432",
+  "POSTGRES_USER": "demo",
+  "POSTGRES_PASSWORD": "demo",
+  "POSTGRES_DB": "demo_noetl"
+}
