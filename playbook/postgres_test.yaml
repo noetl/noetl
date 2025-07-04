@@ -10,10 +10,10 @@ path: workflows/examples/postgres_test
 workload:
   jobId: "{{ job.uuid }}"
   pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-  pg_port: "{{ env.POSTGRES_PORT | default('5434') }}"
-  pg_user: "{{ env.POSTGRES_USER | default('noetl') }}"
-  pg_password: "{{ env.POSTGRES_PASSWORD | default('noetl') }}"
-  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
   test_data: {
     "name": "Test User",
     "email": "test@example.com",
@@ -199,11 +199,3 @@ workbook:
       SELECT id, name, metadata->>'age' as age FROM postgres_test_users;
       UPDATE postgres_test_users SET metadata = jsonb_set(metadata, '{active}', 'false'::jsonb) WHERE id = 1;
       SELECT id, name, metadata->>'active' as is_active FROM postgres_test_users WHERE id = 1;
-      
-      
-      
-
-
-
-
-
