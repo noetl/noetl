@@ -1,6 +1,17 @@
 include README.md
 include LICENSE
 include CHANGELOG.md
-recursive-include ui *
-global-exclude __pycache__
-global-exclude *.py[co]
+include pyproject.toml
+include setup.py
+recursive-include noetl *.py
+recursive-include ui/static *
+recursive-include ui/templates *
+include ui/__init__.py
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * .DS_Store
+recursive-exclude * *.so
+exclude .gitignore
+exclude .env*
+exclude docker-compose*.yml
+exclude Dockerfile*

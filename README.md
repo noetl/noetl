@@ -84,7 +84,6 @@ NoETL provides a command-line interface.
 
 Register a playbook in the catalog:
 ```bash
-# noetl playbook --register path/to/playbook.yaml
 noetl playbook --register playbook/secrets_test.yaml --host localhost --port 8080
 noetl playbook --register playbook/load_dict_test.yaml --port 8080
 noetl playbook --register playbook/weather_example.yaml --port 8080
@@ -524,38 +523,32 @@ Command-line options:
 
 The project includes several example playbooks in the `playbook/` directory to demonstrate different NoETL capabilities:
 
-### Core Examples
-
-#### 1. Weather Example (`weather_example.yaml`)
+### 1. Weather Example (`weather_example.yaml`)
 A simple playbook that fetches weather data for given cities and checks if the temperature exceeds a threshold. Great for learning basic NoETL concepts.
 
-#### 2. Load Dict Test (`load_dict_test.yaml`)
+### 2. Load Dict Test (`load_dict_test.yaml`)
 Demonstrates DuckDB integration with PostgreSQL, including table creation, data manipulation, and cross-database operations.
 - **Documentation**: [load_dict_test_example.md](docs/examples/load_dict_test_example.md)
 - **Purpose**: Testing DuckDB PostgreSQL extension functionality
 - **Use Cases**: Database integration, data transfer workflows, testing setups
 
-#### 3. GCS Secrets Example (`gcs_secrets_example.yaml`)
+### 3. GCS Secrets Example (`gcs_secrets_example.yaml`)
 Shows Google Cloud Storage authentication using Google Secret Manager with secure HMAC credential handling.
 - **Documentation**: [gcp_secrets_example.md](docs/examples/gcp_secrets_example.md)
 - **Purpose**: Secure cloud storage operations with secrets management
 - **Use Cases**: GCS file uploads, secure credential handling, cloud data workflows
 
-### Additional Examples
-
-#### Database Examples
+### 4. Database Examples
 - `postgres_test.yaml`: PostgreSQL database operations and testing
 - `gs_duckdb_postgres_example.yaml`: Google Storage with DuckDB and PostgreSQL integration
 
-#### Secrets Management
+### 5. Secrets Management
 - `secrets_example.yaml`: Basic secrets handling demonstration
 - `secrets_test.yaml`: Secrets functionality testing
 - `test_secrets.yaml`: Additional secrets testing scenarios
 
-#### Advanced Workflows
-- `multi_playbook_example.yaml`: Demonstrates complex multi-step workflows
-- `load_ng_v2.yaml`: Next-generation data loading patterns
-- `attach_example.yaml`: File attachment and processing examples
+### 6. Advanced Workflows
+- `multi_playbook_example.yaml`: Demonstrates complex multi-playbook-calls workflows
 
 ### Quick Start with Examples
 
@@ -574,7 +567,6 @@ noetl playbook --execute --path "workflows/weather/weather_loop_example" \
 # Register the playbook
 noetl playbook --register playbook/load_dict_test.yaml --port 8080
 
-# Execute (requires PostgreSQL running)
 noetl playbook --execute --path "workflows/data/load_dict_test"
 ```
 
@@ -585,18 +577,18 @@ noetl playbook --register playbook/gcs_secrets_example.yaml --port 8080
 
 # Execute with your GCP project
 noetl playbook --execute --path "workflows/examples/gcs_secrets_example" \
-  --payload '{"GOOGLE_CLOUD_PROJECT": "your-project-id"}'
+  --payload '{"GOOGLE_CLOUD_PROJECT": "google-project-id"}'
 ```
 
 ### Documentation Structure
 
-Each major example includes comprehensive documentation:
+Each major example includes:
 - **Overview**: Purpose and use cases
 - **Prerequisites**: Required setup and dependencies
 - **Configuration**: Environment variables and parameters
 - **Workflow Steps**: Detailed step-by-step execution
 - **Troubleshooting**: Common issues and solutions
-- **Security Considerations**: Best practices (for cloud examples)
+- **Security Considerations**: Best practices for cloud examples
 
 ### Example Categories
 
@@ -617,3 +609,19 @@ For detailed information about any specific playbook:
    - [HOW_TO_RUN_GCS_SECRETS.md](playbook/HOW_TO_RUN_GCS_SECRETS.md) - GCS-specific guide
    - [HOW_TO_RUN_SUMMARY.md](playbook/HOW_TO_RUN_SUMMARY.md) - Quick reference
 3. Consult the main [playbook README](playbook/README.md) for an overview
+
+## Documentation
+
+NoETL documentation on various aspects of the system:
+
+### Environment Configuration
+- [Environment Variables Guide](docs/environment_variables.md) - guide to setting up and managing environment variables in NoETL
+
+### Google Cloud Integration
+- [Google Cloud Service Account Guide](docs/google_cloud_service_account.md) - instructions to create and manage Google Cloud service accounts for NoETL
+
+### User Interface
+- [Admin UI Documentation](docs/admin_ui.md) - NoETL UI for creating, editing, and executing playbooks
+
+### Development
+- [PyPI Publishing Guide](docs/pypi_manual.md) - instructions for building and publishing the NoETL package to PyPI
