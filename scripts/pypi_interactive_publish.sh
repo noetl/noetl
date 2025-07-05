@@ -302,13 +302,13 @@ with open('pyproject.toml', 'r') as f:
     case $choice in
         0)
             echo -e "${BLUE} Publishing to TestPyPI...${NC}"
-            "$SCRIPT_DIR/publish_to_pypi.sh" --test "$current_version"
+            "$SCRIPT_DIR/pypi_publish.sh" --test "$current_version"
 
             echo -e "${CYAN}TestPyPI publication completed!${NC}"
             read -p "Test the package and then press Enter to continue to PyPI (or Ctrl+C to abort)..."
 
             echo -e "${BLUE} Publishing to PyPI...${NC}"
-            "$SCRIPT_DIR/publish_to_pypi.sh" "$current_version"
+            "$SCRIPT_DIR/pypi_publish.sh" "$current_version"
             ;;
         1)
             echo -e "${YELLOW}  Publishing directly to PyPI${NC}"
@@ -316,7 +316,7 @@ with open('pyproject.toml', 'r') as f:
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 echo -e "${BLUE} Publishing to PyPI...${NC}"
-                "$SCRIPT_DIR/publish_to_pypi.sh" "$current_version"
+                "$SCRIPT_DIR/pypi_publish.sh" "$current_version"
             else
                 echo -e "${YELLOW} Publication cancelled${NC}"
                 return 1
@@ -324,7 +324,7 @@ with open('pyproject.toml', 'r') as f:
             ;;
         2)
             echo -e "${BLUE} Running dry run...${NC}"
-            "$SCRIPT_DIR/publish_to_pypi.sh" --dry-run "$current_version"
+            "$SCRIPT_DIR/pypi_publish.sh" --dry-run "$current_version"
             ;;
     esac
 
