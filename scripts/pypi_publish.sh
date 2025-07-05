@@ -1,5 +1,11 @@
 #!/bin/bash
-# Publish NoETL package to PyPI
+# Publish NoETL package to PyPI with UV dependency management support
+# Test on TestPyPI first (recommended)
+# ./scripts/pypi_publish.sh --test 0.1.19
+# # Publish to PyPI
+# ./scripts/pypi_publish.sh 0.1.19
+# Dry run to see what would happen
+# ./scripts/pypi_publish.sh --dry-run 0.1.19
 
 set -e
 
@@ -18,7 +24,7 @@ show_help() {
     cat << EOF
 Usage: $0 [OPTIONS] [VERSION]
 
-Publish NoETL package to PyPI with safety checks and validation.
+Publish NoETL package to PyPI with safety checks and UV dependency management.
 
 OPTIONS:
     -t, --test          Publish to TestPyPI instead of PyPI
@@ -37,6 +43,12 @@ EXAMPLES:
 ENVIRONMENT VARIABLES:
     PYPI_TOKEN          PyPI API token (optional, uses ~/.pypirc if not set)
     TESTPYPI_TOKEN      TestPyPI API token (optional)
+
+UV DEPENDENCY MANAGEMENT:
+    This script automatically detects UV-managed projects and uses:
+    - uv add --dev build twine  (for build dependencies)
+    - python -m build          (for package building)
+    - python -m twine upload    (for publishing)
 EOF
 }
 
@@ -125,7 +137,15 @@ check_dependencies() {
 
     if [ ${#missing_deps[@]} -gt 0 ]; then
         echo -e "${YELLOW}Installing missing dependencies: ${missing_deps[*]}${NC}"
-        pip install "${missing_deps[@]}"
+
+        # Check if this is a UV-managed project
+        if [ -f "uv.lock" ]; then
+            echo -e "${BLUE}UV-managed project detected, using UV to install dependencies...${NC}"
+            uv add --dev "${missing_deps[@]}"
+        else
+            echo -e "${BLUE}Using pip to install dependencies...${NC}"
+            pip install "${missing_deps[@]}"
+        fi
     fi
 
     echo -e "${GREEN}Dependencies OK${NC}"
