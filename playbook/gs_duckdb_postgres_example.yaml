@@ -236,7 +236,7 @@ workbook:
       pg_host: "db"
       pg_port: "5432"
       pg_db: "demo_noetl"
-    commands: |
+    command: |
       INSTALL postgres;
       LOAD postgres;
       CREATE OR REPLACE SECRET postgres_secret (
@@ -265,7 +265,7 @@ workbook:
       db_user: "demo"
       db_password: "demo"
       db_name: "demo_noetl"
-    commands: |
+    command: |
       -- Install and load Postgres extension
       INSTALL postgres;
       LOAD postgres;
@@ -309,7 +309,7 @@ workbook:
     type: duckdb
     with:
       execution_id: "{{ execution_id }}"
-    commands: |
+    command: |
       -- Drop DuckDB secrets created during the workflow
       DROP SECRET IF EXISTS gcs_secret;
       DROP SECRET IF EXISTS postgres_secret;
@@ -322,7 +322,7 @@ workbook:
     with:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
-    commands: |
+    command: |
       -- Install httpfs extension for cloud storage operations
       INSTALL httpfs;
       LOAD httpfs;
@@ -366,7 +366,7 @@ workbook:
     with:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
-    commands: |
+    command: |
       INSTALL httpfs;
       LOAD httpfs;
 
@@ -408,7 +408,7 @@ workbook:
     with:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
-    commands: |
+    command: |
       -- Install and load necessary extensions
       INSTALL httpfs;
       LOAD httpfs;
@@ -444,7 +444,7 @@ workbook:
     with:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
-    commands: |
+    command: |
       -- Install and load necessary extensions
       INSTALL httpfs;
       LOAD httpfs;
@@ -490,7 +490,7 @@ workbook:
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
-    commands: |
+    command: |
       -- SHOWCASE: This task uses direct authentication as an alternative to secrets
       -- The following SQL demonstrates direct connection to Postgres
       -- without using secrets for authentication
@@ -511,7 +511,7 @@ workbook:
 
   - name: load_data_task
     type: duckdb
-    commands: |
+    command: |
       -- Install and load extensions
       INSTALL parquet;
       LOAD parquet;
@@ -567,7 +567,7 @@ workbook:
       db_user: "demo"
       db_password: "demo"
       db_name: "demo_noetl"
-    commands: |
+    command: |
       -- Install and load Postgres extension
       INSTALL postgres;
       LOAD postgres;
@@ -636,7 +636,7 @@ workbook:
 
   - name: advanced_file_operations_task
     type: duckdb
-    commands: |
+    command: |
       -- Install and load extensions
       INSTALL httpfs;
       LOAD httpfs;

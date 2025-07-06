@@ -5,9 +5,9 @@ path: workflows/examples/multi_playbook_example
 
 workload:
   jobId: "{{ job.uuid }}"
-  secret_name: "{{ env.GOOGLE_SECRET_POSTGRES_PASSWORD | default('test-secret') }}"
-  environment: "{{ env.ENVIRONMENT | default('dev') }}"
-  GOOGLE_CLOUD_PROJECT: "{{ env.GOOGLE_CLOUD_PROJECT | default('noetl-demo') }}"
+  secret_name: "test-secret"
+  environment: "dev"
+  GOOGLE_CLOUD_PROJECT: "noetl-demo-19700101"
   cities:
     - name: "London"
       lat: 51.51
@@ -16,11 +16,11 @@ workload:
   temperature_threshold: 26
   baseFilePath: "/opt/noetl/data/test"
   bucket: "test-bucket"
-  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
-  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
-  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
-  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  pg_host: "db"
+  pg_port: "5432"
+  pg_user: "demo"
+  pg_password: "demo"
+  pg_db: "demo_noetl"
 
 workflow:
   - step: start
@@ -90,7 +90,7 @@ workflow:
 
 workbook:
   - name: store_results_task
-    type: duckdb
+    type: python
     with:
       secrets_result: "{{ secrets_result }}"
       weather_result: "{{ weather_result }}"
@@ -100,57 +100,91 @@ workbook:
       pg_user: "{{ workload.pg_user }}"
       pg_password: "{{ workload.pg_password }}"
       pg_db: "{{ workload.pg_db }}"
-    commands: |
-      INSTALL postgres;
-      LOAD postgres;
-      INSTALL json;
-      LOAD json;
-      ATTACH 'dbname={{ pg_db }} user={{ pg_user }} password={{ pg_password }} host={{ pg_host }} port={{ pg_port }}' AS postgres_db (TYPE postgres);
-
-      CREATE TABLE IF NOT EXISTS playbook_results (
-          id BIGINT,
-          execution_id VARCHAR,
-          secrets_result JSON,
-          weather_result JSON,
-          load_dict_result JSON,
-          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      INSERT INTO playbook_results (
-          id, 
-          execution_id, 
-          secrets_result, 
-          weather_result, 
-          load_dict_result
-      )
-      VALUES (
-          CAST(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000 AS BIGINT),
-          '{{ job.uuid }}',
-          JSON('{{ secrets_result | to_json }}'),
-          JSON('{{ weather_result | to_json }}'),
-          JSON('{{ load_dict_result | to_json }}')
-      );
-
-      CREATE TABLE IF NOT EXISTS postgres_db.playbook_results (
-          id BIGINT PRIMARY KEY,
-          execution_id VARCHAR,
-          secrets_result JSON,
-          weather_result JSON,
-          load_dict_result JSON,
-          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      INSERT INTO postgres_db.playbook_results (
-          id, 
-          execution_id, 
-          secrets_result, 
-          weather_result, 
-          load_dict_result
-      )
-      VALUES (
-          CAST(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000 AS BIGINT),
-          '{{ job.uuid }}',
-          '{{ secrets_result | to_json }}'::JSON, 
-          '{{ weather_result | to_json }}'::JSON, 
-          '{{ load_dict_result | to_json }}'::JSON
-      );
+      execution_id: "{{ job.uuid }}"
+    code: |
+      def main(secrets_result, weather_result, load_dict_result, pg_host, pg_port, pg_user, pg_password, pg_db, execution_id):
+          import duckdb
+          import json
+          import time
+          
+          # Convert results to JSON strings
+          secrets_json = json.dumps(secrets_result) if isinstance(secrets_result, dict) else str(secrets_result)
+          weather_json = json.dumps(weather_result) if isinstance(weather_result, dict) else str(weather_result)
+          load_dict_json = json.dumps(load_dict_result) if isinstance(load_dict_result, dict) else str(load_dict_result)
+          
+          # Create DuckDB connection
+          conn = duckdb.connect()
+          
+          try:
+              # Install and load required extensions
+              conn.execute("INSTALL postgres")
+              conn.execute("LOAD postgres")
+              conn.execute("INSTALL json")
+              conn.execute("LOAD json")
+              
+              # Attach PostgreSQL database
+              attach_query = f"ATTACH 'dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}' AS postgres_db (TYPE postgres)"
+              try:
+                  conn.execute(attach_query)
+              except Exception as e:
+                  if "already attached" not in str(e):
+                      raise e
+              
+              # Create local DuckDB table
+              conn.execute("""
+                  CREATE TABLE IF NOT EXISTS playbook_results (
+                      id BIGINT,
+                      execution_id VARCHAR,
+                      secrets_result TEXT,
+                      weather_result TEXT,
+                      load_dict_result TEXT,
+                      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                  )
+              """)
+              
+              # Insert into local DuckDB table
+              current_time_ms = int(time.time() * 1000)
+              conn.execute("""
+                  INSERT INTO playbook_results (
+                      id, execution_id, secrets_result, weather_result, load_dict_result
+                  ) VALUES (?, ?, ?, ?, ?)
+              """, [current_time_ms, execution_id, secrets_json, weather_json, load_dict_json])
+              
+              # Create PostgreSQL table
+              conn.execute("""
+                  CREATE TABLE IF NOT EXISTS postgres_db.playbook_results (
+                      id BIGINT PRIMARY KEY,
+                      execution_id VARCHAR,
+                      secrets_result TEXT,
+                      weather_result TEXT,
+                      load_dict_result TEXT,
+                      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                  )
+              """)
+              
+              # Insert into PostgreSQL table
+              conn.execute("""
+                  INSERT INTO postgres_db.playbook_results (
+                      id, execution_id, secrets_result, weather_result, load_dict_result
+                  ) VALUES (?, ?, ?, ?, ?)
+              """, [current_time_ms + 1, execution_id, secrets_json, weather_json, load_dict_json])
+              
+              # Verify insertion
+              result = conn.execute("SELECT COUNT(*) FROM playbook_results").fetchone()
+              total_records = result[0] if result else 0
+              
+              return {
+                  "status": "success",
+                  "message": "Results stored successfully",
+                  "total_records": total_records,
+                  "execution_id": execution_id
+              }
+              
+          except Exception as e:
+              return {
+                  "status": "error",
+                  "message": f"Failed to store results: {str(e)}",
+                  "execution_id": execution_id
+              }
+          finally:
+              conn.close()

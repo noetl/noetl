@@ -35,7 +35,7 @@ workflow:
 workbook:
   - name: duckdb_test_task
     type: duckdb
-    commands: |
+    command: |
       -- Install and load Duckdb Postgres extension
       INSTALL postgres;
       LOAD postgres;

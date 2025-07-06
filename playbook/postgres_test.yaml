@@ -49,9 +49,9 @@ workflow:
         db_user: "{{ workload.pg_user }}"
         db_password: "{{ workload.pg_password }}"
         db_name: "{{ workload.pg_db }}"
-      commands: |
+      command: |
         DROP TABLE IF EXISTS postgres_test_users;
-        
+
         CREATE TABLE IF NOT EXISTS postgres_test_users (
           id SERIAL PRIMARY KEY,
           name VARCHAR(100) NOT NULL,
@@ -59,7 +59,7 @@ workflow:
           metadata JSONB,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         CREATE OR REPLACE FUNCTION get_json_field(data JSONB, field TEXT)
         RETURNS TEXT AS $$
         BEGIN
@@ -109,9 +109,9 @@ workbook:
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
-    commands: |
+    command: |
       DROP TABLE IF EXISTS postgres_test_users;
-      
+
       CREATE TABLE IF NOT EXISTS postgres_test_users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -119,7 +119,7 @@ workbook:
         metadata JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      
+
       CREATE OR REPLACE FUNCTION get_json_field(data JSONB, field TEXT)
       RETURNS TEXT AS $$
       BEGIN
@@ -136,14 +136,14 @@ workbook:
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
-    commands: |
+    command: |
       INSERT INTO postgres_test_users (name, email, metadata)
       VALUES (
         '{{ workload.test_data.name }}',
         '{{ workload.test_data.email }}',
         '{{ workload.test_data.metadata | tojson }}'::JSONB
       );
-      
+
       INSERT INTO postgres_test_users (name, email, metadata)
       VALUES (
         'Another User',
@@ -160,7 +160,7 @@ workbook:
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
-    commands: |
+    command: |
       SELECT 
         id, 
         name, 
@@ -168,7 +168,7 @@ workbook:
         metadata,
         created_at::TEXT as created_at
       FROM postgres_test_users;
-      
+
       SELECT 
         id, 
         name, 
@@ -177,7 +177,7 @@ workbook:
         created_at::TEXT as created_at
       FROM postgres_test_users 
       WHERE metadata->>'active' = 'true';
-      
+
       SELECT 
         id, 
         name, 
@@ -195,7 +195,7 @@ workbook:
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
-    commands: |
+    command: |
       SELECT id, name, metadata->>'age' as age FROM postgres_test_users;
       UPDATE postgres_test_users SET metadata = jsonb_set(metadata, '{active}', 'false'::jsonb) WHERE id = 1;
       SELECT id, name, metadata->>'active' as is_active FROM postgres_test_users WHERE id = 1;
