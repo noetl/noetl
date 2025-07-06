@@ -279,7 +279,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
     start_time = datetime.datetime.now()
 
     try:
-        commands = task_config.get('commands', [])
+        commands = task_config.get('command', task_config.get('commands', []))
         if isinstance(commands, str):
             commands_rendered = render_template(jinja_env, commands, {**context, **task_config.get('with', {})})
             cmd_lines = []
@@ -631,7 +631,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     start_time = datetime.datetime.now()
 
     try:
-        commands = task_config.get('commands', [])
+        commands = task_config.get('command', task_config.get('commands', []))
         if isinstance(commands, str):
             commands_rendered = render_template(jinja_env, commands, {**context, **task_config.get('with', {})})
             commands = []
