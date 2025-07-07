@@ -18,3 +18,10 @@ dist/
 .env.prod
 .env.local
 /.secrets/
+
+# Virtual environments
+publish_env/
+test_env/
+*.venv/
+venv/
+env/
