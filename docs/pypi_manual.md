@@ -119,7 +119,7 @@ python -m twine upload dist/*
 NoETL provides an interactive publishing wizard that guides you through the process:
 
 ```bash
-./scripts/pypi_interactive_publish.sh
+./scripts/interactive_publish.sh
 ```
 
 This wizard will:

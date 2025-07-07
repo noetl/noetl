@@ -190,7 +190,7 @@ NoETL provides scripts for publishing to PyPI:
 ./scripts/pypi_publish.sh <version>
 
 # Interactive publishing wizard
-./scripts/pypi_interactive_publish.sh
+./scripts/interactive_publish.sh
 ```
 
 For more detailed instructions, see the [PyPI Publishing Guide](pypi_manual.md).
