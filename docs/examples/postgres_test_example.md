@@ -257,7 +257,7 @@ noetl playbook --execute --path "workflows/examples/postgres_test" --port 8080 -
 - **Template Variables**: Dynamic data injection using `{{ workload.variable }}`
 - **JSON Templating**: Complex object handling with `| tojson` filter
 - **Multi-step Workflows**: Sequential task execution with dependencies
-- **Direct Task Execution**: PostgreSQL tasks without workbook indirection
+- **Workbook Task Execution**: PostgreSQL tasks defined in workbook section and referenced in workflow steps
 - **Error Handling**: Automatic rollback and error reporting
 
 ### Advanced SQL Operations

@@ -89,7 +89,7 @@ Creates a DuckDB secret for GCS authentication using retrieved HMAC credentials.
 2. **Secret Creation**:
    ```sql
    CREATE OR REPLACE SECRET gcs_secret (
-       TYPE gcs,
+       TYPE S3,
        KEY_ID '{{ key_id }}',
        SECRET '{{ secret_key }}'
    );
@@ -142,7 +142,7 @@ Reads a local CSV file and uploads it to Google Cloud Storage using the created 
 
 5. **Upload to GCS**:
    ```sql
-   COPY temp_csv TO 's3://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}' (FORMAT CSV, HEADER);
+   COPY temp_csv TO 'gs://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}' (FORMAT CSV, HEADER);
    ```
 
 6. **Cleanup**:
@@ -275,6 +275,6 @@ SELECT * FROM read_csv('file.csv', columns={'id': 'INTEGER', 'name': 'VARCHAR'})
 Extend the workbook to handle multiple files:
 ```sql
 -- Upload multiple files
-COPY (SELECT * FROM read_csv_auto('file1.csv')) TO 's3://bucket/file1.csv' (FORMAT CSV, HEADER);
-COPY (SELECT * FROM read_csv_auto('file2.csv')) TO 's3://bucket/file2.csv' (FORMAT CSV, HEADER);
+COPY (SELECT * FROM read_csv_auto('file1.csv')) TO 'gs://bucket/file1.csv' (FORMAT CSV, HEADER);
+COPY (SELECT * FROM read_csv_auto('file2.csv')) TO 'gs://bucket/file2.csv' (FORMAT CSV, HEADER);
 ```

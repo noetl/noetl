@@ -7,7 +7,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: weather_example
-path: workflows/examples/weather_example  # Unique path identifier for this playbook
+path: workflows/examples/weather_loop  # Unique path identifier for this playbook
 
 workload:  # Input parameters section accessible throughout the workflow
   jobId: "{{ job.uuid }}"
