@@ -39,7 +39,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: docker/noetl/Dockerfile
+      dockerfile: docker/noetl/development/Dockerfile
     container_name: noetl-api
     depends_on:
       db:

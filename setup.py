@@ -30,7 +30,7 @@ setup(
     long_description=read_readme(),
     long_description_content_type='text/markdown',
     url="https://github.com/noetl/noetl",
-    packages=find_packages(),
+    packages=find_packages() + ['ui'],
     package_data={
         '': ['*.md', '*.txt', '*.yml', '*.yaml'],
         'ui': ['static/**/*', 'templates/**/*', '**/*'],

@@ -5,6 +5,7 @@ import json
 import logging
 import base64
 import requests
+import importlib.resources
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -59,8 +60,18 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
         allow_headers=["*"],
     )
 
-    project_root = pathlib.Path(__file__).parent.parent.absolute()
-    templates = Jinja2Templates(directory=str(project_root / "ui" / "templates"))
+    try:
+        templates_path = str(importlib.resources.files('ui') / 'templates')
+        static_path = str(importlib.resources.files('ui') / 'static')
+        logger.info(f"Using UI files from installed package: templates={templates_path}, static={static_path}")
+    except (ModuleNotFoundError, ImportError, ValueError) as e:
+        logger.warning(f"Could not find UI files in installed package: {e}")
+        project_root = pathlib.Path(__file__).parent.parent.absolute()
+        templates_path = str(project_root / "ui" / "templates")
+        static_path = str(project_root / "ui" / "static")
+        logger.info(f"Using UI files from local development path: templates={templates_path}, static={static_path}")
+
+    templates = Jinja2Templates(directory=templates_path)
 
     class NoCacheStaticFiles(StaticFiles):
         async def __call__(self, scope, receive, send):
@@ -75,7 +86,7 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
 
             return await super().__call__(scope, receive, send_wrapper)
 
-    app.mount("/static", NoCacheStaticFiles(directory=str(project_root / "ui" / "static")), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=static_path), name="static")
     app.include_router(server_router)
 
     @app.get("/", response_class=HTMLResponse)
