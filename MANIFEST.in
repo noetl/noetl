@@ -1,11 +1,14 @@
 include README.md
 include LICENSE
-include CHANGELOG.md
 include pyproject.toml
 recursive-include noetl *.py
-recursive-include ui/static *
-recursive-include ui/templates *
-include ui/__init__.py
+recursive-include noetl/ui *
+recursive-include noetl/ui/static *
+recursive-include noetl/ui/templates *
+include noetl/ui/__init__.py
+include noetl/ui/static/__init__.py
+include noetl/ui/templates/__init__.py
+graft noetl/ui
 global-exclude __pycache__
 global-exclude *.py[co]
 global-exclude .DS_Store

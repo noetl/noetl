@@ -30,12 +30,19 @@ setup(
     long_description=read_readme(),
     long_description_content_type='text/markdown',
     url="https://github.com/noetl/noetl",
-    packages=find_packages() + ['ui'],
+    packages=find_packages() + ['ui', 'ui.static', 'ui.templates'],
     package_data={
         '': ['*.md', '*.txt', '*.yml', '*.yaml'],
         'ui': ['static/**/*', 'templates/**/*', '**/*'],
+        'ui.static': ['**/*'],
+        'ui.templates': ['**/*'],
         'noetl': ['*.py'],
     },
+    data_files=[
+        ('ui', ['ui/__init__.py']),
+        ('ui/static', ['ui/static/__init__.py']),
+        ('ui/templates', ['ui/templates/__init__.py']),
+    ],
     include_package_data=True,
     python_requires=">=3.11",
     classifiers=[

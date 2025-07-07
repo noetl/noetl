@@ -20,7 +20,10 @@ RUN uv venv && \
 
 COPY LICENSE README.md ./
 COPY noetl ./noetl
-COPY ui ./ui
+
+RUN echo "=== Checking UI files before installation ===" && \
+    find noetl -name "ui" -type d && \
+    find noetl/ui -type f 2>/dev/null | head -10 || echo "No UI files found"
 
 RUN uv pip install -e .
 
@@ -48,10 +51,14 @@ COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
 WORKDIR /opt/noetl
 
 COPY --from=builder /opt/noetl/noetl ./noetl
-COPY --from=builder /opt/noetl/ui ./ui
 COPY --from=builder /opt/noetl/pyproject.toml ./
 COPY --from=builder /opt/noetl/LICENSE ./
 COPY --from=builder /opt/noetl/README.md ./
+
+RUN echo "=== Checking UI files in production ===" && \
+    ls -la noetl/ && \
+    find noetl -name "ui" -type d && \
+    find noetl/ui -type f 2>/dev/null | head -10 || echo "No UI files found"
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

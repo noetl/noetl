@@ -1,22 +1,20 @@
 [project]
 name = "noetl"
-version = "0.1.19"
+version = "0.1.21"
 description = "A framework to build and run data pipelines and workflows."
 authors = [
     { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" }
 ]
 readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.11"
+license = "MIT"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-keywords = ["etl", "data-pipeline", "workflow", "automation"]
+keywords = ["etl", "data", "pipeline", "workflow", "automation"]
 dependencies = [
     "fastapi>=0.115.6",
     "pydantic>=2.11.4",
@@ -72,19 +70,29 @@ Homepage = "https://noetl.io"
 Repository = "https://github.com/noetl/noetl"
 Issues = "https://github.com/noetl/noetl/issues"
 
-[tool.hatchling.build.targets.wheel]
-packages = ["noetl", "ui"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["noetl*"]
 
-[tool.hatchling.build.targets.wheel.sources]
-"noetl" = "noetl"
-"ui" = "ui"
+[tool.setuptools]
 
 [tool.setuptools.package-data]
-"ui" = ["**/*"]
+noetl = [
+    "ui/**/*",
+    "ui/static/**/*",
+    "ui/templates/**/*",
+    "**/*.html",
+    "**/*.css",
+    "**/*.js",
+    "**/*.png",
+    "**/*.ico",
+    "**/*.json"
+]
+
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [

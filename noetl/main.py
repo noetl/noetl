@@ -16,6 +16,7 @@ from noetl.common import deep_merge
 from noetl.worker import NoETLAgent
 from noetl.schema import DatabaseSchema
 import pathlib
+from pathlib import Path
 from noetl.common import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
@@ -49,7 +50,7 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
-        version="0.1.0"
+        version="0.1.21"
     )
 
     app.add_middleware(
@@ -60,62 +61,67 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
         allow_headers=["*"],
     )
 
+    templates = None
     try:
-        templates_path = str(importlib.resources.files('ui') / 'templates')
-        static_path = str(importlib.resources.files('ui') / 'static')
-        logger.info(f"Using UI files from installed package: templates={templates_path}, static={static_path}")
-    except (ModuleNotFoundError, ImportError, ValueError) as e:
-        logger.warning(f"Could not find UI files in installed package: {e}")
-        project_root = pathlib.Path(__file__).parent.parent.absolute()
-        templates_path = str(project_root / "ui" / "templates")
-        static_path = str(project_root / "ui" / "static")
-        logger.info(f"Using UI files from local development path: templates={templates_path}, static={static_path}")
+        package_dir = Path(__file__).parent  # noetl package directory
+        templates_path = str(package_dir / "ui" / "templates")
+        static_path = str(package_dir / "ui" / "static")
 
-    templates = Jinja2Templates(directory=templates_path)
+        if Path(templates_path).exists() and Path(static_path).exists():
+            templates = Jinja2Templates(directory=templates_path)
+            class NoCacheStaticFiles(StaticFiles):
+                async def __call__(self, scope, receive, send):
+                    async def send_wrapper(message):
+                        if message["type"] == "http.response.start":
+                            headers = dict(message.get("headers", []))
+                            headers[b"Cache-Control"] = b"no-cache, no-store, must-revalidate"
+                            headers[b"Pragma"] = b"no-cache"
+                            headers[b"Expires"] = b"0"
+                            message["headers"] = [(k, v) for k, v in headers.items()]
+                        await send(message)
+                    return await super().__call__(scope, receive, send_wrapper)
+            app.mount("/static", NoCacheStaticFiles(directory=static_path), name="static")
+            logger.info(f"UI mounted: templates={templates_path}, static={static_path}")
+        else:
+            logger.warning(f"UI files not found: templates={templates_path}, static={static_path}")
 
-    class NoCacheStaticFiles(StaticFiles):
-        async def __call__(self, scope, receive, send):
-            async def send_wrapper(message):
-                if message["type"] == "http.response.start":
-                    headers = dict(message.get("headers", []))
-                    headers[b"Cache-Control"] = b"no-cache, no-store, must-revalidate"
-                    headers[b"Pragma"] = b"no-cache"
-                    headers[b"Expires"] = b"0"
-                    message["headers"] = [(k, v) for k, v in headers.items()]
-                await send(message)
+    except Exception as e:
+        logger.warning(f"Could not initialize UI: {e}")
 
-            return await super().__call__(scope, receive, send_wrapper)
-
-    app.mount("/static", NoCacheStaticFiles(directory=static_path), name="static")
     app.include_router(server_router)
 
-    @app.get("/", response_class=HTMLResponse)
-    async def root(request: Request):
-        return templates.TemplateResponse("index.html", {"request": request})
+    if templates:
+        @app.get("/", response_class=HTMLResponse)
+        async def root(request: Request):
+            return templates.TemplateResponse("index.html", {"request": request})
 
-    @app.get("/editor", response_class=HTMLResponse)
-    async def editor(request: Request):
-        return templates.TemplateResponse("editor.html", {"request": request})
+        @app.get("/editor", response_class=HTMLResponse)
+        async def editor(request: Request):
+            return templates.TemplateResponse("editor.html", {"request": request})
 
-    @app.get("/editor/{path:path}", response_class=HTMLResponse)
-    async def editor_with_path(request: Request, path: str):
-        return templates.TemplateResponse("editor.html", {"request": request})
+        @app.get("/editor/{path:path}", response_class=HTMLResponse)
+        async def editor_with_path(request: Request, path: str):
+            return templates.TemplateResponse("editor.html", {"request": request})
 
-    @app.get("/editor/{path:path}/{version}", response_class=HTMLResponse)
-    async def editor_with_path_version(request: Request, path: str, version: str):
-        return templates.TemplateResponse("editor.html", {"request": request})
+        @app.get("/editor/{path:path}/{version}", response_class=HTMLResponse)
+        async def editor_with_path_version(request: Request, path: str, version: str):
+            return templates.TemplateResponse("editor.html", {"request": request})
 
-    @app.get("/playbook/{path:path}", response_class=HTMLResponse)
-    async def playbook_with_path(request: Request, path: str):
-        return templates.TemplateResponse("editor.html", {"request": request})
+        @app.get("/playbook/{path:path}", response_class=HTMLResponse)
+        async def playbook_with_path(request: Request, path: str):
+            return templates.TemplateResponse("editor.html", {"request": request})
 
-    @app.get("/playbook/{path:path}/{version}", response_class=HTMLResponse)
-    async def playbook_with_path_version(request: Request, path: str, version: str):
-        return templates.TemplateResponse("editor.html", {"request": request})
+        @app.get("/playbook/{path:path}/{version}", response_class=HTMLResponse)
+        async def playbook_with_path_version(request: Request, path: str, version: str):
+            return templates.TemplateResponse("editor.html", {"request": request})
 
-    @app.get("/execution/{execution_id}", response_class=HTMLResponse)
-    async def execution(request: Request, execution_id: str):
-        return templates.TemplateResponse("execution.html", {"request": request})
+        @app.get("/execution/{execution_id}", response_class=HTMLResponse)
+        async def execution(request: Request, execution_id: str):
+            return templates.TemplateResponse("execution.html", {"request": request})
+    else:
+        @app.get("/", response_class=HTMLResponse)
+        async def root(request: Request):
+            return {"message": "NoETL API is running, but UI is not available"}
 
     @app.get("/health")
     async def health():
