@@ -160,7 +160,7 @@ class CatalogService:
                     "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
                     (resource_path, resource_version)
                 )
-                count = cursor.fetchone()[0]
+                count = int(cursor.fetchone()[0])  # Convert to int
                 max_attempts = 10
                 attempt = 1
                 while count > 0 and attempt <= max_attempts:
@@ -172,7 +172,7 @@ class CatalogService:
                         "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
                         (resource_path, resource_version)
                     )
-                    count = cursor.fetchone()[0]
+                    count = int(cursor.fetchone()[0])  # Convert to int
                     attempt += 1
 
                 if attempt > max_attempts:
