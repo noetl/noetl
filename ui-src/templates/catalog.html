@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoETL Playbook Catalog</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- The build process will automatically inject the correct CSS link here -->
+</head>
+<body>
+    <div class="ant-layout">
+        <header class="ant-layout-header app-header">
+            <div class="logo">
+                <a href="/">
+                    <i class="fas fa-book-open"></i>
+                    <span>NoETL Playbook Catalog</span>
+                </a>
+            </div>
+            <nav class="ant-menu ant-menu-dark ant-menu-root ant-menu-horizontal">
+                <div class="ant-menu-item ant-menu-item-selected">
+                    <a href="/catalog"><i class="fas fa-th-list"></i>Catalog</a>
+                </div>
+                <div class="ant-menu-item">
+                    <a href="/editor/new"><i class="fas fa-edit"></i>Editor</a>
+                </div>
+            </nav>
+        </header>
+
+        <main class="ant-layout-content app-content">
+            <div class="ant-row page-header-row">
+                <div class="ant-col ant-col-md-16">
+                    <div class="page-title-container">
+                        <h1 id="catalog-title" class="page-title">Playbook Catalog</h1>
+                        <p id="catalog-subtitle" class="page-subtitle">Browse, manage, and execute your playbooks.</p>
+                    </div>
+                </div>
+                <div class="ant-col ant-col-md-8 page-actions">
+                     <a href="/editor/new" class="ant-btn ant-btn-primary"><i class="fas fa-plus-circle"></i> Create New Playbook</a>
+                </div>
+            </div>
+
+            <!-- This panel will be used for info messages, like execution status -->
+            <div id="info-panel" class="ant-alert" style="display: none;" role="alert">
+                <span id="info-message" class="ant-alert-description"></span>
+                <button type="button" class="ant-alert-close-icon" aria-label="Close">
+                    <span class="anticon anticon-close"><i class="fas fa-times"></i></span>
+                </button>
+            </div>
+
+            <div class="ant-card styled-card">
+                <div class="ant-card-head">
+                    <div class="ant-card-head-title"><i class="fas fa-list-ul"></i>Available Playbooks</div>
+                </div>
+                <div class="ant-card-body">
+                    <div class="ant-table-container">
+                        <table class="ant-table">
+                            <thead class="ant-table-thead">
+                                <tr>
+                                    <th class="ant-table-cell">Name</th>
+                                    <th class="ant-table-cell">Path</th>
+                                    <th class="ant-table-cell">Version</th>
+                                    <th class="ant-table-cell">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="playbook-list" class="ant-table-tbody">
+                                <!-- JavaScript will populate this area -->
+                                <tr>
+                                    <td colspan="4" style="text-align: center; padding: 24px;">
+                                        <div class="placeholder"><div class="ant-spin ant-spin-spinning"></div><p>Loading playbooks...</p></div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- The Payload Modal structure, which catalog.js will control -->
+    <div class="ant-modal-root" id="payload-modal" style="display: none;">
+        <div class="ant-modal-mask"></div>
+        <div class="ant-modal-wrap">
+            <div class="ant-modal">
+                <div class="ant-modal-content">
+                    <div class="ant-modal-header">
+                        <div class="ant-modal-title">Execute Playbook with Payload</div>
+                        <button type="button" class="ant-modal-close" id="modal-close" aria-label="Close">
+                            <span class="ant-modal-close-x"><i class="fas fa-times"></i></span>
+                        </button>
+                    </div>
+                    <div class="ant-modal-body">
+                        <div class="ant-tabs" id="payloadTabs">
+                            <div class="ant-tabs-nav">
+                                <div class="ant-tabs-nav-list">
+                                    <div class="ant-tabs-tab ant-tabs-tab-active">
+                                        <div class="ant-tabs-tab-btn" data-tab-id="json-content">JSON Input</div>
+                                    </div>
+                                    <div class="ant-tabs-tab">
+                                        <div class="ant-tabs-tab-btn" data-tab-id="file-upload">File Upload</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ant-tabs-content">
+                                <div id="json-content" class="ant-tabs-tabpane ant-tabs-tabpane-active">
+                                    <div class="ant-form-item">
+                                        <label for="payload-json" class="ant-form-item-label">Enter JSON payload:</label>
+                                        <textarea id="payload-json" class="ant-input" rows="10" placeholder='{"key": "value"}'></textarea>
+                                    </div>
+                                </div>
+                                <div id="file-upload" class="ant-tabs-tabpane" style="display: none;">
+                                    <div class="ant-form-item">
+                                        <label for="payload-file" class="ant-form-item-label">Upload JSON file:</label>
+                                        <input type="file" id="payload-file" accept=".json" class="ant-input" />
+                                        <div id="file-name-display" class="ant-form-item-extra"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ant-form-item">
+                            <div class="ant-checkbox-wrapper">
+                                <label>
+                                    <input type="checkbox" id="merge-payload" class="ant-checkbox-input" />
+                                    <span>Merge with existing workload (instead of replacing)</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ant-modal-footer">
+                        <button type="button" class="ant-btn" id="modal-cancel">Cancel</button>
+                        <button type="button" class="ant-btn ant-btn-primary" id="execute-with-payload">Execute</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- This single script tag is the entry point for this page -->
+    <script type="module" src="/src/catalog.jsx"></script>
+</body>
+</html>
