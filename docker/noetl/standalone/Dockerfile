@@ -42,4 +42,4 @@ ENV NOETL_LOG_LEVEL=INFO
 ENV NOETL_DATA_PATH=/opt/noetl/data
 ENV NOETL_PLAYBOOKS_PATH=/opt/noetl/playbooks
 
-CMD ["python", "-m", "uvicorn", "--factory", "noetl.main:create_app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+CMD ["python", "-m", "uvicorn", "--factory", "noetl.main:create_app", "--host", "0.0.0.0", "--port", "8084", "--reload"]

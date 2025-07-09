@@ -22,6 +22,13 @@ For development or specific versions:
   source .venv/bin/activate
   pip install noetl
   ```
+- For Windows users (in PowerShell)
+  ```bash
+  python -m venv .venv
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  .venv\Scripts\Activate.ps1
+  pip install noetl
+  ```
 - Install a specific version
   ```bash
   pip install noetl==0.1.18
