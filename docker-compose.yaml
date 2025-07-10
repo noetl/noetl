@@ -36,11 +36,11 @@ services:
     networks:
       - noetl-network
 
-  api:
+  development-api:
     build:
       context: .
       dockerfile: docker/noetl/development/Dockerfile
-    container_name: noetl-api
+    container_name: development-api
     depends_on:
       db:
         condition: service_healthy
@@ -63,6 +63,7 @@ services:
       NOETL_USER: noetl
       NOETL_PASSWORD: noetl
       NOETL_SCHEMA: noetl
+      NOETL_SERVER_URL: http://development-api:8080
       GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
     networks:
       - noetl-network

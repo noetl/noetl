@@ -21,10 +21,6 @@
       crossorigin="anonymous"
       referrerpolicy="no-referrer"
     />
-    <script type="module" crossorigin src="/assets/main.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/main2.js">
-    <link rel="stylesheet" crossorigin href="/assets/main2.css">
-    <link rel="stylesheet" crossorigin href="/assets/main.css">
   </head>
   <body>
     <!-- The root element where the React application will be mounted. -->
@@ -35,6 +31,7 @@
       The `type="module"` attribute enables modern JavaScript modules.
       A build tool like Vite will process this file and its imports.
     -->
+    <script type="module" src="/src/main.jsx"></script>
 
     <!-- Fallback content for users with JavaScript disabled. -->
     <noscript>You need to enable JavaScript to run this app.</noscript>
