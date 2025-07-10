@@ -215,4 +215,147 @@ body {
 .ant-modal-root { display: none; }
 .ant-modal-mask { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000; height: 100%; background-color: rgba(0, 0, 0, 0.45); }
 .ant-modal-wrap { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000; overflow: auto; outline: 0; -webkit-overflow-scrolling: touch; }
-.ant-modal { position: relative; width: auto; max-width: calc(100vw - 32px); margin: 100px auto; }
+.ant-modal { position: relative; width: auto; max-width: calc(100vw - 32px); margin: 100px auto; width: 520px; }
+
+.ant-modal-content {
+    position: relative;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.12), 
+                0 6px 16px 0 rgba(0, 0, 0, 0.08), 
+                0 9px 28px 8px rgba(0, 0, 0, 0.05);
+}
+
+.ant-modal-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid #f0f0f0;
+    border-radius: 8px 8px 0 0;
+    background: linear-gradient(to right, #fafafa, #f5f5f5);
+}
+
+.ant-modal-title {
+    margin: 0;
+    font-size: 16px;
+    line-height: 22px;
+    font-weight: 500;
+    color: rgba(0, 0, 0, 0.85);
+}
+
+.ant-modal-close {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 10;
+    padding: 0;
+    color: rgba(0, 0, 0, 0.45);
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    background: transparent;
+    border: 0;
+    outline: 0;
+    cursor: pointer;
+    transition: color 0.3s;
+}
+
+.ant-modal-close-x {
+    display: block;
+    width: 56px;
+    height: 56px;
+    font-size: 16px;
+    font-style: normal;
+    line-height: 56px;
+    text-align: center;
+    text-transform: none;
+    text-rendering: auto;
+}
+
+.ant-modal-body {
+    padding: 24px;
+    font-size: 14px;
+    line-height: 1.5;
+    word-wrap: break-word;
+}
+
+.ant-modal-footer {
+    padding: 10px 16px;
+    text-align: right;
+    background: transparent;
+    border-top: 1px solid #f0f0f0;
+    border-radius: 0 0 8px 8px;
+}
+
+.ant-modal-footer .ant-btn + .ant-btn {
+    margin-left: 8px;
+}
+
+/* Tab styles for the modal */
+.ant-tabs-nav {
+    margin-bottom: 16px;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+}
+
+.ant-tabs-nav-list {
+    display: flex;
+    flex: 1;
+}
+
+.ant-tabs-tab {
+    padding: 8px 16px;
+    margin-right: 8px;
+    cursor: pointer;
+    border: 1px solid #f0f0f0;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    background-color: #f5f5f5;
+    transition: all 0.3s;
+}
+
+.ant-tabs-tab-active {
+    background-color: white;
+    position: relative;
+    bottom: -1px;
+}
+
+.ant-tabs-tab-btn {
+    font-weight: 500;
+    color: rgba(0, 0, 0, 0.65);
+}
+
+.ant-tabs-tab-active .ant-tabs-tab-btn {
+    color: #1890ff;
+}
+
+.ant-tabs-tabpane {
+    display: none;
+}
+
+.ant-tabs-tabpane-active {
+    display: block;
+}
+
+/* Form styles for the modal */
+.ant-form-item {
+    margin-bottom: 16px;
+}
+
+.ant-form-item-label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.ant-checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.ant-checkbox {
+    margin-right: 8px;
+}
+
+.ant-checkbox-input {
+    margin-right: 4px;
+}

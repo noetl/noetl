@@ -28,7 +28,7 @@
 
         useEffect(() => {
             // Fetch server health on component mount
-            fetch('/api/health')
+            fetch('/health')
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`Server responded with status: ${response.status}`);
@@ -118,4 +118,3 @@
     } else {
         console.error('Fatal Error: Root element with id "root" not found in the DOM.');
     }
-    

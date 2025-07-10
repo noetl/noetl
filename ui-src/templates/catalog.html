@@ -78,57 +78,82 @@
     </div>
 
     <!-- The Payload Modal structure, which catalog.js will control -->
-    <div class="ant-modal-root" id="payload-modal" style="display: none;">
-        <div class="ant-modal-mask"></div>
-        <div class="ant-modal-wrap">
-            <div class="ant-modal">
-                <div class="ant-modal-content">
-                    <div class="ant-modal-header">
-                        <div class="ant-modal-title">Execute Playbook with Payload</div>
-                        <button type="button" class="ant-modal-close" id="modal-close" aria-label="Close">
-                            <span class="ant-modal-close-x"><i class="fas fa-times"></i></span>
-                        </button>
+    <div class="ant-modal-root" id="payload-modal" style="display: none; position: fixed; inset: 0; z-index: 1000;">
+        <div class="ant-modal-mask" style="background-color: rgba(0, 0, 0, 0.45); position: fixed; inset: 0; z-index: 1000;"></div>
+        <div class="ant-modal-wrap" style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; overflow: auto; outline: 0; -webkit-overflow-scrolling: touch; display: flex; align-items: center; justify-content: center; z-index: 1001;">
+            <div class="ant-modal" style="width: 800px; position: relative; top: 0; margin: 0 auto; z-index: 1001;">
+                <div class="ant-modal-content" style="background-color: white; border-radius: 12px; box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 9px 28px 8px rgba(0, 0, 0, 0.05);">
+                    <div class="ant-modal-header" style="border-radius: 12px 12px 0 0; background: linear-gradient(to right, #fafafa, #f5f5f5); padding: 16px 24px;">
+                        <div class="ant-modal-title" id="payloadModalLabel" style="font-size: 18px; font-weight: 600; color: rgba(0, 0, 0, 0.85);">
+                            <i class="fas fa-code" style="margin-right: 10px; color: #1890ff;"></i>Add Payload
+                        </div>
                     </div>
-                    <div class="ant-modal-body">
-                        <div class="ant-tabs" id="payloadTabs">
-                            <div class="ant-tabs-nav">
-                                <div class="ant-tabs-nav-list">
-                                    <div class="ant-tabs-tab ant-tabs-tab-active">
-                                        <div class="ant-tabs-tab-btn" data-tab-id="json-content">JSON Input</div>
+                    <button type="button" class="ant-modal-close" id="modal-close" aria-label="Close" style="position: absolute; top: 0; right: 0; z-index: 10; padding: 0; color: rgba(0, 0, 0, 0.45); font-weight: 700; line-height: 1; text-decoration: none; background: transparent; border: 0; outline: 0; cursor: pointer; transition: color 0.3s;">
+                        <span class="ant-modal-close-x" style="display: block; width: 56px; height: 56px; font-size: 16px; font-style: normal; line-height: 56px; text-align: center; text-transform: none; text-rendering: auto;">
+                            <span class="anticon anticon-close"><i class="fas fa-times"></i></span>
+                        </span>
+                    </button>
+                    <div class="ant-modal-body" style="padding: 24px;">
+                        <div class="ant-tabs ant-tabs-top" id="payloadTabs">
+                            <div class="ant-tabs-nav" style="margin-bottom: 16px; border-bottom: 1px solid #f0f0f0;">
+                                <div class="ant-tabs-nav-list" style="display: flex;">
+                                    <div class="ant-tabs-tab ant-tabs-tab-active" id="json-tab" style="margin-right: 8px; padding: 8px 16px; border: 1px solid #f0f0f0; border-bottom: none; border-radius: 4px 4px 0 0; background-color: white; position: relative; bottom: -1px;">
+                                        <div class="ant-tabs-tab-btn" role="tab" aria-selected="true" data-tab-id="json-content" style="font-weight: 500;">JSON Input</div>
                                     </div>
-                                    <div class="ant-tabs-tab">
-                                        <div class="ant-tabs-tab-btn" data-tab-id="file-upload">File Upload</div>
+                                    <div class="ant-tabs-tab" id="file-tab" style="padding: 8px 16px; border: 1px solid #f0f0f0; border-bottom: none; border-radius: 4px 4px 0 0; background-color: #f5f5f5;">
+                                        <div class="ant-tabs-tab-btn" role="tab" aria-selected="false" data-tab-id="file-upload" style="font-weight: 500;">File Upload</div>
                                     </div>
                                 </div>
                             </div>
                             <div class="ant-tabs-content">
-                                <div id="json-content" class="ant-tabs-tabpane ant-tabs-tabpane-active">
-                                    <div class="ant-form-item">
-                                        <label for="payload-json" class="ant-form-item-label">Enter JSON payload:</label>
-                                        <textarea id="payload-json" class="ant-input" rows="10" placeholder='{"key": "value"}'></textarea>
+                                <div class="ant-tabs-tabpane ant-tabs-tabpane-active" id="json-content" role="tabpanel" aria-labelledby="json-tab">
+                                    <div class="ant-form-item" style="margin-top: 16px;">
+                                        <label for="payload-json" class="ant-form-item-label" style="font-weight: 500; margin-bottom: 8px;">
+                                            <i class="fas fa-code" style="margin-right: 8px; color: #1890ff;"></i>Enter JSON payload:
+                                        </label>
+                                        <div class="ant-form-item-control">
+                                            <div class="ant-form-item-control-input">
+                                                <textarea class="ant-input" id="payload-json" rows="10" placeholder='{"key": "value"}' style="resize: vertical; border-radius: 8px; padding: 12px; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05); border: 1px solid #1890ff;"></textarea>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                                <div id="file-upload" class="ant-tabs-tabpane" style="display: none;">
-                                    <div class="ant-form-item">
-                                        <label for="payload-file" class="ant-form-item-label">Upload JSON file:</label>
-                                        <input type="file" id="payload-file" accept=".json" class="ant-input" />
-                                        <div id="file-name-display" class="ant-form-item-extra"></div>
+                                <div class="ant-tabs-tabpane" id="file-upload" role="tabpanel" aria-labelledby="file-tab" style="display: none;">
+                                    <div class="ant-form-item" style="margin-top: 16px;">
+                                        <label for="payload-file" class="ant-form-item-label" style="font-weight: 500; margin-bottom: 8px;">
+                                            <i class="fas fa-upload" style="margin-right: 8px; color: #1890ff;"></i>Upload JSON file:
+                                        </label>
+                                        <div class="ant-form-item-control">
+                                            <div class="ant-form-item-control-input">
+                                                <div class="ant-upload ant-upload-select">
+                                                    <div class="ant-upload ant-upload-select-text">
+                                                        <input type="file" id="payload-file" accept=".json" style="display: block;">
+                                                        <div id="file-name-display" style="margin-top: 8px; color: rgba(0, 0, 0, 0.65);"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="ant-form-item">
-                            <div class="ant-checkbox-wrapper">
-                                <label>
-                                    <input type="checkbox" id="merge-payload" class="ant-checkbox-input" />
-                                    <span>Merge with existing workload (instead of replacing)</span>
-                                </label>
+                        <div class="ant-form-item" style="margin-top: 16px;">
+                            <div class="ant-checkbox-wrapper" style="display: flex; align-items: center;">
+                                <span class="ant-checkbox">
+                                    <input type="checkbox" class="ant-checkbox-input" id="merge-payload">
+                                    <span class="ant-checkbox-inner"></span>
+                                </span>
+                                <span>Merge with existing workload (instead of replacing)</span>
                             </div>
                         </div>
                     </div>
-                    <div class="ant-modal-footer">
-                        <button type="button" class="ant-btn" id="modal-cancel">Cancel</button>
-                        <button type="button" class="ant-btn ant-btn-primary" id="execute-with-payload">Execute</button>
+                    <div class="ant-modal-footer" style="border-top: 1px solid #f0f0f0; padding: 16px 24px; border-radius: 0 0 12px 12px; display: flex; justify-content: flex-end;">
+                        <button type="button" class="ant-btn" id="modal-cancel" style="margin-right: 12px; height: 38px; padding: 0 16px; border-radius: 6px; display: flex; align-items: center; justify-content: center;">
+                            <i class="fas fa-times" style="margin-right: 8px;"></i>Cancel
+                        </button>
+                        <button type="button" class="ant-btn ant-btn-primary" id="execute-with-payload" style="height: 38px; padding: 0 16px; background: linear-gradient(to right, #1890ff, #096dd9); border: none; border-radius: 6px; display: flex; align-items: center; justify-content: center;">
+                            <i class="fas fa-check" style="margin-right: 8px;"></i>Execute
+                        </button>
                     </div>
                 </div>
             </div>
