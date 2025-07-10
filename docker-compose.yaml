@@ -36,11 +36,11 @@ services:
     networks:
       - noetl-network
 
-  api:
+  development-api:
     build:
       context: .
       dockerfile: docker/noetl/development/Dockerfile
-    container_name: noetl-api
+    container_name: development-api
     depends_on:
       db:
         condition: service_healthy
@@ -63,9 +63,42 @@ services:
       NOETL_USER: noetl
       NOETL_PASSWORD: noetl
       NOETL_SCHEMA: noetl
+      NOETL_SERVER_URL: http://development-api:8080
       GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
     networks:
       - noetl-network
+
+  pip-standalone-api:
+    build:
+      context: .
+      dockerfile: docker/noetl/standalone/Dockerfile
+    container_name: standalone-api
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./.secrets/noetl-service-account.json:/secrets/application_default_credentials.json
+      - ./data:/opt/noetl/data
+    environment:
+      TZ: America/Chicago
+      LOG_LEVEL: INFO
+      PYTHONPATH: "/opt/noetl"
+      NOETL_DATA_DIR: "/opt/noetl/data"
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo_noetl
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_SCHEMA: public
+      NOETL_USER: noetl
+      NOETL_PASSWORD: noetl
+      NOETL_SCHEMA: noetl
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/application_default_credentials.json
+    networks:
+      - noetl-network
+    command: ["python", "-m", "uvicorn", "--factory", "noetl.main:create_app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
 
   jupyter:
     build:

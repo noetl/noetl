@@ -29,7 +29,6 @@ dependencies = [
     "python-multipart==0.0.20",
     "PyYAML>=6.0.1",
     "Jinja2>=3.1.6",
-    "selenium>=4.32.0",
     "pycryptodome>=3.21",
     "urllib3>=2.3",
     "Authlib>=1.5.1",
@@ -54,48 +53,61 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# For core development and testing
 dev = [
-    "ipykernel>=6.29.4",
     "pytest>=8.1.1",
     "pytest-asyncio>=0.23.6",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.14.0"
 ]
+# For building and publishing the package
+publish = [
+    "build>=1.2.2.post1",
+    "twine>=6.1.0",
+]
+# Data sources and engines
+#postgres = ["psycopg[binary,pool]>=3.2.7"]
+#pandas = ["pandas>=2.2.3"]
+#polars = ["polars[pyarrow]>=1.30.0", "connectorx>=0.4.3"]
+#duckdb = ["duckdb>=1.3.2", "duckdb-engine>=0.17.0"]
+## Cloud providers
+#gcp = ["google-auth>=2.27.0", "gcsfs>=2025.5.1"]
+#azure = ["azure-identity>=1.23.0", "azure-keyvault-secrets>=4.8.0"]
+## Interactive and visualization tools
+#notebook = ["jupysql>=0.11.1", "jupyterlab>=4.4.3", "ipykernel>=6.29.4"]
+#viz = ["matplotlib>=3.10.3", "networkx>=3.5", "pydot>=4.0.1"]
+#web = ["selenium>=4.32.0"]
+## Convenience group to install everything
+#all = [
+#    "noetl[postgres]",
+#    "noetl[pandas]",
+#    "noetl[polars]",
+#    "noetl[duckdb]",
+#    "noetl[gcp]",
+#    "noetl[azure]",
+#    "noetl[notebook]",
+#    "noetl[viz]",
+#    "noetl[web]",
+#]
+
 
 [project.scripts]
-noetl = "noetl.main:app"
+noetl = "noetl.main:cli_app"
 
 [project.urls]
 Homepage = "https://noetl.io"
 Repository = "https://github.com/noetl/noetl"
 Issues = "https://github.com/noetl/noetl/issues"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["noetl*"]
-
-[tool.setuptools]
-
-[tool.setuptools.package-data]
-noetl = [
-    "ui/**/*",
-    "ui/static/**/*",
-    "ui/templates/**/*",
-    "**/*.html",
-    "**/*.css",
-    "**/*.js",
-    "**/*.png",
-    "**/*.ico",
-    "**/*.json"
-]
-
-
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[dependency-groups]
-dev = [
-    "build>=1.2.2.post1",
-    "twine>=6.1.0",
-]
+[tool.setuptools.packages.find]
+# Use automatic package discovery.
+where = ["."]      # Look for packages in the project root.
+include = ["noetl*"] # Find the 'noetl' package and all its subpackages.
+
+[tool.setuptools.package-data]
+# This single pattern correctly includes all UI assets
+"noetl" = ["ui/**/*"]

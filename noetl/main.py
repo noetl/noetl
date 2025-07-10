@@ -5,48 +5,29 @@ import json
 import logging
 import base64
 import requests
-import importlib.resources
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from noetl.server import router as server_router
-from noetl.common import deep_merge
+from noetl.common import deep_merge, setup_logger
 from noetl.worker import NoETLAgent
 from noetl.schema import DatabaseSchema
-import pathlib
-from pathlib import Path
-from noetl.common import setup_logger
+
+# Setup logger for the main module
 logger = setup_logger(__name__, include_location=True)
 
-app = typer.Typer()
-
-@app.callback(invoke_without_command=True)
-def main_callback(
-    ctx: typer.Context,
-    host: str = typer.Option(None, help="Server host."),
-    port: int = typer.Option(None, help="Server port."),
-    reload: bool = typer.Option(None, help="Server auto-reload."),
- ):
-    if ctx.invoked_subcommand is None and (host is not None or port is not None or reload is not None):
-        host = host or "0.0.0.0"
-        port = port or 8082
-        reload = reload or False
-        create_server(host=host, port=port, reload=reload)
+# Use a distinct name for the Typer CLI application to avoid confusion with the FastAPI app.
+cli_app = typer.Typer()
 
 
-def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
-    try:
-        logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=False)
-        db_schema.create_noetl_metadata()
-        db_schema.init_database()
-        logger.info("NoETL user and database schema initialized.")
-    except Exception as e:
-        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
-        logger.warning("Continuing with server startup despite database initialization error.")
-
+def create_app() -> FastAPI:
+    """
+    Creates and configures the main FastAPI application instance.
+    This function is the factory for Uvicorn.
+    """
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
@@ -61,86 +42,90 @@ def create_app(host: str = "0.0.0.0", port: int = 8082) -> FastAPI:
         allow_headers=["*"],
     )
 
-    templates = None
+    # --- Database Initialization ---
     try:
-        package_dir = Path(__file__).parent  # noetl package directory
-        templates_path = str(package_dir / "ui" / "templates")
-        static_path = str(package_dir / "ui" / "static")
-
-        if Path(templates_path).exists() and Path(static_path).exists():
-            templates = Jinja2Templates(directory=templates_path)
-            class NoCacheStaticFiles(StaticFiles):
-                async def __call__(self, scope, receive, send):
-                    async def send_wrapper(message):
-                        if message["type"] == "http.response.start":
-                            headers = dict(message.get("headers", []))
-                            headers[b"Cache-Control"] = b"no-cache, no-store, must-revalidate"
-                            headers[b"Pragma"] = b"no-cache"
-                            headers[b"Expires"] = b"0"
-                            message["headers"] = [(k, v) for k, v in headers.items()]
-                        await send(message)
-                    return await super().__call__(scope, receive, send_wrapper)
-            app.mount("/static", NoCacheStaticFiles(directory=static_path), name="static")
-            logger.info(f"UI mounted: templates={templates_path}, static={static_path}")
-        else:
-            logger.warning(f"UI files not found: templates={templates_path}, static={static_path}")
-
+        logger.info("Initializing NoETL system metadata.")
+        db_schema = DatabaseSchema(auto_setup=False)
+        db_schema.create_noetl_metadata()
+        db_schema.init_database()
+        logger.info("NoETL user and database schema initialized.")
     except Exception as e:
-        logger.warning(f"Could not initialize UI: {e}")
+        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
+        logger.warning("Continuing with server startup despite database initialization error.")
 
+    # --- UI Serving Setup ---
+    package_dir = Path(__file__).parent
+    ui_path = package_dir / "ui"
+    templates_path = ui_path / "templates"
+    static_path = ui_path / "static"
+    assets_path = static_path / "assets"
+
+    templates = None
+    if templates_path.exists() and assets_path.exists():
+        templates = Jinja2Templates(directory=templates_path)
+
+        # Mount the /assets directory to serve JS, CSS, etc.
+        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
+        logger.info(f"UI assets mounted from: {assets_path}")
+
+        # Add a specific route for the favicon
+        @app.get("/favicon.svg", include_in_schema=False)
+        async def favicon():
+            favicon_file = static_path / "favicon.svg"
+            if favicon_file.exists():
+                return FileResponse(favicon_file)
+            return HTMLResponse(status_code=404)
+    else:
+        logger.warning(f"UI files not found. Searched in: {ui_path}")
+
+    # --- API Router ---
     app.include_router(server_router)
 
-    if templates:
-        @app.get("/", response_class=HTMLResponse)
-        async def root(request: Request):
-            return templates.TemplateResponse("index.html", {"request": request})
-
-        @app.get("/editor", response_class=HTMLResponse)
-        async def editor(request: Request):
-            return templates.TemplateResponse("editor.html", {"request": request})
-
-        @app.get("/editor/{path:path}", response_class=HTMLResponse)
-        async def editor_with_path(request: Request, path: str):
-            return templates.TemplateResponse("editor.html", {"request": request})
-
-        @app.get("/editor/{path:path}/{version}", response_class=HTMLResponse)
-        async def editor_with_path_version(request: Request, path: str, version: str):
-            return templates.TemplateResponse("editor.html", {"request": request})
-
-        @app.get("/playbook/{path:path}", response_class=HTMLResponse)
-        async def playbook_with_path(request: Request, path: str):
-            return templates.TemplateResponse("editor.html", {"request": request})
-
-        @app.get("/playbook/{path:path}/{version}", response_class=HTMLResponse)
-        async def playbook_with_path_version(request: Request, path: str, version: str):
-            return templates.TemplateResponse("editor.html", {"request": request})
-
-        @app.get("/execution/{execution_id}", response_class=HTMLResponse)
-        async def execution(request: Request, execution_id: str):
-            return templates.TemplateResponse("execution.html", {"request": request})
-    else:
-        @app.get("/", response_class=HTMLResponse)
-        async def root(request: Request):
-            return {"message": "NoETL API is running, but UI is not available"}
-
-    @app.get("/health")
+    # --- Health Check ---
+    @app.get("/health", include_in_schema=False)
     async def health():
         return {"status": "ok"}
 
+    # --- SPA Catch-all Route ---
+    # This single route handles serving all your HTML pages.
+    # It must be defined *after* all other API routes.
+    if templates:
+        @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
+        async def serve_spa(request: Request, full_path: str):
+            """Serves the appropriate HTML template for any given path."""
+            if full_path.startswith("editor") or full_path.startswith("playbook"):
+                template_name = "editor.html"
+            elif full_path.startswith("execution"):
+                template_name = "execution.html"
+            elif full_path.startswith("catalog"):
+                template_name = "catalog.html"
+            else:
+                template_name = "index.html"  # Default/fallback
+
+            return templates.TemplateResponse(template_name, {"request": request})
+    else:
+        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        async def root_no_ui():
+            return {"message": "NoETL API is running, but UI is not available"}
+
     return app
 
-@app.command("server")
-def create_server(
+
+# --- Typer CLI Commands ---
+
+@cli_app.command("server")
+def run_server(
     host: str = typer.Option("0.0.0.0", help="Server host."),
-    port: int = typer.Option(8082, help="Server port."),
+    port: int = typer.Option(8080, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload.")
 ):
-    app = create_app(host=host, port=port)
+    """Starts the NoETL web server."""
     logger.info(f"Starting NoETL API server at http://{host}:{port}")
-    logger.info(f"Access the server at http://localhost:{port} or http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port, reload=reload)
+    # Use the factory pattern for Uvicorn, which is best practice.
+    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload)
 
-@app.command("agent")
+
+@cli_app.command("agent")
 def run_agent(
     file: str = typer.Option(..., "--file", "-f", help="Path to playbook YAML file."),
     mock: bool = typer.Option(False, help="Run in mock mode"),
@@ -154,6 +139,7 @@ def run_agent(
     merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
     debug: bool = typer.Option(False, help="Debug logging mode.")
 ):
+    """Executes a NoETL playbook as a local agent."""
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
         datefmt='%Y-%m-%dT%H:%M:%S',
@@ -232,7 +218,8 @@ def run_agent(
         print(f"Error executing playbook: {e}")
         raise typer.Exit(code=1)
 
-@app.command("playbook")
+
+@cli_app.command("playbook")
 def manage_playbook(
     register: str = typer.Option(None, "--register", "-r", help="Path to playbook file to register."),
     execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbook by path."),
@@ -245,6 +232,7 @@ def manage_playbook(
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
     merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
 ):
+    """Registers or executes a playbook via the NoETL server."""
     if register:
         try:
             if not os.path.exists(register):
@@ -335,12 +323,19 @@ def manage_playbook(
     else:
         logger.info("No action specified. Use --register to register a playbook or --execute to execute a playbook.")
         logger.info("Examples:")
-        logger.info("  noetl playbook --register ./catalog/playbooks/weather_example.yaml")
+        logger.info("  noetl playbook --register ./playbook/weather_example.yaml")
         logger.info("  noetl playbook --execute --path weather_example --version 0.1.0 --payload '{\"city\": \"New York\"}'")
         logger.info("  noetl playbook --execute --path weather_example --input ./data/input/payload.json")
 
+
 def main():
-    app()
+    """Main entry point for the CLI application."""
+    cli_app()
+
+
+# Create the app instance for external imports (e.g., from entry points)
+app = create_app()
+
 
 if __name__ == "__main__":
-    app()
+    main()
