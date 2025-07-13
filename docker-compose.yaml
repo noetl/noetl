@@ -9,12 +9,12 @@ services:
       dockerfile: docker/postgres/Dockerfile
     container_name: noetl-database
     environment:
-      TZ: America/Chicago
-      POSTGRES_USER: demo
-      POSTGRES_PASSWORD: demo
-      POSTGRES_SCHEMA: public
-      POSTGRES_DB: demo_noetl
-      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: ${TZ}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: ${PGDATA}
     command: "postgres -c port=5432 -c config_file=/etc/postgresql/postgresql.conf"
     volumes:
       - ./database/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
@@ -23,7 +23,7 @@ services:
     ports:
       - "5434:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U demo -d demodb -p 5432"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d demodb -p 5432"]
       interval: 5s
       timeout: 5s
       retries: 3
@@ -50,20 +50,19 @@ services:
       - ./.secrets/noetl-service-account.json:/opt/noetl/secrets/application_default_credentials.json
       - ./data:/opt/noetl/data
     environment:
-      TZ: America/Chicago
-      LOG_LEVEL: INFO
-      PYTHONPATH: "/opt/noetl"
-      NOETL_DATA_DIR: "/opt/noetl/data"
-      POSTGRES_USER: demo
-      POSTGRES_PASSWORD: demo
-      POSTGRES_DB: demo_noetl
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
-      POSTGRES_SCHEMA: public
-      NOETL_USER: noetl
-      NOETL_PASSWORD: noetl
-      NOETL_SCHEMA: noetl
-      NOETL_SERVER_URL: http://development-api:8080
+      TZ: ${TZ}
+      LOG_LEVEL: ${LOG_LEVEL}
+      PYTHONPATH: ${PYTHONPATH}
+      NOETL_DATA_DIR: ${NOETL_DATA_DIR}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA}
+      NOETL_USER: ${NOETL_USER}
+      NOETL_PASSWORD: ${NOETL_PASSWORD}
+      NOETL_SCHEMA: ${NOETL_SCHEMA}
       GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
     networks:
       - noetl-network
@@ -112,8 +111,8 @@ services:
       - ./data/jupyter:/home/jovyan/data
       - .secrets/noetl-demo.json:/home/jovyan/secrets/noetl-demo.json
     environment:
-      - JUPYTER_TOKEN=noetl
-      - TZ=America/Chicago
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN}
+      - TZ=${TZ}
       - GOOGLE_APPLICATION_CREDENTIALS=/home/jovyan/secrets/noetl-demo.json
     networks:
       - noetl-network

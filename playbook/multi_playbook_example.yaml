@@ -1,7 +1,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: multi_playbook_example
-path: workflows/examples/multi_playbook_example
+path: examples/multi_playbook_example
 
 workload:
   jobId: "{{ job.uuid }}"
@@ -30,12 +30,11 @@ workflow:
 
   - step: run_secrets_test
     desc: "Run the secrets_test playbook"
-    call:
-      type: playbook
-      path: workflows/examples/secrets_test
-      with:
-        secret_name: "{{ workload.secret_name }}"
-        GOOGLE_CLOUD_PROJECT: "{{ workload.GOOGLE_CLOUD_PROJECT }}"
+    type: playbook
+    path: examples/secrets_test
+    with:
+      secret_name: "{{ workload.secret_name }}"
+      GOOGLE_CLOUD_PROJECT: "{{ workload.GOOGLE_CLOUD_PROJECT }}"
     next:
       - step: run_weather_example
         with:
@@ -43,14 +42,13 @@ workflow:
 
   - step: run_weather_example
     desc: "Run the weather_example playbook"
-    call:
-      type: playbook
-      path: workflows/examples/weather_example
-      with:
-        cities: "{{ workload.cities }}"
-        base_url: "{{ workload.base_url }}"
-        temperature_threshold: "{{ workload.temperature_threshold }}"
-        secret_from_previous: "{{ secret_result }}"
+    type: playbook
+    path: examples/weather_example
+    with:
+      cities: "{{ workload.cities }}"
+      base_url: "{{ workload.base_url }}"
+      temperature_threshold: "{{ workload.temperature_threshold }}"
+      secret_from_previous: "{{ secret_result }}"
     next:
       - step: run_load_dict_test
         with:
@@ -58,30 +56,28 @@ workflow:
 
   - step: run_load_dict_test
     desc: "Run the load_dict_test playbook"
-    call:
-      type: playbook
-      path: workflows/data/load_dict_test
-      with:
-        baseFilePath: "{{ workload.baseFilePath }}"
-        bucket: "{{ workload.bucket }}"
-        pg_host: "{{ workload.pg_host }}"
-        pg_port: "{{ workload.pg_port }}"
-        pg_user: "{{ workload.pg_user }}"
-        pg_password: "{{ workload.pg_password }}"
-        pg_db: "{{ workload.pg_db }}"
-        weather_data: "{{ weather_result }}"
+    type: playbook
+    path: examples/load_dict_test
+    with:
+      baseFilePath: "{{ workload.baseFilePath }}"
+      bucket: "{{ workload.bucket }}"
+      pg_host: "{{ workload.pg_host }}"
+      pg_port: "{{ workload.pg_port }}"
+      pg_user: "{{ workload.pg_user }}"
+      pg_password: "{{ workload.pg_password }}"
+      pg_db: "{{ workload.pg_db }}"
+      weather_data: "{{ weather_result }}"
     next:
       - step: store_results
 
   - step: store_results
     desc: "Store the results from all playbooks"
-    call:
-      type: workbook
-      name: store_results_task
-      with:
-        secrets_result: "{{ run_secrets_test }}"
-        weather_result: "{{ run_weather_example }}"
-        load_dict_result: "{{ run_load_dict_test }}"
+    type: workbook
+    task: store_results_task
+    with:
+      secrets_result: "{{ run_secrets_test }}"
+      weather_result: "{{ run_weather_example }}"
+      load_dict_result: "{{ run_load_dict_test }}"
     next:
       - step: end
 
@@ -122,7 +118,7 @@ workbook:
               conn.execute("INSTALL json")
               conn.execute("LOAD json")
               
-              # Attach PostgreSQL database
+              # Attach Postgres database
               attach_query = f"ATTACH 'dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}' AS postgres_db (TYPE postgres)"
               try:
                   conn.execute(attach_query)
@@ -150,7 +146,7 @@ workbook:
                   ) VALUES (?, ?, ?, ?, ?)
               """, [current_time_ms, execution_id, secrets_json, weather_json, load_dict_json])
               
-              # Create PostgreSQL table
+              # Create Postgres table
               conn.execute("""
                   CREATE TABLE IF NOT EXISTS postgres_db.playbook_results (
                       id BIGINT PRIMARY KEY,
@@ -162,7 +158,7 @@ workbook:
                   )
               """)
               
-              # Insert into PostgreSQL table
+              # Insert into Postgres table
               conn.execute("""
                   INSERT INTO postgres_db.playbook_results (
                       id, execution_id, secrets_result, weather_result, load_dict_result

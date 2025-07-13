@@ -16,7 +16,7 @@ Each example has:
 
 This example fetches weather data for a city and checks if the temperature exceeds a threshold.
 
-- **Playbook**: [weather.yaml](../playbook/weather.yaml)
+- **Playbook**: [weather.yaml](../playbook/weather_example.yaml)
 - **Documentation**: [Weather Example Documentation](examples/weather_example.md)
 
 **Key Features:**
@@ -29,7 +29,7 @@ This example fetches weather data for a city and checks if the temperature excee
 
 This example demonstrates an advanced weather data workflow that iterates over multiple cities, fetches weather data for each, and processes city districts.
 
-- **Playbook**: [weather_example.yaml](../playbook/weather_example.yaml)
+- **Playbook**: [weather_example.yaml](../playbook/weather_loop_example.yaml)
 - **Documentation**: [Weather Example with Loops Documentation](examples/weather_loop_example.md)
 
 **Key Features:**
@@ -132,8 +132,8 @@ This example demonstrates how to integrate Google Cloud Storage, DuckDB, and Pos
 
 | Category | Example | Playbook | Documentation |
 |----------|---------|----------|--------------|
-| **Basic** | Weather API | [weather.yaml](../playbook/weather.yaml) | [Weather Example](examples/weather_example.md) |
-| **Basic** | Weather with Loops | [weather_example.yaml](../playbook/weather_example.yaml) | [Weather Example with Loops](examples/weather_loop_example.md) |
+| **Basic** | Weather API | [weather.yaml](../playbook/weather_example.yaml) | [Weather Example](examples/weather_example.md) |
+| **Basic** | Weather with Loops | [weather_example.yaml](../playbook/weather_loop_example.yaml) | [Weather Example with Loops](examples/weather_loop_example.md) |
 | **Database** | Postres JSONB | [postgres_test.yaml](../playbook/postgres_test.yaml) | [Postres JSONB Example](examples/postgres_test_example.md) |
 | **Database** | DuckDB Dictionary Loading | [load_dict_test.yaml](../playbook/load_dict_test.yaml) | [DuckDB Dictionary Loading Example](examples/load_dict_test_example.md) |
 | **Cloud** | GCS Secrets | [gcs_secrets_example.yaml](../playbook/gcs_secrets_example.yaml) | [GCS Secrets Example](examples/gcs_secrets_example.md) |

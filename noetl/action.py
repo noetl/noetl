@@ -9,18 +9,15 @@ from jinja2 import Environment
 from noetl.common import render_template, setup_logger
 from noetl.common import DateTimeEncoder
 
-# Make duckdb import optional
 try:
     import duckdb
     DUCKDB_AVAILABLE = True
 except ImportError:
     DUCKDB_AVAILABLE = False
 
-
-
 logger = setup_logger(__name__, include_location=True)
 
-def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, mock_mode: bool = False, log_event_callback=None) -> Dict:
+def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
     Execute an HTTP task.
 
@@ -28,7 +25,7 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
         task_config: The task configuration
         context: The context to use for rendering templates
         jinja_env: The Jinja2 environment for template rendering
-        mock_mode: Whether to use mock mode for testing
+        task_with: The rendered 'with' parameters dictionary
         log_event_callback: A callback function to log events
 
     Returns:
@@ -52,106 +49,62 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
             event_id = log_event_callback(
                 'task_start', task_id, task_name, 'http',
                 'in_progress', 0, context, None,
-                {'method': method, 'endpoint': endpoint}, None
+                {'method': method, 'endpoint': endpoint, 'with_params': task_with}, None
             )
 
-        if mock_mode:
-            response_data = {"data": "mocked_response", "status": "success"}
+        headers = render_template(jinja_env, task_config.get('headers', {}), context)
+        timeout = task_config.get('timeout', 30)
 
-            if 'forecast' in endpoint:
-                temp_data = [20, 22, 25, 28, 30, 26, 24]
-                max_temp = max(temp_data)
-                temp_threshold = context.get('temperature_threshold', 25)
-                alert = max_temp > temp_threshold
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                if method == 'GET':
+                    response = client.get(endpoint, params=params, headers=headers)
+                elif method == 'POST':
+                    response = client.post(endpoint, json=payload, params=params, headers=headers)
+                elif method == 'PUT':
+                    response = client.put(endpoint, json=payload, params=params, headers=headers)
+                elif method == 'DELETE':
+                    response = client.delete(endpoint, params=params, headers=headers)
+                elif method == 'PATCH':
+                    response = client.patch(endpoint, json=payload, params=params, headers=headers)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+
+                response.raise_for_status()
+
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    response_data = {"text": response.text}
 
                 response_data = {
-                    "data": {
-                        "hourly": {
-                            "temperature_2m": temp_data,
-                            "precipitation_probability": [0, 10, 20, 30, 20, 10, 0],
-                            "windspeed_10m": [10, 12, 15, 18, 22, 19, 14]
-                        }
-                    },
-                    "alert": alert,
-                    "max_temp": max_temp
-                }
-            elif 'districts' in endpoint:
-                response_data = {
-                    "data": [
-                        {"name": "Downtown", "population": 50000},
-                        {"name": "North", "population": 25000},
-                        {"name": "East", "population": 30000},
-                        {"name": "Mordor", "population": 666}
-                    ]
+                    "data": response_data,
+                    "status_code": response.status_code,
+                    "headers": dict(response.headers)
                 }
 
-            end_time = datetime.datetime.now()
-            duration = (end_time - start_time).total_seconds()
+                end_time = datetime.datetime.now()
+                duration = (end_time - start_time).total_seconds()
 
-            if log_event_callback:
-                log_event_callback(
-                    'task_complete', task_id, task_name, 'http',
-                    'success', duration, context, response_data,
-                    {'method': method, 'endpoint': endpoint}, event_id
-                )
+                if log_event_callback:
+                    log_event_callback(
+                        'task_complete', task_id, task_name, 'http',
+                        'success', duration, context, response_data,
+                        {'method': method, 'endpoint': endpoint, 'with_params': task_with}, event_id
+                    )
 
-            return {
-                'id': task_id,
-                'status': 'success',
-                'data': response_data
-            }
-        else:
-            headers = render_template(jinja_env, task_config.get('headers', {}), context)
-            timeout = task_config.get('timeout', 30)
+                return {
+                    'id': task_id,
+                    'status': 'success',
+                    'data': response_data
+                }
 
-            try:
-                with httpx.Client(timeout=timeout) as client:
-                    if method == 'GET':
-                        response = client.get(endpoint, params=params, headers=headers)
-                    elif method == 'POST':
-                        response = client.post(endpoint, json=payload, params=params, headers=headers)
-                    elif method == 'PUT':
-                        response = client.put(endpoint, json=payload, params=params, headers=headers)
-                    elif method == 'DELETE':
-                        response = client.delete(endpoint, params=params, headers=headers)
-                    elif method == 'PATCH':
-                        response = client.patch(endpoint, json=payload, params=params, headers=headers)
-                    else:
-                        raise ValueError(f"Unsupported HTTP method: {method}")
-                    response.raise_for_status()
-                    try:
-                        response_data = response.json()
-                    except ValueError:
-                        response_data = {"text": response.text}
-
-                    response_data = {
-                        "data": response_data,
-                        "status_code": response.status_code,
-                        "headers": dict(response.headers)
-                    }
-
-                    end_time = datetime.datetime.now()
-                    duration = (end_time - start_time).total_seconds()
-
-                    if log_event_callback:
-                        log_event_callback(
-                            'task_complete', task_id, task_name, 'http',
-                            'success', duration, context, response_data,
-                            {'method': method, 'endpoint': endpoint}, event_id
-                        )
-
-                    return {
-                        'id': task_id,
-                        'status': 'success',
-                        'data': response_data
-                    }
-
-            except httpx.HTTPStatusError as e:
-                error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
-                raise Exception(error_msg)
-            except httpx.RequestError as e:
-                error_msg = f"Request error: {str(e)}"
-                raise Exception(error_msg)
+        except httpx.HTTPStatusError as e:
+            error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
+            raise Exception(error_msg)
+        except httpx.RequestError as e:
+            error_msg = f"Request error: {str(e)}"
+            raise Exception(error_msg)
 
     except Exception as e:
         error_msg = str(e)
@@ -163,7 +116,7 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
             log_event_callback(
                 'task_error', task_id, task_name, 'http',
                 'error', duration, context, None,
-                {'error': error_msg}, None
+                {'error': error_msg, 'with_params': task_with}, None
             )
 
         return {
@@ -172,7 +125,7 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
             'error': error_msg
         }
 
-def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment, log_event_callback=None) -> Dict:
+def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
     Execute a Python task.
 
@@ -180,6 +133,7 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
         task_config: The task configuration
         context: The context for rendering templates
         jinja_env: The Jinja2 environment for template rendering
+        task_with: The rendered 'with' parameters dictionary
         log_event_callback: A callback function to log events
 
     Returns:
@@ -192,7 +146,6 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
 
     try:
         code = task_config.get('code', '')
-        task_with = render_template(jinja_env, task_config.get('with', {}), context)
 
         event_id = None
         if log_event_callback:
@@ -235,7 +188,7 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
                 log_event_callback(
                     'task_error', task_id, task_name, 'python',
                     'error', duration, context, None,
-                    {'error': error_msg}, event_id
+                    {'error': error_msg, 'with_params': task_with}, event_id
                 )
 
             return {
@@ -254,7 +207,7 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
             log_event_callback(
                 'task_error', task_id, task_name, 'python',
                 'error', duration, context, None,
-                {'error': error_msg}, None
+                {'error': error_msg, 'with_params': task_with}, None
             )
 
         return {
@@ -263,9 +216,7 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
             'error': error_msg
         }
 
-
-
-def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment, log_event_callback=None) -> Dict:
+def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
     Execute a DuckDB task.
 
@@ -273,6 +224,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
         task_config: The task configuration
         context: The context for rendering templates
         jinja_env: The Jinja2 environment for template rendering
+        task_with: The rendered 'with' parameters dictionary
         log_event_callback: A callback function to log events
 
     Returns:
@@ -282,14 +234,14 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
     if not DUCKDB_AVAILABLE:
         task_id = str(uuid.uuid4())
         task_name = task_config.get('task', 'duckdb_task')
-        error_msg = "DuckDB is not installed. Please install it with 'pip install noetl[duckdb]' to use DuckDB tasks."
+        error_msg = "DuckDB is not installed. Install it with 'pip install noetl[duckdb]'."
         logger.error(error_msg)
 
         if log_event_callback:
             log_event_callback(
                 'task_error', task_id, task_name, 'duckdb',
                 'error', 0, context, None,
-                {'error': error_msg}, None
+                {'error': error_msg, 'with_params': task_with}, None
             )
 
         return {
@@ -298,7 +250,6 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             'error': error_msg
         }
 
-
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'duckdb_task')
     start_time = datetime.datetime.now()
@@ -306,7 +257,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
     try:
         commands = task_config.get('command', task_config.get('commands', []))
         if isinstance(commands, str):
-            commands_rendered = render_template(jinja_env, commands, {**context, **task_config.get('with', {})})
+            commands_rendered = render_template(jinja_env, commands, {**context, **task_with})
             cmd_lines = []
             for line in commands_rendered.split('\n'):
                 line = line.strip()
@@ -314,7 +265,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                     cmd_lines.append(line)
             commands_text = ' '.join(cmd_lines)
             commands = [cmd.strip() for cmd in commands_text.split(';') if cmd.strip()]
-        task_with = render_template(jinja_env, task_config.get('with', {}), context)
+
         bucket = task_with.get('bucket', context.get('bucket', ''))
         blob_path = task_with.get('blob', '')
         file_path = task_with.get('file', '')
@@ -337,8 +288,10 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
         os.makedirs(os.path.dirname(duckdb_file), exist_ok=True)
         logger.info(f"Connecting to DuckDB at {duckdb_file} for execution {execution_id}")
         duckdb_con = duckdb.connect(duckdb_file)
+
         db_type = task_with.get('db_type', 'postgres')
         db_alias = task_with.get('db_alias', 'postgres_db')
+
         if db_type.lower() == 'postgres':
             logger.info("Installing and loading Postgres extension")
             duckdb_con.execute("INSTALL postgres;")
@@ -351,22 +304,25 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             logger.info("SQLite support is built-in to DuckDB, no extension needed")
         else:
             logger.info(f"Using custom database type: {db_type}, no specific extension loaded")
+
         duckdb_con.execute("INSTALL httpfs;")
         duckdb_con.execute("LOAD httpfs;")
+
         key_id = task_with.get('key_id')
         secret_key = task_with.get('secret_key')
         if key_id and secret_key:
             logger.info("Setting up S3 credentials for GCS operations")
             try:
                 duckdb_con.execute(f"""
-                    CREATE OR REPLACE CHAIN gcs_chain (
+                    CREATE OR REPLACE SECRET gcs_secret (
                         TYPE S3,
-                        ENDPOINT 'storage.googleapis.com',
-                        REGION 'auto',
-                        URL_STYLE 'path',
-                        USE_SSL true,
+                        PROVIDER GCS,
                         KEY_ID '{key_id}',
-                        SECRET_KEY '{secret_key}'
+                        SECRET '{secret_key}',
+                        REGION 'auto',
+                        ENDPOINT 'storage.googleapis.com',
+                        URL_STYLE 'path',
+                        USE_SSL true
                     );
                 """)
                 logger.info("Successfully created GCS configuration chain")
@@ -421,12 +377,14 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             if not conn_string:
                 logger.warning(f"No connection string provided for database type: {db_type}. Using in-memory DuckDB.")
                 conn_string = "memory"
+
         read_only = task_with.get('db_read_only', False)
         attach_options = ""
         if read_only:
             attach_options += " (READ_ONLY)"
         elif db_type.lower() in ['postgres', 'mysql']:
             attach_options += f" (TYPE {db_type.lower()})"
+
         try:
             test_query = f"SELECT 1 FROM {db_alias}.sqlite_master LIMIT 1" if db_type.lower() == 'sqlite' else f"SELECT 1 FROM {db_alias}.information_schema.tables LIMIT 1"
             duckdb_con.execute(test_query)
@@ -440,6 +398,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             except Exception as attach_error:
                 logger.error(f"Error attaching database: {attach_error}.")
                 raise
+
         results = {}
         if commands:
             for i, cmd in enumerate(commands):
@@ -450,7 +409,9 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                         cmd = re.sub(r"{{[^}]*\|\s*default\(['\"]([^'\"]*)['\"].*?}}", r"\1", cmd)
                         cmd = re.sub(r"default\('([^']*)'\)", r'default("\1")', cmd)
                         cmd = re.sub(r"(HOST|DATABASE|USER|PASSWORD|ENDPOINT|REGION|URL_STYLE|KEY_ID|SECRET_KEY) '([^']*)'", r'\1 "\2"', cmd)
+
                 logger.info(f"Executing DuckDB command: {cmd}")
+
                 if cmd.strip().upper().startswith("ATTACH"):
                     try:
                         attach_parts = cmd.strip().split(" AS ")
@@ -509,6 +470,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                 else:
                     full_path = file_path if file_path else os.path.join(duckdb_data_dir, blob_path)
                     logger.info(f"Reading from local file: {full_path}")
+
                 header = task_with.get('header', False)
                 header_option = "TRUE" if header else "FALSE"
 
@@ -519,6 +481,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
 
                 row_count = duckdb_con.execute(f"SELECT COUNT(*) FROM {temp_table}").fetchone()[0]
                 logger.info(f"Read {row_count} rows from {full_path} into {temp_table}")
+
                 schema_info = duckdb_con.execute(f"DESCRIBE {temp_table}").fetchall()
                 columns = []
                 for col_info in schema_info:
@@ -558,12 +521,15 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                     "rows_inserted": pg_row_count,
                     "target_table": table
                 }
+
         duckdb_con.close()
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
+
         try:
             json_results = json.dumps(results, cls=DateTimeEncoder)
             parsed_results = json.loads(json_results)
+
             if log_event_callback:
                 log_event_callback(
                     'task_complete', task_id, task_name, 'duckdb',
@@ -629,7 +595,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             log_event_callback(
                 'task_error', task_id, task_name, 'duckdb',
                 'error', duration, context, None,
-                {'error': error_msg}, None
+                {'error': error_msg, 'with_params': task_with}, None
             )
 
         return {
@@ -638,7 +604,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
             'error': error_msg
         }
 
-def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environment, log_event_callback=None) -> Dict:
+def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
     Execute a Postgres task.
 
@@ -646,6 +612,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         task_config: The task configuration
         context: The context for rendering templates
         jinja_env: The Jinja2 environment for template rendering
+        task_with: The rendered 'with' parameters dictionary
         log_event_callback: A callback function to log events
 
     Returns:
@@ -658,7 +625,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     try:
         commands = task_config.get('command', task_config.get('commands', []))
         if isinstance(commands, str):
-            commands_rendered = render_template(jinja_env, commands, {**context, **task_config.get('with', {})})
+            commands_rendered = render_template(jinja_env, commands, {**context, **task_with})
             commands = []
             current_command = []
             dollar_quote = False
@@ -701,8 +668,6 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
             if current_cmd:
                 commands.append(current_cmd)
 
-        task_with = render_template(jinja_env, task_config.get('with', {}), context)
-
         event_id = None
         if log_event_callback:
             event_id = log_event_callback(
@@ -716,6 +681,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         pg_user_raw = task_with.get('db_user', os.environ.get('POSTGRES_USER', 'noetl'))
         pg_password_raw = task_with.get('db_password', os.environ.get('POSTGRES_PASSWORD', 'noetl'))
         pg_db_raw = task_with.get('db_name', os.environ.get('POSTGRES_DB', 'noetl'))
+
         pg_host = render_template(jinja_env, pg_host_raw, context) if isinstance(pg_host_raw, str) and '{{' in pg_host_raw else pg_host_raw
         pg_port = render_template(jinja_env, pg_port_raw, context) if isinstance(pg_port_raw, str) and '{{' in pg_port_raw else pg_port_raw
         pg_user = render_template(jinja_env, pg_user_raw, context) if isinstance(pg_user_raw, str) and '{{' in pg_user_raw else pg_user_raw
@@ -785,6 +751,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
                         "status": "error",
                         "message": str(cmd_error)
                     }
+
         conn.close()
 
         end_time = datetime.datetime.now()
@@ -813,7 +780,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
             log_event_callback(
                 'task_error', task_id, task_name, 'postgres',
                 'error', duration, context, None,
-                {'error': error_msg}, None
+                {'error': error_msg, 'with_params': task_with}, None
             )
 
         return {
@@ -822,9 +789,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
             'error': error_msg
         }
 
-
-
-def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_event_callback=None) -> Dict:
+def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, task_with: Dict, log_event_callback=None) -> Dict:
     """
     Execute a secret's task.
 
@@ -832,6 +797,7 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_e
         task_config: The task configuration
         context: The context to use for rendering templates
         secret_manager: The SecretManager instance
+        task_with: The rendered 'with' parameters dictionary
         log_event_callback: A callback function to log events
 
     Returns:
@@ -840,6 +806,9 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_e
     def log_event_wrapper(event_type, task_id, task_name, node_type, status, duration,
                           context, output_result, metadata, parent_event_id):
         if log_event_callback:
+            if metadata is None:
+                metadata = {}
+            metadata['with_params'] = task_with
             return log_event_callback(
                 event_type, task_id, task_name, node_type,
                 status, duration, context, output_result,
@@ -850,7 +819,7 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_e
     return secret_manager.get_secret(task_config, context, log_event_wrapper)
 
 def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: Environment,
-                 secret_manager=None, mock_mode: bool = False, log_event_callback=None) -> Dict:
+                 secret_manager=None, log_event_callback=None) -> Dict:
     """
     Execute a task type.
 
@@ -860,7 +829,6 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         context: The context for rendering templates
         jinja_env: The Jinja2 environment for template rendering
         secret_manager: The SecretManager instance
-        mock_mode: Flag to use mock mode for testing
         log_event_callback: A callback function to log events
 
     Returns:
@@ -887,28 +855,27 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
     task_type = task_config.get('type', 'http')
     task_id = str(uuid.uuid4())
     start_time = datetime.datetime.now()
+    task_with = {}
+    if 'with' in task_config:
+        task_with = render_template(jinja_env, task_config.get('with'), context)
+        context.update(task_with)
 
     event_id = None
     if log_event_callback:
         event_id = log_event_callback(
             'task_execute', task_id, task_name, f'task.{task_type}',
             'in_progress', 0, context, None,
-            {'task_type': task_type}, None
+            {'task_type': task_type, 'with_params': task_with}, None
         )
 
-    task_with = {}
-    if 'with' in task_config:
-        task_with = render_template(jinja_env, task_config.get('with'), context)
-        context.update(task_with)
-
     if task_type == 'http':
-        result = execute_http_task(task_config, context, jinja_env, mock_mode, log_event_callback)
+        result = execute_http_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'python':
-        result = execute_python_task(task_config, context, jinja_env, log_event_callback)
+        result = execute_python_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'duckdb':
-        result = execute_duckdb_task(task_config, context, jinja_env, log_event_callback)
+        result = execute_duckdb_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'postgres':
-        result = execute_postgres_task(task_config, context, jinja_env, log_event_callback)
+        result = execute_postgres_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'secrets':
         if not secret_manager:
             error_msg = "SecretManager is required for secrets tasks."
@@ -917,7 +884,7 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
                 log_event_callback(
                     'task_error', task_id, task_name, f'task.{task_type}',
                     'error', 0, context, None,
-                    {'error': error_msg}, event_id
+                    {'error': error_msg, 'with_params': task_with}, event_id
                 )
 
             return {
@@ -926,7 +893,7 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
                 'error': error_msg
             }
 
-        result = execute_secrets_task(task_config, context, secret_manager, log_event_callback)
+        result = execute_secrets_task(task_config, context, secret_manager, task_with, log_event_callback)
     else:
         error_msg = f"Unsupported task type: {task_type}"
 
@@ -934,7 +901,7 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
             log_event_callback(
                 'task_error', task_id, task_name, f'task.{task_type}',
                 'error', 0, context, None,
-                {'error': error_msg}, event_id
+                {'error': error_msg, 'with_params': task_with}, event_id
             )
 
         result = {
@@ -959,7 +926,7 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         log_event_callback(
             'task_complete', task_id, task_name, f'task.{task_type}',
             result['status'], duration, context, result.get('data'),
-            {'task_type': task_type}, event_id
+            {'task_type': task_type, 'with_params': task_with}, event_id
         )
 
     return result

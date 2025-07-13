@@ -4,7 +4,6 @@ import uuid
 import datetime
 import tempfile
 import httpx
-import psycopg
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
 from noetl.common import render_template, setup_logger, deep_merge
@@ -26,10 +25,48 @@ class Broker:
         self.event_reporting_enabled = True
         self.validate_server_url()
 
+    def has_log_event(self):
+        """
+        Check if the agent has a log_event method.
+
+        Returns:
+            bool: True if the agent has a log_event method, False otherwise
+        """
+        return hasattr(self.agent, 'log_event') and callable(getattr(self.agent, 'log_event'))
+
+    def write_event_log(self, event_type, node_id, node_name, node_type, status, duration,
+                        input_context, output_result, metadata=None, parent_event_id=None, **kwargs):
+        """
+        The call of log_event on the agent if it exists.
+
+        Args:
+            event_type: The type of event
+            node_id: The ID of the node
+            node_name: The name of the node
+            node_type: The type of node
+            status: The status of the event
+            duration: The duration of the event
+            input_context: The input context
+            output_result: The output result
+            metadata: metadata
+            parent_event_id: The ID of the parent event
+            **kwargs: keyword arguments to log_event
+
+        Returns:
+            The event ID if log_event exists, None otherwise
+        """
+        if self.has_log_event():
+            return self.agent.log_event(
+                event_type, node_id, node_name, node_type, status, duration,
+                input_context, output_result, metadata, parent_event_id, **kwargs
+            )
+        else:
+            logger.warning(f"Agent does not have log_event method. Event type: {event_type}, Node: {node_name}")
+            return None
+
     def validate_server_url(self):
         """
-        Validates the server URL.
-        Disables event reporting if the server is not reachable.
+        Validate the server URL and disable event reporting if the server is not reachable.
         """
         if not self.server_url:
             logger.warning("No server URL provided, disabling event reporting")
@@ -154,7 +191,7 @@ class Broker:
                 step_id, step_name, None,
                 'error', None, error_msg
             )
-            self.agent.log_event(
+            self.write_event_log(
                 'step_error', step_id, step_name, 'step',
                 'error', 0, self.agent.get_context(), None,
                 {'error': error_msg}, None
@@ -179,7 +216,7 @@ class Broker:
                     self.agent.update_context(key, value)
 
         logger.debug(f"Executing step: context after update: {step_context}")
-        step_event = self.agent.log_event(
+        step_event = self.write_event_log(
             'step_start', step_id, step_name, 'step',
             'in_progress', 0, step_context, None,
             {'step_type': 'standard'}, None
@@ -199,23 +236,97 @@ class Broker:
             result = self.end_loop_step(step_config, step_context, step_id)
         elif 'loop' in step_config:
             result = self.execute_loop_step(step_config, step_context, step_id)
-        elif 'call' in step_config:
-            call_config = step_config['call']
-            task_name = call_config.get('name') or call_config.get('task')
-            call_type = call_config.get('type', 'workbook')
-            task_with = render_template(self.agent.jinja_env, call_config.get('with', {}), step_context)
-            task_context = {**step_context, **task_with}
+        else:
+            if 'call' in step_config:
+                call_config = step_config['call'].copy()
+                logger.debug(f"Using 'call' attribute with type: {call_config.get('type', 'workbook')}")
+                merged_fields = []
+                for key, value in step_config.items():
+                    if key != 'call' and key not in call_config:
+                        call_config[key] = value
+                        merged_fields.append(key)
+
+                if merged_fields:
+                    logger.debug(f"Merged fields from step into call: {', '.join(merged_fields)}")
+
+                task_name = call_config.get('name') or call_config.get('task')
+                call_type = call_config.get('type', 'workbook')
+                task_with = render_template(self.agent.jinja_env, call_config.get('with', {}), step_context)
+                task_context = {**step_context, **task_with}
+            else:
+                call_type = step_config.get('type', 'workbook')
+                logger.debug(f"Using direct 'type' attribute: {call_type}")
+
+                task_name = step_config.get('name') or step_config.get('task')
+                logger.debug(f"Extracted task_name: '{task_name}' from step_config: {step_config}")
+
+                if not task_name and 'next' in step_config and call_type == 'workbook':
+                    logger.debug(f"Step '{step_name}' appears to be a routing step with no task - treating as no-op")
+                    result = {
+                        'id': step_id,
+                        'status': 'success',
+                        'data': {'message': f'Routing step {step_name} completed'}
+                    }
+                    self.agent.save_step_result(
+                        step_id, step_name, None,
+                        result.get('status', 'success'), result.get('data'), result.get('error')
+                    )
+
+                    self.agent.update_context(step_name, result.get('data'))
+                    self.agent.update_context(step_name + '.result', result.get('data'))
+                    self.agent.update_context(step_name + '.status', result.get('status'))
+                    self.agent.update_context('result', result.get('data'))
+
+                    end_time = datetime.datetime.now()
+                    duration = (end_time - start_time).total_seconds()
+                    self.write_event_log(
+                        'step_complete', step_id, step_name, 'step',
+                        result['status'], duration, step_context, result.get('data'),
+                        {'step_type': 'routing'}, step_event
+                    )
+
+                    if self.server_url and self.event_reporting_enabled:
+                        report_event({
+                            'event_type': 'step_complete',
+                            'execution_id': self.agent.execution_id,
+                            'step_id': step_id,
+                            'step_name': step_name,
+                            'status': result['status'],
+                            'duration': duration,
+                            'timestamp': datetime.datetime.now().isoformat(),
+                            'result': result.get('data'),
+                            'error': result.get('error')
+                        }, self.server_url)
+
+                    return result
+
+                task_with = render_template(self.agent.jinja_env, step_config.get('with', {}), step_context)
+                task_context = {**step_context, **task_with}
+                call_config = step_config
 
             if call_type == 'workbook':
                 task_config = self.agent.find_task(task_name)
+                logger.debug(f"Found task_config for '{task_name}': {task_config}")
+
+                if task_config:
+                    execution_task_config = task_config.copy()
+                    merged_with = task_config.get('with', {}).copy()
+                    step_with_params = step_config.get('with', {})
+                    merged_with.update(step_with_params)
+                    execution_task_config['with'] = merged_with
+                    logger.debug(f"Task config for execution: {execution_task_config}")
+                    logger.debug(f"Merged with parameters: step_with={step_with_params}, task_with={task_config.get('with', {})}, merged={merged_with}")
+                else:
+                    execution_task_config = {}
+                    logger.error(f"No task config found for task_name: '{task_name}'")
+
                 result = execute_task(
-                    task_config, 
-                    task_name, 
-                    task_context, 
+                    execution_task_config,
+                    task_name,
+                    step_context,
                     self.agent.jinja_env,
                     self.agent.secret_manager,
-                    self.agent.mock_mode,
-                    self.agent.log_event
+                    self.write_event_log if self.has_log_event() else None
                 )
             elif call_type == 'playbook':
                 path = call_config.get('path')
@@ -248,7 +359,7 @@ class Broker:
                     'type': call_type,
                     'with': call_config.get('with', {})
                 }
-                fields = ['name', 'params', 'commands', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name']
+                fields = ['name', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name']
                 task_config.update({
                     field: call_config.get(field)
                     for field in fields
@@ -261,8 +372,7 @@ class Broker:
                     task_context,
                     self.agent.jinja_env,
                     self.agent.secret_manager,
-                    self.agent.mock_mode,
-                    self.agent.log_event
+                    self.write_event_log if self.has_log_event() else None
                 )
             else:
                 error_msg = f"Unsupported call type: {call_type}"
@@ -282,20 +392,10 @@ class Broker:
             self.agent.update_context(step_name + '.result', result.get('data'))
             self.agent.update_context(step_name + '.status', result.get('status'))
             self.agent.update_context('result', result.get('data'))
-        else:
-            self.agent.save_step_result(
-                step_id, step_name, None,
-                'success', {}, None
-            )
-            result = {
-                'id': step_id,
-                'status': 'success',
-                'data': {}
-            }
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
-        self.agent.log_event(
+        self.write_event_log(
             'step_complete', step_id, step_name, 'step',
             result['status'], duration, step_context, result.get('data'),
             {'step_type': 'standard'}, step_event
@@ -336,7 +436,7 @@ class Broker:
                 step_id, step_config.get('step', 'end_loop'), None,
                 'error', None, error_msg
             )
-            self.agent.log_event(
+            self.write_event_log(
                 'step_error', step_id, step_config.get('step', 'end_loop'), 'step.end_loop',
                 'error', 0, context, None,
                 {'error': error_msg}, None
@@ -349,7 +449,7 @@ class Broker:
             }
 
         logger.info(f"Processing end_loop for: {loop_name}")
-        end_loop_event = self.agent.log_event(
+        end_loop_event = self.write_event_log(
             'end_loop_start', step_id, step_config.get('step', 'end_loop'), 'step.end_loop',
             'in_progress', 0, context, None,
             {'loop_name': loop_name}, None
@@ -372,7 +472,7 @@ class Broker:
                 step_id, step_config.get('step', 'end_loop'), None,
                 'error', None, error_msg
             )
-            self.agent.log_event(
+            self.write_event_log(
                 'end_loop_error', step_id, step_config.get('step', 'end_loop'), 'step.end_loop',
                 'error', 0, context, None,
                 {'error': error_msg, 'loop_name': loop_name}, end_loop_event
@@ -401,7 +501,7 @@ class Broker:
         )
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
-        self.agent.log_event(
+        self.write_event_log(
             'end_loop_complete', step_id, step_config.get('step', 'end_loop'), 'step.end_loop',
             'success', duration, context, aggregated_results,
             {'loop_name': loop_name}, end_loop_event
@@ -446,7 +546,7 @@ class Broker:
                 step_id, step_config.get('step', 'loop'), None,
                 'error', None, error_msg
             )
-            self.agent.log_event(
+            self.write_event_log(
                 'step_error', step_id, step_config.get('step', 'loop'), 'step.loop',
                 'error', 0, context, None,
                 {'error': error_msg}, None
@@ -471,7 +571,7 @@ class Broker:
                 step_id, step_config.get('step', 'loop'), None,
                 'error', None, error_msg
             )
-            self.agent.log_event(
+            self.write_event_log(
                 'loop_error', step_id, step_config.get('step', 'loop'), 'step.loop',
                 'error', 0, context, None,
                 {'error': error_msg}, None
@@ -500,7 +600,7 @@ class Broker:
         logger.debug(f"Loop step iterator={iterator}, items={items}")
         loop_name = step_config.get('step', 'unnamed_loop')
         loop_id = str(uuid.uuid4())
-        loop_start_event = self.agent.log_event(
+        loop_start_event = self.write_event_log(
             'loop_start', loop_id, loop_name, 'step.loop',
             'in_progress', 0, context, None,
             {'item_count': len(items), 'iterator': iterator}, None,
@@ -528,7 +628,7 @@ class Broker:
             iter_context = dict(context)
             iter_context[iterator] = validate_dict(item)
 
-            iter_event = self.agent.log_event(
+            iter_event = self.write_event_log(
                 'loop_iteration', f"{loop_id}_{idx}", f"{loop_name}[{idx}]", 'iteration',
                 'in_progress', 0, context, None,
                 {'index': idx, 'item': item}, loop_start_event,
@@ -559,7 +659,7 @@ class Broker:
 
             if skip_item:
                 logger.info(f"Filtering out item {idx}")
-                self.agent.log_event(
+                self.write_event_log(
                     'loop_iteration_filtered', f"{loop_id}_{idx}", f"{loop_name}[{idx}]", 'iteration',
                     'filtered', 0, iter_context, None,
                     {'index': idx, 'filter': filter_expr}, iter_event
@@ -606,7 +706,7 @@ class Broker:
                     'status') == 'success' else None
 
             all_results.append(iter_results)
-            self.agent.log_event(
+            self.write_event_log(
                 'loop_iteration_complete', f"{loop_id}_{idx}", f"{loop_name}[{idx}]", 'iteration',
                 'success', 0, iter_context, iter_results,
                 {'index': idx, 'item': item}, iter_event,
@@ -636,7 +736,7 @@ class Broker:
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
 
-        self.agent.log_event(
+        self.write_event_log(
             'loop_complete', loop_id, loop_name, 'step.loop',
             'success', duration, context, all_results,
             {'item_count': len(items), 'processed_count': len(all_results)}, loop_start_event,
@@ -747,7 +847,7 @@ class Broker:
         """
         logger.info(f"Starting playbook: {self.agent.playbook.get('name', 'Unnamed')}")
         self.agent.update_context('execution_start', datetime.datetime.now().isoformat())
-        execution_start_event = self.agent.log_event(
+        execution_start_event = self.write_event_log(
             'execution_start', self.agent.execution_id, self.agent.playbook.get('name', 'Unnamed'),
             'playbook',
             'in_progress',
@@ -772,7 +872,7 @@ class Broker:
             step_config = self.agent.find_step(current_step)
             if not step_config:
                 logger.error(f"Step not found: {current_step}")
-                self.agent.log_event(
+                self.write_event_log(
                     'execution_error',
                     f"{self.agent.execution_id}_error", self.agent.playbook.get('name', 'Unnamed'),
                     'playbook',
@@ -797,7 +897,7 @@ class Broker:
 
             if step_result['status'] != 'success':
                 logger.error(f"Step failed: {current_step}, error: {step_result.get('error')}")
-                self.agent.log_event(
+                self.write_event_log(
                     'execution_error',
                     f"{self.agent.execution_id}_error", self.agent.playbook.get('name', 'Unnamed'),
                     'playbook',
@@ -833,7 +933,7 @@ class Broker:
                             condition = f"{ns[2]} (ml_selected)"
                             break
 
-                    self.agent.log_event(
+                    self.write_event_log(
                         'step_transition', f"{self.agent.execution_id}_transition_{next_step}",
                         f"transition_to_{next_step}", 'transition',
                         'success', 0, self.agent.context, None,
@@ -871,7 +971,7 @@ class Broker:
                     next_step = step_result['next_step']
                     logger.info(f"Using next_step from step result: {next_step}")
 
-                    self.agent.log_event(
+                    self.write_event_log(
                         'step_transition', f"{self.agent.execution_id}_transition_{next_step}",
                         f"transition_to_{next_step}", 'transition',
                         'success', 0, self.agent.context, None,
@@ -909,7 +1009,7 @@ class Broker:
 
                     current_step, step_with, condition = next_steps[0]
 
-                self.agent.log_event(
+                self.write_event_log(
                     'step_transition', f"{self.agent.execution_id}_transition_{current_step}",
                     f"transition_to_{current_step}", 'transition',
                     'success', 0, self.agent.context, None,
@@ -945,7 +1045,7 @@ class Broker:
         execution_duration = (datetime.datetime.now() - datetime.datetime.fromisoformat(
             self.agent.context.get('execution_start'))).total_seconds()
 
-        self.agent.log_event(
+        self.write_event_log(
             'execution_complete',
             f"{self.agent.execution_id}_complete", self.agent.playbook.get('name', 'Unnamed'),
             'playbook',

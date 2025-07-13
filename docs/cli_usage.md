@@ -54,19 +54,19 @@ Examples:
 
 ```bash
 # Basic execution
-noetl agent -f ./playbooks/weather_example.yaml
+noetl agent -f ./playbooks/weather_loop_example.yaml
 
 # With debug logging
-noetl agent -f ./playbooks/weather_example.yaml --debug
+noetl agent -f ./playbooks/weather_loop_example.yaml --debug
 
 # With payload
-noetl agent -f ./playbooks/weather_example.yaml --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}'
+noetl agent -f ./playbooks/weather_loop_example.yaml --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}'
 
 # With input file
-noetl agent -f ./playbooks/weather_example.yaml --input ./data/input/payload.json
+noetl agent -f ./playbooks/weather_loop_example.yaml --input ./data/input/payload.json
 
 # Export execution data
-noetl agent -f ./playbooks/weather_example.yaml --export ./data/exports/execution_data.parquet
+noetl agent -f ./playbooks/weather_loop_example.yaml --export ./data/exports/execution_data.parquet
 ```
 
 ## Managing Playbooks in the Catalog
@@ -86,7 +86,7 @@ Options:
 
 Example:
 ```bash
-noetl playbook --register ./playbooks/weather_example.yaml --host localhost --port 8082
+noetl playbook --register ./playbooks/weather_loop_example.yaml --host localhost --port 8082
 ```
 
 ### Executing a Playbook from the Catalog

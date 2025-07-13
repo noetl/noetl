@@ -17,7 +17,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: gs_duckdb_postgres_example
-path: workflows/examples/gs_duckdb_postgres_example
+path: examples/gs_duckdb_postgres_example
 
 workload:
   jobId: "{{ job.uuid }}"
@@ -48,159 +48,144 @@ workflow:
 
   - step: setup_duckdb_infrastructure
     desc: "Create DuckDB directory structure and database file"
-    call:
-      type: workbook
-      name: setup_duckdb_task
+    type: workbook
+    task: setup_duckdb_task
     next:
       - step: get_gcs_key_id
 
   - step: get_gcs_key_id
     desc: "Retrieve GCS HMAC Key ID from Google Secret Manager"
-    call:
-      type: secrets
-      provider: google
-      secret_name: "{{ workload.gcs_key_id_secret }}"
+    type: secrets
+    provider: google
+    secret_name: "{{ workload.gcs_key_id_secret }}"
     next:
       - step: get_gcs_secret_key
 
   - step: get_gcs_secret_key
     desc: "Retrieve GCS HMAC Secret Key from Google Secret Manager"
-    call:
-      type: secrets
-      provider: google
-      secret_name: "{{ workload.gcs_secret_key_secret }}"
+    type: secrets
+    provider: google
+    secret_name: "{{ workload.gcs_secret_key_secret }}"
     next:
       - step: get_pg_password
 
   - step: get_pg_password
     desc: "Retrieve Postgres Password from Google Secret Manager"
-    call:
-      type: secrets
-      provider: google
-      secret_name: "{{ workload.pg_password_secret }}"
+    type: secrets
+    provider: google
+    secret_name: "{{ workload.pg_password_secret }}"
     next:
       - step: create_gcs_secret
 
   - step: create_gcs_secret
     desc: "Create Duckdb secret for GCS authentication"
-    call:
-      type: workbook
-      name: create_gcs_secret_task
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: create_gcs_secret_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: create_pg_secret
 
   - step: create_pg_secret
     desc: "Create Duckdb secret for Postgres authentication"
-    call:
-      type: workbook
-      name: create_pg_secret_task
-      with:
-        pg_user: "{{ workload.pg_user }}"
-        pg_password: "{{ get_pg_password.secret_value }}"
-        execution_id: "{{ workload.execution_id }}"
+    type: workbook
+    task: create_pg_secret_task
+    with:
+      pg_user: "{{ workload.pg_user }}"
+      pg_password: "{{ get_pg_password.secret_value }}"
+      execution_id: "{{ workload.execution_id }}"
     next:
       - step: test_gcs_credentials
 
 
   - step: test_gcs_credentials
     desc: "Test GCS credentials by attempting to list bucket or create a test file"
-    call:
-      type: workbook
-      name: test_gcs_credentials
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: test_gcs_credentials
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: read_from_postgres
 
   - step: read_from_postgres
     desc: "Read data from Postgres test_data_table and store on local filesystem"
-    call:
-      type: workbook
-      name: read_from_postgres_task
-      with:
-        pg_user: "{{ get_pg_user.secret_value }}"
-        pg_password: "{{ get_pg_password.secret_value }}"
-        execution_id: "{{ workload.execution_id }}"
+    type: workbook
+    task: read_from_postgres_task
+    with:
+      pg_user: "{{ get_pg_user.secret_value }}"
+      pg_password: "{{ get_pg_password.secret_value }}"
+      execution_id: "{{ workload.execution_id }}"
     next:
       - step: upload_csv_to_gs
 
   - step: upload_csv_to_gs
     desc: "Upload CSV file to Google Storage bucket"
-    call:
-      type: workbook
-      name: upload_csv_task
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: upload_csv_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: download_and_convert
 
   - step: download_and_convert
     desc: "Download CSV from GS and convert to Parquet"
-    call:
-      type: workbook
-      name: download_convert_task
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: download_convert_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: create_postgres_table
 
   - step: create_postgres_table
     desc: "Create table in Postgres"
-    call:
-      type: workbook
-      name: create_table_task
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: create_table_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: load_data_to_postgres
 
   - step: load_data_to_postgres
     desc: "Load data from Parquet to Postgres"
-    call:
-      type: workbook
-      name: load_data_task
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: load_data_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: upload_parquet_to_gs
 
   - step: upload_parquet_to_gs
     desc: "Upload Parquet file to Google Storage bucket"
-    call:
-      type: workbook
-      name: upload_parquet_task
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: upload_parquet_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: advanced_file_operations
 
   - step: advanced_file_operations
     desc: "Advanced file operations with Duckdb"
-    call:
-      type: workbook
-      name: advanced_file_operations_task
-      with:
-        key_id: "{{ get_gcs_key_id.secret_value }}"
-        secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    type: workbook
+    task: advanced_file_operations_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
       - step: delete_secrets
 
   - step: delete_secrets
     desc: "Delete all secrets created during workflow"
-    call:
-      type: workbook
-      name: delete_secrets_task
-      with:
-        execution_id: "{{ workload.execution_id }}"
+    type: workbook
+    task: delete_secrets_task
+    with:
+      execution_id: "{{ workload.execution_id }}"
     next:
       - step: end
 
