@@ -227,13 +227,13 @@ Stores the aggregated alert summary in DuckDB and PostgreSQL.
 
 ### Direct Execution
 ```bash
-noetl agent -f playbook/weather_example.yaml
+noetl agent -f playbook/weather_loop_example.yaml
 ```
 
 ### Register and Execute from Catalog
 ```bash
 # Register in the catalog
-noetl playbook --register playbook/weather_example.yaml
+noetl playbook --register playbook/weather_loop_example.yaml
 
 # Execute from the catalog
 noetl playbook --execute --path "workflows/examples/weather_example"

@@ -3,7 +3,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: load_dict_test
-path: workflows/data/load_dict_test
+path: examples/load_dict_test
 
 workload:
   jobId: "{{ job.uuid }}"
@@ -24,7 +24,7 @@ workflow:
   - step: test_duckdb
     desc: "Test DuckDB implementation"
     type: workbook
-    name: duckdb_test_task
+    task: duckdb_test_task
     next:
       - step: end
 

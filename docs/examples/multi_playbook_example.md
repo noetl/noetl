@@ -277,7 +277,7 @@ export POSTGRES_DB="noetl"
 ```bash
 # Register child playbooks first
 noetl playbook --register playbook/secrets_test.yaml --port 8080
-noetl playbook --register playbook/weather_example.yaml --port 8080
+noetl playbook --register playbook/weather_loop_example.yaml --port 8080
 noetl playbook --register playbook/load_dict_test.yaml --port 8080
 
 # Register the orchestrator playbook

@@ -323,7 +323,7 @@ def manage_playbook(
     else:
         logger.info("No action specified. Use --register to register a playbook or --execute to execute a playbook.")
         logger.info("Examples:")
-        logger.info("  noetl playbook --register ./playbook/weather_example.yaml")
+        logger.info("  noetl playbook --register ./playbook/weather_loop_example.yaml")
         logger.info("  noetl playbook --execute --path weather_example --version 0.1.0 --payload '{\"city\": \"New York\"}'")
         logger.info("  noetl playbook --execute --path weather_example --input ./data/input/payload.json")
 

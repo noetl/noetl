@@ -5,7 +5,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: postgres_test
-path: workflows/examples/postgres_test
+path: examples/postgres_test
 
 workload:
   jobId: "{{ job.uuid }}"
@@ -40,59 +40,55 @@ workflow:
 
   - step: setup_tables
     desc: "Create test tables in Postgres"
-    call:
-      name: setup_tables_task
-      type: postgres
-      with:
-        db_host: "{{ workload.pg_host }}"
-        db_port: "{{ workload.pg_port }}"
-        db_user: "{{ workload.pg_user }}"
-        db_password: "{{ workload.pg_password }}"
-        db_name: "{{ workload.pg_db }}"
-      command: |
-        DROP TABLE IF EXISTS postgres_test_users;
+    name: setup_tables_task
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    command: |
+      DROP TABLE IF EXISTS postgres_test_users;
 
-        CREATE TABLE IF NOT EXISTS postgres_test_users (
-          id SERIAL PRIMARY KEY,
-          name VARCHAR(100) NOT NULL,
-          email VARCHAR(100) UNIQUE NOT NULL,
-          metadata JSONB,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
+      CREATE TABLE IF NOT EXISTS postgres_test_users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        metadata JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
 
-        CREATE OR REPLACE FUNCTION get_json_field(data JSONB, field TEXT)
-        RETURNS TEXT AS $$
-        BEGIN
-          RETURN data->>field;
-        END
-        $$ LANGUAGE plpgsql;
+      CREATE OR REPLACE FUNCTION get_json_field(data JSONB, field TEXT)
+      RETURNS TEXT AS $$
+      BEGIN
+        RETURN data->>field;
+      END
+      $$ LANGUAGE plpgsql;
     next:
       - step: insert_data
 
 
   - step: insert_data
     desc: "Insert test data with JSONB"
-    call:
-      type: workbook
-      name: insert_data_task
-      with:
-        test_data: "{{ workload.test_data }}"
+    type: workbook
+    task: insert_data_task
+    with:
+      test_data: "{{ workload.test_data }}"
     next:
       - step: query_data
 
   - step: query_data
     desc: "Query data including JSONB fields"
-    call:
-      type: workbook
-      name: query_data_task
+    type: workbook
+    task: query_data_task
     next:
       - step: update_data_task
 
   - step: update_data_task
     desc: "Update data task"
-    call:
-      type: workbook
-      name: update_data_task
+    type: workbook
+    task: update_data_task
     next:
       - step: end
 

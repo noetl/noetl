@@ -6,10 +6,10 @@ HOST=${2:-localhost}
 echo "Loading playbooks on $HOST port $PORT"
 
 PLAYBOOKS=(
-  "playbook/weather.yaml"
+  "playbook/weather_example.yaml"
   "playbook/multi_playbook_example.yaml"
   "playbook/secrets_test.yaml"
-  "playbook/weather_example.yaml"
+  "playbook/weather_loop_example.yaml"
   "playbook/postgres_test.yaml"
   "playbook/load_dict_test.yaml"
   "playbook/gs_duckdb_postgres_example.yaml"
