@@ -97,7 +97,7 @@ NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining 
   - **Parameters**: Input parameters for the tasks
   - **Code**: Implementation of the tasks
 
-For examples of NoETL playbooks and detailed explanations, see the [Examples Guide](docs/examples.md).
+For examples of NoETL playbooks and detailed explanations, see the [Examples Guide](https://github.com/noetl/noetl/blob/main/docs/examples.md).
 
 To run a playbook:
 
@@ -109,16 +109,20 @@ noetl agent -f path/to/playbook.yaml
 
 For more detailed information, please refer to the following documentation:
 
+> **Note:**  
+> When installed from PyPI, the `docs` folder is included in your local package.  
+> You can find all documentation files in the `docs/` directory of your installed package.
+
 ### Getting Started
-- [Installation Guide](docs/installation.md) - Installation instructions
-- [CLI Usage Guide](docs/cli_usage.md) - Commandline interface usage
-- [API Usage Guide](docs/api_usage.md) - REST API usage
-- [Docker Usage Guide](docs/docker_usage.md) - Docker deployment
+- [Installation Guide](https://github.com/noetl/noetl/blob/main/docs/installation.md) - Installation instructions
+- [CLI Usage Guide](https://github.com/noetl/noetl/blob/main/docs/cli_usage.md) - Commandline interface usage
+- [API Usage Guide](https://github.com/noetl/noetl/blob/main/docs/api_usage.md) - REST API usage
+- [Docker Usage Guide](https://github.com/noetl/noetl/blob/main/docs/docker_usage.md) - Docker deployment
 
 ### Core Concepts
-- [Playbook Structure](docs/playbook_structure.md) - Structure of NoETL playbooks
-- [Workflow Tasks](docs/action_type.md) - Action types and parameters
-- [Environment Configuration](docs/environment_variables.md) - Setting up environment variables
+- [Playbook Structure](https://github.com/noetl/noetl/blob/main/docs/playbook_structure.md) - Structure of NoETL playbooks
+- [Workflow Tasks](https://github.com/noetl/noetl/blob/main/docs/action_type.md) - Action types and parameters
+- [Environment Configuration](https://github.com/noetl/noetl/blob/main/docs/environment_variables.md) - Setting up environment variables
 
 
 ### Advanced Examples
@@ -131,14 +135,14 @@ NoETL includes several example playbooks that demonstrate more advanced capabili
 - **Secrets Management** - Illustrates secure handling of credentials and sensitive data
 - **Multi-Playbook Workflows** - Demonstrates complex workflow orchestration
 
-For detailed examples, see the [Examples Guide](docs/examples.md).
+For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/blob/main/docs/examples.md).
 
 ## Development
 
 For information about contributing to NoETL or building from source:
 
-- [Development Guide](docs/development.md) - Setting up a development environment
-- [PyPI Publishing Guide](docs/pypi_manual.md) - Building and publishing to PyPI
+- [Development Guide](https://github.com/noetl/noetl/blob/main/docs/development.md) - Setting up a development environment
+- [PyPI Publishing Guide](https://github.com/noetl/noetl/blob/main/docs/pypi_manual.md) - Building and publishing to PyPI
 
 ## Community & Support
 
