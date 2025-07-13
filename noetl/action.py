@@ -14,7 +14,7 @@ from noetl.common import DateTimeEncoder
 
 logger = setup_logger(__name__, include_location=True)
 
-def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, mock_mode: bool = False, log_event_callback=None) -> Dict:
+def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, log_event_callback=None) -> Dict:
     """
     Execute an HTTP task.
 
@@ -22,7 +22,6 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
         task_config: The task configuration
         context: The context to use for rendering templates
         jinja_env: The Jinja2 environment for template rendering
-        mock_mode: Whether to use mock mode for testing
         log_event_callback: A callback function to log events
 
     Returns:
@@ -49,52 +48,6 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
                 {'method': method, 'endpoint': endpoint}, None
             )
 
-        if mock_mode:
-            response_data = {"data": "mocked_response", "status": "success"}
-
-            if 'forecast' in endpoint:
-                temp_data = [20, 22, 25, 28, 30, 26, 24]
-                max_temp = max(temp_data)
-                temp_threshold = context.get('temperature_threshold', 25)
-                alert = max_temp > temp_threshold
-
-                response_data = {
-                    "data": {
-                        "hourly": {
-                            "temperature_2m": temp_data,
-                            "precipitation_probability": [0, 10, 20, 30, 20, 10, 0],
-                            "windspeed_10m": [10, 12, 15, 18, 22, 19, 14]
-                        }
-                    },
-                    "alert": alert,
-                    "max_temp": max_temp
-                }
-            elif 'districts' in endpoint:
-                response_data = {
-                    "data": [
-                        {"name": "Downtown", "population": 50000},
-                        {"name": "North", "population": 25000},
-                        {"name": "East", "population": 30000},
-                        {"name": "Mordor", "population": 666}
-                    ]
-                }
-
-            end_time = datetime.datetime.now()
-            duration = (end_time - start_time).total_seconds()
-
-            if log_event_callback:
-                log_event_callback(
-                    'task_complete', task_id, task_name, 'http',
-                    'success', duration, context, response_data,
-                    {'method': method, 'endpoint': endpoint}, event_id
-                )
-
-            return {
-                'id': task_id,
-                'status': 'success',
-                'data': response_data
-            }
-        else:
             headers = render_template(jinja_env, task_config.get('headers', {}), context)
             timeout = task_config.get('timeout', 30)
 
@@ -825,7 +778,7 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, log_e
     return secret_manager.get_secret(task_config, context, log_event_wrapper)
 
 def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: Environment,
-                 secret_manager=None, mock_mode: bool = False, log_event_callback=None) -> Dict:
+                 secret_manager=None, log_event_callback=None) -> Dict:
     """
     Execute a task type.
 
@@ -835,7 +788,6 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         context: The context for rendering templates
         jinja_env: The Jinja2 environment for template rendering
         secret_manager: The SecretManager instance
-        mock_mode: Flag to use mock mode for testing
         log_event_callback: A callback function to log events
 
     Returns:
@@ -877,7 +829,7 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         context.update(task_with)
 
     if task_type == 'http':
-        result = execute_http_task(task_config, context, jinja_env, mock_mode, log_event_callback)
+        result = execute_http_task(task_config, context, jinja_env, log_event_callback)
     elif task_type == 'python':
         result = execute_python_task(task_config, context, jinja_env, log_event_callback)
     elif task_type == 'duckdb':
