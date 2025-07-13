@@ -23,9 +23,8 @@ workflow:
 
   - step: test_duckdb
     desc: "Test DuckDB implementation"
-    call:
-      type: workbook
-      name: duckdb_test_task
+    type: workbook
+    name: duckdb_test_task
     next:
       - step: end
 

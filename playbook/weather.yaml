@@ -26,13 +26,12 @@ workflow:
 
   - step: fetch_weather
     desc: "Fetch weather data for the city"
-    call:
-      type: workbook
-      name: fetch_weather
-      with:
-        city: "{{ workload.cities[0] }}"
-        base_url: "{{ workload.base_url }}"
-        threshold: "{{ workload.temperature_threshold }}"
+    type: workbook
+    name: fetch_weather
+    with:
+      city: "{{ workload.cities[0] }}"
+      base_url: "{{ workload.base_url }}"
+      threshold: "{{ workload.temperature_threshold }}"
     next:
       - when: "{{ fetch_weather.alert }}"
         then:
@@ -48,32 +47,30 @@ workflow:
 
   - step: report_warm
     desc: "Report warm weather"
-    call:
-      type: python
-      with:
-        city: "{{ city }}"
-        temperature: "{{ temperature }}"
-      code: |
-        def main(city, temperature):
-            city_name = city["name"] if isinstance(city, dict) else str(city)
-            print(f"It's warm in {city_name} ({temperature}°C)")
-            return {"status": "warm", "city": city_name, "temperature": temperature}
+    type: python
+    with:
+      city: "{{ city }}"
+      temperature: "{{ temperature }}"
+    code: |
+      def main(city, temperature):
+          city_name = city["name"] if isinstance(city, dict) else str(city)
+          print(f"It's warm in {city_name} ({temperature}°C)")
+          return {"status": "warm", "city": city_name, "temperature": temperature}
     next:
       - step: end
 
   - step: report_cold
     desc: "Report cold weather"
-    call:
-      type: python
-      name: report_cold
-      with:
-        city: "{{ city }}"
-        temperature: "{{ temperature }}"
-      code: |
-        def main(city, temperature):
-            city_name = city["name"] if isinstance(city, dict) else str(city)
-            print(f"It's cold in {city_name} ({temperature}°C)")
-            return {"status": "cold", "city": city_name, "temperature": temperature}
+    type: python
+    name: report_cold
+    with:
+      city: "{{ city }}"
+      temperature: "{{ temperature }}"
+    code: |
+      def main(city, temperature):
+          city_name = city["name"] if isinstance(city, dict) else str(city)
+          print(f"It's cold in {city_name} ({temperature}°C)")
+          return {"status": "cold", "city": city_name, "temperature": temperature}
     next:
       - step: end
 

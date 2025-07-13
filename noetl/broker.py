@@ -270,7 +270,6 @@ class Broker:
                     task_context, 
                     self.agent.jinja_env,
                     self.agent.secret_manager,
-                    self.agent.mock_mode,
                     self.safe_log_event if self.has_log_event() else None
                 )
             elif call_type == 'playbook':
@@ -317,7 +316,6 @@ class Broker:
                     task_context,
                     self.agent.jinja_env,
                     self.agent.secret_manager,
-                    self.agent.mock_mode,
                     self.safe_log_event if self.has_log_event() else None
                 )
             else:
