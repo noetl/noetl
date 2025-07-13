@@ -4,7 +4,8 @@
 # Usage: source bin/load_env_files.sh [dev|prod|test]
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-BASE_DIR="$DIR/.."
+# BASE_DIR="$DIR/.."
+BASE_DIR="$DIR"
 
 ENV="${1:-dev}"
 
