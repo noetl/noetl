@@ -18,6 +18,7 @@ dist/
 .env.prod
 .env.local
 /.secrets/
+node_modules/
 
 # Virtual environments
 publish_env/
