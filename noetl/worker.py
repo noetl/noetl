@@ -680,7 +680,22 @@ class NoETLAgent:
         """
         for task in self.playbook.get('workbook', []):
             if task.get('name') == task_name or task.get('task') == task_name:
-                return task
+                if 'call' in task:
+                    call_config = task['call'].copy()
+                    logger.debug(f"Task '{task_name}' has 'call' attribute with type: {call_config.get('type', 'workbook')}")
+                    merged_fields = []
+                    for key, value in task.items():
+                        if key != 'call' and key not in call_config:
+                            call_config[key] = value
+                            merged_fields.append(key)
+
+                    if merged_fields:
+                        logger.debug(f"Merged fields from task into call: {', '.join(merged_fields)}")
+
+                    return call_config
+                else:
+                    logger.debug(f"Task '{task_name}' using direct attributes with type: {task.get('type', 'http')}")
+                    return task
         return None
 
     def ml_recommendation(self, current_step: str, context: Dict) -> str:
