@@ -2,13 +2,19 @@ import os
 import uuid
 import datetime
 import httpx
-import duckdb
 import psycopg
 import json
 from typing import Dict, Any
 from jinja2 import Environment
 from noetl.common import render_template, setup_logger
 from noetl.common import DateTimeEncoder
+
+# Make duckdb import optional
+try:
+    import duckdb
+    DUCKDB_AVAILABLE = True
+except ImportError:
+    DUCKDB_AVAILABLE = False
 
 
 
@@ -225,6 +231,25 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
     Returns:
         A dictionary of the task result
     """
+    # Check if duckdb is available
+    if not DUCKDB_AVAILABLE:
+        task_id = str(uuid.uuid4())
+        task_name = task_config.get('task', 'duckdb_task')
+        error_msg = "DuckDB is not installed. Please install it with 'pip install noetl[duckdb]' to use DuckDB tasks."
+        logger.error(error_msg)
+
+        if log_event_callback:
+            log_event_callback(
+                'task_error', task_id, task_name, 'duckdb',
+                'error', 0, context, None,
+                {'error': error_msg}, None
+            )
+
+        return {
+            'id': task_id,
+            'status': 'error',
+            'error': error_msg
+        }
 
 
     task_id = str(uuid.uuid4())

@@ -6,7 +6,7 @@ PROJECT_NAME = noetl
 PYPI_USER = noetl
 VENV = .venv
 PYTHON = $(VENV)/bin/python
-UV = uv
+UV = $(HOME)/.local/bin/uv
 
 #   export PAT=<PERSONAL_ACCESS_TOKEN>
 #   export GIT_USER=<GITHUB_USERNAME>
@@ -51,10 +51,16 @@ docker-login:
 
 .PHONY: build
 build:
+	@echo "Building UI assets"
+	@bash scripts/build_ui.sh
+	@echo "Building Docker images"
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build
 
 .PHONY: rebuild
 rebuild:
+	@echo "Building UI assets first with no cache"
+	@bash scripts/build_ui.sh
+	@echo "Rebuilding Docker images with no cache"
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build --no-cache
 
 .PHONY: up
@@ -72,17 +78,17 @@ restart: down up
 logs:
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) logs -f
 
-.PHONY: clean install-uv create-venv install-dev run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-setup build-uv publish encode-playbook register-playbook execute-playbook
+.PHONY: clean install-uv create-venv install-dev uv-lock run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-setup build-uv publish encode-playbook register-playbook execute-playbook
 
 clean:
 	docker system prune -af --volumes
 
 install-uv:
-	@command -v uv >/dev/null 2>&1 || { \
-		echo "Installing uv"; \
-		curl -LsSf https://astral.sh/uv/install.sh | sh; \
-		echo "uv installed to $$HOME/.local/bin"; \
-	}
+	@echo "Installing or upgrading uv to the latest version..."
+	@curl -LsSf https://astral.sh/uv/install.sh | sh
+	@echo "uv has been installed/upgraded."
+	@echo "You may need to open a new terminal or run 'source ~/.bashrc' for the change to take effect."
+
 
 create-venv:
 	$(UV) venv
@@ -96,6 +102,9 @@ install:
 
 uninstall:
 	$(UV) pip uninstall noetl
+
+uv-lock:
+	    $(UV) lock
 
 run:
 	$(VENV)/bin/noetl server --host 0.0.0.0 --port 8082
