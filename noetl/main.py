@@ -16,10 +16,8 @@ from noetl.common import deep_merge, setup_logger
 from noetl.worker import NoETLAgent
 from noetl.schema import DatabaseSchema
 
-# Setup logger for the main module
 logger = setup_logger(__name__, include_location=True)
 
-# Use a distinct name for the Typer CLI application to avoid confusion with the FastAPI app.
 cli_app = typer.Typer()
 
 
@@ -53,7 +51,6 @@ def create_app() -> FastAPI:
         logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
         logger.warning("Continuing with server startup despite database initialization error.")
 
-    # --- UI Serving Setup ---
     package_dir = Path(__file__).parent
     ui_path = package_dir / "ui"
     templates_path = ui_path / "templates"
@@ -63,12 +60,9 @@ def create_app() -> FastAPI:
     templates = None
     if templates_path.exists() and assets_path.exists():
         templates = Jinja2Templates(directory=templates_path)
-
-        # Mount the /assets directory to serve JS, CSS, etc.
         app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
         logger.info(f"UI assets mounted from: {assets_path}")
 
-        # Add a specific route for the favicon
         @app.get("/favicon.svg", include_in_schema=False)
         async def favicon():
             favicon_file = static_path / "favicon.svg"
@@ -87,8 +81,6 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     # --- SPA Catch-all Route ---
-    # This single route handles serving all your HTML pages.
-    # It must be defined *after* all other API routes.
     if templates:
         @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
         async def serve_spa(request: Request, full_path: str):
@@ -121,7 +113,6 @@ def run_server(
 ):
     """Starts the NoETL web server."""
     logger.info(f"Starting NoETL API server at http://{host}:{port}")
-    # Use the factory pattern for Uvicorn, which is best practice.
     uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload)
 
 
@@ -331,9 +322,6 @@ def manage_playbook(
 def main():
     """Main entry point for the CLI application."""
     cli_app()
-
-
-# Create the app instance for external imports (e.g., from entry points)
 app = create_app()
 
 

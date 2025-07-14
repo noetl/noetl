@@ -1,11 +1,11 @@
 #!/bin/bash
 # Publish NoETL package to PyPI with UV dependency management support
-# Test on TestPyPI first (recommended)
-# ./scripts/pypi_publish.sh --test 0.1.19
+# Test on TestPyPI
+# ./scripts/pypi_publish.sh --test 0.1.25
 # # Publish to PyPI
-# ./scripts/pypi_publish.sh 0.1.19
-# Dry run to see what would happen
-# ./scripts/pypi_publish.sh --dry-run 0.1.19
+# ./scripts/pypi_publish.sh 0.1.25
+# Dry run
+# ./scripts/pypi_publish.sh --dry-run 0.1.15
 
 set -e
 
@@ -27,7 +27,7 @@ Usage: $0 [OPTIONS] [VERSION]
 Publish NoETL package to PyPI with safety checks and UV dependency management.
 
 OPTIONS:
-    -t, --test          Publish to TestPyPI instead of PyPI
+    -t, --test          Publish to TestPyPI instead of PyPI (requires TestPyPI token)
     -v, --version VER   Specify version to publish
     -s, --skip-build    Skip building the package
     -n, --skip-tests    Skip running tests
@@ -36,13 +36,19 @@ OPTIONS:
 
 EXAMPLES:
     $0 0.1.19                   # Publish version 0.1.19 to PyPI
-    $0 --test 0.1.19            # Publish to TestPyPI first
+    $0 --test 0.1.19            # Publish to TestPyPI first (requires TestPyPI setup)
     $0 --skip-build 0.1.19      # Publish without rebuilding
     $0 --dry-run 0.1.19         # Show what would be published
 
 ENVIRONMENT VARIABLES:
     PYPI_TOKEN          PyPI API token (optional, uses ~/.pypirc if not set)
-    TESTPYPI_TOKEN      TestPyPI API token (optional)
+    TESTPYPI_TOKEN      TestPyPI API token (required for --test option)
+
+TESTPYPI SETUP:
+    To use TestPyPI, you need:
+    1. A TestPyPI account at https://test.pypi.org/
+    2. A TestPyPI API token
+    3. Either set TESTPYPI_TOKEN environment variable or update ~/.pypirc
 
 UV DEPENDENCY MANAGEMENT:
     This script automatically detects UV-managed projects and uses:
@@ -250,6 +256,44 @@ with zipfile.ZipFile('$wheel_file', 'r') as z:
     echo -e "${GREEN}Package validation passed${NC}"
 }
 
+check_testpypi_setup() {
+    if [ "$REPOSITORY" != "testpypi" ]; then
+        return 0
+    fi
+
+    echo -e "${BLUE}Checking TestPyPI setup...${NC}"
+
+    # Check if TestPyPI token is available
+    if [ -z "$TESTPYPI_TOKEN" ]; then
+        # Check if testpypi section exists in .pypirc
+        if ! grep -q "\[testpypi\]" ~/.pypirc 2>/dev/null; then
+            echo -e "${RED}TestPyPI is not configured${NC}"
+            echo -e "${YELLOW}To use TestPyPI, you need to:${NC}"
+            echo "1. Create an account at https://test.pypi.org/"
+            echo "2. Generate an API token"
+            echo "3. Either:"
+            echo "   - Set TESTPYPI_TOKEN environment variable"
+            echo "   - Add [testpypi] section to ~/.pypirc"
+            echo ""
+            echo -e "${BLUE}Switching to PyPI instead...${NC}"
+            REPOSITORY="pypi"
+            return 0
+        fi
+
+        # Check if testpypi section has a password
+        if ! grep -A 5 "\[testpypi\]" ~/.pypirc 2>/dev/null | grep -q "password"; then
+            echo -e "${RED}TestPyPI password/token not found in ~/.pypirc${NC}"
+            echo -e "${YELLOW}Please add your TestPyPI token to ~/.pypirc or set TESTPYPI_TOKEN${NC}"
+            echo ""
+            echo -e "${BLUE}Switching to PyPI instead...${NC}"
+            REPOSITORY="pypi"
+            return 0
+        fi
+    fi
+
+    echo -e "${GREEN}TestPyPI setup OK${NC}"
+}
+
 # Upload to PyPI
 upload_package() {
     echo -e "${BLUE}Uploading to $REPOSITORY...${NC}"
@@ -257,12 +301,16 @@ upload_package() {
     local upload_args=""
     if [ "$REPOSITORY" = "testpypi" ]; then
         upload_args="--repository testpypi"
-    fi
 
-    if [ "$REPOSITORY" = "testpypi" ] && [ -n "$TESTPYPI_TOKEN" ]; then
-        upload_args="$upload_args --username __token__ --password $TESTPYPI_TOKEN"
-    elif [ "$REPOSITORY" = "pypi" ] && [ -n "$PYPI_TOKEN" ]; then
-        upload_args="$upload_args --username __token__ --password $PYPI_TOKEN"
+        # Use token if available
+        if [ -n "$TESTPYPI_TOKEN" ]; then
+            upload_args="$upload_args --username __token__ --password $TESTPYPI_TOKEN"
+        fi
+    elif [ "$REPOSITORY" = "pypi" ]; then
+        # Use PyPI token if available
+        if [ -n "$PYPI_TOKEN" ]; then
+            upload_args="$upload_args --username __token__ --password $PYPI_TOKEN"
+        fi
     fi
 
     if [ "$DRY_RUN" = true ]; then
@@ -271,7 +319,22 @@ upload_package() {
         return 0
     fi
 
-    python3 -m twine upload $upload_args dist/*
+    # Try upload with error handling
+    if ! python3 -m twine upload $upload_args dist/*; then
+        echo -e "${RED}Upload failed${NC}"
+
+        if [ "$REPOSITORY" = "testpypi" ]; then
+            echo -e "${YELLOW}TestPyPI upload failed. This might be due to:${NC}"
+            echo "1. Missing or invalid TestPyPI token"
+            echo "2. Version already exists on TestPyPI"
+            echo "3. Package name conflicts"
+            echo ""
+            echo -e "${BLUE}Consider publishing directly to PyPI:${NC}"
+            echo "$0 $VERSION"
+        fi
+
+        exit 1
+    fi
 
     echo -e "${GREEN}Package uploaded successfully!${NC}"
 }
@@ -293,19 +356,64 @@ verify_upload() {
     echo -e "${BLUE}Package URL: $package_url${NC}"
 
     echo -e "${BLUE}Waiting for package to be available...${NC}"
-    sleep 10
+    echo -e "${YELLOW}Note: PyPI can take a few minutes to make new versions available${NC}"
+
+    sleep 30
 
     echo -e "${BLUE}Testing installation...${NC}"
 
     local temp_venv="/tmp/noetl_test_$$"
     python3 -m venv "$temp_venv"
     source "$temp_venv/bin/activate"
+    local max_retries=3
+    local retry_count=0
+    local install_success=false
 
-    if [ "$REPOSITORY" = "testpypi" ]; then
-        pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ noetl==$VERSION
-    else
-        pip install noetl==$VERSION
+    while [ $retry_count -lt $max_retries ] && [ "$install_success" = false ]; do
+        echo -e "${BLUE}Installation attempt $((retry_count + 1)) of $max_retries...${NC}"
+
+        if [ "$REPOSITORY" = "testpypi" ]; then
+            if pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ noetl==$VERSION; then
+                install_success=true
+            fi
+        else
+            if pip install noetl==$VERSION; then
+                install_success=true
+            fi
+        fi
+
+        if [ "$install_success" = false ]; then
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                echo -e "${YELLOW}Installation failed, waiting 30 seconds before retry...${NC}"
+                sleep 30
+            fi
+        fi
+    done
+
+    if [ "$install_success" = false ]; then
+        echo -e "${YELLOW}Installation verification failed after $max_retries attempts${NC}"
+        echo -e "${BLUE}This might be due to:${NC}"
+        echo "1. PyPI propagation delay (can take up to 10-15 minutes)"
+        echo "2. Network connectivity issues"
+        echo "3. Package upload issues"
+        echo ""
+        echo -e "${BLUE}You can manually verify the upload at:${NC}"
+        echo "$package_url"
+        echo ""
+        echo -e "${BLUE}Try installing manually in a few minutes:${NC}"
+        if [ "$REPOSITORY" = "testpypi" ]; then
+            echo "pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ noetl==$VERSION"
+        else
+            echo "pip install noetl==$VERSION"
+        fi
+
+        deactivate
+        rm -rf "$temp_venv"
+        return 0
     fi
+
+    echo -e "${GREEN}Package installed successfully!${NC}"
 
     python3 -c "
 import noetl
@@ -313,10 +421,10 @@ print(f'Installed version: {noetl.__version__ if hasattr(noetl, \"__version__\")
 
 # Test UI availability
 try:
-    import ui
+    from noetl import ui
     print('UI module available')
 except ImportError:
-    print('UI module not available')
+    print('UI module not available (this is OK)')
 
 # Test server import
 try:
@@ -324,6 +432,13 @@ try:
     print('Server module available')
 except ImportError as e:
     print(f'Server module import failed: {e}')
+
+# Test CLI
+try:
+    from noetl import main
+    print('CLI module available')
+except ImportError as e:
+    print(f'CLI module import failed: {e}')
 "
 
     deactivate
@@ -336,6 +451,7 @@ main() {
     echo -e "${BLUE}Starting publication process...${NC}"
 
     check_dependencies
+    check_testpypi_setup
     run_tests
     build_package
     check_version_exists
@@ -343,6 +459,9 @@ main() {
 
     if [ "$DRY_RUN" = false ]; then
         echo -e "${YELLOW}About to publish NoETL v$VERSION to $REPOSITORY${NC}"
+        if [ "$REPOSITORY" = "testpypi" ]; then
+            echo -e "${BLUE}Note: Publishing to TestPyPI first for testing${NC}"
+        fi
         read -p "Continue? (y/N): " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
