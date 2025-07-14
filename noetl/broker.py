@@ -387,11 +387,19 @@ class Broker:
                 step_id, step_name, None,
                 result.get('status', 'success'), result.get('data'), result.get('error')
             )
-
             self.agent.update_context(step_name, result.get('data'))
             self.agent.update_context(step_name + '.result', result.get('data'))
             self.agent.update_context(step_name + '.status', result.get('status'))
             self.agent.update_context('result', result.get('data'))
+
+            if call_type == 'secrets' and result.get('status') == 'success':
+                secret_data = result.get('data', {})
+                if isinstance(secret_data, dict) and 'secret_value' in secret_data:
+                    step_result_obj = {
+                        'secret_value': secret_data['secret_value'],
+                        **secret_data
+                    }
+                    self.agent.update_context(step_name, step_result_obj)
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
