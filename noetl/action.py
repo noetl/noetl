@@ -17,9 +17,10 @@ except ImportError:
 
 logger = setup_logger(__name__, include_location=True)
 
-def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
+def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict,
+                      log_event_callback=None) -> Dict:
     """
-    Execute an HTTP task.
+    Execute an HTTP task with enhanced headers, payload, and response handling.
 
     Args:
         task_config: The task configuration
@@ -31,7 +32,6 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
     Returns:
         A dictionary of the task result
     """
-
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'http_task')
     start_time = datetime.datetime.now()
@@ -41,6 +41,9 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
         endpoint = render_template(jinja_env, task_config.get('endpoint', ''), context)
         params = render_template(jinja_env, task_config.get('params', {}), context)
         payload = render_template(jinja_env, task_config.get('payload', {}), context)
+        headers = render_template(jinja_env, task_config.get('headers', {}), context)
+        timeout = task_config.get('timeout', 30)
+        return_template = task_config.get('return', None)
 
         logger.info(f"HTTP {method} request to {endpoint}")
 
@@ -52,36 +55,110 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
                 {'method': method, 'endpoint': endpoint, 'with_params': task_with}, None
             )
 
-        headers = render_template(jinja_env, task_config.get('headers', {}), context)
-        timeout = task_config.get('timeout', 30)
-
         try:
             with httpx.Client(timeout=timeout) as client:
-                if method == 'GET':
-                    response = client.get(endpoint, params=params, headers=headers)
-                elif method == 'POST':
-                    response = client.post(endpoint, json=payload, params=params, headers=headers)
-                elif method == 'PUT':
-                    response = client.put(endpoint, json=payload, params=params, headers=headers)
-                elif method == 'DELETE':
-                    response = client.delete(endpoint, params=params, headers=headers)
-                elif method == 'PATCH':
-                    response = client.patch(endpoint, json=payload, params=params, headers=headers)
-                else:
-                    raise ValueError(f"Unsupported HTTP method: {method}")
+                request_args = {
+                    'url': endpoint,
+                    'headers': headers,
+                    'params': params
+                }
+                if method in ['POST', 'PUT', 'PATCH'] and payload:
+                    content_type = headers.get('Content-Type', '').lower()
 
-                response.raise_for_status()
+                    if 'application/json' in content_type:
+                        request_args['json'] = payload
+                    elif 'application/x-www-form-urlencoded' in content_type:
+                        request_args['data'] = payload
+                    elif 'multipart/form-data' in content_type:
+                        request_args['files'] = payload
+                    else:
+                        if isinstance(payload, (dict, list)):
+                            request_args['json'] = payload
+                        else:
+                            request_args['data'] = payload
+
+                response = client.request(method, **request_args)
+                response_data = {
+                    'status_code': response.status_code,
+                    'headers': dict(response.headers),
+                    'url': str(response.url),
+                    'elapsed': response.elapsed.total_seconds() if hasattr(response, 'elapsed') else None
+                }
 
                 try:
-                    response_data = response.json()
-                except ValueError:
-                    response_data = {"text": response.text}
+                    response_content_type = response.headers.get('Content-Type', '').lower()
+                    if 'application/json' in response_content_type:
+                        response_data['data'] = response.json()
+                    else:
+                        response_data['data'] = response.text
+                except Exception as e:
+                    logger.warning(f"Failed to parse response content: {str(e)}")
+                    response_data['data'] = response.text
 
-                response_data = {
-                    "data": response_data,
-                    "status_code": response.status_code,
-                    "headers": dict(response.headers)
+                is_success = response.is_success
+                result = {
+                    'id': task_id,
+                    'status': 'success' if is_success else 'error',
+                    'data': response_data
                 }
+
+                if not is_success:
+                    result['error'] = f"HTTP {response.status_code}: {response.reason_phrase}"
+                if return_template:
+                    try:
+                        template_context = {
+                            'status': 'success' if is_success else 'error',
+                            'result': response_data,
+                            'status_code': response_data['status_code'],
+                            'data': response_data.get('data', {}),
+                            'headers': response_data['headers']
+                        }
+                        template_context['_context'] = template_context
+                        logger.info(f"Template result object: {response_data}")
+                        logger.debug(f"Template context keys: {list(template_context.keys())}")
+                        logger.debug(f"Template context data type: {type(template_context.get('data'))}")
+                        processed_return = render_template(jinja_env, return_template, template_context)
+                        if isinstance(processed_return, str):
+                            processed_return = processed_return.strip()
+                            if processed_return.startswith('{') and processed_return.endswith('}'):
+                                try:
+                                    parsed_result = json.loads(processed_return)
+                                    result = {
+                                        'id': task_id,
+                                        'status': parsed_result.get('status', 'success'),
+                                        'data': parsed_result
+                                    }
+                                    if 'message' in parsed_result:
+                                        result['error'] = parsed_result['message']
+                                except json.JSONDecodeError as e:
+                                    logger.warning(f"Failed to parse return template as JSON: {str(e)}")
+                                    result = {
+                                        'id': task_id,
+                                        'status': 'success',
+                                        'data': processed_return
+                                    }
+                            else:
+                                result = {
+                                    'id': task_id,
+                                    'status': 'success',
+                                    'data': processed_return
+                                }
+                        elif isinstance(processed_return, dict):
+                            result = {
+                                'id': task_id,
+                                'status': processed_return.get('status', 'success'),
+                                'data': processed_return
+                            }
+                        else:
+                            result = {
+                                'id': task_id,
+                                'status': 'success',
+                                'data': processed_return
+                            }
+
+                    except Exception as e:
+                        logger.error(f"Failed to process return template: {str(e)}")
+                        result['template_error'] = str(e)
 
                 end_time = datetime.datetime.now()
                 duration = (end_time - start_time).total_seconds()
@@ -89,21 +166,20 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
                 if log_event_callback:
                     log_event_callback(
                         'task_complete', task_id, task_name, 'http',
-                        'success', duration, context, response_data,
+                        result['status'], duration, context, result.get('data'),
                         {'method': method, 'endpoint': endpoint, 'with_params': task_with}, event_id
                     )
 
-                return {
-                    'id': task_id,
-                    'status': 'success',
-                    'data': response_data
-                }
+                return result
 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
             raise Exception(error_msg)
         except httpx.RequestError as e:
             error_msg = f"Request error: {str(e)}"
+            raise Exception(error_msg)
+        except httpx.TimeoutException as e:
+            error_msg = f"Request timeout: {str(e)}"
             raise Exception(error_msg)
 
     except Exception as e:
@@ -116,7 +192,7 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
             log_event_callback(
                 'task_error', task_id, task_name, 'http',
                 'error', duration, context, None,
-                {'error': error_msg, 'with_params': task_with}, None
+                {'error': error_msg, 'with_params': task_with}, event_id
             )
 
         return {
@@ -124,6 +200,7 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
             'status': 'error',
             'error': error_msg
         }
+
 
 def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
@@ -911,11 +988,20 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         }
 
     if 'return' in task_config and result['status'] == 'success':
-        transformed_result = render_template(jinja_env, task_config['return'], {
+        # Create template context with result data
+        template_context = {
             **context,
             'result': result['data'],
             'status': result['status']
-        })
+        }
+
+        # Add _context to allow templates to access the context directly
+        template_context['_context'] = template_context
+
+        # Print the result object for debugging
+        logger.info(f"Task result object: {result['data']}")
+
+        transformed_result = render_template(jinja_env, task_config['return'], template_context)
 
         result['data'] = transformed_result
 
