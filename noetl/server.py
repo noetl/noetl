@@ -3,6 +3,7 @@ import json
 import yaml
 import tempfile
 import psycopg
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -288,9 +289,166 @@ class CatalogService:
 def get_catalog_service() -> CatalogService:
     return CatalogService()
 
+async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
+    logger.info(f"Dependency received playbook_id: '{playbook_id}'")
+    path_to_lookup = playbook_id.replace('%2F', '/')
+    if path_to_lookup.startswith("playbooks/"):
+        path_to_lookup = path_to_lookup.removeprefix("playbooks/")
+        logger.info(f"Trimmed playbook_id to: '{path_to_lookup}'")
+    version_to_lookup = None
+    if ':' in path_to_lookup:
+        path_parts = path_to_lookup.rsplit(':', 1)
+        if path_parts[1].replace('.', '').isdigit():
+            path_to_lookup = path_parts[0]
+            logger.info(f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
+
+    catalog_service = get_catalog_service()
+    latest_version = catalog_service.get_latest_version(path_to_lookup)
+    logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
+
+    entry = catalog_service.fetch_entry(path_to_lookup, latest_version)
+    if not entry:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Playbook '{path_to_lookup}' with version '{latest_version}' not found in catalog."
+        )
+    return entry
+
 class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
         self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
+        
+    def get_all_executions(self) -> List[Dict[str, Any]]:
+        """
+        Get all executions from the event_log table.
+        
+        Returns:
+            A list of execution data dictionaries
+        """
+        conn = None
+        try:
+            conn = psycopg.connect(self.pgdb_conn_string)
+            with conn.cursor() as cursor:
+                # Get distinct execution_ids with their latest event
+                cursor.execute("""
+                    WITH latest_events AS (
+                        SELECT 
+                            execution_id,
+                            MAX(timestamp) as latest_timestamp
+                        FROM event_log
+                        GROUP BY execution_id
+                    )
+                    SELECT 
+                        e.execution_id,
+                        e.event_type,
+                        e.status,
+                        e.timestamp,
+                        e.metadata,
+                        e.input_context,
+                        e.output_result,
+                        e.error
+                    FROM event_log e
+                    JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
+                    ORDER BY e.timestamp DESC
+                """)
+                
+                rows = cursor.fetchall()
+                executions = []
+                
+                for row in rows:
+                    execution_id = row[0]
+                    metadata = json.loads(row[4]) if row[4] else {}
+                    input_context = json.loads(row[5]) if row[5] else {}
+                    output_result = json.loads(row[6]) if row[6] else {}
+                    
+                    # Extract playbook information from metadata or input_context
+                    playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+                    playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                    
+                    # Determine status
+                    status = row[2]
+                    if status == 'COMPLETED':
+                        status = 'completed'
+                    elif status == 'ERROR':
+                        status = 'failed'
+                    elif status == 'RUNNING':
+                        status = 'running'
+                    else:
+                        status = 'pending'
+                    
+                    # Calculate duration if available
+                    start_time = row[3].isoformat() if row[3] else None
+                    end_time = None
+                    duration = None
+                    
+                    # Get the first event for this execution to find start time
+                    cursor.execute("""
+                        SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
+                    """, (execution_id,))
+                    min_time_row = cursor.fetchone()
+                    if min_time_row and min_time_row[0]:
+                        start_time = min_time_row[0].isoformat()
+                    
+                    # If execution is completed or failed, get end time
+                    if status in ['completed', 'failed']:
+                        cursor.execute("""
+                            SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
+                        """, (execution_id,))
+                        max_time_row = cursor.fetchone()
+                        if max_time_row and max_time_row[0]:
+                            end_time = max_time_row[0].isoformat()
+                            
+                            # Calculate duration if both start and end times are available
+                            if start_time:
+                                start_dt = datetime.fromisoformat(start_time)
+                                end_dt = datetime.fromisoformat(end_time)
+                                duration = (end_dt - start_dt).total_seconds()
+                    
+                    # Calculate progress
+                    progress = 100 if status in ['completed', 'failed'] else 0
+                    if status == 'running':
+                        # Count total steps and completed steps
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM event_log WHERE execution_id = %s
+                        """, (execution_id,))
+                        total_steps = cursor.fetchone()[0]
+                        
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM event_log 
+                            WHERE execution_id = %s AND status IN ('COMPLETED', 'ERROR')
+                        """, (execution_id,))
+                        completed_steps = cursor.fetchone()[0]
+                        
+                        if total_steps > 0:
+                            progress = int((completed_steps / total_steps) * 100)
+                    
+                    # Create execution data object
+                    execution_data = {
+                        "id": execution_id,
+                        "playbook_id": playbook_id,
+                        "playbook_name": playbook_name,
+                        "status": status,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "duration": duration,
+                        "progress": progress,
+                        "result": output_result,
+                        "error": row[7]
+                    }
+                    
+                    executions.append(execution_data)
+                
+                return executions
+                
+        except Exception as e:
+            logger.exception(f"Error getting all executions: {e}")
+            return []
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.exception(f"Error closing connection: {close_error}")
 
     def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         conn = None
@@ -1139,3 +1297,448 @@ async def execute_agent_async(
             status_code=500,
             detail=f"Error starting agent execution for playbook '{path}' version '{version}': {e}"
         )
+
+
+# Add dashboard endpoints that the UI expects
+@router.get("/dashboard/stats", response_class=JSONResponse)
+async def get_dashboard_stats():
+    """Get dashboard statistics"""
+    try:
+        # Return mock data for now - you can implement real statistics later
+        return {
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "total_playbooks": 0,
+            "active_workflows": 0
+        }
+    except Exception as e:
+        logger.error(f"Error getting dashboard stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/dashboard/widgets", response_class=JSONResponse)
+async def get_dashboard_widgets():
+    """Get dashboard widgets"""
+    try:
+        # Return mock data for now - you can implement real widgets later
+        # Return an empty array instead of an object with a widgets property
+        # This matches what the UI expects
+        return []
+    except Exception as e:
+        logger.error(f"Error getting dashboard widgets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/playbooks", response_class=JSONResponse)
+async def get_playbooks():
+    """Get all playbooks (legacy endpoint)"""
+    return await get_catalog_playbooks()
+
+@router.get("/catalog/playbooks", response_class=JSONResponse)
+async def get_catalog_playbooks():
+    """Get all playbooks"""
+    try:
+        catalog_service = get_catalog_service()
+        entries = catalog_service.list_entries('playbook')
+        
+        # Transform catalog entries to match the PlaybookData interface
+        playbooks = []
+        for entry in entries:
+            # Extract metadata from the entry
+            meta = entry.get('meta', {})
+            
+            # Create a PlaybookData object
+            playbook = {
+                "id": entry.get('resource_path', ''),
+                "name": entry.get('resource_path', '').split('/')[-1],
+                "description": meta.get('description', ''),
+                "created_at": entry.get('timestamp', ''),
+                "updated_at": entry.get('timestamp', ''),
+                "status": meta.get('status', 'active'),
+                "tasks_count": meta.get('tasks_count', 0)
+            }
+            playbooks.append(playbook)
+        
+        return playbooks
+    except Exception as e:
+        logger.error(f"Error getting playbooks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/catalog/playbooks", response_class=JSONResponse)
+async def create_catalog_playbook(request: Request):
+    """Create a new playbook"""
+    try:
+        body = await request.json()
+        name = body.get("name", "New Playbook")
+        description = body.get("description", "")
+        status = body.get("status", "draft")
+        
+        # Create a basic playbook template
+        content = f"""# {name}
+name: "{name.lower().replace(' ', '-')}"
+description: "{description}"
+tasks:
+  - name: "sample-task"
+    type: "log"
+    config:
+      message: "Hello from NoETL!"
+"""
+        
+        # Register the new playbook
+        catalog_service = get_catalog_service()
+        result = catalog_service.register_resource(content, "playbook")
+        
+        # Create a PlaybookData object for the response
+        playbook = {
+            "id": result.get("resource_path", ""),
+            "name": name,
+            "description": description,
+            "created_at": result.get("timestamp", ""),
+            "updated_at": result.get("timestamp", ""),
+            "status": status,
+            "tasks_count": 1,
+            "version": result.get("resource_version", "")
+        }
+        
+        return playbook
+    except Exception as e:
+        logger.error(f"Error creating playbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/catalog/playbooks/validate", response_class=JSONResponse)
+async def validate_catalog_playbook(request: Request):
+    """Validate playbook content"""
+    try:
+        body = await request.json()
+        content = body.get("content")
+        
+        if not content:
+            raise HTTPException(
+                status_code=400,
+                detail="Content is required."
+            )
+        
+        # Basic validation - check if it's valid YAML
+        try:
+            yaml.safe_load(content)
+            return {"valid": True}
+        except Exception as yaml_error:
+            return {
+                "valid": False,
+                "errors": [str(yaml_error)]
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating playbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/executions/run", response_class=JSONResponse)
+async def execute_playbook(request: Request):
+    """Execute a playbook"""
+    try:
+        body = await request.json()
+        playbook_id = body.get("playbook_id")
+        parameters = body.get("parameters", {})
+        
+        if not playbook_id:
+            raise HTTPException(
+                status_code=400,
+                detail="playbook_id is required."
+            )
+        
+        # Call the agent/execute endpoint
+        result = await execute_agent(
+            request=request,
+            path=playbook_id,
+            input_payload=parameters,
+            sync_to_postgres=True,
+            merge=False
+        )
+        
+        # Transform the result to match the ExecutionData interface
+        execution = {
+            "id": result.get("execution_id", ""),
+            "playbook_id": playbook_id,
+            "playbook_name": playbook_id.split("/")[-1],
+            "status": "running",
+            "start_time": result.get("timestamp", ""),
+            "progress": 0,
+            "result": result
+        }
+        
+        return execution
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error executing playbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# @router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
+# async def get_catalog_playbook(playbook_id: str):
+#     """Get a playbook by ID"""
+#     try:
+#         logger.info(f"Received playbook_id for get: '{playbook_id}'")
+#
+#         if playbook_id.startswith("playbooks/"):
+#             playbook_id = playbook_id[10:]
+#             logger.info(f"Fixed playbook_id for get: '{playbook_id}'")
+#
+#         catalog_service = get_catalog_service()
+#         latest_version = catalog_service.get_latest_version(playbook_id)
+#         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
+#
+#         entry = catalog_service.fetch_entry(playbook_id, latest_version)
+#
+#         if not entry:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Playbook '{playbook_id}' not found."
+#             )
+#
+#         meta = entry.get('meta', {})
+#
+#         playbook = {
+#             "id": entry.get('resource_path', ''),
+#             "name": entry.get('resource_path', '').split('/')[-1],
+#             "description": meta.get('description', ''),
+#             "created_at": entry.get('timestamp', ''),
+#             "updated_at": entry.get('timestamp', ''),
+#             "status": meta.get('status', 'active'),
+#             "tasks_count": meta.get('tasks_count', 0),
+#             "version": entry.get('resource_version', '')
+#         }
+#
+#         return playbook
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error getting playbook: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
+async def get_catalog_playbook(
+    entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
+):
+    try:
+        meta = entry.get('meta', {})
+        playbook_data = {
+            "id": entry.get('resource_path', ''),
+            "name": entry.get('resource_path', '').split('/')[-1],
+            "description": meta.get('description', ''),
+            "created_at": entry.get('timestamp', ''),
+            "updated_at": entry.get('timestamp', ''),
+            "status": meta.get('status', 'active'),
+            "tasks_count": meta.get('tasks_count', 0),
+            "version": entry.get('resource_version', '')
+        }
+        return playbook_data
+    except Exception as e:
+        logger.error(f"Error processing playbook entry: {e}")
+        raise HTTPException(status_code=500, detail="Error processing playbook data.")
+
+@router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
+async def get_catalog_playbook_content(playbook_id: str):
+    """Get playbook content"""
+    try:
+        # Log the received playbook_id for debugging
+        logger.info(f"Received playbook_id: '{playbook_id}'")
+        
+        # Fix for incorrect path parsing
+        # If the path starts with "playbooks/", remove it
+        if playbook_id.startswith("playbooks/"):
+            playbook_id = playbook_id[10:]  # Remove "playbooks/"
+            logger.info(f"Fixed playbook_id: '{playbook_id}'")
+        
+        catalog_service = get_catalog_service()
+        # Get the latest version of the playbook
+        latest_version = catalog_service.get_latest_version(playbook_id)
+        logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
+        
+        entry = catalog_service.fetch_entry(playbook_id, latest_version)
+        
+        if not entry:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Playbook '{playbook_id}' not found."
+            )
+        
+        # Return the content
+        return {"content": entry.get('content', '')}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting playbook content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
+async def save_catalog_playbook_content(playbook_id: str, request: Request):
+    """Save playbook content"""
+    try:
+        # Log the received playbook_id for debugging
+        logger.info(f"Received playbook_id for save: '{playbook_id}'")
+        
+        # Fix for incorrect path parsing
+        # If the path starts with "playbooks/", remove it
+        if playbook_id.startswith("playbooks/"):
+            playbook_id = playbook_id[10:]  # Remove "playbooks/"
+            logger.info(f"Fixed playbook_id for save: '{playbook_id}'")
+        
+        body = await request.json()
+        content = body.get("content")
+        
+        if not content:
+            raise HTTPException(
+                status_code=400,
+                detail="Content is required."
+            )
+        
+        # Register the updated playbook
+        catalog_service = get_catalog_service()
+        result = catalog_service.register_resource(content, "playbook")
+        
+        return {
+            "status": "success",
+            "message": f"Playbook '{playbook_id}' content updated.",
+            "resource_path": result.get("resource_path"),
+            "resource_version": result.get("resource_version")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving playbook content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/catalog/widgets", response_class=JSONResponse)
+async def get_catalog_widgets():
+    """Get catalog visualization widgets"""
+    try:
+        # Return mock data for now - you can implement real widgets later
+        return [
+            {
+                "id": "catalog-summary",
+                "type": "metric",
+                "title": "Catalog Summary",
+                "data": {
+                    "value": 0
+                },
+                "config": {
+                    "format": "number",
+                    "color": "#1890ff"
+                }
+            }
+        ]
+    except Exception as e:
+        logger.error(f"Error getting catalog widgets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/executions", response_class=JSONResponse)
+async def get_executions():
+    """Get all executions"""
+    try:
+        event_service = get_event_service()
+        executions = event_service.get_all_executions()
+        return executions
+    except Exception as e:
+        logger.error(f"Error getting executions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/executions/{execution_id}", response_class=JSONResponse)
+async def get_execution(execution_id: str):
+    """Get a specific execution by ID"""
+    try:
+        event_service = get_event_service()
+        events = event_service.get_events_by_execution_id(execution_id)
+        
+        if not events:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Execution '{execution_id}' not found."
+            )
+        
+        # Get the latest event for this execution to determine status
+        latest_event = None
+        for event in events.get("events", []):
+            if not latest_event or (event.get("timestamp", "") > latest_event.get("timestamp", "")):
+                latest_event = event
+        
+        if not latest_event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No events found for execution '{execution_id}'."
+            )
+        
+        # Extract playbook information
+        metadata = latest_event.get("metadata", {})
+        input_context = latest_event.get("input_context", {})
+        output_result = latest_event.get("output_result", {})
+        
+        # Extract playbook information from metadata or input_context
+        playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+        
+        # Determine status
+        status = latest_event.get("status", "")
+        if status == 'COMPLETED':
+            status = 'completed'
+        elif status == 'ERROR':
+            status = 'failed'
+        elif status == 'RUNNING':
+            status = 'running'
+        else:
+            status = 'pending'
+        
+        # Find start and end times
+        timestamps = [event.get("timestamp", "") for event in events.get("events", []) if event.get("timestamp")]
+        timestamps.sort()
+        
+        start_time = timestamps[0] if timestamps else None
+        end_time = timestamps[-1] if timestamps and status in ['completed', 'failed'] else None
+        
+        # Calculate duration if both start and end times are available
+        duration = None
+        if start_time and end_time:
+            try:
+                start_dt = datetime.fromisoformat(start_time)
+                end_dt = datetime.fromisoformat(end_time)
+                duration = (end_dt - start_dt).total_seconds()
+            except Exception as e:
+                logger.error(f"Error calculating duration: {e}")
+        
+        # Calculate progress
+        progress = 100 if status in ['completed', 'failed'] else 0
+        if status == 'running':
+            # Count total steps and completed steps
+            total_steps = len(events.get("events", []))
+            completed_steps = sum(1 for event in events.get("events", []) if event.get("status") in ['COMPLETED', 'ERROR'])
+            
+            if total_steps > 0:
+                progress = int((completed_steps / total_steps) * 100)
+        
+        # Create execution data object
+        execution_data = {
+            "id": execution_id,
+            "playbook_id": playbook_id,
+            "playbook_name": playbook_name,
+            "status": status,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration": duration,
+            "progress": progress,
+            "result": output_result,
+            "error": latest_event.get("error"),
+            "events": events.get("events", [])
+        }
+        
+        return execution_data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting execution: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/health", response_class=JSONResponse)
+async def api_health():
+    """API health check endpoint"""
+    return {"status": "ok"}
+
+
+# Existing endpoints continue here...

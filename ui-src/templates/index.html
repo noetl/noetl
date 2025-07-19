@@ -8,12 +8,12 @@
       name="description"
       content="NoETL - The Not Only ETL framework for building and running data pipelines and workflows."
     />
-    <title>NoETL Dashboard</title>
+    <title>{{ title | default("NoETL") }}</title>
 
-    <!--
-      This Font Awesome link is loaded from a CDN. For a fully bundled app,
-      you could also install it via npm and import it in your JavaScript.
-    -->
+    <!-- Ant Design styles -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.12.2/dist/reset.css">
+
+    <!-- Font Awesome for icons -->
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
@@ -21,19 +21,32 @@
       crossorigin="anonymous"
       referrerpolicy="no-referrer"
     />
+
+    <!-- Server-side injected data -->
+    {% if serverData %}
+    <script type="application/json" id="server-data">
+      {{ serverData | tojson | safe }}
+    </script>
+    {% endif %}
   </head>
   <body>
     <!-- The root element where the React application will be mounted. -->
-    <div id="root"></div>
+    <div id="root">
+      <!-- Optional server-rendered content for SEO and initial loading -->
+      {% if serverContent %}
+      {{ serverContent | safe }}
+      {% endif %}
+    </div>
 
-    <!--
-      This script tag is the entry point for your React application.
-      The `type="module"` attribute enables modern JavaScript modules.
-      A build tool like Vite will process this file and its imports.
-    -->
-    <script type="module" src="/src/main.jsx"></script>
+    <!-- Main application script -->
+    <script type="module" src="/src/main.tsx"></script>
 
     <!-- Fallback content for users with JavaScript disabled. -->
-    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <noscript>
+      <div style="text-align: center; padding: 20px;">
+        <h1>JavaScript Required</h1>
+        <p>NoETL requires JavaScript to be enabled in your browser.</p>
+      </div>
+    </noscript>
   </body>
 </html>

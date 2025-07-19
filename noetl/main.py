@@ -6,7 +6,7 @@ import logging
 import base64
 import requests
 from pathlib import Path
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,10 +21,23 @@ logger = setup_logger(__name__, include_location=True)
 cli_app = typer.Typer()
 
 
+# Global variable to control UI state
+_enable_ui = True
+
 def create_app() -> FastAPI:
     """
     Creates and configures the main FastAPI application instance.
     This function is the factory for Uvicorn.
+    """
+    global _enable_ui
+    return _create_app_with_ui(_enable_ui)
+
+def _create_app_with_ui(enable_ui: bool = True) -> FastAPI:
+    """
+    Creates and configures the main FastAPI application instance.
+
+    Args:
+        enable_ui: Whether to enable UI components (default: True)
     """
     app = FastAPI(
         title="NoETL API",
@@ -58,7 +71,7 @@ def create_app() -> FastAPI:
     assets_path = static_path / "assets"
 
     templates = None
-    if templates_path.exists() and assets_path.exists():
+    if enable_ui and templates_path.exists() and assets_path.exists():
         templates = Jinja2Templates(directory=templates_path)
         app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
         logger.info(f"UI assets mounted from: {assets_path}")
@@ -69,11 +82,13 @@ def create_app() -> FastAPI:
             if favicon_file.exists():
                 return FileResponse(favicon_file)
             return HTMLResponse(status_code=404)
-    else:
+    elif enable_ui:
         logger.warning(f"UI files not found. Searched in: {ui_path}")
+    else:
+        logger.info("UI disabled by configuration")
 
     # --- API Router ---
-    app.include_router(server_router)
+    app.include_router(server_router, prefix="/api")
 
     # --- Health Check ---
     @app.get("/health", include_in_schema=False)
@@ -85,6 +100,10 @@ def create_app() -> FastAPI:
         @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
         async def serve_spa(request: Request, full_path: str):
             """Serves the appropriate HTML template for any given path."""
+            # Don't intercept API routes
+            if full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="API route not found")
+
             if full_path.startswith("editor") or full_path.startswith("playbook"):
                 template_name = "editor.html"
             elif full_path.startswith("execution"):
@@ -98,7 +117,10 @@ def create_app() -> FastAPI:
     else:
         @app.get("/", response_class=HTMLResponse, include_in_schema=False)
         async def root_no_ui():
-            return {"message": "NoETL API is running, but UI is not available"}
+            if enable_ui:
+                return {"message": "NoETL API is running, but UI is not available"}
+            else:
+                return {"message": "NoETL API is running (UI disabled)"}
 
     return app
 
@@ -109,10 +131,20 @@ def create_app() -> FastAPI:
 def run_server(
     host: str = typer.Option("0.0.0.0", help="Server host."),
     port: int = typer.Option(8080, help="Server port."),
-    reload: bool = typer.Option(False, help="Server auto-reload.")
+    reload: bool = typer.Option(False, help="Server auto-reload."),
+    no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components.")
 ):
     """Starts the NoETL web server."""
-    logger.info(f"Starting NoETL API server at http://{host}:{port}")
+    global _enable_ui
+
+    # Check environment variable if no_ui is not explicitly set
+    if not no_ui and os.environ.get("NOETL_ENABLE_UI", "true").lower() == "false":
+        no_ui = True
+
+    _enable_ui = not no_ui
+
+    ui_status = "disabled" if no_ui else "enabled"
+    logger.info(f"Starting NoETL API server at http://{host}:{port} (UI {ui_status})")
     uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload)
 
 
@@ -232,7 +264,7 @@ def manage_playbook(
             with open(register, 'r') as f:
                 content = f.read()
             content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-            url = f"http://{host}:{port}/catalog/register"
+            url = f"http://{host}:{port}/api/catalog/register"
             headers = {"Content-Type": "application/json"}
             data = {"content_base64": content_base64}
             logger.info(f"Registering playbook {register} with NoETL server at {url}")
@@ -275,7 +307,7 @@ def manage_playbook(
                     logger.error(f"Error parsing payload JSON: {e}")
                     raise typer.Exit(code=1)
 
-            url = f"http://{host}:{port}/agent/execute"
+            url = f"http://{host}:{port}/api/agent/execute"
             headers = {"Content-Type": "application/json"}
             data = {
                 "path": path,
