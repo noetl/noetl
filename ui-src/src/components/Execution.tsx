@@ -4,6 +4,7 @@ import { PlayCircleOutlined, StopOutlined, ReloadOutlined, EyeOutlined } from '@
 import { apiService } from '../services/api';
 import { ExecutionData } from '../types';
 import moment from 'moment';
+import { useNavigate } from 'react-router-dom';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -13,19 +14,25 @@ const Execution: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchExecutions();
 
     // Set up auto-refresh for active executions
-    const interval = setInterval(() => {
-      if (executions.some(exec => exec.status === 'running' || exec.status === 'pending')) {
-        fetchExecutions(true);
+    const interval = setInterval(async () => {
+      try {
+        const response = await apiService.getExecutions();
+        if (response.some((exec: ExecutionData) => exec.status === 'running' || exec.status === 'pending')) {
+          setExecutions(response);
+        }
+      } catch (err) {
+        // Optionally handle error
       }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [executions]);
+  }, []);
 
   const fetchExecutions = async (isRefresh = false) => {
     try {
@@ -146,7 +153,7 @@ const Execution: React.FC = () => {
           <Button
             type="text"
             icon={<EyeOutlined />}
-            onClick={() => console.log('View execution', record.id)}
+            onClick={() => navigate(`/execution/${record.id}`)}
           >
             View
           </Button>

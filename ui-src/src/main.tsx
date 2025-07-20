@@ -9,6 +9,7 @@ import Dashboard from './components/Dashboard';
 import Catalog from './components/Catalog';
 import Editor from './components/Editor';
 import Execution from './components/Execution';
+import ExecutionDetail from './components/ExecutionDetail';
 
 // Import styles
 import 'antd/dist/reset.css';
@@ -68,6 +69,7 @@ const App: React.FC = () => {
               <Route path="/catalog" element={<Catalog />} />
               <Route path="/editor" element={<Editor />} />
               <Route path="/execution" element={<Execution />} />
+              <Route path="/execution/:id" element={<ExecutionDetail />} />
             </Routes>
           </Content>
           <Footer style={{ textAlign: 'center' }}>

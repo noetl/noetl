@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 // API Base URL - will be proxied by Vite to FastAPI backend
-const API_BASE_URL = process.env.NODE_ENV === 'development' ? 'http://localhost:8081/api' : '/api';
-
+//const API_BASE_URL = process.env.NODE_ENV === 'development' ? 'http://localhost:8081/api' : '/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081/api';
 // API Client instance
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

@@ -44,6 +44,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="/opt/noetl:$PYTHONPATH"
 ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
-ENV NOETL_ENABLE_UI=true
+ENV NOETL_ENABLE_UI=false
 
 CMD ["python", "-m", "noetl.main", "server", "--host", "0.0.0.0", "--port", "8080"]
