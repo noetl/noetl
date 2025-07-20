@@ -12,6 +12,13 @@ import random
 import string
 from typing import Dict, Any, Optional, List, Union
 from jinja2 import Environment, StrictUndefined, BaseLoader
+import psycopg
+from psycopg.rows import dict_row
+from contextlib import contextmanager
+try:
+    from psycopg_pool import ConnectionPool
+except ImportError:
+    ConnectionPool = None
 
 # logger = setup_logger(__name__, include_location=True)
 #===================================
@@ -129,6 +136,7 @@ def setup_logger(name: str, include_location=False, use_json=False):
 
 logger = setup_logger(__name__, include_location=True)
 
+
 #===================================
 #  jinja2 template rendering
 #===================================
@@ -235,7 +243,7 @@ def quote_jinja2_expressions(yaml_text):
 
 
 #===================================
-#  time calendar (დრო)
+#  time calendar (დ����ო)
 #===================================
 
 def generate_id() -> str:
@@ -435,7 +443,7 @@ def deep_merge(dest: Union[Dict, List, Any], source: Union[Dict, List, Any]) -> 
         return source
 
 #===================================
-# connections
+# connection strings
 #===================================
 
 def get_pgdb_connection(
@@ -454,3 +462,45 @@ def get_pgdb_connection(
     schema = schema or os.environ.get('NOETL_SCHEMA', 'noetl')
 
     return f"dbname={db_name} user={user} password={password} host={host} port={port} options='-c search_path={schema}'"
+
+#===================================
+# postgres pool
+#===================================
+
+db_pool = None
+
+def initialize_db_pool():
+    global db_pool
+    if db_pool is None and ConnectionPool:
+        try:
+            db_pool = ConnectionPool(conninfo=get_pgdb_connection(), min_size=1, max_size=10)
+            logger.info("Database connection pool initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
+            db_pool = None
+    return db_pool
+
+@contextmanager
+def get_db_connection():
+    pool = initialize_db_pool()
+    if pool:
+        try:
+            conn = pool.getconn()
+            try:
+                yield conn
+                return
+            finally:
+                pool.putconn(conn)
+        except Exception as pool_error:
+            logger.warning(f"Connection pool error: {pool_error}. Falling back to direct connection.")
+
+    conn = None
+    try:
+        conn = psycopg.connect(get_pgdb_connection())
+        yield conn
+    except Exception as e:
+        logger.error(f"Connection failed: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()

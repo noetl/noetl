@@ -2,12 +2,11 @@ import os
 import json
 import yaml
 import tempfile
-import psycopg
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
-from noetl.common import setup_logger, deep_merge, get_pgdb_connection
+from noetl.common import setup_logger, deep_merge, get_pgdb_connection, get_db_connection
 from noetl.worker import NoETLAgent
 from noetl.broker import Broker
 
@@ -17,121 +16,105 @@ router = APIRouter()
 
 class CatalogService:
     def __init__(self, pgdb_conn_string: str | None = None):
-        self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
+        pass
 
     def get_latest_version(self, resource_path: str) -> str:
-        conn = None
         try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
-                    (resource_path,)
-                )
-                count = cursor.fetchone()[0]
-                logger.debug(f"Found {count} entries for resource_path '{resource_path}'")
-
-                if count == 0:
-                    logger.debug(f"No entries found for resource_path '{resource_path}', returning default version '0.1.0'")
-                    return "0.1.0"
-
-                cursor.execute(
-                    "SELECT resource_version FROM catalog WHERE resource_path = %s",
-                    (resource_path,)
-                )
-                versions = [row[0] for row in cursor.fetchall()]
-                logger.debug(f"All versions for resource_path '{resource_path}': {versions}")
-
-                cursor.execute(
-                    """
-                    WITH parsed_versions AS (
-                        SELECT 
-                            resource_version,
-                            CAST(SPLIT_PART(resource_version, '.', 1) AS INTEGER) AS major,
-                            CAST(SPLIT_PART(resource_version, '.', 2) AS INTEGER) AS minor,
-                            CAST(SPLIT_PART(resource_version, '.', 3) AS INTEGER) AS patch
-                        FROM catalog
-                        WHERE resource_path = %s
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
+                        (resource_path,)
                     )
-                    SELECT resource_version
-                    FROM parsed_versions
-                    ORDER BY major DESC, minor DESC, patch DESC
-                    LIMIT 1
-                    """,
-                    (resource_path,)
-                )
-                result = cursor.fetchone()
+                    count = cursor.fetchone()[0]
+                    logger.debug(f"Found {count} entries for resource_path '{resource_path}'")
 
-                if result:
-                    latest_version = result[0]
-                    logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
-                    return latest_version
+                    if count == 0:
+                        logger.debug(f"No entries found for resource_path '{resource_path}', returning default version '0.1.0'")
+                        return "0.1.0"
 
-                logger.debug(f"No valid version found for resource_path '{resource_path}', returning default version '0.1.0'")
-                return "0.1.0"
+                    cursor.execute(
+                        "SELECT resource_version FROM catalog WHERE resource_path = %s",
+                        (resource_path,)
+                    )
+                    versions = [row[0] for row in cursor.fetchall()]
+                    logger.debug(f"All versions for resource_path '{resource_path}': {versions}")
+
+                    cursor.execute(
+                        """
+                        WITH parsed_versions AS (
+                            SELECT 
+                                resource_version,
+                                CAST(SPLIT_PART(resource_version, '.', 1) AS INTEGER) AS major,
+                                CAST(SPLIT_PART(resource_version, '.', 2) AS INTEGER) AS minor,
+                                CAST(SPLIT_PART(resource_version, '.', 3) AS INTEGER) AS patch
+                            FROM catalog
+                            WHERE resource_path = %s
+                        )
+                        SELECT resource_version
+                        FROM parsed_versions
+                        ORDER BY major DESC, minor DESC, patch DESC
+                        LIMIT 1
+                        """,
+                        (resource_path,)
+                    )
+                    result = cursor.fetchone()
+
+                    if result:
+                        latest_version = result[0]
+                        logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
+                        return latest_version
+
+                    logger.debug(f"No valid version found for resource_path '{resource_path}', returning default version '0.1.0'")
+                    return "0.1.0"
         except Exception as e:
             logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
             return "0.1.0"
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
 
     def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
-        conn = None
         try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT resource_path, resource_type, resource_version, content, payload, meta
-                    FROM catalog
-                    WHERE resource_path = %s AND resource_version = %s
-                    """,
-                    (path, version)
-                )
-
-                result = cursor.fetchone()
-
-                if not result and '/' in path:
-                    filename = path.split('/')[-1]
-                    logger.info(f"Path not found. Trying to match filename: {filename}")
-
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
                     cursor.execute(
                         """
                         SELECT resource_path, resource_type, resource_version, content, payload, meta
                         FROM catalog
                         WHERE resource_path = %s AND resource_version = %s
                         """,
-                        (filename, version)
+                        (path, version)
                     )
 
                     result = cursor.fetchone()
 
-            if result:
-                return {
-                    "resource_path": result[0],
-                    "resource_type": result[1],
-                    "resource_version": result[2],
-                    "content": result[3],
-                    "payload": result[4],
-                    "meta": result[5]
-                }
-            return None
+                    if not result and '/' in path:
+                        filename = path.split('/')[-1]
+                        logger.info(f"Path not found. Trying to match filename: {filename}")
+
+                        cursor.execute(
+                            """
+                            SELECT resource_path, resource_type, resource_version, content, payload, meta
+                            FROM catalog
+                            WHERE resource_path = %s AND resource_version = %s
+                            """,
+                            (filename, version)
+                        )
+
+                        result = cursor.fetchone()
+
+                if result:
+                    return {
+                        "resource_path": result[0],
+                        "resource_type": result[1],
+                        "resource_version": result[2],
+                        "content": result[3],
+                        "payload": result[4],
+                        "meta": result[5]
+                    }
+                return None
 
         except Exception as e:
             logger.exception(f"Error fetching catalog entry: {e}.")
             return None
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
 
     def increment_version(self, version: str) -> str:
         try:
@@ -146,144 +129,122 @@ class CatalogService:
             return f"{version}.1"
 
     def register_resource(self, content: str, resource_type: str = "playbook") -> Dict[str, Any]:
-        conn = None
         try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-            resource_data = yaml.safe_load(content)
-            resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
-            logger.debug(f"Extracted resource_path: '{resource_path}'")
-            latest_version = self.get_latest_version(resource_path)
-            logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
-            resource_version = self.increment_version(latest_version)
-            logger.debug(f"Incremented version: '{resource_version}'")
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
-                    (resource_path, resource_version)
-                )
-                count = int(cursor.fetchone()[0])  # Convert to int
-                max_attempts = 10
-                attempt = 1
-                while count > 0 and attempt <= max_attempts:
-                    logger.warning(f"Version '{resource_version}' already exists for resource_path '{resource_path}', incrementing again (attempt {attempt}/{max_attempts})")
-                    resource_version = self.increment_version(resource_version)
-                    logger.debug(f"Incremented version: '{resource_version}'")
+            with get_db_connection() as conn:
+                resource_data = yaml.safe_load(content)
+                resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
+                logger.debug(f"Extracted resource_path: '{resource_path}'")
+                latest_version = self.get_latest_version(resource_path)
+                logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
+                resource_version = self.increment_version(latest_version)
+                logger.debug(f"Incremented version: '{resource_version}'")
 
+                with conn.cursor() as cursor:
                     cursor.execute(
                         "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
                         (resource_path, resource_version)
                     )
-                    count = int(cursor.fetchone()[0])  # Convert to int
-                    attempt += 1
+                    count = int(cursor.fetchone()[0])
+                    max_attempts = 10
+                    attempt = 1
+                    while count > 0 and attempt <= max_attempts:
+                        logger.warning(f"Version '{resource_version}' already exists for resource_path '{resource_path}', incrementing again (attempt {attempt}/{max_attempts})")
+                        resource_version = self.increment_version(resource_version)
+                        logger.debug(f"Incremented version: '{resource_version}'")
 
-                if attempt > max_attempts:
-                    logger.error(f"Failed to find version after {max_attempts} attempts")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to find version after {max_attempts} attempts"
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
+                            (resource_path, resource_version)
+                        )
+                        count = int(cursor.fetchone()[0])
+                        attempt += 1
+
+                    if attempt > max_attempts:
+                        logger.error(f"Failed to find version after {max_attempts} attempts")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to find version after {max_attempts} attempts"
+                        )
+
+                logger.info(f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
+
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
+                        (resource_type,)
                     )
-
-            logger.info(f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
-
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
-                    (resource_type,)
-                )
-                cursor.execute(
-                    """
-                    INSERT INTO catalog 
-                    (resource_path, resource_type, resource_version, content, payload, meta)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        resource_path,
-                        resource_type,
-                        resource_version,
-                        content,
-                        json.dumps(resource_data),
-                        json.dumps({"registered_at": "now()"})
+                    cursor.execute(
+                        """
+                        INSERT INTO catalog 
+                        (resource_path, resource_type, resource_version, content, payload, meta)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            resource_path,
+                            resource_type,
+                            resource_version,
+                            content,
+                            json.dumps(resource_data),
+                            json.dumps({"registered_at": "now()"})
+                        )
                     )
-                )
-                conn.commit()
+                    conn.commit()
 
-            return {
-                "status": "success",
-                "message": f"Resource '{resource_path}' version '{resource_version}' registered.",
-                "resource_path": resource_path,
-                "resource_version": resource_version,
-                "resource_type": resource_type
-            }
+                return {
+                    "status": "success",
+                    "message": f"Resource '{resource_path}' version '{resource_version}' registered.",
+                    "resource_path": resource_path,
+                    "resource_version": resource_version,
+                    "resource_type": resource_type
+                }
 
         except Exception as e:
             logger.exception(f"Error registering resource: {e}.")
-            if conn:
-                try:
-                    conn.rollback()
-                    logger.info("Transaction rolled back due to error.")
-                except Exception as rollback_error:
-                    logger.exception(f"Error rolling back transaction: {rollback_error}.")
             raise HTTPException(
                 status_code=500,
                 detail=f"Error registering resource: {e}."
             )
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                    logger.debug("Connection closed.")
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}.")
 
     def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
-        conn = None
         try:
-            conn = psycopg.connect(self.pgdb_conn_string)
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    if resource_type:
+                        cursor.execute(
+                            """
+                            SELECT resource_path, resource_type, resource_version, meta, timestamp
+                            FROM catalog
+                            WHERE resource_type = %s
+                            ORDER BY timestamp DESC
+                            """,
+                            (resource_type,)
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            SELECT resource_path, resource_type, resource_version, meta, timestamp
+                            FROM catalog
+                            ORDER BY timestamp DESC
+                            """
+                        )
 
-            with conn.cursor() as cursor:
-                if resource_type:
-                    cursor.execute(
-                        """
-                        SELECT resource_path, resource_type, resource_version, meta, timestamp
-                        FROM catalog
-                        WHERE resource_type = %s
-                        ORDER BY timestamp DESC
-                        """,
-                        (resource_type,)
-                    )
-                else:
-                    cursor.execute(
-                        """
-                        SELECT resource_path, resource_type, resource_version, meta, timestamp
-                        FROM catalog
-                        ORDER BY timestamp DESC
-                        """
-                    )
+                    results = cursor.fetchall()
 
-                results = cursor.fetchall()
+                entries = []
+                for row in results:
+                    entries.append({
+                        "resource_path": row[0],
+                        "resource_type": row[1],
+                        "resource_version": row[2],
+                        "meta": row[3],
+                        "timestamp": row[4]
+                    })
 
-            entries = []
-            for row in results:
-                entries.append({
-                    "resource_path": row[0],
-                    "resource_type": row[1],
-                    "resource_version": row[2],
-                    "meta": row[3],
-                    "timestamp": row[4]
-                })
-
-            return entries
+                return entries
 
         except Exception as e:
             logger.exception(f"Error listing catalog entries: {e}")
             return []
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
-
 
 
 def get_catalog_service() -> CatalogService:
@@ -316,8 +277,8 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
 
 class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
-        self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
-        
+        pass
+
     def get_all_executions(self) -> List[Dict[str, Any]]:
         """
         Get all executions from the event_log table.
@@ -325,133 +286,118 @@ class EventService:
         Returns:
             A list of execution data dictionaries
         """
-        conn = None
         try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-            with conn.cursor() as cursor:
-                # Get distinct execution_ids with their latest event
-                cursor.execute("""
-                    WITH latest_events AS (
-                        SELECT 
-                            execution_id,
-                            MAX(timestamp) as latest_timestamp
-                        FROM event_log
-                        GROUP BY execution_id
-                    )
-                    SELECT 
-                        e.execution_id,
-                        e.event_type,
-                        e.status,
-                        e.timestamp,
-                        e.metadata,
-                        e.input_context,
-                        e.output_result,
-                        e.error
-                    FROM event_log e
-                    JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
-                    ORDER BY e.timestamp DESC
-                """)
-                
-                rows = cursor.fetchall()
-                executions = []
-                
-                for row in rows:
-                    execution_id = row[0]
-                    metadata = json.loads(row[4]) if row[4] else {}
-                    input_context = json.loads(row[5]) if row[5] else {}
-                    output_result = json.loads(row[6]) if row[6] else {}
-                    
-                    # Extract playbook information from metadata or input_context
-                    playbook_id = metadata.get('resource_path', input_context.get('path', ''))
-                    playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-                    
-                    # Determine status
-                    status = row[2]
-                    if status == 'COMPLETED':
-                        status = 'completed'
-                    elif status == 'ERROR':
-                        status = 'failed'
-                    elif status == 'RUNNING':
-                        status = 'running'
-                    else:
-                        status = 'pending'
-                    
-                    # Calculate duration if available
-                    start_time = row[3].isoformat() if row[3] else None
-                    end_time = None
-                    duration = None
-                    
-                    # Get the first event for this execution to find start time
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
                     cursor.execute("""
-                        SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
-                    """, (execution_id,))
-                    min_time_row = cursor.fetchone()
-                    if min_time_row and min_time_row[0]:
-                        start_time = min_time_row[0].isoformat()
-                    
-                    # If execution is completed or failed, get end time
-                    if status in ['completed', 'failed']:
+                        WITH latest_events AS (
+                            SELECT 
+                                execution_id,
+                                MAX(timestamp) as latest_timestamp
+                            FROM event_log
+                            GROUP BY execution_id
+                        )
+                        SELECT 
+                            e.execution_id,
+                            e.event_type,
+                            e.status,
+                            e.timestamp,
+                            e.metadata,
+                            e.input_context,
+                            e.output_result,
+                            e.error
+                        FROM event_log e
+                        JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
+                        ORDER BY e.timestamp DESC
+                    """)
+
+                    rows = cursor.fetchall()
+                    executions = []
+
+                    for row in rows:
+                        execution_id = row[0]
+                        metadata = json.loads(row[4]) if row[4] else {}
+                        input_context = json.loads(row[5]) if row[5] else {}
+                        output_result = json.loads(row[6]) if row[6] else {}
+
+                        # Extract playbook information from metadata or input_context
+                        playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+                        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+
+                        # Determine status
+                        status = row[2]
+                        if status == 'COMPLETED':
+                            status = 'completed'
+                        elif status == 'ERROR':
+                            status = 'failed'
+                        elif status == 'RUNNING':
+                            status = 'running'
+                        else:
+                            status = 'pending'
+
+                        # Calculate duration if available
+                        start_time = row[3].isoformat() if row[3] else None
+                        end_time = None
+                        duration = None
+
                         cursor.execute("""
-                            SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
+                            SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
                         """, (execution_id,))
-                        max_time_row = cursor.fetchone()
-                        if max_time_row and max_time_row[0]:
-                            end_time = max_time_row[0].isoformat()
-                            
-                            # Calculate duration if both start and end times are available
-                            if start_time:
-                                start_dt = datetime.fromisoformat(start_time)
-                                end_dt = datetime.fromisoformat(end_time)
-                                duration = (end_dt - start_dt).total_seconds()
-                    
-                    # Calculate progress
-                    progress = 100 if status in ['completed', 'failed'] else 0
-                    if status == 'running':
-                        # Count total steps and completed steps
-                        cursor.execute("""
-                            SELECT COUNT(*) FROM event_log WHERE execution_id = %s
-                        """, (execution_id,))
-                        total_steps = cursor.fetchone()[0]
-                        
-                        cursor.execute("""
-                            SELECT COUNT(*) FROM event_log 
-                            WHERE execution_id = %s AND status IN ('COMPLETED', 'ERROR')
-                        """, (execution_id,))
-                        completed_steps = cursor.fetchone()[0]
-                        
-                        if total_steps > 0:
-                            progress = int((completed_steps / total_steps) * 100)
-                    
-                    # Create execution data object
-                    execution_data = {
-                        "id": execution_id,
-                        "playbook_id": playbook_id,
-                        "playbook_name": playbook_name,
-                        "status": status,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "duration": duration,
-                        "progress": progress,
-                        "result": output_result,
-                        "error": row[7]
-                    }
-                    
-                    executions.append(execution_data)
-                
-                return executions
-                
+                        min_time_row = cursor.fetchone()
+                        if min_time_row and min_time_row[0]:
+                            start_time = min_time_row[0].isoformat()
+
+                        if status in ['completed', 'failed']:
+                            cursor.execute("""
+                                SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
+                            """, (execution_id,))
+                            max_time_row = cursor.fetchone()
+                            if max_time_row and max_time_row[0]:
+                                end_time = max_time_row[0].isoformat()
+
+                                if start_time:
+                                    start_dt = datetime.fromisoformat(start_time)
+                                    end_dt = datetime.fromisoformat(end_time)
+                                    duration = (end_dt - start_dt).total_seconds()
+
+                        progress = 100 if status in ['completed', 'failed'] else 0
+                        if status == 'running':
+                            cursor.execute("""
+                                SELECT COUNT(*) FROM event_log WHERE execution_id = %s
+                            """, (execution_id,))
+                            total_steps = cursor.fetchone()[0]
+
+                            cursor.execute("""
+                                SELECT COUNT(*) FROM event_log 
+                                WHERE execution_id = %s AND status IN ('COMPLETED', 'ERROR')
+                            """, (execution_id,))
+                            completed_steps = cursor.fetchone()[0]
+
+                            if total_steps > 0:
+                                progress = int((completed_steps / total_steps) * 100)
+
+                        execution_data = {
+                            "id": execution_id,
+                            "playbook_id": playbook_id,
+                            "playbook_name": playbook_name,
+                            "status": status,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "duration": duration,
+                            "progress": progress,
+                            "result": output_result,
+                            "error": row[7]
+                        }
+
+                        executions.append(execution_data)
+
+                    return executions
+
         except Exception as e:
             logger.exception(f"Error getting all executions: {e}")
             return []
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
 
     def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
-        conn = None
         try:
             event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id
@@ -469,66 +415,66 @@ class EventService:
             output_result = json.dumps(event_data.get("result", {}))
             metadata_str = json.dumps(metadata)
 
-            conn = psycopg.connect(self.pgdb_conn_string)
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT COUNT(*) FROM event_log 
-                    WHERE execution_id = %s AND event_id = %s
-                """, (execution_id, event_id))
-
-                exists = cursor.fetchone()[0] > 0
-
-                if exists:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
                     cursor.execute("""
-                        UPDATE event_log SET
-                            event_type = %s,
-                            status = %s,
-                            duration = %s,
-                            input_context = %s,
-                            output_result = %s,
-                            metadata = %s,
-                            error = %s,
-                            timestamp = CURRENT_TIMESTAMP
+                        SELECT COUNT(*) FROM event_log 
                         WHERE execution_id = %s AND event_id = %s
-                    """, (
-                        event_type,
-                        status,
-                        duration,
-                        input_context,
-                        output_result,
-                        metadata_str,
-                        error,
-                        execution_id,
-                        event_id
-                    ))
-                else:
-                    cursor.execute("""
-                        INSERT INTO event_log (
-                            execution_id, event_id, parent_event_id, timestamp, event_type,
-                            node_id, node_name, node_type, status, duration,
-                            input_context, output_result, metadata, error
-                        ) VALUES (
-                            %s, %s, %s, CURRENT_TIMESTAMP, %s,
-                            %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s
-                        )
-                    """, (
-                        execution_id,
-                        event_id,
-                        parent_event_id,
-                        event_type,
-                        node_id,
-                        node_name,
-                        node_type,
-                        status,
-                        duration,
-                        input_context,
-                        output_result,
-                        metadata_str,
-                        error
-                    ))
+                    """, (execution_id, event_id))
 
-                conn.commit()
+                    exists = cursor.fetchone()[0] > 0
+
+                    if exists:
+                        cursor.execute("""
+                            UPDATE event_log SET
+                                event_type = %s,
+                                status = %s,
+                                duration = %s,
+                                input_context = %s,
+                                output_result = %s,
+                                metadata = %s,
+                                error = %s,
+                                timestamp = CURRENT_TIMESTAMP
+                            WHERE execution_id = %s AND event_id = %s
+                        """, (
+                            event_type,
+                            status,
+                            duration,
+                            input_context,
+                            output_result,
+                            metadata_str,
+                            error,
+                            execution_id,
+                            event_id
+                        ))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO event_log (
+                                execution_id, event_id, parent_event_id, timestamp, event_type,
+                                node_id, node_name, node_type, status, duration,
+                                input_context, output_result, metadata, error
+                            ) VALUES (
+                                %s, %s, %s, CURRENT_TIMESTAMP, %s,
+                                %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s
+                            )
+                        """, (
+                            execution_id,
+                            event_id,
+                            parent_event_id,
+                            event_type,
+                            node_id,
+                            node_name,
+                            node_type,
+                            status,
+                            duration,
+                            input_context,
+                            output_result,
+                            metadata_str,
+                            error
+                        ))
+
+                    conn.commit()
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
             return event_data
@@ -539,12 +485,6 @@ class EventService:
                 status_code=500,
                 detail=f"Error emitting event: {e}"
             )
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
 
     def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -556,33 +496,103 @@ class EventService:
         Returns:
             A dictionary containing events or None if not found
         """
-        conn = None
         try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT 
-                        event_id, 
-                        event_type, 
-                        node_id, 
-                        node_name, 
-                        node_type, 
-                        status, 
-                        duration, 
-                        timestamp, 
-                        input_context, 
-                        output_result, 
-                        metadata, 
-                        error
-                    FROM event_log 
-                    WHERE execution_id = %s
-                    ORDER BY timestamp
-                """, (execution_id,))
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT 
+                            event_id, 
+                            event_type, 
+                            node_id, 
+                            node_name, 
+                            node_type, 
+                            status, 
+                            duration, 
+                            timestamp, 
+                            input_context, 
+                            output_result, 
+                            metadata, 
+                            error
+                        FROM event_log 
+                        WHERE execution_id = %s
+                        ORDER BY timestamp
+                    """, (execution_id,))
 
-                rows = cursor.fetchall()
-                if rows:
-                    events = []
-                    for row in rows:
+                    rows = cursor.fetchall()
+                    if rows:
+                        events = []
+                        for row in rows:
+                            event_data = {
+                                "event_id": row[0],
+                                "event_type": row[1],
+                                "node_id": row[2],
+                                "node_name": row[3],
+                                "node_type": row[4],
+                                "status": row[5],
+                                "duration": row[6],
+                                "timestamp": row[7].isoformat() if row[7] else None,
+                                "input_context": json.loads(row[8]) if row[8] else None,
+                                "output_result": json.loads(row[9]) if row[9] else None,
+                                "metadata": json.loads(row[10]) if row[10] else None,
+                                "error": row[11],
+                                "execution_id": execution_id,
+                                "resource_path": None,
+                                "resource_version": None
+                            }
+
+                            # Try to extract resource_path and resource_version from metadata or input_context
+                            if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
+                                event_data["resource_path"] = event_data["metadata"]["playbook_path"]
+
+                            if event_data["input_context"] and "path" in event_data["input_context"]:
+                                event_data["resource_path"] = event_data["input_context"]["path"]
+
+                            if event_data["input_context"] and "version" in event_data["input_context"]:
+                                event_data["resource_version"] = event_data["input_context"]["version"]
+
+                            events.append(event_data)
+
+                        return {"events": events}
+
+                    return None
+        except Exception as e:
+            logger.exception(f"Error getting events by execution_id: {e}")
+            return None
+
+    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a single event by its ID.
+
+        Args:
+            event_id: The ID of the event
+
+        Returns:
+            A dictionary containing the event or None if not found
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT 
+                            event_id, 
+                            event_type, 
+                            node_id, 
+                            node_name, 
+                            node_type, 
+                            status, 
+                            duration, 
+                            timestamp, 
+                            input_context, 
+                            output_result, 
+                            metadata, 
+                            error,
+                            execution_id
+                        FROM event_log 
+                        WHERE event_id = %s
+                    """, (event_id,))
+
+                    row = cursor.fetchone()
+                    if row:
                         event_data = {
                             "event_id": row[0],
                             "event_type": row[1],
@@ -596,12 +606,10 @@ class EventService:
                             "output_result": json.loads(row[9]) if row[9] else None,
                             "metadata": json.loads(row[10]) if row[10] else None,
                             "error": row[11],
-                            "execution_id": execution_id,
+                            "execution_id": row[12],
                             "resource_path": None,
                             "resource_version": None
                         }
-
-                        # Try to extract resource_path and resource_version from metadata or input_context
                         if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
                             event_data["resource_path"] = event_data["metadata"]["playbook_path"]
 
@@ -610,94 +618,12 @@ class EventService:
 
                         if event_data["input_context"] and "version" in event_data["input_context"]:
                             event_data["resource_version"] = event_data["input_context"]["version"]
+                        return {"events": [event_data]}
 
-                        events.append(event_data)
-
-                    return {"events": events}
-
-                return None
-        except Exception as e:
-            logger.exception(f"Error getting events by execution_id: {e}")
-            return None
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
-
-    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a single event by its ID.
-
-        Args:
-            event_id: The ID of the event
-
-        Returns:
-            A dictionary containing the event or None if not found
-        """
-        conn = None
-        try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT 
-                        event_id, 
-                        event_type, 
-                        node_id, 
-                        node_name, 
-                        node_type, 
-                        status, 
-                        duration, 
-                        timestamp, 
-                        input_context, 
-                        output_result, 
-                        metadata, 
-                        error,
-                        execution_id
-                    FROM event_log 
-                    WHERE event_id = %s
-                """, (event_id,))
-
-                row = cursor.fetchone()
-                if row:
-                    event_data = {
-                        "event_id": row[0],
-                        "event_type": row[1],
-                        "node_id": row[2],
-                        "node_name": row[3],
-                        "node_type": row[4],
-                        "status": row[5],
-                        "duration": row[6],
-                        "timestamp": row[7].isoformat() if row[7] else None,
-                        "input_context": json.loads(row[8]) if row[8] else None,
-                        "output_result": json.loads(row[9]) if row[9] else None,
-                        "metadata": json.loads(row[10]) if row[10] else None,
-                        "error": row[11],
-                        "execution_id": row[12],
-                        "resource_path": None,
-                        "resource_version": None
-                    }
-                    if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
-                        event_data["resource_path"] = event_data["metadata"]["playbook_path"]
-
-                    if event_data["input_context"] and "path" in event_data["input_context"]:
-                        event_data["resource_path"] = event_data["input_context"]["path"]
-
-                    if event_data["input_context"] and "version" in event_data["input_context"]:
-                        event_data["resource_version"] = event_data["input_context"]["version"]
-                    return {"events": [event_data]}
-
-                return None
+                    return None
         except Exception as e:
             logger.exception(f"Error getting event by ID: {e}")
             return None
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
 
     def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
         """
@@ -709,49 +635,50 @@ class EventService:
         Returns:
             A dictionary containing events or None if not found
         """
-        conn = None
         try:
-            conn = psycopg.connect(self.pgdb_conn_string)
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT COUNT(*) FROM event_log WHERE execution_id = %s
-                """, (id_param,))
-                count = cursor.fetchone()[0]
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM event_log WHERE execution_id = %s
+                    """, (id_param,))
+                    count = cursor.fetchone()[0]
 
-                if count > 0:
-                    events = self.get_events_by_execution_id(id_param)
-                    if events:
-                        return events
+                    if count > 0:
+                        events = self.get_events_by_execution_id(id_param)
+                        if events:
+                            return events
 
-            event = self.get_event_by_id(id_param)
-            if event:
-                return event
+                event = self.get_event_by_id(id_param)
+                if event:
+                    return event
 
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT DISTINCT execution_id FROM event_log 
-                    WHERE event_id = %s
-                """, (id_param,))
-                execution_ids = [row[0] for row in cursor.fetchall()]
+                with get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            SELECT DISTINCT execution_id FROM event_log 
+                            WHERE event_id = %s
+                        """, (id_param,))
+                        execution_ids = [row[0] for row in cursor.fetchall()]
 
-                if execution_ids:
-                    events = self.get_events_by_execution_id(execution_ids[0])
-                    if events:
-                        return events
+                        if execution_ids:
+                            events = self.get_events_by_execution_id(execution_ids[0])
+                            if events:
+                                return events
 
-            return None
+                return None
         except Exception as e:
             logger.exception(f"Error in get_event: {e}")
             return None
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.exception(f"Error closing connection: {close_error}")
 
+# Service factory functions - defined after all classes
 def get_event_service() -> EventService:
-    return EventService(get_pgdb_connection())
+    return EventService()
+
+def get_catalog_service_dependency() -> CatalogService:
+    return CatalogService()
+
+def get_event_service_dependency() -> EventService:
+    return EventService()
 
 
 class AgentService:
@@ -849,6 +776,9 @@ class AgentService:
 
 def get_agent_service() -> AgentService:
     return AgentService(get_pgdb_connection())
+
+def get_agent_service_dependency() -> AgentService:
+    return AgentService()
 
 @router.post("/catalog/register", response_class=JSONResponse)
 async def register_resource(
@@ -1299,7 +1229,6 @@ async def execute_agent_async(
         )
 
 
-# Add dashboard endpoints that the UI expects
 @router.get("/dashboard/stats", response_class=JSONResponse)
 async def get_dashboard_stats():
     """Get dashboard statistics"""
@@ -1320,9 +1249,6 @@ async def get_dashboard_stats():
 async def get_dashboard_widgets():
     """Get dashboard widgets"""
     try:
-        # Return mock data for now - you can implement real widgets later
-        # Return an empty array instead of an object with a widgets property
-        # This matches what the UI expects
         return []
     except Exception as e:
         logger.error(f"Error getting dashboard widgets: {e}")
@@ -1340,13 +1266,10 @@ async def get_catalog_playbooks():
         catalog_service = get_catalog_service()
         entries = catalog_service.list_entries('playbook')
         
-        # Transform catalog entries to match the PlaybookData interface
         playbooks = []
         for entry in entries:
-            # Extract metadata from the entry
             meta = entry.get('meta', {})
             
-            # Create a PlaybookData object
             playbook = {
                 "id": entry.get('resource_path', ''),
                 "name": entry.get('resource_path', '').split('/')[-1],
@@ -1372,7 +1295,6 @@ async def create_catalog_playbook(request: Request):
         description = body.get("description", "")
         status = body.get("status", "draft")
         
-        # Create a basic playbook template
         content = f"""# {name}
 name: "{name.lower().replace(' ', '-')}"
 description: "{description}"
@@ -1383,11 +1305,9 @@ tasks:
       message: "Hello from NoETL!"
 """
         
-        # Register the new playbook
         catalog_service = get_catalog_service()
         result = catalog_service.register_resource(content, "playbook")
         
-        # Create a PlaybookData object for the response
         playbook = {
             "id": result.get("resource_path", ""),
             "name": name,
@@ -1417,7 +1337,6 @@ async def validate_catalog_playbook(request: Request):
                 detail="Content is required."
             )
         
-        # Basic validation - check if it's valid YAML
         try:
             yaml.safe_load(content)
             return {"valid": True}
@@ -1446,7 +1365,6 @@ async def execute_playbook(request: Request):
                 detail="playbook_id is required."
             )
         
-        # Call the agent/execute endpoint
         result = await execute_agent(
             request=request,
             path=playbook_id,
@@ -1455,7 +1373,6 @@ async def execute_playbook(request: Request):
             merge=False
         )
         
-        # Transform the result to match the ExecutionData interface
         execution = {
             "id": result.get("execution_id", ""),
             "playbook_id": playbook_id,
@@ -1473,47 +1390,6 @@ async def execute_playbook(request: Request):
         logger.error(f"Error executing playbook: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# @router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
-# async def get_catalog_playbook(playbook_id: str):
-#     """Get a playbook by ID"""
-#     try:
-#         logger.info(f"Received playbook_id for get: '{playbook_id}'")
-#
-#         if playbook_id.startswith("playbooks/"):
-#             playbook_id = playbook_id[10:]
-#             logger.info(f"Fixed playbook_id for get: '{playbook_id}'")
-#
-#         catalog_service = get_catalog_service()
-#         latest_version = catalog_service.get_latest_version(playbook_id)
-#         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
-#
-#         entry = catalog_service.fetch_entry(playbook_id, latest_version)
-#
-#         if not entry:
-#             raise HTTPException(
-#                 status_code=404,
-#                 detail=f"Playbook '{playbook_id}' not found."
-#             )
-#
-#         meta = entry.get('meta', {})
-#
-#         playbook = {
-#             "id": entry.get('resource_path', ''),
-#             "name": entry.get('resource_path', '').split('/')[-1],
-#             "description": meta.get('description', ''),
-#             "created_at": entry.get('timestamp', ''),
-#             "updated_at": entry.get('timestamp', ''),
-#             "status": meta.get('status', 'active'),
-#             "tasks_count": meta.get('tasks_count', 0),
-#             "version": entry.get('resource_version', '')
-#         }
-#
-#         return playbook
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error(f"Error getting playbook: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
 @router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
 async def get_catalog_playbook(
     entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
@@ -1539,17 +1415,12 @@ async def get_catalog_playbook(
 async def get_catalog_playbook_content(playbook_id: str):
     """Get playbook content"""
     try:
-        # Log the received playbook_id for debugging
         logger.info(f"Received playbook_id: '{playbook_id}'")
-        
-        # Fix for incorrect path parsing
-        # If the path starts with "playbooks/", remove it
         if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]  # Remove "playbooks/"
+            playbook_id = playbook_id[10:]
             logger.info(f"Fixed playbook_id: '{playbook_id}'")
         
         catalog_service = get_catalog_service()
-        # Get the latest version of the playbook
         latest_version = catalog_service.get_latest_version(playbook_id)
         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
         
@@ -1561,7 +1432,6 @@ async def get_catalog_playbook_content(playbook_id: str):
                 detail=f"Playbook '{playbook_id}' not found."
             )
         
-        # Return the content
         return {"content": entry.get('content', '')}
     except HTTPException:
         raise
@@ -1573,13 +1443,9 @@ async def get_catalog_playbook_content(playbook_id: str):
 async def save_catalog_playbook_content(playbook_id: str, request: Request):
     """Save playbook content"""
     try:
-        # Log the received playbook_id for debugging
         logger.info(f"Received playbook_id for save: '{playbook_id}'")
-        
-        # Fix for incorrect path parsing
-        # If the path starts with "playbooks/", remove it
         if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]  # Remove "playbooks/"
+            playbook_id = playbook_id[10:]
             logger.info(f"Fixed playbook_id for save: '{playbook_id}'")
         
         body = await request.json()
@@ -1590,8 +1456,6 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 status_code=400,
                 detail="Content is required."
             )
-        
-        # Register the updated playbook
         catalog_service = get_catalog_service()
         result = catalog_service.register_resource(content, "playbook")
         
@@ -1611,7 +1475,6 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
 async def get_catalog_widgets():
     """Get catalog visualization widgets"""
     try:
-        # Return mock data for now - you can implement real widgets later
         return [
             {
                 "id": "catalog-summary",
@@ -1654,7 +1517,6 @@ async def get_execution(execution_id: str):
                 detail=f"Execution '{execution_id}' not found."
             )
         
-        # Get the latest event for this execution to determine status
         latest_event = None
         for event in events.get("events", []):
             if not latest_event or (event.get("timestamp", "") > latest_event.get("timestamp", "")):
@@ -1666,16 +1528,13 @@ async def get_execution(execution_id: str):
                 detail=f"No events found for execution '{execution_id}'."
             )
         
-        # Extract playbook information
         metadata = latest_event.get("metadata", {})
         input_context = latest_event.get("input_context", {})
         output_result = latest_event.get("output_result", {})
         
-        # Extract playbook information from metadata or input_context
         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
         
-        # Determine status
         status = latest_event.get("status", "")
         if status == 'COMPLETED':
             status = 'completed'
@@ -1686,14 +1545,12 @@ async def get_execution(execution_id: str):
         else:
             status = 'pending'
         
-        # Find start and end times
         timestamps = [event.get("timestamp", "") for event in events.get("events", []) if event.get("timestamp")]
         timestamps.sort()
         
         start_time = timestamps[0] if timestamps else None
         end_time = timestamps[-1] if timestamps and status in ['completed', 'failed'] else None
         
-        # Calculate duration if both start and end times are available
         duration = None
         if start_time and end_time:
             try:
@@ -1703,17 +1560,14 @@ async def get_execution(execution_id: str):
             except Exception as e:
                 logger.error(f"Error calculating duration: {e}")
         
-        # Calculate progress
         progress = 100 if status in ['completed', 'failed'] else 0
         if status == 'running':
-            # Count total steps and completed steps
             total_steps = len(events.get("events", []))
             completed_steps = sum(1 for event in events.get("events", []) if event.get("status") in ['COMPLETED', 'ERROR'])
             
             if total_steps > 0:
                 progress = int((completed_steps / total_steps) * 100)
         
-        # Create execution data object
         execution_data = {
             "id": execution_id,
             "playbook_id": playbook_id,
@@ -1741,4 +1595,3 @@ async def api_health():
     return {"status": "ok"}
 
 
-# Existing endpoints continue here...

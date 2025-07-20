@@ -1,9 +1,17 @@
 import axios from 'axios';
 
-// API Base URL - will be proxied by Vite to FastAPI backend
-//const API_BASE_URL = process.env.NODE_ENV === 'development' ? 'http://localhost:8081/api' : '/api';
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081/api';
-// API Client instance
+ const getApiBaseUrl = () => {
+   if (import.meta.env.VITE_API_BASE_URL) {
+     return import.meta.env.VITE_API_BASE_URL;
+   }
+   if (import.meta.env.MODE === 'development') {
+     return 'http://localhost:8081/api';
+   }
+   return '/api';
+ };
+
+ const API_BASE_URL = getApiBaseUrl();
+
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
@@ -12,7 +20,6 @@ const apiClient = axios.create({
   },
 });
 
-// Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -21,7 +28,6 @@ apiClient.interceptors.response.use(
   }
 );
 
-// Type definitions for API responses
 export interface ServerStatus {
   status: string;
   message: string;
@@ -67,15 +73,12 @@ export interface VisualizationWidget {
   config: any;
 }
 
-// API Service class
 class APIService {
-  // Health check
   async getHealth(): Promise<ServerStatus> {
     const response = await apiClient.get('/health');
     return response.data;
   }
 
-  // Dashboard APIs
   async getDashboardStats(): Promise<DashboardStats> {
     const response = await apiClient.get('/dashboard/stats');
     return response.data;
@@ -86,7 +89,6 @@ class APIService {
     return response.data;
   }
 
-  // Playbook APIs
   async getPlaybooks(): Promise<PlaybookData[]> {
     const response = await apiClient.get('/catalog/playbooks');
     return response.data;
@@ -111,7 +113,6 @@ class APIService {
     await apiClient.delete(`/catalog/playbooks/${id}`);
   }
 
-  // Execution APIs
   async getExecutions(): Promise<ExecutionData[]> {
     const response = await apiClient.get('/executions');
     return response.data;
@@ -134,7 +135,6 @@ class APIService {
     await apiClient.post(`/executions/${id}/stop`);
   }
 
-  // Editor APIs
   async getPlaybookContent(id: string): Promise<string> {
     const response = await apiClient.get(`/catalog/playbooks/${id}/content`);
     return response.data.content;
@@ -149,7 +149,6 @@ class APIService {
     return response.data;
   }
 
-  // Catalog APIs
   async getCatalogWidgets(): Promise<VisualizationWidget[]> {
     const response = await apiClient.get('/catalog/widgets');
     return response.data;
