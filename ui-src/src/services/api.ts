@@ -34,6 +34,21 @@ export interface ServerStatus {
   timestamp: string;
 }
 
+ export interface EventData {
+   event_id: string;
+   event_type: string;
+   node_id: string;
+   node_name: string;
+   node_type: string;
+   status: string;
+   duration: number;
+   timestamp: string;
+   input_context?: any;
+   output_result?: any;
+   metadata?: any;
+   error?: string;
+ }
+
 export interface PlaybookData {
   id: string;
   name: string;
@@ -42,6 +57,7 @@ export interface PlaybookData {
   updated_at: string;
   status: 'active' | 'inactive' | 'draft';
   tasks_count: number;
+  events?: EventData[];
 }
 
 export interface ExecutionData {
@@ -55,6 +71,14 @@ export interface ExecutionData {
   progress: number;
   result?: any;
   error?: string;
+  events?: Array<{
+  event_id: string;
+  event_type: string;
+  node_name: string;
+  status: string;
+  timestamp: string;
+  duration: number;
+  }>;
 }
 
 export interface DashboardStats {
