@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import ReactDOM from 'react-dom/client';
+import { useState, useEffect } from 'react';
+import type React from 'react';
+import { createRoot } from 'react-dom/client';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Typography, ConfigProvider } from 'antd';
 import { HomeOutlined, BookOutlined, EditOutlined, HistoryOutlined } from '@ant-design/icons';
@@ -29,7 +30,7 @@ const App: React.FC = () => {
     return 'dashboard';
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (location.pathname.startsWith('/catalog')) setSelectedKey('catalog');
     else if (location.pathname.startsWith('/editor')) setSelectedKey('editor');
     else if (location.pathname.startsWith('/execution')) setSelectedKey('execution');
@@ -40,43 +41,21 @@ const App: React.FC = () => {
     <ConfigProvider theme={{ token: { colorPrimary: '#1890ff' } }}>
       <Layout style={{ minHeight: '100vh' }}>
         <Header className="app-header">
-          <div className="logo">
-            <Title level={4} style={{ color: 'white', margin: 0 }}>
-              NoETL Dashboard
-            </Title>
+          <div className="header-inner">
+            <div className="logo">NoETL Dashboard</div>
+            <Menu
+              theme="light"
+              mode="horizontal"
+              selectedKeys={[selectedKey]}
+              className="centered-menu"
+              items={[
+                { key: 'dashboard', label: 'Dashboard', onClick: () => navigate('/') },
+                { key: 'catalog', label: 'Catalog', onClick: () => navigate('/catalog') },
+                { key: 'editor', label: 'Editor', onClick: () => navigate('/editor') },
+                { key: 'execution', label: 'Execution', onClick: () => navigate('/execution') }
+              ]}
+            />
           </div>
-          <Menu
-            theme="dark"
-            mode="horizontal"
-            selectedKeys={[selectedKey]}
-            style={{ flex: 1, minWidth: 0 }}
-            items={[
-              {
-                key: 'dashboard',
-                icon: <HomeOutlined />,
-                label: 'Dashboard',
-                onClick: () => navigate('/')
-              },
-              {
-                key: 'catalog',
-                icon: <BookOutlined />,
-                label: 'Catalog',
-                onClick: () => navigate('/catalog')
-              },
-              {
-                key: 'editor',
-                icon: <EditOutlined />,
-                label: 'Editor',
-                onClick: () => navigate('/editor')
-              },
-              {
-                key: 'execution',
-                icon: <HistoryOutlined />,
-                label: 'Execution',
-                onClick: () => navigate('/execution')
-              }
-            ]}
-          />
         </Header>
         <Content style={{ padding: '24px' }}>
           <Routes>
@@ -96,7 +75,7 @@ const App: React.FC = () => {
 };
 
 // Mount the app
-const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+const root = createRoot(document.getElementById('root') as HTMLElement);
 root.render(
   <Router>
     <App />
