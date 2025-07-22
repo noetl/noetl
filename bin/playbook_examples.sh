@@ -14,6 +14,8 @@ PLAYBOOKS=(
   "playbook/load_dict_test.yaml"
   "playbook/gs_duckdb_postgres_example.yaml"
   "playbook/gcs_secrets_example.yaml"
+   "playbook/amadeus_api.yaml"
+   "playbook/amadeus_api_v1.yaml"
 )
 
 for playbook in "${PLAYBOOKS[@]}"; do

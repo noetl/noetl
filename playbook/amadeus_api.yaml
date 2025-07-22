@@ -18,13 +18,25 @@ path: amadeus/amadeus_api
 workload:
   jobId: "{{ job.uuid }}"
   execution_id: "{{ job.uuid }}"
-  project_id: "mestumre-dev-host"
-  credentials_path: ".secrets/mestumre-sa-credentials.json"
+  project_id: "noetl-demo-19700101"
+  credentials_path: ".secrets/noetl-service-account.json"
   query: "I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult"
+  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('postgres') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('postgres') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
 
 workflow:
   - step: start
     desc: "Start Amadeus API Workflow"
+    next:
+      - step: create_results_table
+
+  - step: create_results_table
+    desc: "Create results table in Postgres if not exists"
+    type: workbook
+    task: create_results_table_task
     next:
       - step: get_openai_api_key
 
@@ -66,7 +78,18 @@ workflow:
     with:
       amadeus_query: "{{ process_natural_language.amadeus_query }}"
     next:
+      - step: check_parsed_query
+
+  - step: check_parsed_query
+    desc: "Check if endpoint_path is valid"
+    type: workbook
+    task: check_parsed_query_task
+    with:
+      endpoint_path: "{{ parse_amadeus_query.endpoint_path }}"
+    next:
       - step: get_amadeus_token
+    on_error:
+      - step: end
 
   - step: get_amadeus_token
     desc: "Get Amadeus API access token"
@@ -87,6 +110,17 @@ workflow:
       query_params: "{{ parse_amadeus_query.query_params }}"
       access_token: "{{ get_amadeus_token.access_token }}"
     next:
+      - step: insert_amadeus_result
+
+  - step: insert_amadeus_result
+    desc: "Insert Amadeus API result into Postgres"
+    type: workbook
+    task: insert_amadeus_result_task
+    with:
+      execution_id: "{{ workload.execution_id }}"
+      source: "amadeus"
+      result: "{{ execute_amadeus_query }}"
+    next:
       - step: process_amadeus_response
 
   - step: process_amadeus_response
@@ -97,9 +131,18 @@ workflow:
       amadeus_response: "{{ execute_amadeus_query }}"
       openai_api_key: "{{ get_openai_api_key.secret_value }}"
     next:
+      - step: insert_openai_result
+
+  - step: insert_openai_result
+    desc: "Insert OpenAI result into Postgres"
+    type: workbook
+    task: insert_openai_result_task
+    with:
+      execution_id: "{{ workload.execution_id }}"
+      source: "openai"
+      result: "{% if process_amadeus_response.result is defined %}{{ process_amadeus_response.result }}{% else %}{% endif %}"
+    next:
       - step: end
-
-
 
   - step: end
     desc: "End of workflow"
@@ -193,6 +236,7 @@ workbook:
               if not method_match:
                   return {
                       "status": "error",
+                      "endpoint_path": None,
                       "message": f"Could not parse Amadeus method from query: {amadeus_query}"
                   }
 
@@ -204,6 +248,7 @@ workbook:
               if not params_match:
                   return {
                       "status": "error",
+                      "endpoint_path": None,
                       "message": "Could not parse parameters from query"
                   }
 
@@ -229,8 +274,24 @@ workbook:
           except Exception as e:
               return {
                   "status": "error",
+                  "endpoint_path": None,
                   "message": f"Failed to parse Amadeus query: {str(e)}"
               }
+
+  - name: check_parsed_query_task
+    type: python
+    with:
+      endpoint_path: "{{ endpoint_path }}"
+    code: |
+      def main(endpoint_path):
+          if endpoint_path is None or endpoint_path == "None" or endpoint_path == "":
+              return {
+                  "status": "error",
+                  "message": "No valid endpoint_path parsed. Skipping Amadeus API call."
+              }
+          return {
+              "status": "success"
+          }
 
   - name: get_amadeus_token_task
     type: http
@@ -274,12 +335,13 @@ workbook:
       {% if status == 'success' %}
       {
         "status": "success",
-        "amadeus_response": "{{ data | tojson }}"
+        "amadeus_response": {{ data | tojson }}
       }
       {% else %}
       {
         "status": "error",
-        "message": "HTTP {{ status_code }}: {{ data }}"
+        "message": "HTTP {{ status_code }}",
+        "data": {{ data | tojson }}
       }
       {% endif %}
 
@@ -327,3 +389,42 @@ workbook:
         "message": "OpenAI API Error: {{ result.error | default('Unknown error') }}"
       }
       {% endif %}
+
+  - name: create_results_table_task
+    type: postgres
+    command: |
+      CREATE TABLE IF NOT EXISTS api_results (
+        id SERIAL PRIMARY KEY,
+        execution_id VARCHAR(64),
+        source VARCHAR(32),
+        result JSONB,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+
+  - name: insert_amadeus_result_task
+    type: postgres
+    command: |
+      INSERT INTO api_results (execution_id, source, result)
+      VALUES (
+        '{{ execution_id }}',
+        '{{ source }}',
+        {% if result is defined and result and result != 'None' %}
+          '{{ result | tojson }}'
+        {% else %}
+          NULL
+        {% endif %}
+      );
+
+  - name: insert_openai_result_task
+    type: postgres
+    command: |
+      INSERT INTO api_results (execution_id, source, result)
+      VALUES (
+        '{{ execution_id }}',
+        '{{ source }}',
+        {% if result is defined and result and result != 'None' %}
+          '{{ result | tojson }}'
+        {% else %}
+          NULL
+        {% endif %}
+      );
