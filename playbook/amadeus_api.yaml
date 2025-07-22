@@ -78,7 +78,18 @@ workflow:
     with:
       amadeus_query: "{{ process_natural_language.amadeus_query }}"
     next:
+      - step: check_parsed_query
+
+  - step: check_parsed_query
+    desc: "Check if endpoint_path is valid"
+    type: workbook
+    task: check_parsed_query_task
+    with:
+      endpoint_path: "{{ parse_amadeus_query.endpoint_path }}"
+    next:
       - step: get_amadeus_token
+    on_error:
+      - step: end
 
   - step: get_amadeus_token
     desc: "Get Amadeus API access token"
@@ -129,7 +140,7 @@ workflow:
     with:
       execution_id: "{{ workload.execution_id }}"
       source: "openai"
-      result: "{{ process_amadeus_response.result }}"
+      result: "{% if process_amadeus_response.result is defined %}{{ process_amadeus_response.result }}{% else %}{% endif %}"
     next:
       - step: end
 
@@ -225,6 +236,7 @@ workbook:
               if not method_match:
                   return {
                       "status": "error",
+                      "endpoint_path": None,
                       "message": f"Could not parse Amadeus method from query: {amadeus_query}"
                   }
 
@@ -236,6 +248,7 @@ workbook:
               if not params_match:
                   return {
                       "status": "error",
+                      "endpoint_path": None,
                       "message": "Could not parse parameters from query"
                   }
 
@@ -261,8 +274,24 @@ workbook:
           except Exception as e:
               return {
                   "status": "error",
+                  "endpoint_path": None,
                   "message": f"Failed to parse Amadeus query: {str(e)}"
               }
+
+  - name: check_parsed_query_task
+    type: python
+    with:
+      endpoint_path: "{{ endpoint_path }}"
+    code: |
+      def main(endpoint_path):
+          if endpoint_path is None or endpoint_path == "None" or endpoint_path == "":
+              return {
+                  "status": "error",
+                  "message": "No valid endpoint_path parsed. Skipping Amadeus API call."
+              }
+          return {
+              "status": "success"
+          }
 
   - name: get_amadeus_token_task
     type: http
@@ -306,12 +335,13 @@ workbook:
       {% if status == 'success' %}
       {
         "status": "success",
-        "amadeus_response": "{{ data | tojson }}"
+        "amadeus_response": {{ data | tojson }}
       }
       {% else %}
       {
         "status": "error",
-        "message": "HTTP {{ status_code }}: {{ data }}"
+        "message": "HTTP {{ status_code }}",
+        "data": {{ data | tojson }}
       }
       {% endif %}
 
@@ -362,12 +392,6 @@ workbook:
 
   - name: create_results_table_task
     type: postgres
-    with:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
     command: |
       CREATE TABLE IF NOT EXISTS api_results (
         id SERIAL PRIMARY KEY,
@@ -379,30 +403,28 @@ workbook:
 
   - name: insert_amadeus_result_task
     type: postgres
-    with:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
-      execution_id: "{{ execution_id }}"
-      source: "{{ source }}"
-      result: "{{ result }}"
     command: |
       INSERT INTO api_results (execution_id, source, result)
-      VALUES ('{{ execution_id }}', '{{ source }}', '{{ result | tojson }}');
+      VALUES (
+        '{{ execution_id }}',
+        '{{ source }}',
+        {% if result is defined and result and result != 'None' %}
+          '{{ result | tojson }}'
+        {% else %}
+          NULL
+        {% endif %}
+      );
 
   - name: insert_openai_result_task
     type: postgres
-    with:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
-      execution_id: "{{ execution_id }}"
-      source: "{{ source }}"
-      result: "{{ result }}"
     command: |
       INSERT INTO api_results (execution_id, source, result)
-      VALUES ('{{ execution_id }}', '{{ source }}', '{{ result | tojson }}');
+      VALUES (
+        '{{ execution_id }}',
+        '{{ source }}',
+        {% if result is defined and result and result != 'None' %}
+          '{{ result | tojson }}'
+        {% else %}
+          NULL
+        {% endif %}
+      );
