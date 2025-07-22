@@ -19,6 +19,7 @@ dist/
 .env.local
 /.secrets/
 node_modules/
+data/noetldb/
 
 # Virtual environments
 publish_env/
