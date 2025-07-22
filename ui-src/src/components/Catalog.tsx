@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Layout, Row, Col, Input, Card, Button, Typography, Space, Spin, Alert, Tag } from 'antd';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Layout, Row, Col, Input, Card, Button, Typography, Space, Spin, Alert, Tag, message } from 'antd';
 import { SearchOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined } from '@ant-design/icons';
 import { apiService } from '../services/api';
 import { PlaybookData, VisualizationWidget } from '../types';
@@ -11,11 +11,61 @@ const { Search } = Input;
 
 const Catalog: React.FC = () => {
   const [playbooks, setPlaybooks] = useState<PlaybookData[]>([]);
+  const [allPlaybooks, setAllPlaybooks] = useState<PlaybookData[]>([]);
   const [widgets, setWidgets] = useState<VisualizationWidget[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Debounced search function
+  const debounceSearch = useCallback(
+    (() => {
+      let timeoutId: number;
+      return (query: string) => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          handleSearchInternal(query);
+        }, 300);
+      };
+    })(),
+    [allPlaybooks]
+  );
+
+  const handleSearchInternal = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      // If empty search, show all playbooks
+      setPlaybooks(allPlaybooks);
+      return;
+    }
+
+    try {
+      setSearchLoading(true);
+      
+      // Try server-side search first
+      try {
+        const results = await apiService.searchPlaybooks(query);
+        setPlaybooks(results);
+      } catch (serverError) {
+        // Fallback to client-side search if server search fails
+        console.warn('Server search failed, falling back to client-side search:', serverError);
+        const filteredPlaybooks = allPlaybooks.filter(playbook =>
+          playbook.name.toLowerCase().includes(query.toLowerCase()) ||
+          (playbook.description && playbook.description.toLowerCase().includes(query.toLowerCase()))
+        );
+        setPlaybooks(filteredPlaybooks);
+      }
+    } catch (err) {
+      console.error('Search failed:', err);
+      message.error('Search failed. Please try again.');
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [allPlaybooks]);
+
+  const handleSearch = (query: string) => {
+    handleSearchInternal(query);
+  };
 
   useEffect(() => {
     fetchCatalogData();
@@ -33,39 +83,31 @@ const Catalog: React.FC = () => {
       ]);
 
       setPlaybooks(playbooksResponse);
+      setAllPlaybooks(playbooksResponse); // Store all playbooks for local filtering
       setWidgets(widgetsResponse);
     } catch (err) {
       console.error('Failed to fetch catalog data:', err);
-      setError('Failed to load catalog data.');
+      setError('Failed to load catalog data. Please check if the server is running.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSearch = async (query: string) => {
-    if (!query.trim()) {
-      fetchCatalogData();
-      return;
-    }
-
-    try {
-      setSearchLoading(true);
-      const results = await apiService.searchPlaybooks(query);
-      setPlaybooks(results);
-    } catch (err) {
-      console.error('Search failed:', err);
-    } finally {
-      setSearchLoading(false);
-    }
+  const handleSearchInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+    debounceSearch(value);
   };
 
   const handleExecutePlaybook = async (playbookId: string) => {
     try {
       await apiService.executePlaybook(playbookId);
-      // Redirect to execution page or show success message
+      message.success('Playbook execution started successfully!');
+      // Redirect to execution page
       window.location.href = '/execution';
     } catch (err) {
       console.error('Failed to execute playbook:', err);
+      message.error('Failed to execute playbook. Please try again.');
     }
   };
 
@@ -106,8 +148,9 @@ const Catalog: React.FC = () => {
           enterButton={<SearchOutlined />}
           size="large"
           loading={searchLoading}
+          value={searchQuery}
           onSearch={handleSearch}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={handleSearchInputChange}
         />
 
         {/* Render catalog widgets from FastAPI */}
@@ -168,10 +211,10 @@ const Catalog: React.FC = () => {
           ))}
         </Row>
 
-        {playbooks.length === 0 && (
+        {playbooks.length === 0 && !loading && (
           <Alert
-            message="No playbooks found"
-            description="No playbooks match your search criteria."
+            message={searchQuery ? "No playbooks found" : "No playbooks available"}
+            description={searchQuery ? `No playbooks match your search for "${searchQuery}".` : "There are no playbooks in the catalog yet."}
             type="info"
             showIcon
           />

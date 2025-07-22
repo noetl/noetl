@@ -179,7 +179,7 @@ class APIService {
   }
 
   async searchPlaybooks(query: string): Promise<PlaybookData[]> {
-    const response = await apiClient.get(`/playbooks/search?q=${encodeURIComponent(query)}`);
+    const response = await apiClient.get(`/catalog/playbooks/search?q=${encodeURIComponent(query)}`);
     return response.data;
   }
 }
