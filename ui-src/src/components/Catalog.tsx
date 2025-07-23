@@ -4,12 +4,14 @@ import { SearchOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined } from '@
 import { apiService } from '../services/api';
 import { PlaybookData, VisualizationWidget } from '../types';
 import WidgetRenderer from './WidgetRenderer';
+import {useNavigate} from "react-router-dom";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
 const { Search } = Input;
 
 const Catalog: React.FC = () => {
+  const navigate = useNavigate();
   const [playbooks, setPlaybooks] = useState<PlaybookData[]>([]);
   const [allPlaybooks, setAllPlaybooks] = useState<PlaybookData[]>([]);
   const [widgets, setWidgets] = useState<VisualizationWidget[]>([]);
@@ -104,7 +106,7 @@ const Catalog: React.FC = () => {
       await apiService.executePlaybook(playbookId);
       message.success('Playbook execution started successfully!');
       // Redirect to execution page
-      window.location.href = '/execution';
+      navigate('/execution');
     } catch (err) {
       console.error('Failed to execute playbook:', err);
       message.error('Failed to execute playbook. Please try again.');
