@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from noetl.common import setup_logger, deep_merge, get_pgdb_connection, get_db_connection
-from noetl.worker import NoETLAgent
+from noetl.worker import Worker
 from noetl.broker import Broker
 
 logger = setup_logger(__name__, include_location=True)
@@ -319,12 +319,8 @@ class EventService:
                         metadata = json.loads(row[4]) if row[4] else {}
                         input_context = json.loads(row[5]) if row[5] else {}
                         output_result = json.loads(row[6]) if row[6] else {}
-
-                        # Extract playbook information from metadata or input_context
                         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
                         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-
-                        # Determine status
                         status = row[2]
                         if status == 'COMPLETED':
                             status = 'completed'
@@ -335,7 +331,6 @@ class EventService:
                         else:
                             status = 'pending'
 
-                        # Calculate duration if available
                         start_time = row[3].isoformat() if row[3] else None
                         end_time = None
                         duration = None
@@ -540,7 +535,6 @@ class EventService:
                                 "resource_version": None
                             }
 
-                            # Try to extract resource_path and resource_version from metadata or input_context
                             if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
                                 event_data["resource_path"] = event_data["metadata"]["playbook_path"]
 
@@ -670,7 +664,6 @@ class EventService:
             logger.exception(f"Error in get_event: {e}")
             return None
 
-# Service factory functions - defined after all classes
 def get_event_service() -> EventService:
     return EventService()
 
@@ -723,7 +716,7 @@ class AgentService:
                 temp_file_path = temp_file.name
             try:
                 pgdb_conn = self.pgdb_conn_string if sync_to_postgres else None
-                self.agent = NoETLAgent(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
+                self.agent = Worker(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
                 agent = self.agent
                 workload = agent.playbook.get('workload', {})
                 if input_payload:
@@ -1136,7 +1129,7 @@ async def execute_agent_async(
 
                 try:
                     pgdb_conn = get_pgdb_connection() if sync_to_postgres else None
-                    agent = NoETLAgent(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
+                    agent = Worker(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
                     workload = agent.playbook.get('workload', {})
                     if input_payload:
                         if merge:

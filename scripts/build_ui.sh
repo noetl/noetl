@@ -186,18 +186,11 @@ case $MODE in
         cd "$PROJECT_ROOT"
         echo -e "${BLUE}Copying built assets to $UI_DEST_DIR...${NC}"
 
-        # Clean destination and recreate structure
-        rm -rf "$UI_DEST_DIR"
-        mkdir -p "$UI_DEST_DIR/static/assets"
-        mkdir -p "$UI_DEST_DIR/templates"
+        # Remove old build and copy new build
+        rm -rf "$UI_DEST_DIR/build"
+        cp -r "$UI_SRC_DIR/dist" "$UI_DEST_DIR/build"
 
-        # Copy the generated HTML files to the templates directory
-        cp "$UI_SRC_DIR/dist/"*.html "$UI_DEST_DIR/templates/"
-
-        # Copy the generated JS and CSS assets
-        cp -r "$UI_SRC_DIR/dist/assets/"* "$UI_DEST_DIR/static/assets/"
-
-        # Ensure all UI directories are valid Python packages
+        # Ensure __init__.py exists for Python package discovery
         find "$UI_DEST_DIR" -type d -exec touch {}/__init__.py \;
 
         echo -e "${GREEN}✓ UI build completed and assets integrated successfully!${NC}"

@@ -12,7 +12,7 @@ from noetl.common import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
-class NoETLAgent:
+class Worker:
 
     def __init__(self, playbook_path: str, mock_mode: bool = True, pgdb: str = None):
         self.playbook_path = playbook_path

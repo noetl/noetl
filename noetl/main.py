@@ -9,11 +9,11 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
 from noetl.server import router as server_router
+from noetl.system import router as system_router
 from noetl.common import deep_merge, setup_logger
-from noetl.worker import NoETLAgent
+from noetl.worker import Worker
 from noetl.schema import DatabaseSchema
 
 logger = setup_logger(__name__, include_location=True)
@@ -21,20 +21,19 @@ logger = setup_logger(__name__, include_location=True)
 cli_app = typer.Typer()
 
 
-# Global variable to control UI state
 _enable_ui = True
 
 def create_app() -> FastAPI:
     """
-    Creates and configures the main FastAPI application instance.
     This function is the factory for Uvicorn.
     """
     global _enable_ui
-    return _create_app_with_ui(_enable_ui)
 
-def _create_app_with_ui(enable_ui: bool = True) -> FastAPI:
+    return _create_app(_enable_ui)
+
+def _create_app(enable_ui: bool = True) -> FastAPI:
     """
-    Creates and configures the main FastAPI application instance.
+    Creates the main FastAPI application instance.
 
     Args:
         enable_ui: Whether to enable UI components (default: True)
@@ -53,7 +52,6 @@ def _create_app_with_ui(enable_ui: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # --- Database Initialization ---
     try:
         logger.info("Initializing NoETL system metadata.")
         db_schema = DatabaseSchema(auto_setup=False)
@@ -65,67 +63,33 @@ def _create_app_with_ui(enable_ui: bool = True) -> FastAPI:
         logger.warning("Continuing with server startup despite database initialization error.")
 
     package_dir = Path(__file__).parent
-    ui_path = package_dir / "ui"
-    templates_path = ui_path / "templates"
-    static_path = ui_path / "static"
-    assets_path = static_path / "assets"
+    ui_build_path = package_dir / "ui" / "build"
 
-    templates = None
-    if enable_ui and templates_path.exists() and assets_path.exists():
-        templates = Jinja2Templates(directory=templates_path)
-        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
-        logger.info(f"UI assets mounted from: {assets_path}")
-
-        @app.get("/favicon.svg", include_in_schema=False)
-        async def favicon():
-            favicon_file = static_path / "favicon.svg"
-            if favicon_file.exists():
-                return FileResponse(favicon_file)
-            return HTMLResponse(status_code=404)
-    elif enable_ui:
-        logger.warning(f"UI files not found. Searched in: {ui_path}")
-    else:
-        logger.info("UI disabled by configuration")
-
-    # --- API Router ---
+    # Register API routers first so /api/* routes are handled by FastAPI
     app.include_router(server_router, prefix="/api")
+    app.include_router(system_router, prefix="/api/sys", tags=["System"])
 
-    # --- Health Check ---
     @app.get("/health", include_in_schema=False)
     async def health():
         return {"status": "ok"}
 
-    # --- SPA Catch-all Route ---
-    if templates:
-        @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
-        async def serve_spa(request: Request, full_path: str):
-            """Serves the appropriate HTML template for any given path."""
-            # Don't intercept API routes
-            if full_path.startswith("api/"):
-                raise HTTPException(status_code=404, detail="API route not found")
-
-            if full_path.startswith("editor") or full_path.startswith("playbook"):
-                template_name = "editor.html"
-            elif full_path.startswith("execution"):
-                template_name = "execution.html"
-            elif full_path.startswith("catalog"):
-                template_name = "catalog.html"
-            else:
-                template_name = "index.html"  # Default/fallback
-
-            return templates.TemplateResponse(template_name, {"request": request})
+    # Mount UI after routers so /api/* routes are not intercepted
+    if enable_ui and ui_build_path.exists():
+        app.mount("/", StaticFiles(directory=ui_build_path, html=True), name="ui")
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon():
+            favicon_file = ui_build_path / "favicon.ico"
+            if favicon_file.exists():
+                return FileResponse(favicon_file)
+            return FileResponse(ui_build_path / "index.html")
     else:
-        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        @app.get("/", include_in_schema=False)
         async def root_no_ui():
-            if enable_ui:
-                return {"message": "NoETL API is running, but UI is not available"}
-            else:
-                return {"message": "NoETL API is running (UI disabled)"}
+            return {"message": "NoETL API is running, but UI is not available"}
 
     return app
 
 
-# --- Typer CLI Commands ---
 
 @cli_app.command("server")
 def run_server(
@@ -134,10 +98,8 @@ def run_server(
     reload: bool = typer.Option(False, help="Server auto-reload."),
     no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components.")
 ):
-    """Starts the NoETL web server."""
     global _enable_ui
 
-    # Check environment variable if no_ui is not explicitly set
     if not no_ui and os.environ.get("NOETL_ENABLE_UI", "true").lower() == "false":
         no_ui = True
 
@@ -162,7 +124,6 @@ def run_agent(
     merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
     debug: bool = typer.Option(False, help="Debug logging mode.")
 ):
-    """Executes a NoETL playbook as a local agent."""
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
         datefmt='%Y-%m-%dT%H:%M:%S',
@@ -195,7 +156,7 @@ def run_agent(
             os.environ['DUCKDB_PATH'] = duckdb
             logger.info(f"Using DuckDB for business logic: {duckdb}")
 
-        agent = NoETLAgent(file, mock_mode=mock, pgdb=pgdb_conn)
+        agent = Worker(file, mock_mode=mock, pgdb=pgdb_conn)
         workload = agent.playbook.get('workload', {})
 
         if input_payload:
@@ -255,7 +216,6 @@ def manage_playbook(
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
     merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
 ):
-    """Registers or executes a playbook via the NoETL server."""
     if register:
         try:
             if not os.path.exists(register):
@@ -352,10 +312,8 @@ def manage_playbook(
 
 
 def main():
-    """Main entry point for the CLI application."""
     cli_app()
 app = create_app()
-
 
 if __name__ == "__main__":
     main()

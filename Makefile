@@ -52,9 +52,8 @@ docker-login:
 .PHONY: build
 build:
 	@echo "Building UI assets"
-	@bash scripts/build_ui.sh
+	set -a; [ -f .env.docker ] && . .env.docker; set +a; bash scripts/build_ui.sh
 	@echo "Building Docker images"
-	set -a; [ -f .env ] && . .env; set +a; \
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build
 
 .PHONY: rebuild
@@ -66,11 +65,18 @@ rebuild:
 
 .PHONY: up
 up:
-	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) up -d
+	set -a; [ -f .env.docker ] && . .env.docker; set +a; docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) up -d
 
 .PHONY: down
 down:
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) down
+
+.PHONY: db-up db-down
+db-up:
+	docker compose up -d db
+
+db-down:
+	docker compose down
 
 .PHONY: restart
 restart: down up

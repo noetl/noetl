@@ -7,7 +7,7 @@ import httpx
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
 from noetl.common import render_template, setup_logger, deep_merge
-from noetl.worker import NoETLAgent
+from noetl.worker import Worker
 logger = setup_logger(__name__, include_location=True)
 
 class Broker:
@@ -124,7 +124,7 @@ class Broker:
 
             try:
                 pgdb_conn = self.agent.pgdb
-                child_agent = NoETLAgent(temp_file_path, mock_mode=self.agent.mock_mode, pgdb=pgdb_conn)
+                child_agent = Worker(temp_file_path, mock_mode=self.agent.mock_mode, pgdb=pgdb_conn)
                 workload = child_agent.playbook.get('workload', {})
                 if input_payload:
                     if merge:

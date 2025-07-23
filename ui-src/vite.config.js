@@ -11,11 +11,11 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/health': 'http://localhost:8000',
+      '/api': 'http://localhost:8081',
+      '/health': 'http://localhost:8081',
     }
   },
   define: {
-    __FASTAPI_URL__: JSON.stringify('http://localhost:8000')
+    __FASTAPI_URL__: JSON.stringify('http://localhost:8081')
   }
 })
