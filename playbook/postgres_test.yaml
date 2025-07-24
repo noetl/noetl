@@ -23,6 +23,12 @@ workload:
       "tags": ["test", "example", "jsonb"]
     }
   }
+  steps:
+    setup_tables: run
+    insert_data: pass
+    query_data: pass
+    update_data: pass
+
 
 workflow:
   - step: start
@@ -40,7 +46,7 @@ workflow:
 
   - step: setup_tables
     desc: "Create test tables in Postgres"
-    name: setup_tables_task
+    pass: "{{ workload.steps.setup_tables }}"
     type: postgres
     with:
       db_host: "{{ workload.pg_host }}"
@@ -71,6 +77,7 @@ workflow:
 
   - step: insert_data
     desc: "Insert test data with JSONB"
+    pass: "{{ workload.steps.insert_data }}"
     type: workbook
     task: insert_data_task
     with:
@@ -80,13 +87,15 @@ workflow:
 
   - step: query_data
     desc: "Query data including JSONB fields"
+    pass: "{{ workload.steps.query_data }}"
     type: workbook
     task: query_data_task
     next:
       - step: update_data_task
 
-  - step: update_data_task
+  - step: update_data
     desc: "Update data task"
+    pass: "{{ workload.steps.update_data }}"
     type: workbook
     task: update_data_task
     next:

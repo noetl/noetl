@@ -320,6 +320,15 @@ def is_on(value: str) -> bool:
 def is_off(value: str) -> bool:
     return str(value).lower() in ("false", "0", "no", "off", "n", "f")
 
+def get_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on", "pass", "ignore")
+    if isinstance(value, (int, float)):
+        return value != 0
+    return False
+
 async def mkdir(dir_path):
     try:
         loop = asyncio.get_running_loop()

@@ -9,6 +9,45 @@
 # Usage:
 # noetl playbook --register playbook/amadeus_api.yaml --port 8080
 # noetl playbook --execute --path "workflows/amadeus/amadeus_api" --payload '{"query": "I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult"}'
+#
+# Example workload to run only specific steps:
+#
+# workload:
+#   run_steps:
+#     - start
+#     - create_results_table
+#     - get_openai_api_key
+#     - get_amadeus_api_key
+#     - get_amadeus_api_secret
+#     - process_natural_language
+#     - parse_amadeus_query
+#     - check_parsed_query
+#     - get_amadeus_token
+#     - execute_amadeus_query
+#     - insert_amadeus_result
+#     - process_amadeus_response
+#     - insert_openai_result
+#     - end
+#
+# Only the steps listed above will be executed. All other steps will be skipped.
+# To run a subset, just include the desired step names in run_steps.
+#
+# Example: Control step execution using the 'pass' attribute in workflow steps.
+#
+# workload:
+#   steps:
+#     create_results_table: true   # This will skip (pass) the 'create_results_table' step
+#     get_openai_api_key: false    # This will execute the 'get_openai_api_key' step
+#
+# workflow:
+#   - step: create_results_table
+#     pass: {{ workload.steps.create_results_table }}
+#     ...
+#   - step: get_openai_api_key
+#     pass: {{ workload.steps.get_openai_api_key }}
+#     ...
+#
+# If 'pass' is true, the step is skipped. If false or omitted, the step is executed.
 
 apiVersion: noetl.io/v1
 kind: Playbook
@@ -26,6 +65,22 @@ workload:
   pg_user: "{{ env.POSTGRES_USER | default('postgres') }}"
   pg_password: "{{ env.POSTGRES_PASSWORD | default('postgres') }}"
   pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
+  steps_override:
+    - get_openai_api_key
+    - get_amadeus_api_key
+#  steps:
+#    create_results_table: false
+#    get_openai_api_key: false
+#    get_amadeus_api_key: false
+#    get_amadeus_api_secret: true
+#    process_natural_language: true
+#    parse_amadeus_query: true
+#    check_parsed_query: true
+#    get_amadeus_token: true
+#    execute_amadeus_query: true
+#    insert_amadeus_result: true
+#    process_amadeus_response: true
+#    insert_openai_result: true
 
 workflow:
   - step: start
@@ -34,6 +89,7 @@ workflow:
       - step: create_results_table
 
   - step: create_results_table
+    pass: "{{ workload.steps.create_results_table }}"
     desc: "Create results table in Postgres if not exists"
     type: workbook
     task: create_results_table_task
@@ -41,6 +97,7 @@ workflow:
       - step: get_openai_api_key
 
   - step: get_openai_api_key
+    pass: "{{ workload.steps.get_openai_api_key }}"
     desc: "Retrieve OpenAI API key from Google Secret Manager"
     type: workbook
     task: get_openai_api_key_task
@@ -48,6 +105,7 @@ workflow:
       - step: get_amadeus_api_key
 
   - step: get_amadeus_api_key
+    pass: "{{ workload.steps.get_amadeus_api_key }}"
     desc: "Retrieve Amadeus API key from Google Secret Manager"
     type: workbook
     task: get_amadeus_api_key_task
@@ -55,6 +113,7 @@ workflow:
       - step: get_amadeus_api_secret
 
   - step: get_amadeus_api_secret
+    pass: "{{ workload.steps.get_amadeus_api_secret }}"
     desc: "Retrieve Amadeus API secret from Google Secret Manager"
     type: workbook
     task: get_amadeus_api_secret_task
@@ -62,6 +121,7 @@ workflow:
       - step: process_natural_language
 
   - step: process_natural_language
+    pass: "{{ workload.steps.process_natural_language }}"
     desc: "Convert natural language query to Amadeus API call"
     type: workbook
     task: process_natural_language_task
@@ -72,6 +132,7 @@ workflow:
       - step: parse_amadeus_query
 
   - step: parse_amadeus_query
+    pass: "{{ workload.steps.parse_amadeus_query }}"
     desc: "Parse the Amadeus query to extract endpoint and parameters"
     type: workbook
     task: parse_amadeus_query_task
@@ -81,6 +142,7 @@ workflow:
       - step: check_parsed_query
 
   - step: check_parsed_query
+    pass: "{{ workload.steps.check_parsed_query }}"
     desc: "Check if endpoint_path is valid"
     type: workbook
     task: check_parsed_query_task
@@ -92,6 +154,7 @@ workflow:
       - step: end
 
   - step: get_amadeus_token
+    pass: "{{ workload.steps.get_amadeus_token }}"
     desc: "Get Amadeus API access token"
     type: workbook
     task: get_amadeus_token_task
@@ -102,6 +165,7 @@ workflow:
       - step: execute_amadeus_query
 
   - step: execute_amadeus_query
+    pass: "{{ workload.steps.execute_amadeus_query }}"
     desc: "Execute Amadeus API query"
     type: workbook
     task: execute_amadeus_query_task
@@ -113,6 +177,7 @@ workflow:
       - step: insert_amadeus_result
 
   - step: insert_amadeus_result
+    pass: "{{ workload.steps.insert_amadeus_result }}"
     desc: "Insert Amadeus API result into Postgres"
     type: workbook
     task: insert_amadeus_result_task
@@ -124,6 +189,7 @@ workflow:
       - step: process_amadeus_response
 
   - step: process_amadeus_response
+    pass: "{{ workload.steps.process_amadeus_response }}"
     desc: "Convert Amadeus API response to natural language"
     type: workbook
     task: process_amadeus_response_task
@@ -134,6 +200,7 @@ workflow:
       - step: insert_openai_result
 
   - step: insert_openai_result
+    pass: "{{ workload.steps.insert_openai_result }}"
     desc: "Insert OpenAI result into Postgres"
     type: workbook
     task: insert_openai_result_task
@@ -148,6 +215,7 @@ workflow:
     desc: "End of workflow"
     with:
       result: "{{ process_amadeus_response.result }}"
+
 
 workbook:
   - name: get_openai_api_key_task

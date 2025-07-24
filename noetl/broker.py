@@ -6,7 +6,7 @@ import tempfile
 import httpx
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
-from noetl.common import render_template, setup_logger, deep_merge
+from noetl.common import render_template, setup_logger, deep_merge, get_bool
 from noetl.worker import Worker
 logger = setup_logger(__name__, include_location=True)
 
@@ -203,6 +203,55 @@ class Broker:
                 'error': error_msg
             }
 
+        pass_value = step_config.get("pass", False)
+        if isinstance(pass_value, str):
+            pass_value = render_template(self.agent.jinja_env, pass_value, self.agent.get_context())
+        pass_flag = get_bool(pass_value)
+        if pass_flag:
+            logger.info(f"Step '{step_name}' is marked as pass/skip. Skipping execution.")
+            result = {
+                'id': step_id,
+                'status': 'success',
+                'data': {'message': f"Step '{step_name}' was skipped (pass=True)."}
+            }
+            self.agent.save_step_result(
+                step_id, step_name, None,
+                result.get('status', 'success'), result.get('data'), result.get('error')
+            )
+            self.agent.update_context(step_name, result.get('data'))
+            self.agent.update_context(step_name + '.result', result.get('data'))
+            self.agent.update_context(step_name + '.status', result.get('status'))
+            self.agent.update_context('result', result.get('data'))
+
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            self.write_event_log(
+                'step_complete', step_id, step_name, 'step',
+                result['status'], duration, self.agent.get_context(), result.get('data'),
+                {'step_type': 'pass'}, None
+            )
+
+            if self.server_url and self.event_reporting_enabled:
+                report_event({
+                    'event_type': 'step_complete',
+                    'execution_id': self.agent.execution_id,
+                    'step_id': step_id,
+                    'step_name': step_name,
+                    'status': result['status'],
+                    'duration': duration,
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'result': result.get('data'),
+                    'error': result.get('error')
+                }, self.server_url)
+
+            next_step = step_config.get("next")
+            if next_step:
+                return {
+                    **result,
+                    'next_step': next_step
+                }
+            return result
+
         logger.info(f"Executing step: {step_name}")
         logger.debug(f"Executing step: step_name={step_name}, step_with={step_with}")
         logger.debug(f"Executing step: context before update: {self.agent.context}")
@@ -359,7 +408,7 @@ class Broker:
                     'type': call_type,
                     'with': call_config.get('with', {})
                 }
-                fields = ['name', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name']
+                fields = ['name', 'pass', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name']
                 task_config.update({
                     field: call_config.get(field)
                     for field in fields
@@ -639,10 +688,7 @@ class Broker:
             iter_event = self.write_event_log(
                 'loop_iteration', f"{loop_id}_{idx}", f"{loop_name}[{idx}]", 'iteration',
                 'in_progress', 0, context, None,
-                {'index': idx, 'item': item}, loop_start_event,
-                loop_id=loop_id, loop_name=loop_name, iterator=iterator,
-                items=items, current_index=idx, current_item=item, results=all_results,
-                worker_id=os.environ.get('WORKER_ID', 'local'), distributed_state='processing'
+                {'index': idx, 'item': item}, loop_start_event
             )
 
             if self.server_url and self.event_reporting_enabled:
@@ -853,6 +899,7 @@ class Broker:
         Returns:
             A dictionary of workflow results
         """
+
         logger.info(f"Starting playbook: {self.agent.playbook.get('name', 'Unnamed')}")
         self.agent.update_context('execution_start', datetime.datetime.now().isoformat())
         execution_start_event = self.write_event_log(
@@ -864,7 +911,13 @@ class Broker:
             {'playbook_path': self.agent.playbook_path},
             None
         )
-
+        steps_override = self.agent.get_context().get('workload', {}).get('steps_override')
+        if steps_override and isinstance(steps_override, dict):
+            for step_name, step_with in steps_override.items():
+                step_result = self.execute_step(step_name, step_with if isinstance(step_with, dict) else {})
+                if step_result['status'] != 'success':
+                    break
+            return self.agent.get_step_results()
         if self.server_url and self.event_reporting_enabled:
             report_event({
                 'event_type': 'execution_start',
