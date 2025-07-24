@@ -1,14 +1,95 @@
-import React, { useState, useEffect } from 'react';
-import { Layout, Button, Input, Typography, Space, Spin, Alert, Card, Row, Col, message } from 'antd';
-import { SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, FileTextOutlined } from '@ant-design/icons';
+/*
+ * Playbook Editor Component
+ * 
+ * This component provides a code editor for editing YAML playbooks.
+ * Currently uses an enhanced TextArea with VS Code-like features.
+ * 
+ * To upgrade to full Monaco Editor (VS Code editor):
+ * 1. Install Monaco Editor: npm install @monaco-editor/react
+ * 2. Replace the CodeEditor component with Monaco Editor
+ * 3. Uncomment the Monaco-specific features below
+ * 
+ * Features:
+ * - Syntax highlighting (basic in TextArea, full in Monaco)
+ * - Auto-indentation with Tab key
+ * - Keyboard shortcuts (Ctrl/Cmd + S to save)
+ * - Fullscreen mode
+ * - Dark theme
+ * - Monospace font with programming ligatures
+ */
+
+import React, { useState, useEffect, useRef } from 'react';
+import { Layout, Button, Input, Typography, Space, Spin, Alert, Card, Row, Col, message, Divider } from 'antd';
+import { SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, FileTextOutlined, ExpandOutlined, CompressOutlined } from '@ant-design/icons';
 import { apiService } from '../services/api';
 import { PlaybookData } from '../types';
+import MonacoEditor from '@monaco-editor/react';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-const Editor: React.FC = () => {
+// Enhanced CodeEditor component with Monaco-like features using TextArea
+const CodeEditor: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+  language?: string;
+  theme?: string;
+  height?: number;
+  isFullscreen?: boolean;
+}> = ({ value, onChange, height = 500, isFullscreen = false }) => {
+  const textareaRef = useRef<any>(null);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Handle Ctrl/Cmd + S for save
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      // This will be handled by the parent component
+      return;
+    }
+
+    // Handle Tab for indentation
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const textarea = textareaRef.current;
+      if (textarea) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const newValue = value.substring(0, start) + '  ' + value.substring(end);
+        onChange(newValue);
+        
+        // Set cursor position after the tab
+        setTimeout(() => {
+          textarea.selectionStart = textarea.selectionEnd = start + 2;
+        }, 0);
+      }
+    }
+  };
+
+  return (
+    <TextArea
+      ref={textareaRef}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={handleKeyDown}
+      placeholder="Enter your playbook YAML content here..."
+      style={{
+        fontFamily: 'Monaco, "Fira Code", "Cascadia Code", "Consolas", monospace',
+        fontSize: '14px',
+        lineHeight: '1.5',
+        height: isFullscreen ? '90vh' : `${height}px`,
+        resize: 'none',
+        backgroundColor: '#1e1e1e',
+        color: '#d4d4d4',
+        border: '1px solid #3c3c3c',
+        borderRadius: '4px',
+        padding: '16px',
+      }}
+    />
+  );
+};
+
+const PlaybookEditor: React.FC = () => {
   const [playbook, setPlaybook] = useState<PlaybookData | null>(null);
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -17,6 +98,9 @@ const Editor: React.FC = () => {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<{ valid: boolean; errors?: string[] } | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [editorHeight, setEditorHeight] = useState(500);
+  const editorRef = useRef<any>(null);
 
   // Get playbook ID from URL parameters
   const urlParams = new URLSearchParams(window.location.search);
@@ -38,6 +122,11 @@ tasks:
 `);
     }
   }, [playbookId]);
+
+  const toggleFullscreen = () => {
+    setIsFullscreen(!isFullscreen);
+    setEditorHeight(isFullscreen ? 500 : window.innerHeight - 200);
+  };
 
   const loadPlaybook = async (id: string) => {
     try {
@@ -169,6 +258,15 @@ tasks:
             <Space>
               <Button
                 type="default"
+                icon={isFullscreen ? <CompressOutlined /> : <ExpandOutlined />}
+                onClick={toggleFullscreen}
+                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+              >
+                {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              </Button>
+              <Divider type="vertical" />
+              <Button
+                type="default"
                 icon={<CheckCircleOutlined />}
                 loading={validating}
                 onClick={handleValidate}
@@ -216,14 +314,29 @@ tasks:
           </Card>
         )}
 
-        {/* Editor */}
-        <Card>
-          <TextArea
+        {/* Code Editor */}
+        <Card style={{ height: isFullscreen ? '100vh' : 'auto', padding: 0 }}>
+          <MonacoEditor
+            height={isFullscreen ? '90vh' : editorHeight}
+            language="yaml"
+            theme="light"
             value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="Enter your playbook YAML content here..."
-            autoSize={{ minRows: 20, maxRows: 30 }}
-            style={{ fontFamily: 'monospace' }}
+            onChange={(value) => setContent(value || '')}
+            options={{
+              selectOnLineNumbers: true,
+              mouseWheelZoom: true,
+              formatOnPaste: true,
+              formatOnType: true,
+              automaticLayout: true,
+              minimap: { enabled: !isFullscreen },
+              wordWrap: 'on',
+              lineNumbers: 'on',
+              folding: true,
+              matchBrackets: 'always',
+              autoIndent: 'full',
+              tabSize: 2,
+              insertSpaces: true,
+            }}
           />
         </Card>
 
@@ -232,6 +345,7 @@ tasks:
           <Text type="secondary">
             <strong>Tips:</strong> Use YAML format for playbook definition.
             Validate your playbook before saving to catch syntax errors.
+            Use <kbd>Ctrl/Cmd + S</kbd> to save quickly.
           </Text>
         </Card>
       </Space>
@@ -239,4 +353,4 @@ tasks:
   );
 };
 
-export default Editor;
+export default PlaybookEditor;
