@@ -321,7 +321,7 @@ tasks:
             language="yaml"
             theme="light"
             value={content}
-            onChange={(value) => setContent(value || '')}
+            onChange={(value: any) => setContent(value || '')}
             options={{
               selectOnLineNumbers: true,
               mouseWheelZoom: true,
