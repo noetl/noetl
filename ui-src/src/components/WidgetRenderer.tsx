@@ -38,28 +38,32 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({ widget }) => {
           </Space>
         );
 
-      case 'table':
-        const columns: TableColumn[] = widget.config.columns.map((col: any) => ({
-          title: col.title,
-          dataIndex: col.dataIndex,
-          key: col.key,
-          render: col.render ? eval(col.render) : undefined,
-          sorter: col.sorter,
-          width: col.width,
-        }));
+            case 'table':
+              const columns: TableColumn[] = (widget.config.columns ?? []).map((col: any) => ({
+                title: col.title,
+                dataIndex: col.dataIndex,
+                key: col.key,
+                render: typeof col.render === 'function' ? col.render : undefined,
+                sorter: col.sorter,
+                width: col.width,
+              }));
 
-        return (
-          <Space direction="vertical" style={{ width: '100%' }}>
-            <Title level={5}>{widget.title}</Title>
-            <Table
-              dataSource={widget.data.rows}
-              columns={columns}
-              pagination={widget.config.pagination || false}
-              size="small"
-              scroll={{ x: true }}
-            />
-          </Space>
-        );
+            return (
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Title level={5}>{widget.title}</Title>
+                <Table
+                  dataSource={widget.data.rows}
+                  columns={columns}
+                  pagination={
+                    typeof widget.config.pagination === 'object' || widget.config.pagination === false || widget.config.pagination === undefined
+                      ? widget.config.pagination
+                      : false
+                  }
+                  size="small"
+                  scroll={{ x: true }}
+                />
+              </Space>
+            );
 
       case 'list':
         return (

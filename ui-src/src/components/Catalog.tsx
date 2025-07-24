@@ -173,33 +173,33 @@ const Catalog: React.FC = () => {
               <Card
                 title={playbook.name}
                 extra={<Tag color={getStatusColor(playbook.status)}>{playbook.status}</Tag>}
-                actions={[
-                  <Button
-                    key="view"
-                    type="text"
-                    icon={<EyeOutlined />}
-                    onClick={() => console.log('View playbook', playbook.id)}
-                  >
-                    View
-                  </Button>,
-                  <Button
-                    key="edit"
-                    type="text"
-                    icon={<EditOutlined />}
-                    onClick={() => window.location.href = `/editor?id=${playbook.id}`}
-                  >
-                    Edit
-                  </Button>,
-                  <Button
-                    key="execute"
-                    type="text"
-                    icon={<PlayCircleOutlined />}
-                    onClick={() => handleExecutePlaybook(playbook.id)}
-                    disabled={playbook.status !== 'active'}
-                  >
-                    Execute
-                  </Button>
-                ]}
+                  actions={[
+                    <Button
+                      key="view"
+                      type="text"
+                      icon={<EyeOutlined />}
+                      onClick={() => console.log('View playbook', playbook.id)}
+                    >
+                      View
+                    </Button>,
+                    <Button
+                      key="edit"
+                      type="text"
+                      icon={<EditOutlined />}
+                      onClick={() => navigate(`/editor?id=${playbook.id}`)}
+                    >
+                      Edit
+                    </Button>,
+                    <Button
+                      key="execute"
+                      type="text"
+                      icon={<PlayCircleOutlined />}
+                      onClick={() => handleExecutePlaybook(playbook.id)}
+                      disabled={playbook.status !== 'active'}
+                    >
+                      Execute
+                    </Button>
+                  ]}
               >
                 <Space direction="vertical" size="small">
                   <Text type="secondary">{playbook.description || 'No description'}</Text>
