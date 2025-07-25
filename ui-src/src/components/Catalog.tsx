@@ -182,14 +182,14 @@ const Catalog: React.FC = () => {
                     >
                       View
                     </Button>,
-                    <Button
-                      key="edit"
-                      type="text"
-                      icon={<EditOutlined />}
-                      onClick={() => navigate(`/editor?id=${playbook.id}`)}
-                    >
-                      Edit
-                    </Button>,
+                <Button
+                  key="edit"
+                  type="text"
+                  icon={<EditOutlined />}
+                  onClick={() => navigate(`/editor?id=${playbook.id}&version=${playbook.resource_version}`)}
+                >
+                  Edit
+                </Button>,
                     <Button
                       key="execute"
                       type="text"
@@ -201,13 +201,15 @@ const Catalog: React.FC = () => {
                     </Button>
                   ]}
               >
-                <Space direction="vertical" size="small">
-                  <Text type="secondary">{playbook.description || 'No description'}</Text>
-                  <Text type="secondary">Tasks: {playbook.tasks_count}</Text>
-                  <Text type="secondary">
-                    Updated: {new Date(playbook.updated_at).toLocaleDateString()}
-                  </Text>
-                </Space>
+              <Space direction="vertical" size="small">
+                <Text type="secondary">Path: {playbook.id}</Text>
+                <Text type="secondary">Version: {playbook.resource_version}</Text>
+                <Text type="secondary">{playbook.description || 'No description'}</Text>
+                <Text type="secondary">Tasks: {playbook.tasks_count}</Text>
+                <Text type="secondary">
+                  Updated: {new Date(playbook.updated_at).toLocaleDateString()}
+                </Text>
+              </Space>
               </Card>
             </Col>
           ))}

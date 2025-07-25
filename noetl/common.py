@@ -141,18 +141,10 @@ logger = setup_logger(__name__, include_location=True)
 #  jinja2 template rendering
 #===================================
 
-def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None) -> Any:
+def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None, strict_keys: bool = False) -> Any:
     """
     Render a template using the Jinja2 environment.
-
-    Args:
-        env: The Jinja2 environment
-        template: The template to render
-        context: The context to use for rendering
-        rules: Additional rules for rendering
-
-    Returns:
-        The rendered template
+    If strict_keys is True, check that all referenced keys exist before rendering.
     """
     if isinstance(template, str) and '{{' in template and '}}' in template:
         logger.debug(f"Render template: {template}")
@@ -189,12 +181,31 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                                 break
                         if valid_path:
                             return value
-
+            # Strict key existence check
+            if strict_keys:
+                from jinja2 import meta
+                ast = env.parse(template)
+                referenced = meta.find_undeclared_variables(ast)
+                for key in referenced:
+                    parts = key.split('.')
+                    ctx = render_ctx
+                    for part in parts:
+                        if isinstance(ctx, dict) and part in ctx:
+                            ctx = ctx[part]
+                        else:
+                            return False
             template_obj = env.from_string(template)
             try:
                 rendered = template_obj.render(**render_ctx)
             except Exception as e:
-                logger.error(f"Template rendering error: {e}, template: {template}")
+                # Handle case where a nested attribute like 'steps' doesn't exist
+                if "has no attribute" in str(e):
+                    logger.warning(f"Template rendering warning: {e}, template: {template}")
+                    # Return empty string for missing attributes in templates
+                    if template.strip().startswith('{{') and template.strip().endswith('}}'):
+                        return ""
+                else:
+                    logger.error(f"Template rendering error: {e}, template: {template}")
                 return None
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
@@ -214,9 +225,9 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     elif isinstance(template, dict):
         if not template:
             return template
-        return {k: render_template(env, v, render_ctx, rules) for k, v in template.items()}
+        return {k: render_template(env, v, render_ctx, rules, strict_keys) for k, v in template.items()}
     elif isinstance(template, list):
-        return [render_template(env, item, render_ctx, rules) for item in template]
+        return [render_template(env, item, render_ctx, rules, strict_keys) for item in template]
     return template
 
 def quote_jinja2_expressions(yaml_text):
@@ -241,6 +252,31 @@ def quote_jinja2_expressions(yaml_text):
         fixed_lines.append(fixed_line)
     return "\n".join(fixed_lines)
 
+
+def render_template_bool(jinja_env, template_str, context):
+    try:
+        from jinja2 import meta
+        ast = jinja_env.parse(template_str)
+        referenced = meta.find_undeclared_variables(ast)
+        for key in referenced:
+            parts = key.split('.')
+            ctx = context
+            valid_path = True
+            for part in parts:
+                if isinstance(ctx, dict) and part in ctx:
+                    ctx = ctx[part]
+                else:
+                    valid_path = False
+                    break
+            # If any referenced variable is not found, return False
+            if not valid_path:
+                return False
+
+        # All referenced variables exist, proceed with rendering
+        return render_template(jinja_env, template_str, context)
+    except Exception as e:
+        logger.debug(f"Error in render_template_bool: {str(e)}")
+        return False
 
 #===================================
 #  time calendar (დ����ო)
@@ -475,7 +511,48 @@ def get_pgdb_connection(
 #===================================
 # postgres pool
 #===================================
+def safe_render_template_bool(jinja_env, template_str, context, default=False):
+    """
+    Safely renders a template string as a boolean with a default value for missing paths.
 
+    Args:
+        jinja_env: Jinja2 environment
+        template_str: Template string to render
+        context: Context dictionary for rendering
+        default: Default value to return if path doesn't exist (default: False)
+
+    Returns:
+        Rendered boolean value or default if path doesn't exist
+    """
+    try:
+        from jinja2 import meta
+        ast = jinja_env.parse(template_str)
+        referenced = meta.find_undeclared_variables(ast)
+
+        # Check if all referenced variables exist
+        for key in referenced:
+            parts = key.split('.')
+            ctx = context
+            for part in parts:
+                if isinstance(ctx, dict) and part in ctx:
+                    ctx = ctx[part]
+                else:
+                    # Path doesn't exist, return default
+                    logger.debug(f"Path '{key}' not found in context, returning default {default}")
+                    return default
+
+        # All paths exist, render the template
+        result = render_template(jinja_env, template_str, context)
+        if isinstance(result, bool):
+            return result
+        elif isinstance(result, str):
+            result = result.strip().lower()
+            return result in ("true", "1", "yes", "on", "y", "t")
+        else:
+            return bool(result)
+    except Exception as e:
+        logger.debug(f"Error in safe_render_template_bool: {str(e)}")
+        return default
 db_pool = None
 
 def initialize_db_pool():

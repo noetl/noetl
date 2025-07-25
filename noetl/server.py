@@ -1262,10 +1262,14 @@ async def get_catalog_playbooks():
         playbooks = []
         for entry in entries:
             meta = entry.get('meta', {})
-            
+
             playbook = {
                 "id": entry.get('resource_path', ''),
                 "name": entry.get('resource_path', '').split('/')[-1],
+                "resource_type": entry.get('resource_type', ''),
+                "resource_version": entry.get('resource_version', ''),
+                "meta": entry.get('meta', ''),
+                "timestamp": entry.get('timestamp', ''),
                 "description": meta.get('description', ''),
                 "created_at": entry.get('timestamp', ''),
                 "updated_at": entry.get('timestamp', ''),

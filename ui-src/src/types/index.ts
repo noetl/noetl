@@ -9,11 +9,15 @@ export interface ServerStatus {
 export interface PlaybookData {
   id: string;
   name: string;
-  description?: string;
-  created_at: string;
-  updated_at: string;
+  resource_type: string;
+  resource_version: string;
+  meta: any;
+  timestamp: string;
   status: 'active' | 'inactive' | 'draft';
   tasks_count: number;
+  updated_at: string;
+  description?: string;
+  created_at?: string;
 }
 
 export interface ExecutionData {

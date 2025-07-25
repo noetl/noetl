@@ -1,5 +1,5 @@
 import axios from 'axios';
-
+import {DashboardStats, ExecutionData, PlaybookData, ServerStatus, VisualizationWidget} from '../types';
  const getApiBaseUrl = () => {
    if (import.meta.env.VITE_API_BASE_URL) {
      return import.meta.env.VITE_API_BASE_URL;
@@ -28,74 +28,74 @@ apiClient.interceptors.response.use(
   }
 );
 
-export interface ServerStatus {
-  status: string;
-  message: string;
-  timestamp: string;
-}
-
- export interface EventData {
-   event_id: string;
-   event_type: string;
-   node_id: string;
-   node_name: string;
-   node_type: string;
-   status: string;
-   duration: number;
-   timestamp: string;
-   input_context?: any;
-   output_result?: any;
-   metadata?: any;
-   error?: string;
- }
-
-export interface PlaybookData {
-  id: string;
-  name: string;
-  description?: string;
-  created_at: string;
-  updated_at: string;
-  status: 'active' | 'inactive' | 'draft';
-  tasks_count: number;
-  events?: EventData[];
-}
-
-export interface ExecutionData {
-  id: string;
-  playbook_id: string;
-  playbook_name: string;
-  status: 'running' | 'completed' | 'failed' | 'pending';
-  start_time: string;
-  end_time?: string;
-  duration?: number;
-  progress: number;
-  result?: any;
-  error?: string;
-  events?: Array<{
-  event_id: string;
-  event_type: string;
-  node_name: string;
-  status: string;
-  timestamp: string;
-  duration: number;
-  }>;
-}
-
-export interface DashboardStats {
-  total_playbooks: number;
-  total_executions: number;
-  active_executions: number;
-  success_rate: number;
-  recent_executions: ExecutionData[];
-}
-
-export interface VisualizationWidget {
-  id: string;
-  type: 'chart' | 'table' | 'metric' | 'text';
-  title: string;
-  data: any;
-  config: any;
-}
+// export interface ServerStatus {
+//   status: string;
+//   message: string;
+//   timestamp: string;
+// }
+//
+//  export interface EventData {
+//    event_id: string;
+//    event_type: string;
+//    node_id: string;
+//    node_name: string;
+//    node_type: string;
+//    status: string;
+//    duration: number;
+//    timestamp: string;
+//    input_context?: any;
+//    output_result?: any;
+//    metadata?: any;
+//    error?: string;
+//  }
+//
+// export interface PlaybookData {
+//   id: string;
+//   name: string;
+//   description?: string;
+//   created_at: string;
+//   updated_at: string;
+//   status: 'active' | 'inactive' | 'draft';
+//   tasks_count: number;
+//   events?: EventData[];
+// }
+//
+// export interface ExecutionData {
+//   id: string;
+//   playbook_id: string;
+//   playbook_name: string;
+//   status: 'running' | 'completed' | 'failed' | 'pending';
+//   start_time: string;
+//   end_time?: string;
+//   duration?: number;
+//   progress: number;
+//   result?: any;
+//   error?: string;
+//   events?: Array<{
+//   event_id: string;
+//   event_type: string;
+//   node_name: string;
+//   status: string;
+//   timestamp: string;
+//   duration: number;
+//   }>;
+// }
+//
+// export interface DashboardStats {
+//   total_playbooks: number;
+//   total_executions: number;
+//   active_executions: number;
+//   success_rate: number;
+//   recent_executions: ExecutionData[];
+// }
+//
+// export interface VisualizationWidget {
+//   id: string;
+//   type: 'chart' | 'table' | 'metric' | 'text';
+//   title: string;
+//   data: any;
+//   config: any;
+// }
 
 class APIService {
   async getHealth(): Promise<ServerStatus> {

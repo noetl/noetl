@@ -6,7 +6,7 @@ import tempfile
 import httpx
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
-from noetl.common import render_template, setup_logger, deep_merge, get_bool
+from noetl.common import render_template, setup_logger, deep_merge, get_bool, render_template_bool
 from noetl.worker import Worker
 logger = setup_logger(__name__, include_location=True)
 
@@ -205,7 +205,7 @@ class Broker:
 
         pass_value = step_config.get("pass", False)
         if isinstance(pass_value, str):
-            pass_value = render_template(self.agent.jinja_env, pass_value, self.agent.get_context())
+            pass_value = render_template(self.agent.jinja_env, pass_value, self.agent.get_context(), strict_keys=True)
         pass_flag = get_bool(pass_value)
         if pass_flag:
             logger.info(f"Step '{step_name}' is marked as pass/skip. Skipping execution.")
@@ -912,9 +912,9 @@ class Broker:
             None
         )
         steps_override = self.agent.get_context().get('workload', {}).get('steps_override')
-        if steps_override and isinstance(steps_override, dict):
-            for step_name, step_with in steps_override.items():
-                step_result = self.execute_step(step_name, step_with if isinstance(step_with, dict) else {})
+        if steps_override and isinstance(steps_override, list):
+            for step_name in steps_override:
+                step_result = self.execute_step(step_name, {})
                 if step_result['status'] != 'success':
                     break
             return self.agent.get_step_results()
