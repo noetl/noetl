@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import type React from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Typography, ConfigProvider } from 'antd';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { Layout, Menu, Typography, ConfigProvider, Result, Button } from 'antd';
 import { HomeOutlined, BookOutlined, EditOutlined, HistoryOutlined } from '@ant-design/icons';
 
 // Import components
@@ -18,6 +18,24 @@ import '../static/css/main.css';
 
 const { Header, Content, Footer } = Layout;
 const { Title } = Typography;
+
+// 404 Not Found component
+const NotFound: React.FC = () => {
+  const navigate = useNavigate();
+  
+  return (
+    <Result
+      status="404"
+      title="404"
+      subTitle="Sorry, the page you visited does not exist."
+      extra={
+        <Button type="primary" onClick={() => navigate('/')}>
+          Back Home
+        </Button>
+      }
+    />
+  );
+};
 
 // Main App component
 const App: React.FC = () => {
@@ -64,6 +82,8 @@ const App: React.FC = () => {
             <Route path="/editor" element={<Editor />} />
             <Route path="/execution" element={<Execution />} />
             <Route path="/execution/:id" element={<ExecutionDetail />} />
+            {/* Catch-all route for 404 */}
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Content>
         <Footer style={{ textAlign: 'center' }}>
