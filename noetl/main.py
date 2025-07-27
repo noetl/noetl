@@ -65,7 +65,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     package_dir = Path(__file__).parent
     ui_build_path = package_dir / "ui" / "build"
 
-    # Register API routers first so /api/* routes are handled by FastAPI
     app.include_router(server_router, prefix="/api")
     app.include_router(system_router, prefix="/api/sys", tags=["System"])
 
@@ -73,7 +72,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     async def health():
         return {"status": "ok"}
 
-    # Mount UI after routers so /api/* routes are not intercepted
     if enable_ui and ui_build_path.exists():
         app.mount("/", StaticFiles(directory=ui_build_path, html=True), name="ui")
         @app.get("/favicon.ico", include_in_schema=False)
@@ -112,15 +110,15 @@ def run_server(
 
 @cli_app.command("agent")
 def run_agent(
-    file: str = typer.Option(..., "--file", "-f", help="Path to playbook YAML file."),
+    file: str = typer.Option(..., "--file", "-f", help="Path to playbooks YAML file."),
     mock: bool = typer.Option(False, help="Run in mock mode"),
     output: str = typer.Option("json", "--output", "-o", help="Output format, json or plain."),
     export: str = typer.Option(None, help="Export execution data to Parquet file."),
     mlflow: bool = typer.Option(False, help="Use ML model for workflow control."),
     postgres: str = typer.Option(None, help="Postgres connection string."),
     duckdb: str = typer.Option(None, help="Path to DuckDB file for business logic in playbooks."),
-    input: str = typer.Option(None, help="Path to the input payload JSON file for the playbook."),
-    payload: str = typer.Option(None, help="JSON input payload string for the playbook."),
+    input: str = typer.Option(None, help="Path to the input payload JSON file for the playbooks."),
+    payload: str = typer.Option(None, help="JSON input payload string for the playbooks."),
     merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
     debug: bool = typer.Option(False, help="Debug logging mode.")
 ):
@@ -177,7 +175,7 @@ def run_agent(
                 agent.update_context('workload', new_workload)
                 agent.store_workload(new_workload)
         else:
-            logger.info("Using default workload from playbook.")
+            logger.info("Using default workload from playbooks.")
             for key, value in workload.items():
                 agent.update_context(key, value)
             agent.update_context('workload', workload)
@@ -198,23 +196,23 @@ def run_agent(
         logger.info(f"Open notebook/agent_mission_report.ipynb and set 'pgdb' to {agent.pgdb}")
 
     except Exception as e:
-        logger.error(f"Error executing playbook: {e}", exc_info=True)
-        print(f"Error executing playbook: {e}")
+        logger.error(f"Error executing playbooks: {e}", exc_info=True)
+        print(f"Error executing playbooks: {e}")
         raise typer.Exit(code=1)
 
 
-@cli_app.command("playbook")
+@cli_app.command("playbooks")
 def manage_playbook(
-    register: str = typer.Option(None, "--register", "-r", help="Path to playbook file to register."),
-    execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbook by path."),
-    path: str = typer.Option(None, "--path", help="Path of the playbook to execute."),
-    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
+    register: str = typer.Option(None, "--register", "-r", help="Path to playbooks file to register."),
+    execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbooks by path."),
+    path: str = typer.Option(None, "--path", help="Path of the playbooks to execute."),
+    version: str = typer.Option(None, "--version", "-v", help="Version of the playbooks to execute."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
     payload: str = typer.Option(None, "--payload", help="Payload string."),
     host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
     port: int = typer.Option(8082, "--port", "-p", help="NoETL server port."),
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
-    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
+    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbooks.")
 ):
     if register:
         try:
@@ -227,7 +225,7 @@ def manage_playbook(
             url = f"http://{host}:{port}/api/catalog/register"
             headers = {"Content-Type": "application/json"}
             data = {"content_base64": content_base64}
-            logger.info(f"Registering playbook {register} with NoETL server at {url}")
+            logger.info(f"Registering playbooks {register} with NoETL server at {url}")
             response = requests.post(url, headers=headers, json=data)
 
             if response.status_code == 200:
@@ -236,18 +234,18 @@ def manage_playbook(
                 logger.info(f"Resource path: {result.get('resource_path')}")
                 logger.info(f"Resource version: {result.get('resource_version')}")
             else:
-                logger.error(f"Failed to register playbook: {response.status_code}")
+                logger.error(f"Failed to register playbooks: {response.status_code}")
                 logger.error(f"Response: {response.text}")
                 raise typer.Exit(code=1)
 
         except Exception as e:
-            logger.error(f"Error registering playbook: {e}")
+            logger.error(f"Error registering playbooks: {e}")
             raise typer.Exit(code=1)
     elif execute:
         try:
             if not path:
                 logger.error("Path is required when using --execute")
-                logger.info("Example: noetl playbook --execute --path weather_example --version 0.1.0")
+                logger.info("Example: noetl playbooks --execute --path weather_example --version 0.1.0")
                 raise typer.Exit(code=1)
 
             input_payload = {}
@@ -280,9 +278,9 @@ def manage_playbook(
                 data["version"] = version
 
             if version:
-                logger.info(f"Executing playbook {path} version {version} on NoETL server at {url}")
+                logger.info(f"Executing playbooks {path} version {version} on NoETL server at {url}")
             else:
-                logger.info(f"Executing playbook {path} (latest version) on NoETL server at {url}")
+                logger.info(f"Executing playbooks {path} (latest version) on NoETL server at {url}")
             response = requests.post(url, headers=headers, json=data)
 
             if response.status_code == 200:
@@ -296,19 +294,19 @@ def manage_playbook(
                     logger.error(f"Execution failed: {result.get('error')}.")
                     raise typer.Exit(code=1)
             else:
-                logger.error(f"Failed to execute playbook: {response.status_code}.")
+                logger.error(f"Failed to execute playbooks: {response.status_code}.")
                 logger.error(f"Response: {response.text}.")
                 raise typer.Exit(code=1)
 
         except Exception as e:
-            logger.error(f"Error executing playbook: {e}.")
+            logger.error(f"Error executing playbooks: {e}.")
             raise typer.Exit(code=1)
     else:
-        logger.info("No action specified. Use --register to register a playbook or --execute to execute a playbook.")
+        logger.info("No action specified. Use --register to register a playbooks or --execute to execute a playbooks.")
         logger.info("Examples:")
-        logger.info("  noetl playbook --register ./playbook/weather_loop_example.yaml")
-        logger.info("  noetl playbook --execute --path weather_example --version 0.1.0 --payload '{\"city\": \"New York\"}'")
-        logger.info("  noetl playbook --execute --path weather_example --input ./data/input/payload.json")
+        logger.info("  noetl playbooks --register ./playbooks/weather_loop_example.yaml")
+        logger.info("  noetl playbooks --execute --path weather_example --version 0.1.0 --payload '{\"city\": \"New York\"}'")
+        logger.info("  noetl playbooks --execute --path weather_example --input ./data/input/payload.json")
 
 
 def main():

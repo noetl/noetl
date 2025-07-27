@@ -29,8 +29,8 @@ workflow:
       - step: run_secrets_test
 
   - step: run_secrets_test
-    desc: "Run the secrets_test playbook"
-    type: playbook
+    desc: "Run the secrets_test playbooks"
+    type: playbooks
     path: examples/secrets_test
     with:
       secret_name: "{{ workload.secret_name }}"
@@ -41,8 +41,8 @@ workflow:
           secret_result: "{{ run_secrets_test }}"
 
   - step: run_weather_example
-    desc: "Run the weather_example playbook"
-    type: playbook
+    desc: "Run the weather_example playbooks"
+    type: playbooks
     path: examples/weather_example
     with:
       cities: "{{ workload.cities }}"
@@ -55,8 +55,8 @@ workflow:
           weather_result: "{{ run_weather_example }}"
 
   - step: run_load_dict_test
-    desc: "Run the load_dict_test playbook"
-    type: playbook
+    desc: "Run the load_dict_test playbooks"
+    type: playbooks
     path: examples/load_dict_test
     with:
       baseFilePath: "{{ workload.baseFilePath }}"

@@ -1,7 +1,7 @@
 # NoETL DSL Playbook for testing the postgres task type.
-# This playbook tests SQL execution in Postgres,
-# noetl playbook --register playbook/postgres_test.yaml --port 8080
-# noetl playbook --execute --path "workflows/examples/postgres_test"
+# This playbooks tests SQL execution in Postgres,
+# noetl playbooks --register playbooks/postgres_test.yaml --port 8080
+# noetl playbooks --execute --path "workflows/examples/postgres_test"
 apiVersion: noetl.io/v1
 kind: Playbook
 name: postgres_test

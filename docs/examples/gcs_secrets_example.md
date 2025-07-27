@@ -178,8 +178,8 @@ Reads a local CSV file and uploads it to Google Cloud Storage using the created 
 
 ### Running the Playbook
 ```bash
-noetl playbook --register playbook/gcs_secrets_example.yaml --port 8080
-noetl playbook --execute --path "workflows/examples/gcs_secrets_example" --payload '{"GOOGLE_CLOUD_PROJECT": "your-project-id"}'
+noetl playbooks --register playbooks/gcs_secrets_example.yaml --port 8080
+noetl playbooks --execute --path "workflows/examples/gcs_secrets_example" --payload '{"GOOGLE_CLOUD_PROJECT": "your-project-id"}'
 ```
 
 ### Environment Variables Setup

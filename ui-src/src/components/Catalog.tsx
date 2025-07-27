@@ -108,8 +108,8 @@ const Catalog: React.FC = () => {
       // Redirect to execution page
       navigate('/execution');
     } catch (err) {
-      console.error('Failed to execute playbook:', err);
-      message.error('Failed to execute playbook. Please try again.');
+      console.error('Failed to execute playbooks:', err);
+      message.error('Failed to execute playbooks. Please try again.');
     }
   };
 
@@ -178,7 +178,7 @@ const Catalog: React.FC = () => {
                       key="view"
                       type="text"
                       icon={<EyeOutlined />}
-                      onClick={() => console.log('View playbook', playbook.id)}
+                      onClick={() => console.log('View playbooks', playbook.id)}
                     >
                       View
                     </Button>,

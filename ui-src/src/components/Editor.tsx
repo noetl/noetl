@@ -102,7 +102,7 @@ const PlaybookEditor: React.FC = () => {
   const [editorHeight, setEditorHeight] = useState(500);
   const editorRef = useRef<any>(null);
 
-  // Get playbook ID from URL parameters
+  // Get playbooks ID from URL parameters
   const urlParams = new URLSearchParams(window.location.search);
   const playbookId = urlParams.get('id');
 
@@ -110,7 +110,7 @@ const PlaybookEditor: React.FC = () => {
     if (playbookId) {
       loadPlaybook(playbookId);
     } else {
-      // Create new playbook template
+      // Create new playbooks template
       setContent(`# New Playbook
 name: "untitled-playbook"
 description: "Enter description here"
@@ -141,7 +141,7 @@ tasks:
       setPlaybook(playbookData);
       setContent(playbookContent);
     } catch (err: any) {
-      console.error('Failed to load playbook:', err);
+      console.error('Failed to load playbooks:', err);
       // IMPROVEMENT: Display the specific error from the server
       const detail = err.response?.data?.detail || 'An unknown error occurred. Check the server logs.';
       const status = err.response?.status ? ` (Status: ${err.response.status})` : '';
@@ -161,11 +161,11 @@ tasks:
       setSaving(true);
 
       if (playbookId) {
-        // Update existing playbook
+        // Update existing playbooks
         await apiService.savePlaybookContent(playbookId, content);
         message.success('Playbook saved successfully');
       } else {
-        // Create new playbook
+        // Create new playbooks
         const newPlaybook = await apiService.createPlaybook({
           name: 'New Playbook',
           description: 'Created from editor',
@@ -174,11 +174,11 @@ tasks:
         await apiService.savePlaybookContent(newPlaybook.id, content);
         setPlaybook(newPlaybook);
         window.history.pushState({}, '', `/editor?id=${newPlaybook.id}`);
-        message.success('New playbook created and saved');
+        message.success('New playbooks created and saved');
       }
     } catch (err) {
-      console.error('Failed to save playbook:', err);
-      message.error('Failed to save playbook');
+      console.error('Failed to save playbooks:', err);
+      message.error('Failed to save playbooks');
     } finally {
       setSaving(false);
     }
@@ -205,7 +205,7 @@ tasks:
 
   const handleExecute = async () => {
     if (!playbook) {
-      message.error('Please save the playbook first');
+      message.error('Please save the playbooks first');
       return;
     }
 
@@ -216,8 +216,8 @@ tasks:
       // Redirect to execution page
       window.location.href = '/execution';
     } catch (err) {
-      console.error('Failed to execute playbook:', err);
-      message.error('Failed to execute playbook');
+      console.error('Failed to execute playbooks:', err);
+      message.error('Failed to execute playbooks');
     } finally {
       setExecuting(false);
     }

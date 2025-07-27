@@ -17,8 +17,8 @@ Here's the basic structure of a NoETL playbook:
 ```yaml
 # Metadata
 version: "0.1.0"
-path: "workflows/example/playbook"
-description: "Example playbook"
+path: "workflows/example/playbooks"
+description: "Example playbooks"
 
 # Workload (input data and parameters)
 workload:
@@ -57,8 +57,8 @@ Example:
 
 ```yaml
 version: "0.1.0"
-path: "workflows/example/playbook"
-description: "Example playbook of basic functionality"
+path: "workflows/example/playbooks"
+description: "Example playbooks of basic functionality"
 author: "John Doe"
 tags:
   - "example"

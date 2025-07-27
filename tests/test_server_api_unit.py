@@ -70,7 +70,7 @@ steps:
                 self.assertEqual(result, expected)
 
     def test_fetch_entry_found(self):
-        mock_result = ('test_path', 'playbook', '0.1.0', 'content', 'payload', 'meta')
+        mock_result = ('test_path', 'playbooks', '0.1.0', 'content', 'payload', 'meta')
         self.cursor_mock.fetchone.return_value = mock_result
 
         result = self.catalog_service.fetch_entry('test_path', '0.1.0')
@@ -87,7 +87,7 @@ steps:
         self.assertIsNone(result)
 
     def test_fetch_entry_with_path_fallback(self):
-        self.cursor_mock.fetchone.side_effect = [None, ('filename', 'playbook', '0.1.0', 'content', 'payload', 'meta')]
+        self.cursor_mock.fetchone.side_effect = [None, ('filename', 'playbooks', '0.1.0', 'content', 'payload', 'meta')]
 
         result = self.catalog_service.fetch_entry('path/to/filename', '0.1.0')
 

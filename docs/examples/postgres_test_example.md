@@ -225,17 +225,17 @@ export POSTGRES_DB="noetl"
 
 ### 1. Register the Playbook
 ```bash
-noetl playbook --register playbook/postgres_test.yaml --port 8080
+noetl playbooks --register playbooks/postgres_test.yaml --port 8080
 ```
 
 ### 2. Execute the Workflow
 ```bash
-noetl playbook --execute --path "workflows/examples/postgres_test"
+noetl playbooks --execute --path "workflows/examples/postgres_test"
 ```
 
 ### 3. Alternative Execution with Custom Parameters
 ```bash
-noetl playbook --execute --path "workflows/examples/postgres_test" --port 8080 --payload '{
+noetl playbooks --execute --path "workflows/examples/postgres_test" --port 8080 --payload '{
   "POSTGRES_HOST": "localhost",
   "POSTGRES_PORT": "5434",
   "POSTGRES_USER": "noetl",

@@ -51,7 +51,7 @@ class Worker:
             rendered_workload = render_template(self.jinja_env, db_workload, self.context)
             self.context.update(rendered_workload)
         else:
-            logger.info(f"Workload not found in database. Using default from playbook.")
+            logger.info(f"Workload not found in database. Using default from playbooks.")
             rendered_workload = render_template(self.jinja_env, self.playbook.get('workload', {}), self.context)
             self.context.update(rendered_workload)
 
@@ -149,10 +149,10 @@ class Worker:
 
     def load_playbook(self) -> Dict:
         """
-        Load the playbook from the file.
+        Load the playbooks from the file.
 
         Returns:
-            The playbook data
+            The playbooks data
         """
         if not os.path.exists(self.playbook_path):
             raise FileNotFoundError(f"Playbook not found: {self.playbook_path}")
@@ -162,7 +162,7 @@ class Worker:
 
     def parse_playbook(self):
         """
-        Parse the playbook and store in the database.
+        Parse the playbooks and store in the database.
         """
         with self.conn.cursor() as cursor:
             for step in self.playbook.get('workflow', []):
@@ -206,14 +206,17 @@ class Worker:
                                     to_step = then_step
                                     with_params = '{}'
 
-                                params = (
-                                    self.execution_id,
-                                    step_name,
-                                    to_step,
-                                    condition,
-                                    with_params
-                                )
-                                cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                                if to_step is not None and to_step != '':
+                                    params = (
+                                        self.execution_id,
+                                        step_name,
+                                        to_step,
+                                        condition,
+                                        with_params
+                                    )
+                                    cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                                else:
+                                    logger.warning(f"Skipping transition with null to_step from {step_name} with condition {condition}")
                         elif 'else' in next_step:
                             else_steps = next_step.get('else', [])
                             if not isinstance(else_steps, list):
@@ -227,34 +230,44 @@ class Worker:
                                     to_step = else_step
                                     with_params = '{}'
 
-                                params = (
-                                    self.execution_id,
-                                    step_name,
-                                    to_step,
-                                    'else',
-                                    with_params
-                                )
-                                cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                                if to_step is not None and to_step != '':
+                                    params = (
+                                        self.execution_id,
+                                        step_name,
+                                        to_step,
+                                        'else',
+                                        with_params
+                                    )
+                                    cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                                else:
+                                    logger.warning(f"Skipping transition with null to_step from {step_name} with condition 'else'")
                     elif isinstance(next_step, str):
-                        params = (
-                            self.execution_id,
-                            step_name,
-                            next_step,
-                            '',
-                            '{}'
-                        )
-                        cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                        if next_step is not None and next_step != '':
+                            params = (
+                                self.execution_id,
+                                step_name,
+                                next_step,
+                                '',
+                                '{}'
+                            )
+                            cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                        else:
+                            logger.warning(f"Skipping transition with null next_step from {step_name}")
                     else:
-                        to_step = next_step.get('step')
-                        with_params = json.dumps(next_step.get('with', {}))
-                        params = (
-                            self.execution_id,
-                            step_name,
-                            to_step,
-                            '',
-                            with_params
-                        )
-                        cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                        to_step = next_step.get('step') if next_step else None
+                        with_params = json.dumps(next_step.get('with', {})) if next_step else '{}'
+                        
+                        if to_step is not None and to_step != '':
+                            params = (
+                                self.execution_id,
+                                step_name,
+                                to_step,
+                                '',
+                                with_params
+                            )
+                            cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
+                        else:
+                            logger.warning(f"Skipping transition with null to_step from {step_name}")
 
             for task in self.playbook.get('workbook', []):
                 task_id = str(uuid.uuid4())

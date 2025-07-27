@@ -27,13 +27,23 @@ except ImportError:
 
 SUCCESS_LEVEL = 25
 LOG_SEVERITY = {
-    "DEBUG": "🔍",
-    "INFO": "ℹ️",
-    "SUCCESS": "✅",
-    "WARNING": "⚠️",
-    "ERROR": "❌",
-    "CRITICAL": "🔥"
+    "DEBUG": "DEBUG",
+    "INFO": "INFO",
+    "SUCCESS": "SUCCESS",
+    "WARNING": "WARNING",
+    "ERROR": "ERROR",
+    "CRITICAL": "CRITICAL"
 }
+
+LOG_COLORS = {
+    "DEBUG": "\033[36m",      # Cyan
+    "INFO": "\033[37m",       # White
+    "SUCCESS": "\033[32m",    # Green
+    "WARNING": "\033[33m",    # Yellow
+    "ERROR": "\033[31m",      # Red
+    "CRITICAL": "\033[35m"    # Magenta
+}
+RESET_COLOR = "\033[0m"
 
 logging.addLevelName(SUCCESS_LEVEL, "SUCCESS")
 
@@ -57,7 +67,9 @@ class CustomFormatter(logging.Formatter):
         self.highlight_scope = highlight_scope
 
     def format(self, record):
-        icon = LOG_SEVERITY.get(record.levelname, "ℹ️")
+        level_name = LOG_SEVERITY.get(record.levelname, record.levelname)
+        level_color = LOG_COLORS.get(record.levelname, "")
+
         if hasattr(record, "scope"):
             scope_highlight = f"\033[32m{record.scope}\033[0m"
         else:
@@ -67,7 +79,7 @@ class CustomFormatter(logging.Formatter):
                                                                                                            "lineno"):
             location = f"\033[1;33m({record.module}:{record.funcName}:{record.lineno})\033[0m"
 
-        metadata_line = f"{icon} [{record.levelname}] {scope_highlight} {location}".strip()
+        metadata_line = f"{level_color}[{level_name}]{RESET_COLOR} {scope_highlight} {location}".strip()
 
         if isinstance(record.msg, (dict, list)):
             message = str(record.msg)
@@ -181,7 +193,6 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                                 break
                         if valid_path:
                             return value
-            # Strict key existence check
             if strict_keys:
                 from jinja2 import meta
                 ast = env.parse(template)
@@ -198,15 +209,17 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             try:
                 rendered = template_obj.render(**render_ctx)
             except Exception as e:
-                # Handle case where a nested attribute like 'steps' doesn't exist
-                if "has no attribute" in str(e):
+                if "has no attribute" in str(e) or "is undefined" in str(e):
                     logger.warning(f"Template rendering warning: {e}, template: {template}")
-                    # Return empty string for missing attributes in templates
                     if template.strip().startswith('{{') and template.strip().endswith('}}'):
                         return ""
                 else:
                     logger.error(f"Template rendering error: {e}, template: {template}")
                 return None
+
+            import re
+            if isinstance(rendered, str):
+                rendered = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', rendered)
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
                     (rendered.startswith('{') and rendered.endswith('}')):
@@ -268,18 +281,16 @@ def render_template_bool(jinja_env, template_str, context):
                 else:
                     valid_path = False
                     break
-            # If any referenced variable is not found, return False
             if not valid_path:
                 return False
 
-        # All referenced variables exist, proceed with rendering
         return render_template(jinja_env, template_str, context)
     except Exception as e:
         logger.debug(f"Error in render_template_bool: {str(e)}")
         return False
 
 #===================================
-#  time calendar (დ����ო)
+#  time calendar
 #===================================
 
 def generate_id() -> str:
@@ -529,7 +540,6 @@ def safe_render_template_bool(jinja_env, template_str, context, default=False):
         ast = jinja_env.parse(template_str)
         referenced = meta.find_undeclared_variables(ast)
 
-        # Check if all referenced variables exist
         for key in referenced:
             parts = key.split('.')
             ctx = context
@@ -537,11 +547,9 @@ def safe_render_template_bool(jinja_env, template_str, context, default=False):
                 if isinstance(ctx, dict) and part in ctx:
                     ctx = ctx[part]
                 else:
-                    # Path doesn't exist, return default
                     logger.debug(f"Path '{key}' not found in context, returning default {default}")
                     return default
 
-        # All paths exist, render the template
         result = render_template(jinja_env, template_str, context)
         if isinstance(result, bool):
             return result

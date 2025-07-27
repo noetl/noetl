@@ -1,13 +1,13 @@
 # This is a NoETL DSL Playbook for iterating over cities to fetch and evaluate weather data.
 # It includes a loop to process each city, fetch weather data, evaluate conditions, and handle alerts or logging.
-# The playbook demonstrates nested loops for processing city districts, with conditions to skip certain districts.
-# noetl playbook --execute --path "workflows/weather/weather_example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}], "temperature_threshold": 30}'
+# The playbooks demonstrates nested loops for processing city districts, with conditions to skip certain districts.
+# noetl playbooks --execute --path "workflows/weather/weather_example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}], "temperature_threshold": 30}'
 
 
 apiVersion: noetl.io/v1
 kind: Playbook
 name: weather_example
-path: examples/weather_loop_example  # Unique path identifier for this playbook
+path: examples/weather_loop_example  # Unique path identifier for this playbooks
 
 workload:  # Input parameters section accessible throughout the workflow
   jobId: "{{ job.uuid }}"

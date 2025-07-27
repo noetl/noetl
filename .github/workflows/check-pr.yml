@@ -22,7 +22,7 @@ jobs:
       # https://github.com/amannn/action-semantic-pull-request/releases
       - uses: amannn/action-semantic-pull-request@v5.2.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ google_secret_manager.GITHUB_TOKEN }}
         with:
           # Configure which types are allowed.
           # Default: https://github.com/commitizen/conventional-commit-types

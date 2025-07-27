@@ -128,7 +128,8 @@ class CatalogService:
             logger.exception(f"Error incrementing version: {e}")
             return f"{version}.1"
 
-    def register_resource(self, content: str, resource_type: str = "playbook") -> Dict[str, Any]:
+
+    def register_resource(self, content: str, resource_type: str = "playbooks") -> Dict[str, Any]:
         try:
             with get_db_connection() as conn:
                 resource_data = yaml.safe_load(content)
@@ -139,43 +140,37 @@ class CatalogService:
                 resource_version = self.increment_version(latest_version)
                 logger.debug(f"Incremented version: '{resource_version}'")
 
+                attempt = 0
+                max_attempts = 5
                 with conn.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
-                        (resource_path, resource_version)
-                    )
-                    count = int(cursor.fetchone()[0])
-                    max_attempts = 10
-                    attempt = 1
-                    while count > 0 and attempt <= max_attempts:
-                        logger.warning(f"Version '{resource_version}' already exists for resource_path '{resource_path}', incrementing again (attempt {attempt}/{max_attempts})")
-                        resource_version = self.increment_version(resource_version)
-                        logger.debug(f"Incremented version: '{resource_version}'")
-
+                    while attempt < max_attempts:
                         cursor.execute(
                             "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
                             (resource_path, resource_version)
                         )
                         count = int(cursor.fetchone()[0])
+                        if count == 0:
+                            break
+                        resource_version = self.increment_version(resource_version)
                         attempt += 1
 
-                    if attempt > max_attempts:
+                    if attempt >= max_attempts:
                         logger.error(f"Failed to find version after {max_attempts} attempts")
                         raise HTTPException(
                             status_code=500,
                             detail=f"Failed to find version after {max_attempts} attempts"
                         )
 
-                logger.info(f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
+                    logger.info(
+                        f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
 
-                with conn.cursor() as cursor:
                     cursor.execute(
                         "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
                         (resource_type,)
                     )
                     cursor.execute(
                         """
-                        INSERT INTO catalog 
+                        INSERT INTO catalog
                         (resource_path, resource_type, resource_version, content, payload, meta)
                         VALUES (%s, %s, %s, %s, %s, %s)
                         """,
@@ -204,7 +199,6 @@ class CatalogService:
                 status_code=500,
                 detail=f"Error registering resource: {e}."
             )
-
     def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
             with get_db_connection() as conn:
@@ -399,7 +393,7 @@ class EventService:
             event_type = event_data.get("event_type", "UNKNOWN")
             status = event_data.get("status", "CREATED")
             parent_event_id = event_data.get("parent_id") or event_data.get("parent_event_id")
-            execution_id = event_data.get("execution_id", event_id)  # Use event_id as execution_id if not provided
+            execution_id = event_data.get("execution_id", event_id)
             node_id = event_data.get("node_id", event_id)
             node_name = event_data.get("node_name", event_type)
             node_type = event_data.get("node_type", "event")
@@ -737,7 +731,7 @@ class AgentService:
                         agent.update_context('workload', merged_workload)
                         agent.store_workload(merged_workload)
                 else:
-                    logger.info("No input payload provided. Default workload from playbook is used.")
+                    logger.info("No input payload provided. Default workload from playbooks is used.")
                     for key, value in workload.items():
                         agent.update_context(key, value)
                     agent.update_context('workload', workload)
@@ -750,7 +744,7 @@ class AgentService:
 
                 return {
                     "status": "success",
-                    "message": f"Agent executed for playbook '{playbook_path}' version '{playbook_version}'.",
+                    "message": f"Agent executed for playbooks '{playbook_path}' version '{playbook_version}'.",
                     "result": results,
                     "execution_id": agent.execution_id,
                     "export_path": export_path
@@ -763,7 +757,7 @@ class AgentService:
             logger.exception(f"Error executing agent: {e}.")
             return {
                 "status": "error",
-                "message": f"Error executing agent for playbook '{playbook_path}' version '{playbook_version}': {e}.",
+                "message": f"Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}.",
                 "error": str(e)
             }
 
@@ -778,7 +772,7 @@ async def register_resource(
     request: Request,
     content_base64: str = None,
     content: str = None,
-    resource_type: str = "playbook"
+    resource_type: str = "playbooks"
 ):
     try:
         if not content_base64 and not content:
@@ -1061,7 +1055,7 @@ async def execute_agent(
         logger.exception(f"Error executing agent: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error executing agent for playbook '{path}' version '{version}': {e}."
+            detail=f"Error executing agent for playbooks '{path}' version '{version}': {e}."
         )
 
 @router.post("/agent/execute-async", response_class=JSONResponse)
@@ -1115,7 +1109,7 @@ async def execute_agent_async(
                 "resource_version": version,
             },
             "result": input_payload,
-            "node_type": "playbook",
+            "node_type": "playbooks",
             "node_name": path
         }
 
@@ -1151,7 +1145,7 @@ async def execute_agent_async(
                             agent.update_context('workload', merged_workload)
                             agent.store_workload(merged_workload)
                     else:
-                        logger.info("No input payload provided. Default workload from playbook is used.")
+                        logger.info("No input payload provided. Default workload from playbooks is used.")
 
                         for key, value in workload.items():
                             agent.update_context(key, value)
@@ -1172,7 +1166,7 @@ async def execute_agent_async(
                             "resource_version": version,
                             "execution_id": agent.execution_id
                         },
-                        "node_type": "playbook",
+                        "node_type": "playbooks",
                         "node_name": path
                     }
 
@@ -1199,7 +1193,7 @@ async def execute_agent_async(
                         "resource_version": version,
                         "error": str(e)
                     },
-                    "node_type": "playbook",
+                    "node_type": "playbooks",
                     "node_name": path
                 }
 
@@ -1210,7 +1204,7 @@ async def execute_agent_async(
 
         return {
             "status": "accepted",
-            "message": f"Agent execution started for playbook '{path}' version '{version}'.",
+            "message": f"Agent execution started for playbooks '{path}' version '{version}'.",
             "event_id": initial_event.get("event_id")
         }
 
@@ -1218,7 +1212,7 @@ async def execute_agent_async(
         logger.exception(f"Error starting agent execution: {e}.")
         raise HTTPException(
             status_code=500,
-            detail=f"Error starting agent execution for playbook '{path}' version '{version}': {e}"
+            detail=f"Error starting agent execution for playbooks '{path}' version '{version}': {e}"
         )
 
 
@@ -1226,7 +1220,6 @@ async def execute_agent_async(
 async def get_dashboard_stats():
     """Get dashboard statistics"""
     try:
-        # Return mock data for now - you can implement real statistics later
         return {
             "total_executions": 0,
             "successful_executions": 0,
@@ -1257,7 +1250,7 @@ async def get_catalog_playbooks():
     """Get all playbooks"""
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries('playbook')
+        entries = catalog_service.list_entries('playbooks')
         
         playbooks = []
         for entry in entries:
@@ -1285,7 +1278,7 @@ async def get_catalog_playbooks():
 
 @router.post("/catalog/playbooks", response_class=JSONResponse)
 async def create_catalog_playbook(request: Request):
-    """Create a new playbook"""
+    """Create a new playbooks"""
     try:
         body = await request.json()
         name = body.get("name", "New Playbook")
@@ -1303,7 +1296,7 @@ tasks:
 """
         
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbook")
+        result = catalog_service.register_resource(content, "playbooks")
         
         playbook = {
             "id": result.get("resource_path", ""),
@@ -1318,12 +1311,12 @@ tasks:
         
         return playbook
     except Exception as e:
-        logger.error(f"Error creating playbook: {e}")
+        logger.error(f"Error creating playbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/catalog/playbooks/validate", response_class=JSONResponse)
 async def validate_catalog_playbook(request: Request):
-    """Validate playbook content"""
+    """Validate playbooks content"""
     try:
         body = await request.json()
         content = body.get("content")
@@ -1345,12 +1338,12 @@ async def validate_catalog_playbook(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error validating playbook: {e}")
+        logger.error(f"Error validating playbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/executions/run", response_class=JSONResponse)
 async def execute_playbook(request: Request):
-    """Execute a playbook"""
+    """Execute a playbooks"""
     try:
         body = await request.json()
         playbook_id = body.get("playbook_id")
@@ -1384,7 +1377,7 @@ async def execute_playbook(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error executing playbook: {e}")
+        logger.error(f"Error executing playbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
@@ -1405,12 +1398,12 @@ async def get_catalog_playbook(
         }
         return playbook_data
     except Exception as e:
-        logger.error(f"Error processing playbook entry: {e}")
-        raise HTTPException(status_code=500, detail="Error processing playbook data.")
+        logger.error(f"Error processing playbooks entry: {e}")
+        raise HTTPException(status_code=500, detail="Error processing playbooks data.")
 
 @router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
 async def get_catalog_playbook_content(playbook_id: str):
-    """Get playbook content"""
+    """Get playbooks content"""
     try:
         logger.info(f"Received playbook_id: '{playbook_id}'")
         if playbook_id.startswith("playbooks/"):
@@ -1433,12 +1426,12 @@ async def get_catalog_playbook_content(playbook_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting playbook content: {e}")
+        logger.error(f"Error getting playbooks content: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
 async def save_catalog_playbook_content(playbook_id: str, request: Request):
-    """Save playbook content"""
+    """Save playbooks content"""
     try:
         logger.info(f"Received playbook_id for save: '{playbook_id}'")
         if playbook_id.startswith("playbooks/"):
@@ -1454,7 +1447,7 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 detail="Content is required."
             )
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbook")
+        result = catalog_service.register_resource(content, "playbooks")
         
         return {
             "status": "success",
@@ -1465,7 +1458,7 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error saving playbook content: {e}")
+        logger.error(f"Error saving playbooks content: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/catalog/widgets", response_class=JSONResponse)

@@ -7,7 +7,7 @@ in the project 'noetl-demo-19700101', grants it the necessary permissions,
 and generates a key file.
 
 Usage:
-    python create_service_account.py [--email YOUR_EMAIL]
+    python create_service_account.py [--email EMAIL]
 
 Options:
     --email Google account email for impersonation permissions
@@ -116,9 +116,9 @@ def create_service_account():
     print(f"GOOGLE_APPLICATION_CREDENTIALS=\"{os.path.abspath(key_file)}\"")
     print(f"SERVICE_ACCOUNT_EMAIL=\"{sa_email}\"")
 
-    print("\nThen run the playbook:")
+    print("\nThen run the playbooks:")
     print("source bin/load_env_files.sh dev")
-    print("noetl agent -f playbook/generate_gcs_hmac_keys.yaml")
+    print("noetl agent -f playbooks/generate_gcs_hmac_keys.yaml")
 
 if __name__ == "__main__":
     create_service_account()

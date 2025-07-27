@@ -90,16 +90,16 @@ class Broker:
 
     def execute_playbook_call(self, path: str, version: str = None, input_payload: Dict = None, merge: bool = True) -> Dict:
         """
-        Execute a playbook call.
+        Execute a playbooks call.
 
         Args:
-            path: The path of the playbook to execute
-            version: The version of the playbook to execute (optional, uses latest if not provided)
-            input_payload: The input payload to pass to the playbook (optional)
+            path: The path of the playbooks to execute
+            version: The version of the playbooks to execute (optional, uses latest if not provided)
+            input_payload: The input payload to pass to the playbooks (optional)
             merge: Whether to merge the input payload with the workload (default: True)
 
         Returns:
-            A dictionary containing the results of the playbook execution
+            A dictionary containing the results of the playbooks execution
         """
         try:
             from noetl.server import get_catalog_service
@@ -107,7 +107,7 @@ class Broker:
 
             if not version:
                 version = catalog_service.get_latest_version(path)
-                logger.info(f"Version not specified for playbook '{path}', using latest version: {version}")
+                logger.info(f"Version not specified for playbooks '{path}', using latest version: {version}")
 
             entry = catalog_service.fetch_entry(path, version)
             if not entry:
@@ -128,14 +128,14 @@ class Broker:
                 workload = child_agent.playbook.get('workload', {})
                 if input_payload:
                     if merge:
-                        logger.info(f"Merge mode: merging input payload with workload for playbook '{path}'")
+                        logger.info(f"Merge mode: merging input payload with workload for playbooks '{path}'")
                         merged_workload = deep_merge(workload, input_payload)
                         for key, value in merged_workload.items():
                             child_agent.update_context(key, value)
                         child_agent.update_context('workload', merged_workload)
                         child_agent.store_workload(merged_workload)
                     else:
-                        logger.info(f"Override mode: replacing workload keys with input payload for playbook '{path}'")
+                        logger.info(f"Override mode: replacing workload keys with input payload for playbooks '{path}'")
                         merged_workload = workload.copy()
                         for key, value in input_payload.items():
                             merged_workload[key] = value
@@ -144,7 +144,7 @@ class Broker:
                         child_agent.update_context('workload', merged_workload)
                         child_agent.store_workload(merged_workload)
                 else:
-                    logger.info(f"No input payload provided for playbook '{path}'. Using default workload.")
+                    logger.info(f"No input payload provided for playbooks '{path}'. Using default workload.")
                     for key, value in workload.items():
                         child_agent.update_context(key, value)
                     child_agent.update_context('workload', workload)
@@ -163,7 +163,7 @@ class Broker:
                     os.unlink(temp_file_path)
 
         except Exception as e:
-            error_msg = f"Error executing playbook '{path}': {str(e)}"
+            error_msg = f"Error executing playbooks '{path}': {str(e)}"
             logger.error(error_msg, exc_info=True)
             return {
                 'status': 'error',
@@ -285,6 +285,8 @@ class Broker:
             result = self.end_loop_step(step_config, step_context, step_id)
         elif 'loop' in step_config:
             result = self.execute_loop_step(step_config, step_context, step_id)
+        elif 'transform' in step_config:
+            result = self.execute_transform_step(step_config, step_context, step_id)
         else:
             if 'call' in step_config:
                 call_config = step_config['call'].copy()
@@ -377,12 +379,12 @@ class Broker:
                     self.agent.secret_manager,
                     self.write_event_log if self.has_log_event() else None
                 )
-            elif call_type == 'playbook':
+            elif call_type == 'playbooks':
                 path = call_config.get('path')
                 version = call_config.get('version')
 
                 if not path:
-                    error_msg = "Missing 'path' parameter in playbook call."
+                    error_msg = "Missing 'path' parameter in playbooks call."
                     logger.error(error_msg)
                     result = {
                         'id': str(uuid.uuid4()),
@@ -472,6 +474,122 @@ class Broker:
             }, self.server_url)
 
         return result
+
+    def execute_transform_step(self, step_config: Dict, context: Dict, step_id: str) -> Dict:
+        """
+        Execute a transform step that applies transformations to data.
+
+        Args:
+            step_config: The step configuration
+            context: The context to render templates
+            step_id: The ID of the step
+
+        Returns:
+            A dictionary of the step result
+        """
+        start_time = datetime.datetime.now()
+        
+        transform_config = step_config.get('transform', {})
+        if not transform_config:
+            error_msg = "Missing transform configuration"
+            self.agent.save_step_result(
+                step_id, step_config.get('step', 'transform'), None,
+                'error', None, error_msg
+            )
+            return {
+                'id': step_id,
+                'status': 'error',
+                'error': error_msg
+            }
+
+        logger.info(f"Processing transform step: {step_config.get('step')}")
+        
+        transform_event = self.write_event_log(
+            'transform_start', step_id, step_config.get('step', 'transform'), 'step.transform',
+            'in_progress', 0, context, None,
+            {'transform_config': transform_config}, None
+        )
+
+        try:
+            transformed_data = {}
+            
+            if 'template' in transform_config:
+                template = transform_config['template']
+                transformed_data = render_template(self.agent.jinja_env, template, context)
+            elif 'mapping' in transform_config:
+                mapping = transform_config['mapping']
+                for target_field, source_template in mapping.items():
+                    transformed_data[target_field] = render_template(self.agent.jinja_env, source_template, context)
+            elif 'script' in transform_config:
+                script = transform_config['script']
+                exec_globals = {'__builtins__': __builtins__, 'context': context}
+                exec_locals = {}
+                exec(script, exec_globals, exec_locals)
+                if 'transform' in exec_locals:
+                    transformed_data = exec_locals['transform'](context)
+                else:
+                    transformed_data = exec_locals.get('result', {})
+            else:
+                error_msg = "Transform configuration must include 'template', 'mapping', or 'script'"
+                raise ValueError(error_msg)
+
+            step_name = step_config.get('step')
+            self.agent.update_context(step_name, transformed_data)
+            
+            self.agent.save_step_result(
+                step_id, step_name, None, 'success', transformed_data, None
+            )
+
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            self.write_event_log(
+                'transform_complete', step_id, step_name, 'step.transform',
+                'success', duration, context, transformed_data,
+                {'transform_config': transform_config}, transform_event
+            )
+
+            if self.server_url and self.event_reporting_enabled:
+                report_event({
+                    'event_type': 'transform_complete',
+                    'execution_id': self.agent.execution_id,
+                    'step_id': step_id,
+                    'step_name': step_name,
+                    'status': 'success',
+                    'duration': duration,
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'result': transformed_data
+                }, self.server_url)
+
+            return {
+                'id': step_id,
+                'status': 'success',
+                'data': transformed_data
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Transform step error: {error_msg}", exc_info=True)
+            
+            self.agent.save_step_result(
+                step_id, step_config.get('step', 'transform'), None,
+                'error', None, error_msg
+            )
+
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            self.write_event_log(
+                'transform_error', step_id, step_config.get('step', 'transform'), 'step.transform',
+                'error', duration, context, None,
+                {'error': error_msg, 'transform_config': transform_config}, transform_event
+            )
+
+            return {
+                'id': step_id,
+                'status': 'error',
+                'error': error_msg
+            }
 
     def end_loop_step(self, step_config: Dict, context: Dict, step_id: str) -> Dict:
         """
@@ -900,11 +1018,11 @@ class Broker:
             A dictionary of workflow results
         """
 
-        logger.info(f"Starting playbook: {self.agent.playbook.get('name', 'Unnamed')}")
+        logger.info(f"Starting playbooks: {self.agent.playbook.get('name', 'Unnamed')}")
         self.agent.update_context('execution_start', datetime.datetime.now().isoformat())
         execution_start_event = self.write_event_log(
             'execution_start', self.agent.execution_id, self.agent.playbook.get('name', 'Unnamed'),
-            'playbook',
+            'playbooks',
             'in_progress',
             0, self.agent.context,
             None,
@@ -936,7 +1054,7 @@ class Broker:
                 self.write_event_log(
                     'execution_error',
                     f"{self.agent.execution_id}_error", self.agent.playbook.get('name', 'Unnamed'),
-                    'playbook',
+                    'playbooks',
                     'error', 0, self.agent.context, None,
                     {'error': f"Step not found: {current_step}"}, execution_start_event
                 )
@@ -961,7 +1079,7 @@ class Broker:
                 self.write_event_log(
                     'execution_error',
                     f"{self.agent.execution_id}_error", self.agent.playbook.get('name', 'Unnamed'),
-                    'playbook',
+                    'playbooks',
                     'error', 0, self.agent.context, None,
                     {'error': f"Step failed: {current_step}", 'step_error': step_result.get('error')},
                     execution_start_event
@@ -1109,7 +1227,7 @@ class Broker:
         self.write_event_log(
             'execution_complete',
             f"{self.agent.execution_id}_complete", self.agent.playbook.get('name', 'Unnamed'),
-            'playbook',
+            'playbooks',
             'success', execution_duration, self.agent.context, None,
             {'playbook_path': self.agent.playbook_path}, execution_start_event
         )

@@ -43,7 +43,6 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
         payload = render_template(jinja_env, task_config.get('payload', {}), context)
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
         timeout = task_config.get('timeout', 30)
-        return_template = task_config.get('return', None)
 
         logger.info(f"HTTP {method} request to {endpoint}")
 
@@ -104,61 +103,6 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
 
                 if not is_success:
                     result['error'] = f"HTTP {response.status_code}: {response.reason_phrase}"
-                if return_template:
-                    try:
-                        template_context = {
-                            'status': 'success' if is_success else 'error',
-                            'result': response_data,
-                            'status_code': response_data['status_code'],
-                            'data': response_data.get('data', {}),
-                            'headers': response_data['headers']
-                        }
-                        template_context['_context'] = template_context
-                        logger.info(f"Template result object: {response_data}")
-                        logger.debug(f"Template context keys: {list(template_context.keys())}")
-                        logger.debug(f"Template context data type: {type(template_context.get('data'))}")
-                        processed_return = render_template(jinja_env, return_template, template_context)
-                        if isinstance(processed_return, str):
-                            processed_return = processed_return.strip()
-                            if processed_return.startswith('{') and processed_return.endswith('}'):
-                                try:
-                                    parsed_result = json.loads(processed_return)
-                                    result = {
-                                        'id': task_id,
-                                        'status': parsed_result.get('status', 'success'),
-                                        'data': parsed_result
-                                    }
-                                    if 'message' in parsed_result:
-                                        result['error'] = parsed_result['message']
-                                except json.JSONDecodeError as e:
-                                    logger.warning(f"Failed to parse return template as JSON: {str(e)}")
-                                    result = {
-                                        'id': task_id,
-                                        'status': 'success',
-                                        'data': processed_return
-                                    }
-                            else:
-                                result = {
-                                    'id': task_id,
-                                    'status': 'success',
-                                    'data': processed_return
-                                }
-                        elif isinstance(processed_return, dict):
-                            result = {
-                                'id': task_id,
-                                'status': processed_return.get('status', 'success'),
-                                'data': processed_return
-                            }
-                        else:
-                            result = {
-                                'id': task_id,
-                                'status': 'success',
-                                'data': processed_return
-                            }
-
-                    except Exception as e:
-                        logger.error(f"Failed to process return template: {str(e)}")
-                        result['template_error'] = str(e)
 
                 end_time = datetime.datetime.now()
                 duration = (end_time - start_time).total_seconds()

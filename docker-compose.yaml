@@ -3,11 +3,11 @@ networks:
     name: noetl-network
 
 services:
-  db:
+  database:
     build:
       context: .
       dockerfile: docker/postgres/Dockerfile
-    container_name: noetl-database
+    container_name: database
     environment:
       TZ: ${TZ}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -36,13 +36,13 @@ services:
     networks:
       - noetl-network
 
-  development-api:
+  server:
     build:
       context: .
       dockerfile: docker/noetl/development/Dockerfile
-    container_name: development-api
+    container_name: server
     depends_on:
-      db:
+      database:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -94,7 +94,7 @@ services:
 #      NOETL_USER: noetl
 #      NOETL_PASSWORD: noetl
 #      NOETL_SCHEMA: noetl
-#      GOOGLE_APPLICATION_CREDENTIALS: /secrets/application_default_credentials.json
+#      GOOGLE_APPLICATION_CREDENTIALS: /google_secret_manager/application_default_credentials.json
 #    networks:
 #      - noetl-network
 #    command: ["python", "-m", "uvicorn", "--factory", "noetl.main:create_app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
@@ -105,14 +105,16 @@ services:
       dockerfile: docker/jupyter/Dockerfile
     container_name: noetl-jupyter
     ports:
-      - "8888:8888"
+      - "8899:8888"
     volumes:
+      - ./notebooks:/home/jovyan/notebooks
       - ./data/work:/home/jovyan/work
       - ./data/jupyter:/home/jovyan/data
-      - .secrets/noetl-demo.json:/home/jovyan/secrets/noetl-demo.json
+      - .secrets/noetl-service-account.json:/home/jovyan/secrets/noetl-service-account.json
     environment:
       - JUPYTER_TOKEN=${JUPYTER_TOKEN}
+      - JUPYTER_ENABLE_LAB=yes
       - TZ=${TZ}
-      - GOOGLE_APPLICATION_CREDENTIALS=/home/jovyan/secrets/noetl-demo.json
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/jovyan/secrets/noetl-service-account.json
     networks:
       - noetl-network
