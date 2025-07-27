@@ -17,9 +17,11 @@ dist/
 *.egg-info/
 .env.prod
 .env.local
-/.secrets/
+.secrets/
 node_modules/
 data/noetldb/
+.vscode/
+.vscode-test/
 
 # Virtual environments
 publish_env/

@@ -73,12 +73,25 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         return {"status": "ok"}
 
     if enable_ui and ui_build_path.exists():
-        app.mount("/", StaticFiles(directory=ui_build_path, html=True), name="ui")
+        # Serve specific files first
         @app.get("/favicon.ico", include_in_schema=False)
         async def favicon():
             favicon_file = ui_build_path / "favicon.ico"
             if favicon_file.exists():
                 return FileResponse(favicon_file)
+            return FileResponse(ui_build_path / "index.html")
+        
+        # Mount static files for assets
+        app.mount("/assets", StaticFiles(directory=ui_build_path / "assets"), name="assets")
+        
+        # Catch-all route for SPA routing - this handles all other routes
+        @app.get("/{catchall:path}", include_in_schema=False)
+        async def spa_catchall(catchall: str):
+            return FileResponse(ui_build_path / "index.html")
+        
+        # Root route
+        @app.get("/", include_in_schema=False)
+        async def root():
             return FileResponse(ui_build_path / "index.html")
     else:
         @app.get("/", include_in_schema=False)
