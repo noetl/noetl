@@ -1150,11 +1150,24 @@ class Broker:
                     next_step = step_result['next_step']
                     logger.info(f"Using next_step from step result: {next_step}")
 
+                    if isinstance(next_step, list) and len(next_step) > 0 and isinstance(next_step[0], dict):
+                        step_name = next_step[0].get('step', 'unknown')
+                    elif isinstance(next_step, dict):
+                        step_name = next_step.get('step', 'unknown')
+                    else:
+                        step_name = str(next_step)
+
+                    step_with = {}
+                    if 'params' in step_result:
+                        step_with = step_result['params']
+                    elif 'data' in step_result and isinstance(step_result['data'], dict):
+                        step_with = step_result['data']
+
                     self.write_event_log(
-                        'step_transition', f"{self.agent.execution_id}_transition_{next_step}",
-                        f"transition_to_{next_step}", 'transition',
+                        'step_transition', f"{self.agent.execution_id}_transition_{step_name}",
+                        f"transition_to_{step_name}", 'transition',
                         'success', 0, self.agent.context, None,
-                        {'from_step': step_config.get('step'), 'to_step': next_step, 'with': {}, 'condition': 'direct_specification'},
+                        {'from_step': step_config.get('step'), 'to_step': next_step, 'with': step_with, 'condition': 'direct_specification'},
                         execution_start_event
                     )
 
@@ -1167,19 +1180,20 @@ class Broker:
                             'condition': 'direct_specification',
                             'status': 'success',
                             'timestamp': datetime.datetime.now().isoformat(),
-                            'with': {}
+                            'with': step_with
                         }, self.server_url)
 
                     params = (
                         self.agent.execution_id,
                         step_config.get('step'),
-                        next_step,
+                        step_name,
                         'direct_specification',
-                        '{}'
+                        json.dumps(step_with)
                     )
-
                     self.agent.store_transition(params)
-                    current_step = next_step
+                    self.agent.next_step_with = step_with
+
+                    current_step = step_name
                 else:
                     next_steps = self.get_next_steps(step_config, self.agent.context)
                     if not next_steps:
@@ -1187,6 +1201,15 @@ class Broker:
                         break
 
                     current_step, step_with, condition = next_steps[0]
+
+                    if isinstance(current_step, list) and len(current_step) > 0 and isinstance(current_step[0], dict):
+                        extracted_step_name = current_step[0].get('step', 'unknown')
+                    elif isinstance(current_step, dict):
+                        extracted_step_name = current_step.get('step', 'unknown')
+                    else:
+                        extracted_step_name = str(current_step)
+
+                    current_step = extracted_step_name
 
                 self.write_event_log(
                     'step_transition', f"{self.agent.execution_id}_transition_{current_step}",

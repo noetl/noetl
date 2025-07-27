@@ -23,11 +23,11 @@ workload:
       "tags": ["test", "example", "jsonb"]
     }
   }
-  steps:
-    setup_tables: run
-    insert_data: pass
-    query_data: pass
-    update_data: pass
+#  steps:
+#    setup_tables: run
+#    insert_data: run
+#    query_data: run
+#    update_data: pass
 
 
 workflow:
@@ -35,14 +35,6 @@ workflow:
     desc: "Start Postgres Test Workflow"
     next:
       - step: setup_tables
-
-#  - step: setup_tables
-#    desc: "Create test tables in Postgres"
-#    call:
-#      type: workbook
-#      name: setup_tables_task
-#    next:
-#      - step: insert_data
 
   - step: setup_tables
     desc: "Create test tables in Postgres"
@@ -74,14 +66,11 @@ workflow:
     next:
       - step: insert_data
 
-
   - step: insert_data
     desc: "Insert test data with JSONB"
     pass: "{{ workload.steps.insert_data }}"
     type: workbook
     task: insert_data_task
-    with:
-      test_data: "{{ workload.test_data }}"
     next:
       - step: query_data
 
@@ -91,7 +80,7 @@ workflow:
     type: workbook
     task: query_data_task
     next:
-      - step: update_data_task
+      - step: update_data
 
   - step: update_data
     desc: "Update data task"
@@ -103,6 +92,13 @@ workflow:
 
   - step: end
     desc: "End of workflow"
+    type: python
+    code: |
+      def main():
+          return {
+              'status': 'completed',
+              'message': 'Postgres test workflow completed successfully'
+          }
 
 workbook:
 
@@ -141,12 +137,13 @@ workbook:
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
+      test_data: "{{ workload.test_data }}"
     command: |
       INSERT INTO postgres_test_users (name, email, metadata)
       VALUES (
-        '{{ workload.test_data.name }}',
-        '{{ workload.test_data.email }}',
-        '{{ workload.test_data.metadata | tojson }}'::JSONB
+        '{{ test_data.name }}',
+        '{{ test_data.email }}',
+        '{"age": 30, "active": true, "tags": ["test", "example", "jsonb"]}'::JSONB
       );
 
       INSERT INTO postgres_test_users (name, email, metadata)
