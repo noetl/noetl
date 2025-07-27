@@ -15,29 +15,46 @@ logger = setup_logger(__name__, include_location=True)
 class Worker:
 
     def __init__(self, playbook_path: str, mock_mode: bool = True, pgdb: str = None):
+        logger.debug("=== WORKER.__INIT__: Function entry ===")
+        logger.debug(f"WORKER.__INIT__: Parameters - playbook_path={playbook_path}, mock_mode={mock_mode}, pgdb={pgdb}")
+        
         self.playbook_path = playbook_path
         self.mock_mode = mock_mode
         self.execution_id = str(uuid.uuid4())
+        logger.debug(f"WORKER.__INIT__: Generated execution_id={self.execution_id}")
+        
+        logger.debug("WORKER.__INIT__: Loading playbook")
         self.playbook = self.load_playbook()
+        logger.debug(f"WORKER.__INIT__: Loaded playbook with name={self.playbook.get('name', 'Unnamed')}")
+        
+        logger.debug("WORKER.__INIT__: Setting up Jinja environment")
         self.jinja_env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self.jinja_env.filters['to_json'] = lambda obj: json.dumps(obj)
         self.jinja_env.globals['now'] = lambda: datetime.datetime.now().isoformat()
         self.jinja_env.globals['env'] = os.environ
         self.next_step_with = None
+        
+        logger.debug("WORKER.__INIT__: Initializing SecretManager")
         self.secret_manager = SecretManager(self.jinja_env, self.mock_mode)
 
         if pgdb is None:
             pgdb = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
-            logger.info(f"Default Postgres: {pgdb}")
+            logger.info(f"WORKER.__INIT__: Using default Postgres connection: {pgdb}")
         else:
-            logger.info(f"Modified Postgres: {pgdb}")
+            logger.info(f"WORKER.__INIT__: Using provided Postgres connection: {pgdb}")
 
         self.pgdb = pgdb
+        logger.debug("WORKER.__INIT__: Importing DatabaseSchema")
         from noetl.schema import DatabaseSchema
+        
+        logger.debug("WORKER.__INIT__: Initializing DatabaseSchema")
         self.db_schema = DatabaseSchema(pgdb=pgdb)
         self.conn = self.db_schema.conn
+        
+        logger.debug("WORKER.__INIT__: Initializing database")
         self.db_schema.init_database()
 
+        logger.debug("WORKER.__INIT__: Setting up initial context")
         self.context = {
             'job': {
                 'uuid': self.execution_id,
@@ -45,17 +62,31 @@ class Worker:
             }
         }
 
+        logger.debug("WORKER.__INIT__: Loading workload from database")
         db_workload = self.load_workload()
         if db_workload:
-            logger.info(f"Using workload from database for execution {self.execution_id}")
+            logger.info(f"WORKER.__INIT__: Using workload from database for execution {self.execution_id}")
+            logger.debug(f"WORKER.__INIT__: Database workload: {db_workload}")
             rendered_workload = render_template(self.jinja_env, db_workload, self.context)
+            logger.debug(f"WORKER.__INIT__: Rendered workload: {rendered_workload}")
             self.context.update(rendered_workload)
         else:
-            logger.info(f"Workload not found in database. Using default from playbooks.")
-            rendered_workload = render_template(self.jinja_env, self.playbook.get('workload', {}), self.context)
+            logger.info(f"WORKER.__INIT__: Workload not found in database. Using default from playbook.")
+            playbook_workload = self.playbook.get('workload', {})
+            logger.debug(f"WORKER.__INIT__: Playbook workload: {playbook_workload}")
+            rendered_workload = render_template(self.jinja_env, playbook_workload, self.context)
+            logger.debug(f"WORKER.__INIT__: Rendered workload: {rendered_workload}")
             self.context.update(rendered_workload)
 
+        logger.debug("WORKER.__INIT__: Parsing playbook")
         self.parse_playbook()
+        logger.debug("=== WORKER.__INIT__: Function exit ===")
+        
+        # Print all environment variables when worker is initialized
+        logger.info("=== ENVIRONMENT VARIABLES ===")
+        for key, value in sorted(os.environ.items()):
+            logger.info(f"ENV: {key}={value}")
+        logger.info("=== END ENVIRONMENT VARIABLES ===")
 
     def store_workload(self, data: Dict):
         """
@@ -164,8 +195,14 @@ class Worker:
         """
         Parse the playbooks and store in the database.
         """
+        logger.debug("=== WORKER.PARSE_PLAYBOOK: Function entry ===")
+        logger.debug(f"WORKER.PARSE_PLAYBOOK: Parsing playbook for execution_id={self.execution_id}")
+        
         with self.conn.cursor() as cursor:
-            for step in self.playbook.get('workflow', []):
+            workflow_steps = self.playbook.get('workflow', [])
+            logger.debug(f"WORKER.PARSE_PLAYBOOK: Found {len(workflow_steps)} workflow steps")
+            
+            for step in workflow_steps:
                 step_id = str(uuid.uuid4())
                 step_name = step.get('step')
                 step_type = 'standard'
@@ -175,6 +212,8 @@ class Worker:
                     step_type = 'end_loop'
                 elif 'call' in step:
                     step_type = 'call'
+                
+                logger.debug(f"WORKER.PARSE_PLAYBOOK: Processing step={step_name}, type={step_type}")
 
                 params = (
                     self.execution_id,
@@ -184,27 +223,36 @@ class Worker:
                     step.get('desc', ''),
                     json.dumps(step)
                 )
+                logger.debug(f"WORKER.PARSE_PLAYBOOK: Inserting step into workflow table with params={params}")
                 cursor.execute(WORKFLOW_INSERT_POSTGRES, params)
 
                 next_steps = step.get('next', [])
                 if not isinstance(next_steps, list):
                     next_steps = [next_steps]
+                
+                logger.debug(f"WORKER.PARSE_PLAYBOOK: Step {step_name} has {len(next_steps)} next steps")
 
                 for next_step in next_steps:
+                    logger.debug(f"WORKER.PARSE_PLAYBOOK: Processing next_step={next_step} for step={step_name}")
+                    
                     if isinstance(next_step, dict):
                         if 'when' in next_step and 'then' in next_step:
                             condition = next_step.get('when')
                             then_steps = next_step.get('then', [])
                             if not isinstance(then_steps, list):
                                 then_steps = [then_steps]
+                            
+                            logger.debug(f"WORKER.PARSE_PLAYBOOK: Found conditional transition with condition={condition} and {len(then_steps)} then steps")
 
                             for then_step in then_steps:
                                 if isinstance(then_step, dict):
                                     to_step = then_step.get('step')
                                     with_params = json.dumps(then_step.get('with', {}))
+                                    logger.debug(f"WORKER.PARSE_PLAYBOOK: Then step is a dict with step={to_step}, with_params={with_params}")
                                 else:
                                     to_step = then_step
                                     with_params = '{}'
+                                    logger.debug(f"WORKER.PARSE_PLAYBOOK: Then step is a string: {to_step}")
 
                                 if to_step is not None and to_step != '':
                                     params = (
@@ -214,21 +262,26 @@ class Worker:
                                         condition,
                                         with_params
                                     )
+                                    logger.debug(f"WORKER.PARSE_PLAYBOOK: Inserting conditional transition with params={params}")
                                     cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
                                 else:
-                                    logger.warning(f"Skipping transition with null to_step from {step_name} with condition {condition}")
+                                    logger.warning(f"WORKER.PARSE_PLAYBOOK: Skipping transition with null to_step from {step_name} with condition {condition}")
                         elif 'else' in next_step:
                             else_steps = next_step.get('else', [])
                             if not isinstance(else_steps, list):
                                 else_steps = [else_steps]
+                            
+                            logger.debug(f"WORKER.PARSE_PLAYBOOK: Found else transition with {len(else_steps)} else steps")
 
                             for else_step in else_steps:
                                 if isinstance(else_step, dict):
                                     to_step = else_step.get('step')
                                     with_params = json.dumps(else_step.get('with', {}))
+                                    logger.debug(f"WORKER.PARSE_PLAYBOOK: Else step is a dict with step={to_step}, with_params={with_params}")
                                 else:
                                     to_step = else_step
                                     with_params = '{}'
+                                    logger.debug(f"WORKER.PARSE_PLAYBOOK: Else step is a string: {to_step}")
 
                                 if to_step is not None and to_step != '':
                                     params = (
@@ -238,10 +291,12 @@ class Worker:
                                         'else',
                                         with_params
                                     )
+                                    logger.debug(f"WORKER.PARSE_PLAYBOOK: Inserting else transition with params={params}")
                                     cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
                                 else:
-                                    logger.warning(f"Skipping transition with null to_step from {step_name} with condition 'else'")
+                                    logger.warning(f"WORKER.PARSE_PLAYBOOK: Skipping transition with null to_step from {step_name} with condition 'else'")
                     elif isinstance(next_step, str):
+                        logger.debug(f"WORKER.PARSE_PLAYBOOK: Next step is a string: {next_step}")
                         if next_step is not None and next_step != '':
                             params = (
                                 self.execution_id,
@@ -250,12 +305,14 @@ class Worker:
                                 '',
                                 '{}'
                             )
+                            logger.debug(f"WORKER.PARSE_PLAYBOOK: Inserting simple transition with params={params}")
                             cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
                         else:
-                            logger.warning(f"Skipping transition with null next_step from {step_name}")
+                            logger.warning(f"WORKER.PARSE_PLAYBOOK: Skipping transition with null next_step from {step_name}")
                     else:
                         to_step = next_step.get('step') if next_step else None
                         with_params = json.dumps(next_step.get('with', {})) if next_step else '{}'
+                        logger.debug(f"WORKER.PARSE_PLAYBOOK: Next step is an object with step={to_step}, with_params={with_params}")
                         
                         if to_step is not None and to_step != '':
                             params = (
@@ -265,11 +322,15 @@ class Worker:
                                 '',
                                 with_params
                             )
+                            logger.debug(f"WORKER.PARSE_PLAYBOOK: Inserting object transition with params={params}")
                             cursor.execute(TRANSITION_INSERT_CONDITION_POSTGRES, params)
                         else:
-                            logger.warning(f"Skipping transition with null to_step from {step_name}")
+                            logger.warning(f"WORKER.PARSE_PLAYBOOK: Skipping transition with null to_step from {step_name}")
 
-            for task in self.playbook.get('workbook', []):
+            workbook_tasks = self.playbook.get('workbook', [])
+            logger.debug(f"WORKER.PARSE_PLAYBOOK: Found {len(workbook_tasks)} workbook tasks")
+            
+            for task in workbook_tasks:
                 task_id = str(uuid.uuid4())
                 task_name = task.get('name') or task.get('task')
                 task_type = task.get('type', 'http')

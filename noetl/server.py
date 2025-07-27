@@ -710,61 +710,97 @@ class AgentService:
         merge: bool = False
     ) -> Dict[str, Any]:
         try:
+            logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function entry ===")
+            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Parameters - playbook_path={playbook_path}, playbook_version={playbook_version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
+            
+            temp_file_path = None
+            logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Creating temporary file for playbook content")
             with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
                 temp_file.write(playbook_content.encode('utf-8'))
                 temp_file_path = temp_file.name
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Created temporary file at {temp_file_path}")
+            
             try:
                 pgdb_conn = self.pgdb_conn_string if sync_to_postgres else None
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Using pgdb_conn={pgdb_conn}")
+                
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Initializing Worker with temp_file_path={temp_file_path}")
                 self.agent = Worker(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
                 agent = self.agent
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Worker initialized with execution_id={agent.execution_id}")
+                
                 workload = agent.playbook.get('workload', {})
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Loaded workload from playbook: {workload}")
+                
                 if input_payload:
                     if merge:
-                        logger.info("Merge mode: deep merging input payload with workload.")
+                        logger.info("AGENT_SERVICE.EXECUTE_AGENT: Merge mode: deep merging input payload with workload.")
+                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Input payload for merge: {input_payload}")
                         merged_workload = deep_merge(workload, input_payload)
+                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Merged workload: {merged_workload}")
                         for key, value in merged_workload.items():
                             agent.update_context(key, value)
+                            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
                         agent.update_context('workload', merged_workload)
                         agent.store_workload(merged_workload)
                     else:
-                        logger.info("Override mode: replacing workload keys with input payload.")
+                        logger.info("AGENT_SERVICE.EXECUTE_AGENT: Override mode: replacing workload keys with input payload.")
+                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Input payload for override: {input_payload}")
                         merged_workload = workload.copy()
                         for key, value in input_payload.items():
                             merged_workload[key] = value
+                            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Overriding key={key} with value={value}")
                         for key, value in merged_workload.items():
                             agent.update_context(key, value)
+                            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
                         agent.update_context('workload', merged_workload)
                         agent.store_workload(merged_workload)
                 else:
-                    logger.info("No input payload provided. Default workload from playbooks is used.")
+                    logger.info("AGENT_SERVICE.EXECUTE_AGENT: No input payload provided. Default workload from playbooks is used.")
                     for key, value in workload.items():
                         agent.update_context(key, value)
+                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
                     agent.update_context('workload', workload)
                     agent.store_workload(workload)
+                
                 server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Using server_url={server_url}")
+                
+                logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Initializing Broker")
                 daemon = Broker(agent, server_url=server_url)
+                
+                logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Calling daemon.run()")
                 results = daemon.run()
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: daemon.run() returned results={results}")
 
                 export_path = None
 
-                return {
+                result = {
                     "status": "success",
                     "message": f"Agent executed for playbooks '{playbook_path}' version '{playbook_version}'.",
                     "result": results,
                     "execution_id": agent.execution_id,
                     "export_path": export_path
                 }
+                
+                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Returning result={result}")
+                logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function exit ===")
+                return result
             finally:
                 if os.path.exists(temp_file_path):
+                    logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Removing temporary file {temp_file_path}")
                     os.unlink(temp_file_path)
 
         except Exception as e:
-            logger.exception(f"Error executing agent: {e}.")
-            return {
+            logger.exception(f"AGENT_SERVICE.EXECUTE_AGENT: Error executing agent: {e}.")
+            error_result = {
                 "status": "error",
                 "message": f"Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}.",
                 "error": str(e)
             }
+            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Returning error result={error_result}")
+            logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function exit with error ===")
+            return error_result
 
 def get_agent_service() -> AgentService:
     return AgentService(get_pgdb_connection())
@@ -1015,6 +1051,9 @@ async def execute_agent(
     merge: bool = False
 ):
     try:
+        logger.debug("=== EXECUTE_AGENT: Function entry ===")
+        logger.debug(f"EXECUTE_AGENT: Initial parameters - path={path}, version={version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
+        
         if not path:
             try:
                 body = await request.json()
@@ -1023,28 +1062,36 @@ async def execute_agent(
                 input_payload = body.get("input_payload", input_payload)
                 sync_to_postgres = body.get("sync_to_postgres", sync_to_postgres)
                 merge = body.get("merge", merge)
-            except:
+                logger.debug(f"EXECUTE_AGENT: Parameters from request body - path={path}, version={version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
+            except Exception as e:
+                logger.debug(f"EXECUTE_AGENT: Failed to parse request body: {e}")
                 pass
 
         if not path:
+            logger.error("EXECUTE_AGENT: Missing required parameter path")
             raise HTTPException(
                 status_code=400,
                 detail="Path is a required parameter."
             )
 
+        logger.debug(f"EXECUTE_AGENT: Getting catalog service")
         catalog_service = get_catalog_service()
         if not version:
             version = catalog_service.get_latest_version(path)
-            logger.info(f"Version not specified, using latest version: {version}")
+            logger.debug(f"EXECUTE_AGENT: Version not specified, using latest version: {version}")
 
+        logger.debug(f"EXECUTE_AGENT: Fetching entry for path={path}, version={version}")
         entry = catalog_service.fetch_entry(path, version)
         if not entry:
+            logger.error(f"EXECUTE_AGENT: Playbook '{path}' with version '{version}' not found")
             raise HTTPException(
                 status_code=404,
                 detail=f"Playbook '{path}' with version '{version}' not found."
             )
 
+        logger.debug(f"EXECUTE_AGENT: Getting agent service")
         agent_service = get_agent_service()
+        logger.debug(f"EXECUTE_AGENT: Calling agent_service.execute_agent with playbook_path={path}, playbook_version={version}")
         result = agent_service.execute_agent(
             playbook_content=entry.get("content"),
             playbook_path=path,
@@ -1053,7 +1100,9 @@ async def execute_agent(
             sync_to_postgres=sync_to_postgres,
             merge=merge
         )
+        logger.debug(f"EXECUTE_AGENT: agent_service.execute_agent returned result={result}")
 
+        logger.debug("=== EXECUTE_AGENT: Function exit ===")
         return result
 
     except Exception as e:
@@ -1350,16 +1399,21 @@ async def validate_catalog_playbook(request: Request):
 async def execute_playbook(request: Request):
     """Execute a playbooks"""
     try:
+        logger.debug("=== EXECUTE_PLAYBOOK: Function entry ===")
         body = await request.json()
         playbook_id = body.get("playbook_id")
         parameters = body.get("parameters", {})
         
+        logger.debug(f"EXECUTE_PLAYBOOK: Received request to execute playbook_id={playbook_id} with parameters={parameters}")
+        
         if not playbook_id:
+            logger.error("EXECUTE_PLAYBOOK: Missing required parameter playbook_id")
             raise HTTPException(
                 status_code=400,
                 detail="playbook_id is required."
             )
         
+        logger.debug(f"EXECUTE_PLAYBOOK: Calling execute_agent for playbook_id={playbook_id}")
         result = await execute_agent(
             request=request,
             path=playbook_id,
@@ -1367,6 +1421,7 @@ async def execute_playbook(request: Request):
             sync_to_postgres=True,
             merge=False
         )
+        logger.debug(f"EXECUTE_PLAYBOOK: execute_agent returned result={result}")
         
         execution = {
             "id": result.get("execution_id", ""),
@@ -1378,6 +1433,8 @@ async def execute_playbook(request: Request):
             "result": result
         }
         
+        logger.debug(f"EXECUTE_PLAYBOOK: Returning execution={execution}")
+        logger.debug("=== EXECUTE_PLAYBOOK: Function exit ===")
         return execution
     except HTTPException:
         raise

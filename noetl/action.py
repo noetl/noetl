@@ -332,9 +332,10 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
         key_id = task_with.get('key_id')
         secret_key = task_with.get('secret_key')
         if key_id and secret_key:
-            logger.info("Setting up S3 credentials for GCS operations")
+            logger.info(f"Setting up S3 credentials for GCS operations - key_id: {key_id[:5]}..., secret_key: {secret_key[:3]}...")
+            logger.debug(f"GCS configuration parameters - key_id: {key_id}, secret_key length: {len(secret_key)}")
             try:
-                duckdb_con.execute(f"""
+                gcs_secret_sql = f"""
                     CREATE OR REPLACE SECRET gcs_secret (
                         TYPE S3,
                         PROVIDER GCS,
@@ -345,128 +346,193 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                         URL_STYLE 'path',
                         USE_SSL true
                     );
-                """)
+                """
+                logger.debug(f"Executing GCS secret SQL: {gcs_secret_sql}")
+                duckdb_con.execute(gcs_secret_sql)
                 logger.info("Successfully created GCS configuration chain")
                 try:
+                    logger.debug("Checking if GCS secret exists in DuckDB secrets")
                     secrets_list = duckdb_con.execute("SELECT * FROM duckdb_secrets();").fetchall()
+                    logger.debug(f"DuckDB secrets list: {secrets_list}")
                     gcs_secret_exists = any(secret[0] == 'gcs_secret' for secret in secrets_list)
+                    logger.debug(f"GCS secret exists: {gcs_secret_exists}")
 
                     if not gcs_secret_exists:
                         logger.info("Creating persistent GCS secret")
-                        duckdb_con.execute(f"CREATE PERSISTENT SECRET gcs_secret (TYPE S3, KEY_ID '{key_id}', SECRET '{secret_key}');")
+                        persistent_secret_sql = f"CREATE PERSISTENT SECRET gcs_secret (TYPE S3, KEY_ID '{key_id}', SECRET '{secret_key}');"
+                        logger.debug(f"Executing persistent GCS secret SQL: {persistent_secret_sql}")
+                        duckdb_con.execute(persistent_secret_sql)
+                        logger.info("Successfully created persistent GCS secret")
                 except Exception as e:
                     logger.warning(f"Error checking or creating GCS secret: {e}. Will continue with chain configuration.")
+                    logger.debug(f"GCS secret check/create exception details: {str(e)}")
             except Exception as e:
                 logger.warning(f"Error creating GCS chain: {e}. Falling back to individual parameter configuration.")
+                logger.debug(f"GCS chain creation exception details: {str(e)}")
+                logger.debug("Setting individual S3 parameters for GCS access")
                 duckdb_con.execute("set s3_endpoint='storage.googleapis.com';")
                 duckdb_con.execute("set s3_region='auto';")
                 duckdb_con.execute("set s3_url_style='path';")
                 duckdb_con.execute("set s3_use_ssl=true;")
                 duckdb_con.execute(f"set s3_access_key_id='{key_id}';")
                 duckdb_con.execute(f"set s3_secret_access_key='{secret_key}';")
+                logger.info("Successfully set individual S3 parameters for GCS access")
                 try:
+                    logger.debug("Checking if GCS secret exists after setting individual parameters")
                     secrets_list = duckdb_con.execute("SELECT * FROM duckdb_secrets();").fetchall()
+                    logger.debug(f"DuckDB secrets list after individual parameters: {secrets_list}")
                     gcs_secret_exists = any(secret[0] == 'gcs_secret' for secret in secrets_list)
+                    logger.debug(f"GCS secret exists after individual parameters: {gcs_secret_exists}")
 
                     if not gcs_secret_exists:
-                        logger.info("Creating persistent GCS secret")
-                        duckdb_con.execute(f"CREATE PERSISTENT SECRET gcs_secret (TYPE S3, KEY_ID '{key_id}', SECRET '{secret_key}');")
+                        logger.info("Creating persistent GCS secret after individual parameters")
+                        persistent_secret_sql = f"CREATE PERSISTENT SECRET gcs_secret (TYPE S3, KEY_ID '{key_id}', SECRET '{secret_key}');"
+                        logger.debug(f"Executing persistent GCS secret SQL after individual parameters: {persistent_secret_sql}")
+                        duckdb_con.execute(persistent_secret_sql)
+                        logger.info("Successfully created persistent GCS secret after individual parameters")
                 except Exception as secret_e:
                     logger.warning(f"Error checking or creating GCS secret: {secret_e}. Will continue with session credentials.")
+                    logger.debug(f"GCS secret check/create exception details after individual parameters: {str(secret_e)}")
 
+        logger.info(f"Setting up database connection for type: {db_type}")
         if db_type.lower() == 'postgres':
             pg_host = task_with.get('db_host', os.environ.get('POSTGRES_HOST', 'localhost'))
             pg_port = task_with.get('db_port', os.environ.get('POSTGRES_PORT', '5434'))
             pg_user = task_with.get('db_user', os.environ.get('POSTGRES_USER', 'noetl'))
             pg_password = task_with.get('db_password', os.environ.get('POSTGRES_PASSWORD', 'noetl'))
             pg_db = task_with.get('db_name', os.environ.get('POSTGRES_DB', 'noetl'))
+            logger.debug(f"Postgres connection parameters - host: {pg_host}, port: {pg_port}, user: {pg_user}, db: {pg_db}")
             pg_conn_string = f"dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}"
             conn_string = pg_conn_string
+            logger.info(f"Using Postgres connection to {pg_host}:{pg_port}/{pg_db} as user {pg_user}")
         elif db_type.lower() == 'sqlite':
             sqlite_path = task_with.get('db_path', os.path.join(duckdb_data_dir, 'sqlite', 'noetl.db'))
+            logger.debug(f"SQLite connection parameters - path: {sqlite_path}")
             conn_string = sqlite_path
+            logger.info(f"Using SQLite connection to {sqlite_path}")
         elif db_type.lower() == 'mysql':
             mysql_host = task_with.get('db_host', os.environ.get('MYSQL_HOST', 'localhost'))
             mysql_port = task_with.get('db_port', os.environ.get('MYSQL_PORT', '3306'))
             mysql_user = task_with.get('db_user', os.environ.get('MYSQL_USER', 'noetl'))
             mysql_password = task_with.get('db_password', os.environ.get('MYSQL_PASSWORD', 'noetl'))
             mysql_db = task_with.get('db_name', os.environ.get('MYSQL_DB', 'noetl'))
+            logger.debug(f"MySQL connection parameters - host: {mysql_host}, port: {mysql_port}, user: {mysql_user}, db: {mysql_db}")
             mysql_conn_string = f"host={mysql_host} port={mysql_port} user={mysql_user} password={mysql_password} dbname={mysql_db}"
             conn_string = mysql_conn_string
+            logger.info(f"Using MySQL connection to {mysql_host}:{mysql_port}/{mysql_db} as user {mysql_user}")
         else:
             conn_string = task_with.get('db_conn_string', '')
+            logger.debug(f"Custom database connection parameters - connection string: {conn_string}")
             if not conn_string:
                 logger.warning(f"No connection string provided for database type: {db_type}. Using in-memory DuckDB.")
                 conn_string = "memory"
+                logger.info("Using in-memory DuckDB connection")
+            else:
+                logger.info(f"Using custom connection string for database type: {db_type}")
 
         read_only = task_with.get('db_read_only', False)
         attach_options = ""
         if read_only:
             attach_options += " (READ_ONLY)"
+            logger.debug("Using READ_ONLY mode for database attachment")
         elif db_type.lower() in ['postgres', 'mysql']:
             attach_options += f" (TYPE {db_type.lower()})"
+            logger.debug(f"Using TYPE {db_type.lower()} for database attachment")
 
         try:
             test_query = f"SELECT 1 FROM {db_alias}.sqlite_master LIMIT 1" if db_type.lower() == 'sqlite' else f"SELECT 1 FROM {db_alias}.information_schema.tables LIMIT 1"
+            logger.debug(f"Testing if database is already attached with query: {test_query}")
             duckdb_con.execute(test_query)
             logger.info(f"Database '{db_alias}' is already attached.")
         except Exception as e:
+            logger.debug(f"Database '{db_alias}' is not attached yet. Error: {str(e)}")
             try:
                 logger.info(f"Attaching {db_type} database as '{db_alias}'.")
                 attach_sql = f"ATTACH '{conn_string}' AS {db_alias}{attach_options};"
                 logger.debug(f"ATTACH SQL: {attach_sql}")
                 duckdb_con.execute(attach_sql)
+                logger.info(f"Successfully attached {db_type} database as '{db_alias}'.")
             except Exception as attach_error:
                 logger.error(f"Error attaching database: {attach_error}.")
+                logger.debug(f"Database attachment exception details: {str(attach_error)}")
                 raise
 
         results = {}
         if commands:
+            logger.info(f"Executing {len(commands)} DuckDB commands")
             for i, cmd in enumerate(commands):
+                logger.debug(f"Processing command {i+1}/{len(commands)}")
+                original_cmd = cmd
                 if isinstance(cmd, str) and ('{{' in cmd or '}}' in cmd):
+                    logger.debug(f"Command contains template variables, rendering: {cmd}")
                     cmd = render_template(jinja_env, cmd, context)
+                    logger.debug(f"Rendered command: {cmd}")
                     if "CREATE SECRET" in cmd or "CREATE OR REPLACE CHAIN" in cmd:
+                        logger.debug("Command contains CREATE SECRET or CREATE OR REPLACE CHAIN, applying regex substitutions")
                         import re
                         cmd = re.sub(r"{{[^}]*\|\s*default\(['\"]([^'\"]*)['\"].*?}}", r"\1", cmd)
                         cmd = re.sub(r"default\('([^']*)'\)", r'default("\1")', cmd)
                         cmd = re.sub(r"(HOST|DATABASE|USER|PASSWORD|ENDPOINT|REGION|URL_STYLE|KEY_ID|SECRET_KEY) '([^']*)'", r'\1 "\2"', cmd)
+                        logger.debug(f"Command after regex substitutions: {cmd}")
 
-                logger.info(f"Executing DuckDB command: {cmd}")
+                logger.info(f"Executing DuckDB command ({i+1}/{len(commands)}): {cmd}")
 
                 if cmd.strip().upper().startswith("ATTACH"):
+                    logger.debug("Processing ATTACH command")
                     try:
                         attach_parts = cmd.strip().split(" AS ")
                         if len(attach_parts) >= 2:
                             db_alias_with_options = attach_parts[1].strip()
                             db_alias = db_alias_with_options.split()[0].rstrip(';')
+                            logger.debug(f"Extracted database alias from ATTACH command: {db_alias}")
                             try:
                                 test_query = f"SELECT 1 FROM {db_alias}.information_schema.tables LIMIT 1"
+                                logger.debug(f"Testing if database is already attached with query: {test_query}")
                                 duckdb_con.execute(test_query)
                                 logger.info(f"Database '{db_alias}' is already attached, skipping ATTACH command.")
                                 results[f"command_{i}"] = {"status": "skipped", "message": f"Database '{db_alias}' is already attached."}
                                 continue
-                            except Exception:
+                            except Exception as test_error:
+                                logger.debug(f"Database '{db_alias}' is not attached yet. Error: {str(test_error)}")
                                 logger.info(f"Attaching database as '{db_alias}'.")
+                        logger.debug(f"Executing ATTACH command: {cmd}")
                         result = duckdb_con.execute(cmd).fetchall()
-                        results[f"command_{i}"] = {"status": "success", "message": f"Database attached"}
+                        logger.debug(f"ATTACH command result: {result}")
+                        logger.info(f"Successfully attached database with command: {cmd}")
+                        results[f"command_{i}"] = {"status": "success", "message": f"Database attached", "result": result}
                     except Exception as attach_error:
                         logger.error(f"Error in ATTACH command: {attach_error}.")
+                        logger.debug(f"ATTACH command exception details: {str(attach_error)}")
                         results[f"command_{i}"] = {"status": "error", "message": f"ATTACH operation failed: {str(attach_error)}"}
                 elif cmd.strip().upper().startswith("DETACH"):
+                    logger.debug("Processing DETACH command")
                     try:
                         detach_parts = cmd.strip().split()
                         if len(detach_parts) >= 2:
                             detach_alias = detach_parts[1].rstrip(';')
+                            logger.debug(f"Extracted database alias from DETACH command: {detach_alias}")
                             logger.info(f"Detaching database '{detach_alias}'.")
 
+                        logger.debug(f"Executing DETACH command: {cmd}")
                         result = duckdb_con.execute(cmd).fetchall()
-                        results[f"command_{i}"] = {"status": "success", "message": f"Database detached"}
+                        logger.debug(f"DETACH command result: {result}")
+                        logger.info(f"Successfully detached database with command: {cmd}")
+                        results[f"command_{i}"] = {"status": "success", "message": f"Database detached", "result": result}
                     except Exception as detach_error:
                         logger.warning(f"Error in DETACH command: {detach_error}.")
+                        logger.debug(f"DETACH command exception details: {str(detach_error)}")
                         results[f"command_{i}"] = {"status": "warning", "message": f"DETACH operation failed: {str(detach_error)}"}
                 else:
-                    result = duckdb_con.execute(cmd).fetchall()
-                    results[f"command_{i}"] = result
+                    logger.debug(f"Executing general SQL command: {cmd}")
+                    try:
+                        result = duckdb_con.execute(cmd).fetchall()
+                        logger.debug(f"SQL command result: {result}")
+                        logger.info(f"Successfully executed SQL command: {cmd}")
+                        results[f"command_{i}"] = {"status": "success", "result": result}
+                    except Exception as sql_error:
+                        logger.error(f"Error executing SQL command: {sql_error}.")
+                        logger.debug(f"SQL command exception details: {str(sql_error)}")
+                        results[f"command_{i}"] = {"status": "error", "message": f"SQL operation failed: {str(sql_error)}"}
 
         elif bucket and blob_path and table:
             temp_table = f"temp_{table}_{int(time.time())}"

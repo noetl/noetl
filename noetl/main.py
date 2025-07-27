@@ -107,7 +107,8 @@ def run_server(
     host: str = typer.Option("0.0.0.0", help="Server host."),
     port: int = typer.Option(8080, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload."),
-    no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components.")
+    no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components."),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging mode.")
 ):
     global _enable_ui
 
@@ -116,9 +117,25 @@ def run_server(
 
     _enable_ui = not no_ui
 
+    # Configure logging based on debug flag
+    log_level = "debug" if debug else "info"
+    logging.basicConfig(
+        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
+        datefmt='%Y-%m-%dT%H:%M:%S',
+        level=logging.DEBUG if debug else logging.INFO
+    )
+
     ui_status = "disabled" if no_ui else "enabled"
-    logger.info(f"Starting NoETL API server at http://{host}:{port} (UI {ui_status})")
-    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload)
+    debug_status = "enabled" if debug else "disabled"
+    logger.info(f"Starting NoETL API server at http://{host}:{port} (UI {ui_status}, Debug {debug_status})")
+    
+    # Print all environment variables when server starts
+    logger.info("=== ENVIRONMENT VARIABLES AT SERVER STARTUP ===")
+    for key, value in sorted(os.environ.items()):
+        logger.info(f"ENV: {key}={value}")
+    logger.info("=== END ENVIRONMENT VARIABLES ===")
+    
+    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 
 @cli_app.command("agent")
@@ -133,7 +150,7 @@ def run_agent(
     input: str = typer.Option(None, help="Path to the input payload JSON file for the playbooks."),
     payload: str = typer.Option(None, help="JSON input payload string for the playbooks."),
     merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
-    debug: bool = typer.Option(False, help="Debug logging mode.")
+    debug: bool = typer.Option(False, "--debug", help="Debug logging mode.")
 ):
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
