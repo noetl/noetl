@@ -137,8 +137,13 @@ class CatalogService:
                 logger.debug(f"Extracted resource_path: '{resource_path}'")
                 latest_version = self.get_latest_version(resource_path)
                 logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
-                resource_version = self.increment_version(latest_version)
-                logger.debug(f"Incremented version: '{resource_version}'")
+
+                if latest_version != '0.1.0':
+                    resource_version = self.increment_version(latest_version)
+                    logger.debug(f"Incremented version for existing playbook: '{resource_version}'")
+                else:
+                    resource_version = latest_version
+                    logger.debug(f"Using initial version for new playbook: '{resource_version}'")
 
                 attempt = 0
                 max_attempts = 5
@@ -1583,5 +1588,3 @@ async def get_execution(execution_id: str):
 async def api_health():
     """API health check endpoint"""
     return {"status": "ok"}
-
-
