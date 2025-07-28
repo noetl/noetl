@@ -155,6 +155,11 @@ class APIService {
     return response.data;
   }
 
+  async executePlaybookWithPayload(requestBody: any): Promise<{ execution_id: string }> {
+    const response = await apiClient.post('/agent/execute', requestBody);
+    return response.data;
+  }
+
   async stopExecution(id: string): Promise<void> {
     await apiClient.post(`/executions/${id}/stop`);
   }
