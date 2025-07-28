@@ -1470,17 +1470,83 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
 async def get_catalog_widgets():
     """Get catalog visualization widgets"""
     try:
+        # Get actual playbook count from catalog
+        playbook_count = 0
+        active_count = 0
+        draft_count = 0
+        
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    # Count total playbooks
+                    cursor.execute(
+                        "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'playbooks'"
+                    )
+                    playbook_count = cursor.fetchone()[0]
+                    
+                    # Count by status - we'll need to parse the meta field
+                    cursor.execute(
+                        """
+                        SELECT meta FROM catalog 
+                        WHERE resource_type = 'playbooks'
+                        """
+                    )
+                    results = cursor.fetchall()
+                    
+                    for row in results:
+                        meta_str = row[0]
+                        if meta_str:
+                            try:
+                                meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+                                status = meta.get('status', 'active')
+                                if status == 'active':
+                                    active_count += 1
+                                elif status == 'draft':
+                                    draft_count += 1
+                            except (json.JSONDecodeError, TypeError):
+                                active_count += 1  # Default to active if can't parse
+                        else:
+                            active_count += 1  # Default to active if no meta
+        except Exception as db_error:
+            logger.warning(f"Error getting catalog stats from database: {db_error}")
+            # Fallback to basic count if database query fails
+            playbook_count = 0
+
         return [
             {
                 "id": "catalog-summary",
                 "type": "metric",
-                "title": "Catalog Summary",
+                "title": "Total Playbooks",
                 "data": {
-                    "value": 0
+                    "value": playbook_count
                 },
                 "config": {
                     "format": "number",
                     "color": "#1890ff"
+                }
+            },
+            {
+                "id": "active-playbooks",
+                "type": "metric", 
+                "title": "Active Playbooks",
+                "data": {
+                    "value": active_count
+                },
+                "config": {
+                    "format": "number",
+                    "color": "#52c41a"
+                }
+            },
+            {
+                "id": "draft-playbooks",
+                "type": "metric",
+                "title": "Draft Playbooks", 
+                "data": {
+                    "value": draft_count
+                },
+                "config": {
+                    "format": "number",
+                    "color": "#faad14"
                 }
             }
         ]
