@@ -27,10 +27,8 @@ class CatalogService:
                         (resource_path,)
                     )
                     count = cursor.fetchone()[0]
-                    logger.debug(f"Found {count} entries for resource_path '{resource_path}'")
 
                     if count == 0:
-                        logger.debug(f"No entries found for resource_path '{resource_path}', returning default version '0.1.0'")
                         return "0.1.0"
 
                     cursor.execute(
@@ -38,7 +36,6 @@ class CatalogService:
                         (resource_path,)
                     )
                     versions = [row[0] for row in cursor.fetchall()]
-                    logger.debug(f"All versions for resource_path '{resource_path}': {versions}")
 
                     cursor.execute(
                         """
@@ -62,10 +59,8 @@ class CatalogService:
 
                     if result:
                         latest_version = result[0]
-                        logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
                         return latest_version
 
-                    logger.debug(f"No valid version found for resource_path '{resource_path}', returning default version '0.1.0'")
                     return "0.1.0"
         except Exception as e:
             logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
@@ -134,16 +129,12 @@ class CatalogService:
             with get_db_connection() as conn:
                 resource_data = yaml.safe_load(content)
                 resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
-                logger.debug(f"Extracted resource_path: '{resource_path}'")
                 latest_version = self.get_latest_version(resource_path)
-                logger.debug(f"Latest version for resource_path '{resource_path}': '{latest_version}'")
 
                 if latest_version != '0.1.0':
                     resource_version = self.increment_version(latest_version)
-                    logger.debug(f"Incremented version for existing playbook: '{resource_version}'")
                 else:
                     resource_version = latest_version
-                    logger.debug(f"Using initial version for new playbook: '{resource_version}'")
 
                 attempt = 0
                 max_attempts = 5
@@ -173,6 +164,7 @@ class CatalogService:
                         "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
                         (resource_type,)
                     )
+                    
                     cursor.execute(
                         """
                         INSERT INTO catalog
@@ -211,7 +203,7 @@ class CatalogService:
                     if resource_type:
                         cursor.execute(
                             """
-                            SELECT resource_path, resource_type, resource_version, meta, timestamp
+                            SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog
                             WHERE resource_type = %s
                             ORDER BY timestamp DESC
@@ -221,7 +213,7 @@ class CatalogService:
                     else:
                         cursor.execute(
                             """
-                            SELECT resource_path, resource_type, resource_version, meta, timestamp
+                            SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog
                             ORDER BY timestamp DESC
                             """
@@ -235,8 +227,10 @@ class CatalogService:
                         "resource_path": row[0],
                         "resource_type": row[1],
                         "resource_version": row[2],
-                        "meta": row[3],
-                        "timestamp": row[4]
+                        "content": row[3],
+                        "payload": row[4],
+                        "meta": row[5],
+                        "timestamp": row[6]
                     })
 
                 return entries
@@ -1260,6 +1254,23 @@ async def get_catalog_playbooks():
         playbooks = []
         for entry in entries:
             meta = entry.get('meta', {})
+            
+            # Try to get description from payload (parsed YAML content) first, then from meta
+            description = ""
+            payload = entry.get('payload', {})
+            
+            if isinstance(payload, str):
+                try:
+                    payload_data = json.loads(payload)
+                    description = payload_data.get('description', '')
+                except json.JSONDecodeError:
+                    description = ""
+            elif isinstance(payload, dict):
+                description = payload.get('description', '')
+            
+            # Fallback to meta description if payload doesn't have it
+            if not description:
+                description = meta.get('description', '')
 
             playbook = {
                 "id": entry.get('resource_path', ''),
@@ -1268,7 +1279,7 @@ async def get_catalog_playbooks():
                 "resource_version": entry.get('resource_version', ''),
                 "meta": entry.get('meta', ''),
                 "timestamp": entry.get('timestamp', ''),
-                "description": meta.get('description', ''),
+                "description": description,
                 "created_at": entry.get('timestamp', ''),
                 "updated_at": entry.get('timestamp', ''),
                 "status": meta.get('status', 'active'),

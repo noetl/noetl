@@ -249,62 +249,77 @@ const Catalog: React.FC = () => {
           </Row>
         )}
 
-        {/* Playbooks grid */}
-        <Row gutter={[16, 16]}>
+        {/* Playbooks list */}
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           {playbooks.map((playbook) => (
-            <Col key={playbook.id} xs={24} sm={12} md={8} lg={6}>
-              <Card
-                title={playbook.name}
-                extra={<Tag color={getStatusColor(playbook.status)}>{playbook.status}</Tag>}
-                  actions={[
+            <Card
+              key={playbook.id}
+              size="small"
+              style={{ width: '100%' }}
+            >
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <Space direction="horizontal" size="large" style={{ width: '100%' }}>
+                    <div>
+                      <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
+                        {playbook.name}
+                        <Tag color={getStatusColor(playbook.status)} style={{ marginLeft: 8 }}>
+                          {playbook.status}
+                        </Tag>
+                      </Title>
+                      <Space direction="horizontal" size="large">
+                        <Text type="secondary">Path: {playbook.id}</Text>
+                        <Text type="secondary">Version: {playbook.resource_version}</Text>
+                        <Text type="secondary">Tasks: {playbook.tasks_count}</Text>
+                        <Text type="secondary">
+                          Updated: {new Date(playbook.updated_at).toLocaleDateString()}
+                        </Text>
+                      </Space>
+                      {playbook.description && (
+                        <div style={{ marginTop: 4 }}>
+                          <Text type="secondary">{playbook.description}</Text>
+                        </div>
+                      )}
+                    </div>
+                  </Space>
+                </Col>
+                <Col>
+                  <Space>
                     <Button
-                      key="view"
                       type="text"
                       icon={<EyeOutlined />}
                       onClick={() => console.log('View playbooks', playbook.id)}
                     >
                       View
-                    </Button>,
-                <Button
-                  key="edit"
-                  type="text"
-                  icon={<EditOutlined />}
-                  onClick={() => navigate(`/editor?id=${playbook.id}&version=${playbook.resource_version}`)}
-                >
-                  Edit
-                </Button>,
+                    </Button>
                     <Button
-                      key="payload"
+                      type="text"
+                      icon={<EditOutlined />}
+                      onClick={() => navigate(`/editor?id=${playbook.id}&version=${playbook.resource_version}`)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
                       type="text"
                       icon={<FileTextOutlined />}
                       onClick={() => handleViewPayload(playbook.id, playbook.resource_version)}
                     >
                       Payload
-                    </Button>,
+                    </Button>
                     <Button
-                      key="execute"
-                      type="text"
+                      type="primary"
                       icon={<PlayCircleOutlined />}
                       onClick={() => handleExecutePlaybook(playbook.id)}
                       disabled={playbook.status !== 'active'}
                     >
                       Execute
                     </Button>
-                  ]}
-              >
-              <Space direction="vertical" size="small">
-                <Text type="secondary">Path: {playbook.id}</Text>
-                <Text type="secondary">Version: {playbook.resource_version}</Text>
-                <Text type="secondary">{playbook.description || 'No description'}</Text>
-                <Text type="secondary">Tasks: {playbook.tasks_count}</Text>
-                <Text type="secondary">
-                  Updated: {new Date(playbook.updated_at).toLocaleDateString()}
-                </Text>
-              </Space>
-              </Card>
-            </Col>
+                  </Space>
+                </Col>
+              </Row>
+            </Card>
           ))}
-        </Row>
+        </Space>
 
         {playbooks.length === 0 && !loading && (
           <Alert
