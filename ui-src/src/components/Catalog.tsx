@@ -295,7 +295,7 @@ const Catalog: React.FC = () => {
                     <Button
                       type="text"
                       icon={<EditOutlined />}
-                      onClick={() => navigate(`/editor?id=${playbook.id}&version=${playbook.resource_version}`)}
+                      onClick={() => navigate(`/editor?id=${playbook.id}`)}
                     >
                       Edit
                     </Button>

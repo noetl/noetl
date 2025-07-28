@@ -119,7 +119,7 @@ class APIService {
   }
 
   async getPlaybook(id: string): Promise<PlaybookData> {
-    const response = await apiClient.get(`/catalog/playbooks/${id}`);
+    const response = await apiClient.get(`/catalog/playbooks?id=${id}`);
     return response.data;
   }
 
@@ -165,7 +165,7 @@ class APIService {
   }
 
   async getPlaybookContent(id: string): Promise<string> {
-    const response = await apiClient.get(`/catalog/playbooks/${id}/content`);
+    const response = await apiClient.get(`/catalog/playbooks/content?id=${id}`);
     return response.data.content;
   }
 

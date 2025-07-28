@@ -4,7 +4,7 @@ import yaml
 import tempfile
 from datetime import datetime
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from noetl.common import setup_logger, deep_merge, get_pgdb_connection, get_db_connection
 from noetl.worker import Worker
@@ -1396,11 +1396,13 @@ async def execute_playbook(request: Request):
         logger.error(f"Error executing playbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
+@router.get("/catalog/playbooks", response_class=JSONResponse)
 async def get_catalog_playbook(
-    entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
+    playbook_id: str = Query(..., alias="playbook_id"),
+    # entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
 ):
     try:
+        entry: Dict[str, Any] = get_playbook_entry_from_catalog(playbook_id=playbook_id)
         meta = entry.get('meta', {})
         playbook_data = {
             "id": entry.get('resource_path', ''),
@@ -1417,8 +1419,8 @@ async def get_catalog_playbook(
         logger.error(f"Error processing playbooks entry: {e}")
         raise HTTPException(status_code=500, detail="Error processing playbooks data.")
 
-@router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
-async def get_catalog_playbook_content(playbook_id: str):
+@router.get("/catalog/playbooks/content", response_class=JSONResponse)
+async def get_catalog_playbook_content(playbook_id: str = Query(..., alias="playbook_id")):
     """Get playbooks content"""
     try:
         logger.info(f"Received playbook_id: '{playbook_id}'")
