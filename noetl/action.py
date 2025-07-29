@@ -26,12 +26,19 @@ _connection_lock = threading.Lock()
 @contextmanager
 def get_duckdb_connection(duckdb_file_path):
     """Context manager for shared DuckDB connections to maintain attachments"""
+    logger.debug("=== ACTION.GET_DUCKDB_CONNECTION: Function entry ===")
+    logger.debug(f"ACTION.GET_DUCKDB_CONNECTION: duckdb_file_path={duckdb_file_path}")
+
     with _connection_lock:
         if duckdb_file_path not in _duckdb_connections:
+            logger.debug(f"ACTION.GET_DUCKDB_CONNECTION: Creating new DuckDB connection for {duckdb_file_path}")
             _duckdb_connections[duckdb_file_path] = duckdb.connect(duckdb_file_path)
+        else:
+            logger.debug(f"ACTION.GET_DUCKDB_CONNECTION: Reusing existing DuckDB connection for {duckdb_file_path}")
         conn = _duckdb_connections[duckdb_file_path]
     
     try:
+        logger.debug("ACTION.GET_DUCKDB_CONNECTION: Yielding connection")
         yield conn
     finally:
         pass
@@ -51,23 +58,42 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
     Returns:
         A dictionary of the task result
     """
+    logger.debug("=== ACTION.EXECUTE_HTTP_TASK: Function entry ===")
+    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Parameters - task_config={task_config}, task_with={task_with}")
 
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'http_task')
     start_time = datetime.datetime.now()
 
-    try:
-        method = task_config.get('method', 'GET').upper()
-        endpoint = render_template(jinja_env, task_config.get('endpoint', ''), context)
-        params = render_template(jinja_env, task_config.get('params', {}), context)
-        payload = render_template(jinja_env, task_config.get('payload', {}), context)
-        headers = render_template(jinja_env, task_config.get('headers', {}), context)
-        timeout = task_config.get('timeout', 30)
+    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Generated task_id={task_id}")
+    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Task name={task_name}")
+    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Start time={start_time.isoformat()}")
 
-        logger.info(f"HTTP {method} request to {endpoint}")
+    try:
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendering HTTP task configuration")
+        method = task_config.get('method', 'GET').upper()
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: HTTP method={method}")
+
+        endpoint = render_template(jinja_env, task_config.get('endpoint', ''), context)
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
+
+        params = render_template(jinja_env, task_config.get('params', {}), context)
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendered params={params}")
+
+        payload = render_template(jinja_env, task_config.get('payload', {}), context)
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendered payload={payload}")
+
+        headers = render_template(jinja_env, task_config.get('headers', {}), context)
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendered headers={headers}")
+
+        timeout = task_config.get('timeout', 30)
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Timeout={timeout}")
+
+        logger.info(f"ACTION.EXECUTE_HTTP_TASK: Executing HTTP {method} request to {endpoint}")
 
         event_id = None
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Writing task_start event log")
             event_id = log_event_callback(
                 'task_start', task_id, task_name, 'http',
                 'in_progress', 0, context, None,
@@ -78,46 +104,67 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
         timeout = task_config.get('timeout', 30)
 
         try:
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Creating HTTP client with timeout={timeout}")
             with httpx.Client(timeout=timeout) as client:
                 request_args = {
                     'url': endpoint,
                     'headers': headers,
                     'params': params
                 }
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Initial request_args={request_args}")
+
                 if method in ['POST', 'PUT', 'PATCH'] and payload:
+                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Processing payload for {method} request")
                     content_type = headers.get('Content-Type', '').lower()
+                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Content-Type={content_type}")
 
                     if 'application/json' in content_type:
                         request_args['json'] = payload
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using JSON payload")
                     elif 'application/x-www-form-urlencoded' in content_type:
                         request_args['data'] = payload
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using form data payload")
                     elif 'multipart/form-data' in content_type:
                         request_args['files'] = payload
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using multipart form data payload")
                     else:
                         if isinstance(payload, (dict, list)):
                             request_args['json'] = payload
+                            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using default JSON payload for dict/list")
                         else:
                             request_args['data'] = payload
+                            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using data payload for non-dict/list")
 
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Final request_args={request_args}")
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Making HTTP request")
                 response = client.request(method, **request_args)
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: HTTP response received - status_code={response.status_code}")
+
                 response_data = {
                     'status_code': response.status_code,
                     'headers': dict(response.headers),
                     'url': str(response.url),
                     'elapsed': response.elapsed.total_seconds() if hasattr(response, 'elapsed') else None
                 }
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Response metadata={response_data}")
 
                 try:
                     response_content_type = response.headers.get('Content-Type', '').lower()
+                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Response Content-Type={response_content_type}")
+
                     if 'application/json' in response_content_type:
                         response_data['data'] = response.json()
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Parsed JSON response data")
                     else:
                         response_data['data'] = response.text
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using text response data")
                 except Exception as e:
-                    logger.warning(f"Failed to parse response content: {str(e)}")
+                    logger.warning(f"ACTION.EXECUTE_HTTP_TASK: Failed to parse response content: {str(e)}")
                     response_data['data'] = response.text
 
                 is_success = response.is_success
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Request success status={is_success}")
+
                 result = {
                     'id': task_id,
                     'status': 'success' if is_success else 'error',
@@ -126,47 +173,60 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
 
                 if not is_success:
                     result['error'] = f"HTTP {response.status_code}: {response.reason_phrase}"
+                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Request failed with error={result['error']}")
 
                 end_time = datetime.datetime.now()
                 duration = (end_time - start_time).total_seconds()
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Task duration={duration} seconds")
 
                 if log_event_callback:
+                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Writing task_complete event log")
                     log_event_callback(
                         'task_complete', task_id, task_name, 'http',
                         result['status'], duration, context, result.get('data'),
                         {'method': method, 'endpoint': endpoint, 'with_params': task_with}, event_id
                     )
 
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Returning result={result}")
+                logger.debug("=== ACTION.EXECUTE_HTTP_TASK: Function exit (success) ===")
                 return result
 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
+            logger.error(f"ACTION.EXECUTE_HTTP_TASK: HTTPStatusError - {error_msg}")
             raise Exception(error_msg)
         except httpx.RequestError as e:
             error_msg = f"Request error: {str(e)}"
+            logger.error(f"ACTION.EXECUTE_HTTP_TASK: RequestError - {error_msg}")
             raise Exception(error_msg)
         except httpx.TimeoutException as e:
             error_msg = f"Request timeout: {str(e)}"
+            logger.error(f"ACTION.EXECUTE_HTTP_TASK: TimeoutException - {error_msg}")
             raise Exception(error_msg)
 
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"HTTP task error: {error_msg}")
+        logger.error(f"ACTION.EXECUTE_HTTP_TASK: Exception - {error_msg}", exc_info=True)
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Task duration={duration} seconds (error path)")
 
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Writing task_error event log")
             log_event_callback(
                 'task_error', task_id, task_name, 'http',
                 'error', duration, context, None,
                 {'error': error_msg, 'with_params': task_with}, event_id
             )
 
-        return {
+        result = {
             'id': task_id,
             'status': 'error',
             'error': error_msg
         }
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Returning error result={result}")
+        logger.debug("=== ACTION.EXECUTE_HTTP_TASK: Function exit (error) ===")
+        return result
 
 def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
@@ -182,28 +242,47 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
     Returns:
         A dictionary of the task result
     """
+    logger.debug("=== ACTION.EXECUTE_PYTHON_TASK: Function entry ===")
+    logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Parameters - task_config={task_config}, task_with={task_with}")
 
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'python_task')
     start_time = datetime.datetime.now()
 
+    logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Generated task_id={task_id}")
+    logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Task name={task_name}")
+    logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Start time={start_time.isoformat()}")
+
     try:
         code = task_config.get('code', '')
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Python code length={len(code)} chars")
 
         event_id = None
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Writing task_start event log")
             event_id = log_event_callback(
                 'task_start', task_id, task_name, 'python',
                 'in_progress', 0, context, None,
                 {'with_params': task_with}, None
             )
+            logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Task start event_id={event_id}")
 
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Setting up execution globals")
         exec_globals = {
             '__builtins__': __builtins__,
-            'logger': logger
+            'context': context,
+            'os': os,
+            'json': json,
+            'datetime': datetime,
+            'uuid': uuid
         }
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Execution globals keys: {list(exec_globals.keys())}")
+
         exec_locals = {}
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Executing Python code")
         exec(code, exec_globals, exec_locals)
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Python execution completed")
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
 
         if 'main' in exec_locals:
             result_data = exec_locals['main'](**task_with)
@@ -242,22 +321,28 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
 
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Python task execution error: {error_msg}.", exc_info=True)
+        logger.error(f"ACTION.EXECUTE_PYTHON_TASK: Exception - {error_msg}", exc_info=True)
+
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Task duration={duration} seconds (error path)")
 
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Writing task_error event log")
             log_event_callback(
                 'task_error', task_id, task_name, 'python',
                 'error', duration, context, None,
-                {'error': error_msg, 'with_params': task_with}, None
+                {'error': error_msg, 'with_params': task_with}, event_id
             )
 
-        return {
+        result = {
             'id': task_id,
             'status': 'error',
             'error': error_msg
         }
+        logger.debug(f"ACTION.EXECUTE_PYTHON_TASK: Returning error result={result}")
+        logger.debug("=== ACTION.EXECUTE_PYTHON_TASK: Function exit (error) ===")
+        return result
 
 def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
@@ -273,6 +358,9 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
     Returns:
         A dictionary of the task result
     """
+    logger.debug("=== ACTION.EXECUTE_DUCKDB_TASK: Function entry ===")
+    logger.debug(f"ACTION.EXECUTE_DUCKDB_TASK: Parameters - task_config={task_config}, task_with={task_with}")
+
     if not DUCKDB_AVAILABLE:
         task_id = str(uuid.uuid4())
         task_name = task_config.get('task', 'duckdb_task')
@@ -296,6 +384,10 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
     task_name = task_config.get('task', 'duckdb_task')
     start_time = datetime.datetime.now()
 
+    logger.debug(f"ACTION.EXECUTE_DUCKDB_TASK: Generated task_id={task_id}")
+    logger.debug(f"ACTION.EXECUTE_DUCKDB_TASK: Task name={task_name}")
+    logger.debug(f"ACTION.EXECUTE_DUCKDB_TASK: Start time={start_time.isoformat()}")
+
     try:
         commands = task_config.get('command', task_config.get('commands', []))
         if isinstance(commands, str):
@@ -315,6 +407,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
 
         event_id = None
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_DUCKDB_TASK: Writing task_start event log")
             event_id = log_event_callback(
                 'task_start', task_id, task_name, 'duckdb',
                 'in_progress', 0, context, None,
@@ -632,8 +725,10 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
         logger.error(f"DuckDB task execution error: {error_msg}.", exc_info=True)
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
+        logger.debug(f"ACTION.EXECUTE_DUCKDB_TASK: Task duration={duration} seconds (error path)")
 
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_DUCKDB_TASK: Writing task_error event log")
             log_event_callback(
                 'task_error', task_id, task_name, 'duckdb',
                 'error', duration, context, None,
@@ -876,45 +971,67 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
     Returns:
         A dictionary of the task result
     """
+    logger.debug("=== ACTION.EXECUTE_TASK: Function entry ===")
+    logger.debug(f"ACTION.EXECUTE_TASK: Parameters - task_name={task_name}, task_config={task_config}")
 
     if not task_config:
         task_id = str(uuid.uuid4())
         error_msg = f"Task not found: {task_name}"
+        logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")
 
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_TASK: Writing task_error event log for missing task")
             log_event_callback(
                 'task_error', task_id, task_name, 'unknown',
                 'error', 0, context, None,
                 {'error': error_msg}, None
             )
 
-        return {
+        result = {
             'id': task_id,
             'status': 'error',
             'error': error_msg
         }
+        logger.debug(f"ACTION.EXECUTE_TASK: Returning error result for missing task: {result}")
+        logger.debug("=== ACTION.EXECUTE_TASK: Function exit (task not found) ===")
+        return result
 
     task_type = task_config.get('type', 'http')
+    logger.debug(f"ACTION.EXECUTE_TASK: Task type={task_type}")
+
     task_id = str(uuid.uuid4())
     start_time = datetime.datetime.now()
     task_with = {}
+
+    logger.debug(f"ACTION.EXECUTE_TASK: Generated task_id={task_id}")
+    logger.debug(f"ACTION.EXECUTE_TASK: Start time={start_time.isoformat()}")
+
     if 'with' in task_config:
+        logger.debug(f"ACTION.EXECUTE_TASK: Rendering 'with' parameters: {task_config.get('with')}")
         task_with = render_template(jinja_env, task_config.get('with'), context)
+        logger.debug(f"ACTION.EXECUTE_TASK: Rendered task_with: {task_with}")
         context.update(task_with)
 
     event_id = None
     if log_event_callback:
+        logger.debug(f"ACTION.EXECUTE_TASK: Writing task_execute event log")
         event_id = log_event_callback(
             'task_execute', task_id, task_name, f'task.{task_type}',
             'in_progress', 0, context, None,
             {'task_type': task_type, 'with_params': task_with}, None
         )
+        logger.debug(f"ACTION.EXECUTE_TASK: Task execute event_id={event_id}")
+
+    logger.debug(f"ACTION.EXECUTE_TASK: Dispatching to task type handler: {task_type}")
 
     if task_type == 'http':
+        logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_http_task")
         result = execute_http_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'python':
+        logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_python_task")
         result = execute_python_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'duckdb':
+        logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_duckdb_task")
         result = execute_duckdb_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'postgres':
         result = execute_postgres_task(task_config, context, jinja_env, task_with, log_event_callback)
@@ -938,8 +1055,10 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         result = execute_secrets_task(task_config, context, secret_manager, task_with, log_event_callback)
     else:
         error_msg = f"Unsupported task type: {task_type}"
+        logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")
 
         if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_TASK: Writing task_error event log for unsupported task type")
             log_event_callback(
                 'task_error', task_id, task_name, f'task.{task_type}',
                 'error', 0, context, None,
