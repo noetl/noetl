@@ -12,6 +12,13 @@ import random
 import string
 from typing import Dict, Any, Optional, List, Union
 from jinja2 import Environment, StrictUndefined, BaseLoader
+import psycopg
+from psycopg.rows import dict_row
+from contextlib import contextmanager
+try:
+    from psycopg_pool import ConnectionPool
+except ImportError:
+    ConnectionPool = None
 
 # logger = setup_logger(__name__, include_location=True)
 #===================================
@@ -20,13 +27,23 @@ from jinja2 import Environment, StrictUndefined, BaseLoader
 
 SUCCESS_LEVEL = 25
 LOG_SEVERITY = {
-    "DEBUG": "🔍",
-    "INFO": "ℹ️",
-    "SUCCESS": "✅",
-    "WARNING": "⚠️",
-    "ERROR": "❌",
-    "CRITICAL": "🔥"
+    "DEBUG": "DEBUG",
+    "INFO": "INFO",
+    "SUCCESS": "SUCCESS",
+    "WARNING": "WARNING",
+    "ERROR": "ERROR",
+    "CRITICAL": "CRITICAL"
 }
+
+LOG_COLORS = {
+    "DEBUG": "\033[36m",      # Cyan
+    "INFO": "\033[37m",       # White
+    "SUCCESS": "\033[32m",    # Green
+    "WARNING": "\033[33m",    # Yellow
+    "ERROR": "\033[31m",      # Red
+    "CRITICAL": "\033[35m"    # Magenta
+}
+RESET_COLOR = "\033[0m"
 
 logging.addLevelName(SUCCESS_LEVEL, "SUCCESS")
 
@@ -50,7 +67,9 @@ class CustomFormatter(logging.Formatter):
         self.highlight_scope = highlight_scope
 
     def format(self, record):
-        icon = LOG_SEVERITY.get(record.levelname, "ℹ️")
+        level_name = LOG_SEVERITY.get(record.levelname, record.levelname)
+        level_color = LOG_COLORS.get(record.levelname, "")
+
         if hasattr(record, "scope"):
             scope_highlight = f"\033[32m{record.scope}\033[0m"
         else:
@@ -60,7 +79,7 @@ class CustomFormatter(logging.Formatter):
                                                                                                            "lineno"):
             location = f"\033[1;33m({record.module}:{record.funcName}:{record.lineno})\033[0m"
 
-        metadata_line = f"{icon} [{record.levelname}] {scope_highlight} {location}".strip()
+        metadata_line = f"{level_color}[{level_name}]{RESET_COLOR} {scope_highlight} {location}".strip()
 
         if isinstance(record.msg, (dict, list)):
             message = str(record.msg)
@@ -128,6 +147,7 @@ def setup_logger(name: str, include_location=False, use_json=False):
 
 
 logger = setup_logger(__name__, include_location=True)
+
 
 #===================================
 #  jinja2 template rendering
@@ -234,8 +254,31 @@ def quote_jinja2_expressions(yaml_text):
     return "\n".join(fixed_lines)
 
 
+def render_template_bool(jinja_env, template_str, context):
+    try:
+        from jinja2 import meta
+        ast = jinja_env.parse(template_str)
+        referenced = meta.find_undeclared_variables(ast)
+        for key in referenced:
+            parts = key.split('.')
+            ctx = context
+            valid_path = True
+            for part in parts:
+                if isinstance(ctx, dict) and part in ctx:
+                    ctx = ctx[part]
+                else:
+                    valid_path = False
+                    break
+            if not valid_path:
+                return False
+
+        return render_template(jinja_env, template_str, context)
+    except Exception as e:
+        logger.debug(f"Error in render_template_bool: {str(e)}")
+        return False
+
 #===================================
-#  time calendar (დრო)
+#  time calendar
 #===================================
 
 def generate_id() -> str:
@@ -311,6 +354,15 @@ def is_on(value: str) -> bool:
 
 def is_off(value: str) -> bool:
     return str(value).lower() in ("false", "0", "no", "off", "n", "f")
+
+def get_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on", "pass", "ignore")
+    if isinstance(value, (int, float)):
+        return value != 0
+    return False
 
 async def mkdir(dir_path):
     try:
@@ -435,7 +487,7 @@ def deep_merge(dest: Union[Dict, List, Any], source: Union[Dict, List, Any]) -> 
         return source
 
 #===================================
-# connections
+# connection strings
 #===================================
 
 def get_pgdb_connection(
@@ -454,3 +506,83 @@ def get_pgdb_connection(
     schema = schema or os.environ.get('NOETL_SCHEMA', 'noetl')
 
     return f"dbname={db_name} user={user} password={password} host={host} port={port} options='-c search_path={schema}'"
+
+#===================================
+# postgres pool
+#===================================
+def safe_render_template_bool(jinja_env, template_str, context, default=False):
+    """
+    Safely renders a template string as a boolean with a default value for missing paths.
+
+    Args:
+        jinja_env: Jinja2 environment
+        template_str: Template string to render
+        context: Context dictionary for rendering
+        default: Default value to return if path doesn't exist (default: False)
+
+    Returns:
+        Rendered boolean value or default if path doesn't exist
+    """
+    try:
+        from jinja2 import meta
+        ast = jinja_env.parse(template_str)
+        referenced = meta.find_undeclared_variables(ast)
+
+        for key in referenced:
+            parts = key.split('.')
+            ctx = context
+            for part in parts:
+                if isinstance(ctx, dict) and part in ctx:
+                    ctx = ctx[part]
+                else:
+                    logger.debug(f"Path '{key}' not found in context, returning default {default}")
+                    return default
+
+        result = render_template(jinja_env, template_str, context)
+        if isinstance(result, bool):
+            return result
+        elif isinstance(result, str):
+            result = result.strip().lower()
+            return result in ("true", "1", "yes", "on", "y", "t")
+        else:
+            return bool(result)
+    except Exception as e:
+        logger.debug(f"Error in safe_render_template_bool: {str(e)}")
+        return default
+db_pool = None
+
+def initialize_db_pool():
+    global db_pool
+    if db_pool is None and ConnectionPool:
+        try:
+            db_pool = ConnectionPool(conninfo=get_pgdb_connection(), min_size=1, max_size=10)
+            logger.info("Database connection pool initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
+            db_pool = None
+    return db_pool
+
+@contextmanager
+def get_db_connection():
+    pool = initialize_db_pool()
+    if pool:
+        try:
+            conn = pool.getconn()
+            try:
+                yield conn
+                return
+            finally:
+                pool.putconn(conn)
+        except Exception as pool_error:
+            logger.warning(f"Connection pool error: {pool_error}. Falling back to direct connection.")
+
+    conn = None
+    try:
+        conn = psycopg.connect(get_pgdb_connection())
+        yield conn
+    except Exception as e:
+        logger.error(f"Connection failed: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()

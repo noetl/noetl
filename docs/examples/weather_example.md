@@ -106,21 +106,21 @@ Fetches weather data from the Open-Meteo API and evaluates if the temperature ex
 
 ### Direct Execution
 ```bash
-noetl agent -f playbook/weather_example.yaml
+noetl agent -f playbooks/weather_example.yaml
 ```
 
 ### Register and Execute from Catalog
 ```bash
 # Register in the catalog
-noetl playbook --register playbook/weather_example.yaml
+noetl playbooks --register playbooks/weather_example.yaml
 
 # Execute from the catalog
-noetl playbook --execute --path "workflows/examples/weather"
+noetl playbooks --execute --path "workflows/examples/weather"
 ```
 
 ### Execute with Custom Parameters
 ```bash
-noetl playbook --execute --path "workflows/examples/weather" --payload '{
+noetl playbooks --execute --path "workflows/examples/weather" --payload '{
   "cities": [
     {
       "name": "London",

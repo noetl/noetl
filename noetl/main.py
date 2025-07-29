@@ -6,26 +6,28 @@ import logging
 import base64
 import requests
 from pathlib import Path
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import FileResponse
 from noetl.server import router as server_router
-from noetl.common import deep_merge, setup_logger
-from noetl.worker import NoETLAgent
+from noetl.system import router as system_router
+from noetl.common import deep_merge, setup_logger, DateTimeEncoder
+from noetl.worker import Worker
 from noetl.schema import DatabaseSchema
 
 logger = setup_logger(__name__, include_location=True)
 
 cli_app = typer.Typer()
 
+_enable_ui = True
 
 def create_app() -> FastAPI:
-    """
-    Creates and configures the main FastAPI application instance.
-    This function is the factory for Uvicorn.
-    """
+    global _enable_ui
+
+    return _create_app(_enable_ui)
+
+def _create_app(enable_ui: bool = True) -> FastAPI:
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
@@ -40,7 +42,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # --- Database Initialization ---
     try:
         logger.info("Initializing NoETL system metadata.")
         db_schema = DatabaseSchema(auto_setup=False)
@@ -52,85 +53,89 @@ def create_app() -> FastAPI:
         logger.warning("Continuing with server startup despite database initialization error.")
 
     package_dir = Path(__file__).parent
-    ui_path = package_dir / "ui"
-    templates_path = ui_path / "templates"
-    static_path = ui_path / "static"
-    assets_path = static_path / "assets"
+    ui_build_path = package_dir / "ui" / "build"
 
-    templates = None
-    if templates_path.exists() and assets_path.exists():
-        templates = Jinja2Templates(directory=templates_path)
-        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
-        logger.info(f"UI assets mounted from: {assets_path}")
+    app.include_router(server_router, prefix="/api")
+    app.include_router(system_router, prefix="/api/sys", tags=["System"])
 
-        @app.get("/favicon.svg", include_in_schema=False)
-        async def favicon():
-            favicon_file = static_path / "favicon.svg"
-            if favicon_file.exists():
-                return FileResponse(favicon_file)
-            return HTMLResponse(status_code=404)
-    else:
-        logger.warning(f"UI files not found. Searched in: {ui_path}")
-
-    # --- API Router ---
-    app.include_router(server_router)
-
-    # --- Health Check ---
     @app.get("/health", include_in_schema=False)
     async def health():
         return {"status": "ok"}
 
-    # --- SPA Catch-all Route ---
-    if templates:
-        @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
-        async def serve_spa(request: Request, full_path: str):
-            """Serves the appropriate HTML template for any given path."""
-            if full_path.startswith("editor") or full_path.startswith("playbook"):
-                template_name = "editor.html"
-            elif full_path.startswith("execution"):
-                template_name = "execution.html"
-            elif full_path.startswith("catalog"):
-                template_name = "catalog.html"
-            else:
-                template_name = "index.html"  # Default/fallback
-
-            return templates.TemplateResponse(template_name, {"request": request})
+    if enable_ui and ui_build_path.exists():
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon():
+            favicon_file = ui_build_path / "favicon.ico"
+            if favicon_file.exists():
+                return FileResponse(favicon_file)
+            return FileResponse(ui_build_path / "index.html")
+        
+        app.mount("/assets", StaticFiles(directory=ui_build_path / "assets"), name="assets")
+        
+        @app.get("/{catchall:path}", include_in_schema=False)
+        async def spa_catchall(catchall: str):
+            return FileResponse(ui_build_path / "index.html")
+        
+        @app.get("/", include_in_schema=False)
+        async def root():
+            return FileResponse(ui_build_path / "index.html")
     else:
-        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        @app.get("/", include_in_schema=False)
         async def root_no_ui():
             return {"message": "NoETL API is running, but UI is not available"}
 
     return app
 
 
-# --- Typer CLI Commands ---
 
 @cli_app.command("server")
 def run_server(
     host: str = typer.Option("0.0.0.0", help="Server host."),
     port: int = typer.Option(8080, help="Server port."),
-    reload: bool = typer.Option(False, help="Server auto-reload.")
+    reload: bool = typer.Option(False, help="Server auto-reload."),
+    no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components."),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging mode.")
 ):
-    """Starts the NoETL web server."""
-    logger.info(f"Starting NoETL API server at http://{host}:{port}")
-    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload)
+    global _enable_ui
+
+    if not no_ui and os.environ.get("NOETL_ENABLE_UI", "true").lower() == "false":
+        no_ui = True
+
+    _enable_ui = not no_ui
+
+    log_level = "debug" if debug else "info"
+    logging.basicConfig(
+        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
+        datefmt='%Y-%m-%dT%H:%M:%S',
+        level=logging.DEBUG if debug else logging.INFO
+    )
+
+    ui_status = "disabled" if no_ui else "enabled"
+    debug_status = "enabled" if debug else "disabled"
+    logger.info(f"Starting NoETL API server at http://{host}:{port} (UI {ui_status}, Debug {debug_status})")
+    
+    logger.info("=== ENVIRONMENT VARIABLES AT SERVER STARTUP ===")
+    for key, value in sorted(os.environ.items()):
+        logger.info(f"ENV: {key}={value}")
+    logger.info("=== END ENVIRONMENT VARIABLES ===")
+    
+    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 
 @cli_app.command("agent")
 def run_agent(
-    file: str = typer.Option(..., "--file", "-f", help="Path to playbook YAML file."),
+    file: str = typer.Option(..., "--file", "-f", help="Path to playbooks YAML file."),
     mock: bool = typer.Option(False, help="Run in mock mode"),
     output: str = typer.Option("json", "--output", "-o", help="Output format, json or plain."),
     export: str = typer.Option(None, help="Export execution data to Parquet file."),
     mlflow: bool = typer.Option(False, help="Use ML model for workflow control."),
     postgres: str = typer.Option(None, help="Postgres connection string."),
     duckdb: str = typer.Option(None, help="Path to DuckDB file for business logic in playbooks."),
-    input: str = typer.Option(None, help="Path to the input payload JSON file for the playbook."),
-    payload: str = typer.Option(None, help="JSON input payload string for the playbook."),
+    input: str = typer.Option(None, help="Path to the input payload JSON file for the playbooks."),
+    payload: str = typer.Option(None, help="JSON input payload string for the playbooks."),
     merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
-    debug: bool = typer.Option(False, help="Debug logging mode.")
+    debug: bool = typer.Option(False, "--debug", help="Debug logging mode.")
 ):
-    """Executes a NoETL playbook as a local agent."""
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
         datefmt='%Y-%m-%dT%H:%M:%S',
@@ -163,7 +168,7 @@ def run_agent(
             os.environ['DUCKDB_PATH'] = duckdb
             logger.info(f"Using DuckDB for business logic: {duckdb}")
 
-        agent = NoETLAgent(file, mock_mode=mock, pgdb=pgdb_conn)
+        agent = Worker(file, mock_mode=mock, pgdb=pgdb_conn)
         workload = agent.playbook.get('workload', {})
 
         if input_payload:
@@ -184,7 +189,7 @@ def run_agent(
                 agent.update_context('workload', new_workload)
                 agent.store_workload(new_workload)
         else:
-            logger.info("Using default workload from playbook.")
+            logger.info("Using default workload from playbooks.")
             for key, value in workload.items():
                 agent.update_context(key, value)
             agent.update_context('workload', workload)
@@ -205,25 +210,24 @@ def run_agent(
         logger.info(f"Open notebook/agent_mission_report.ipynb and set 'pgdb' to {agent.pgdb}")
 
     except Exception as e:
-        logger.error(f"Error executing playbook: {e}", exc_info=True)
-        print(f"Error executing playbook: {e}")
+        logger.error(f"Error executing playbooks: {e}", exc_info=True)
+        print(f"Error executing playbooks: {e}")
         raise typer.Exit(code=1)
 
 
-@cli_app.command("playbook")
+@cli_app.command("playbooks")
 def manage_playbook(
-    register: str = typer.Option(None, "--register", "-r", help="Path to playbook file to register."),
-    execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbook by path."),
-    path: str = typer.Option(None, "--path", help="Path of the playbook to execute."),
-    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
+    register: str = typer.Option(None, "--register", "-r", help="Path to playbooks file to register."),
+    execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbooks by path."),
+    path: str = typer.Option(None, "--path", help="Path of the playbooks to execute."),
+    version: str = typer.Option(None, "--version", "-v", help="Version of the playbooks to execute."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
     payload: str = typer.Option(None, "--payload", help="Payload string."),
     host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
     port: int = typer.Option(8082, "--port", "-p", help="NoETL server port."),
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
-    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
+    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbooks.")
 ):
-    """Registers or executes a playbook via the NoETL server."""
     if register:
         try:
             if not os.path.exists(register):
@@ -232,10 +236,10 @@ def manage_playbook(
             with open(register, 'r') as f:
                 content = f.read()
             content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-            url = f"http://{host}:{port}/catalog/register"
+            url = f"http://{host}:{port}/api/catalog/register"
             headers = {"Content-Type": "application/json"}
             data = {"content_base64": content_base64}
-            logger.info(f"Registering playbook {register} with NoETL server at {url}")
+            logger.info(f"Registering playbooks {register} with NoETL server at {url}")
             response = requests.post(url, headers=headers, json=data)
 
             if response.status_code == 200:
@@ -244,18 +248,18 @@ def manage_playbook(
                 logger.info(f"Resource path: {result.get('resource_path')}")
                 logger.info(f"Resource version: {result.get('resource_version')}")
             else:
-                logger.error(f"Failed to register playbook: {response.status_code}")
+                logger.error(f"Failed to register playbooks: {response.status_code}")
                 logger.error(f"Response: {response.text}")
                 raise typer.Exit(code=1)
 
         except Exception as e:
-            logger.error(f"Error registering playbook: {e}")
+            logger.error(f"Error registering playbooks: {e}")
             raise typer.Exit(code=1)
     elif execute:
         try:
             if not path:
                 logger.error("Path is required when using --execute")
-                logger.info("Example: noetl playbook --execute --path weather_example --version 0.1.0")
+                logger.info("Example: noetl playbooks --execute --path weather_example --version 0.1.0")
                 raise typer.Exit(code=1)
 
             input_payload = {}
@@ -275,7 +279,7 @@ def manage_playbook(
                     logger.error(f"Error parsing payload JSON: {e}")
                     raise typer.Exit(code=1)
 
-            url = f"http://{host}:{port}/agent/execute"
+            url = f"http://{host}:{port}/api/agent/execute"
             headers = {"Content-Type": "application/json"}
             data = {
                 "path": path,
@@ -288,9 +292,9 @@ def manage_playbook(
                 data["version"] = version
 
             if version:
-                logger.info(f"Executing playbook {path} version {version} on NoETL server at {url}")
+                logger.info(f"Executing playbooks {path} version {version} on NoETL server at {url}")
             else:
-                logger.info(f"Executing playbook {path} (latest version) on NoETL server at {url}")
+                logger.info(f"Executing playbooks {path} (latest version) on NoETL server at {url}")
             response = requests.post(url, headers=headers, json=data)
 
             if response.status_code == 200:
@@ -299,31 +303,172 @@ def manage_playbook(
 
                 if result.get("status") == "success":
                     logger.info(f"Execution ID: {result.get('execution_id')}")
-                    logger.info(f"Result: {json.dumps(result.get('result'), indent=2)}")
+                    execution_result = result.get('result', {})
+                    logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        print("\n" + "="*60)
+                        print("RAW EXECUTION DATA (DEBUG)")
+                        print("="*60)
+                        for step_name, step_result in execution_result.items():
+                            if isinstance(step_result, dict):
+                                print(f"\n--- {step_name} ---")
+                                command_count = 0
+                                for key, value in step_result.items():
+                                    if key.startswith('command_'):
+                                        command_count += 1
+                                        if isinstance(value, list):
+                                            if value:
+                                                print(f"  {key}: {value}")
+                                            else:
+                                                print(f"  {key}: [] (DDL/DML command - no result data)")
+                                        elif isinstance(value, dict):
+                                            print(f"  {key}: {value}")
+                                if command_count == 0:
+                                    print(f"  No DuckDB commands in this step")
+                        print("="*60)
+
+                    print("\n" + "="*80)
+                    print("EXECUTION REPORT")
+                    print("="*80)
+                    print(f"Playbook Path: {path}")
+                    print(f"Version: {version or 'latest'}")
+                    print(f"Execution ID: {result.get('execution_id')}")
+                    print(f"Status: SUCCESS")
+                    print("-"*80)
+
+                    step_count = 0
+                    success_count = 0
+                    error_count = 0
+                    skipped_count = 0
+
+                    for step_name, step_result in execution_result.items():
+                        step_count += 1
+
+                        if isinstance(step_result, dict):
+                            status = step_result.get('status', None)
+
+                            if status is None:
+                                if ('message' in step_result or
+                                    'secret_value' in step_result or
+                                    'directory_created' in step_result or
+                                    any(key.startswith('command_') for key in step_result.keys())):
+                                    status = 'success'
+                                elif 'error' in step_result:
+                                    status = 'error'
+                                else:
+                                    status = 'unknown'
+
+                            if status == 'success':
+                                success_count += 1
+                                print(f"✓ {step_name}: SUCCESS")
+
+                                if 'message' in step_result:
+                                    print(f"  └─ {step_result['message']}")
+
+                                if 'secret_value' in step_result:
+                                    masked_secret = step_result['secret_value'][:8] + "..." if len(step_result['secret_value']) > 8 else "***"
+                                    print(f"  └─ Secret retrieved: {masked_secret}")
+                                    if 'provider' in step_result:
+                                        print(f"  └─ Provider: {step_result['provider']}")
+
+                                if 'directory_created' in step_result:
+                                    print(f"  └─ Directory: {step_result['directory_created']}")
+
+                                command_executed = False
+                                records_processed = 0
+                                export_message = None
+                                setup_commands = 0
+
+                                for key, value in step_result.items():
+                                    if key.startswith('command_') and isinstance(value, list):
+                                        if value:
+                                            command_executed = True
+                                            if isinstance(value[0], list) and len(value[0]) > 0:
+                                                content = str(value[0][0])
+                                                if "Exporting" in content:
+                                                    export_message = content
+                                                elif content.isdigit():
+                                                    records_processed = int(content)
+                                                elif content == "Export completed":
+                                                    pass
+                                        else:
+                                            setup_commands += 1
+                                    elif key.startswith('command_') and isinstance(value, dict):
+                                        if value.get('status') == 'skipped':
+                                            print(f"  └─ {key}: SKIPPED - {value.get('message', 'No details')}")
+
+                                if setup_commands > 0:
+                                    print(f"  └─ Setup commands: {setup_commands} executed")
+
+                                if export_message:
+                                    if "/" in export_message:
+                                        filename = export_message.split("/")[-1].replace(".csv", "")
+                                        print(f"  └─ Exported: {filename}")
+                                    if records_processed > 0:
+                                        print(f"  └─ Records: {records_processed}")
+
+                                for key, value in step_result.items():
+                                    if (key not in ['status', 'message', 'secret_value', 'provider', 'directory_created'] and
+                                        not key.startswith('command_') and
+                                        isinstance(value, (str, int, float)) and
+                                        len(str(value)) < 100):
+                                        print(f"  └─ {key}: {value}")
+
+                            elif status == 'error':
+                                error_count += 1
+                                print(f"✗ {step_name}: ERROR")
+                                if 'error' in step_result:
+                                    print(f"  └─ {step_result['error']}")
+                            elif status == 'skipped':
+                                skipped_count += 1
+                                print(f"⊘ {step_name}: SKIPPED")
+                                if 'message' in step_result:
+                                    print(f"  └─ {step_result['message']}")
+                            else:
+                                print(f"? {step_name}: {status.upper()}")
+                        else:
+                            print(f"- {step_name}: {step_result}")
+
+                    print("-"*80)
+                    print(f"SUMMARY: {step_count} steps total")
+                    print(f"  ✓ Success: {success_count}")
+                    if error_count > 0:
+                        print(f"  ✗ Errors: {error_count}")
+                    if skipped_count > 0:
+                        print(f"  ⊘ Skipped: {skipped_count}")
+                    print("="*80)
+
                 else:
+                    print("\n" + "="*80)
+                    print("EXECUTION REPORT")
+                    print("="*80)
+                    print(f"Playbook Path: {path}")
+                    print(f"Version: {version or 'latest'}")
+                    print(f"Status: FAILED")
+                    print(f"Error: {result.get('error', 'Unknown error')}")
+                    print("="*80)
+
                     logger.error(f"Execution failed: {result.get('error')}.")
                     raise typer.Exit(code=1)
             else:
-                logger.error(f"Failed to execute playbook: {response.status_code}.")
+                logger.error(f"Failed to execute playbooks: {response.status_code}.")
                 logger.error(f"Response: {response.text}.")
                 raise typer.Exit(code=1)
 
         except Exception as e:
-            logger.error(f"Error executing playbook: {e}.")
+            logger.error(f"Error executing playbooks: {e}.")
             raise typer.Exit(code=1)
     else:
-        logger.info("No action specified. Use --register to register a playbook or --execute to execute a playbook.")
+        logger.info("No action specified. Use --register to register a playbooks or --execute to execute a playbooks.")
         logger.info("Examples:")
-        logger.info("  noetl playbook --register ./playbook/weather_loop_example.yaml")
-        logger.info("  noetl playbook --execute --path weather_example --version 0.1.0 --payload '{\"city\": \"New York\"}'")
-        logger.info("  noetl playbook --execute --path weather_example --input ./data/input/payload.json")
+        logger.info("  noetl playbooks --register ./playbooks/weather_loop_example.yaml")
+        logger.info("  noetl playbooks --execute --path weather_example --version 0.1.0 --payload '{\"city\": \"New York\"}'")
+        logger.info("  noetl playbooks --execute --path weather_example --input ./data/input/payload.json")
 
 
 def main():
-    """Main entry point for the CLI application."""
     cli_app()
 app = create_app()
-
 
 if __name__ == "__main__":
     main()

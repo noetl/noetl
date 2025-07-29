@@ -35,7 +35,7 @@ noetl server --port 8082 --reload
 You can execute a playbook directly using the `noetl agent` command:
 
 ```bash
-noetl agent -f ./path/to/playbook.yaml
+noetl agent -f ./path/to/playbooks.yaml
 ```
 
 Options:
@@ -76,7 +76,7 @@ The `noetl playbook` command allows you to register and execute playbooks in the
 ### Registering a Playbook
 
 ```bash
-noetl playbook --register ./path/to/playbook.yaml
+noetl playbooks --register ./path/to/playbooks.yaml
 ```
 
 Options:
@@ -86,13 +86,13 @@ Options:
 
 Example:
 ```bash
-noetl playbook --register ./playbooks/weather_loop_example.yaml --host localhost --port 8082
+noetl playbooks --register ./playbooks/weather_loop_example.yaml --host localhost --port 8082
 ```
 
 ### Executing a Playbook from the Catalog
 
 ```bash
-noetl playbook --execute --path "workflows/example/playbook"
+noetl playbooks --execute --path "workflows/example/playbook"
 ```
 
 Options:
@@ -109,20 +109,20 @@ Options:
 Examples:
 
 ```bash
-# Execute a playbook by path
-noetl playbook --execute --path "workflows/weather/example"
+# Execute a playbooks by path
+noetl playbooks --execute --path "workflows/weather/example"
 
 # Execute with a specific version
-noetl playbook --execute --path "workflows/weather/example" --version "0.1.0"
+noetl playbooks --execute --path "workflows/weather/example" --version "0.1.0"
 
 # Execute with payload
-noetl playbook --execute --path "workflows/weather/example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}'
+noetl playbooks --execute --path "workflows/weather/example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}'
 
 # Execute with input file
-noetl playbook --execute --path "workflows/weather/example" --input ./data/input/payload.json
+noetl playbooks --execute --path "workflows/weather/example" --input ./data/input/payload.json
 
 # Execute with merge mode
-noetl playbook --execute --path "workflows/weather/example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}' --merge
+noetl playbooks --execute --path "workflows/weather/example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}' --merge
 ```
 
 ## Input Payload
@@ -157,7 +157,7 @@ Example payload.json file:
 When executing a playbook asynchronously, you can monitor the execution using the event ID:
 
 ```bash
-noetl execute path/playbook 1.0.0 --async
+noetl execute path/playbooks 1.0.0 --async
 ```
 
 The event ID is returned when executing a playbook asynchronously. You can view the events in the web interface at:

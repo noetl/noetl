@@ -3,11 +3,36 @@
     "configurations": [
         {
             "name": "Python: Current File",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "NoETL Server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "noetl.main",
+            "args": ["server", "--host", "localhost", "--port", "8080"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "NoETL Server Debug",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "noetl.main",
+            "args": ["server", "--host", "0.0.0.0", "--port", "8080", "--reload"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "NOETL_DEBUG": "true"
+            }
         }
     ]
 }

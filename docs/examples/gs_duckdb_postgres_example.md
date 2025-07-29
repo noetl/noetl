@@ -221,12 +221,12 @@ export POSTGRES_PASSWORD_SECRET="postgres_password"
 
 ### 1. Register the Playbook
 ```bash
-noetl playbook --register playbook/gs_duckdb_postgres_example.yaml --port 8080
+noetl playbooks --register playbooks/gs_duckdb_postgres_example.yaml --port 8080
 ```
 
 ### 2. Execute the Workflow
 ```bash
-noetl playbook --execute --path "workflows/examples/gs_duckdb_postgres_example" --port 8080 --payload '{
+noetl playbooks --execute --path "workflows/examples/gs_duckdb_postgres_example" --port 8080 --payload '{
   "GOOGLE_CLOUD_PROJECT": "noetl-demo-19700101",
   "GCS_KEY_ID_SECRET": "s3_access_key_id",
   "GCS_SECRET_KEY_SECRET": "s3_secret_access_key",

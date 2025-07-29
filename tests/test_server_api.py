@@ -218,7 +218,7 @@ def clean_database():
         logger.error(f"Error cleaning database: {e}")
 
 def test_upload_playbook():
-    logger.info("Testing playbook upload")
+    logger.info("Testing playbooks upload")
     test_playbook = """
 apiVersion: 0.1.0
 kind: Playbook
@@ -244,12 +244,12 @@ spec:
         logger.info(f"Response: {response.json()}")
         return True
     else:
-        logger.error(f"Failed to upload playbook: {response.status_code}")
+        logger.error(f"Failed to upload playbooks: {response.status_code}")
         logger.error(f"Response: {response.text}")
         return False
 
 def test_list_playbooks():
-    logger.info("Testing playbook listing")
+    logger.info("Testing playbooks listing")
     response = requests.get(f"{SERVER_URL}/catalog/list")
 
     if response.status_code == 200:
@@ -261,11 +261,11 @@ def test_list_playbooks():
         for playbook in playbooks:
             if playbook.get("resource_path") == "test_playbook":
                 test_playbook_found = True
-                logger.info("Test playbook found in catalog")
+                logger.info("Test playbooks found in catalog")
                 break
 
         if not test_playbook_found:
-            logger.error("Test playbook not found in catalog")
+            logger.error("Test playbooks not found in catalog")
             logger.info(f"Playbooks in catalog: {playbooks}")
             return False
 
@@ -276,7 +276,7 @@ def test_list_playbooks():
         return False
 
 def test_execute_playbook():
-    logger.info("Testing playbook execution")
+    logger.info("Testing playbooks execution")
     response = requests.get(f"{SERVER_URL}/catalog/list")
     if response.status_code != 200:
         logger.error(f"Failed to list playbooks: {response.status_code}")
@@ -291,10 +291,10 @@ def test_execute_playbook():
             break
 
     if not test_playbook_version:
-        logger.error("Test playbook not found in catalog")
+        logger.error("Test playbooks not found in catalog")
         return False
 
-    logger.info(f"Using test playbook version: {test_playbook_version}")
+    logger.info(f"Using test playbooks version: {test_playbook_version}")
 
     response = requests.post(
         f"{SERVER_URL}/agent/execute",
@@ -315,12 +315,12 @@ def test_execute_playbook():
             logger.error(f"Execution failed: {result.get('error')}")
             return False
     else:
-        logger.error(f"Failed to execute playbook: {response.status_code}")
+        logger.error(f"Failed to execute playbooks: {response.status_code}")
         logger.error(f"Response: {response.text}")
         return False
 
 def test_execute_playbook_async():
-    logger.info("Testing asynchronous playbook execution")
+    logger.info("Testing asynchronous playbooks execution")
     response = requests.get(f"{SERVER_URL}/catalog/list")
     if response.status_code != 200:
         logger.error(f"Failed to list playbooks: {response.status_code}")
@@ -335,10 +335,10 @@ def test_execute_playbook_async():
             break
 
     if not test_playbook_version:
-        logger.error("Test playbook not found in catalog")
+        logger.error("Test playbooks not found in catalog")
         return False
 
-    logger.info(f"Using test playbook version: {test_playbook_version}")
+    logger.info(f"Using test playbooks version: {test_playbook_version}")
     response = requests.post(
         f"{SERVER_URL}/agent/execute-async",
         json={
@@ -398,10 +398,10 @@ def test_get_event_by_query_param():
             break
 
     if not test_playbook_version:
-        logger.error("Test playbook not found in catalog")
+        logger.error("Test playbooks not found in catalog")
         return False
 
-    logger.info(f"Using test playbook version: {test_playbook_version}")
+    logger.info(f"Using test playbooks version: {test_playbook_version}")
     response = requests.post(
         f"{SERVER_URL}/agent/execute-async",
         json={
@@ -443,7 +443,7 @@ def test_get_resource_with_path_segments():
 apiVersion: 0.1.0
 kind: Playbook
 name: test_playbook_segments
-path: test/segments/playbook
+path: test/segments/playbooks
 spec:
   steps:
     - name: echo
@@ -483,7 +483,7 @@ spec:
             logger.error(f"Response: {response.text}")
             return False
     else:
-        logger.error(f"Failed to upload playbook with path segments: {response.status_code}")
+        logger.error(f"Failed to upload playbooks with path segments: {response.status_code}")
         logger.error(f"Response: {response.text}")
         return False
 
@@ -524,7 +524,7 @@ apiVersion: 0.1.0
 kind: Playbook
 name: test_integration_playbook
 path: test_integration_playbook
-description: Integration test playbook
+description: Integration test playbooks
 steps:
   - name: log_step
     action: log
@@ -545,8 +545,8 @@ steps:
     def test_catalog_list_entries(self):
         """Test listing catalog entries"""
         mock_entries = [
-            ('playbook1', 'playbook', '0.1.0', '{}', '2023-01-01'),
-            ('playbook2', 'playbook', '0.2.0', '{}', '2023-01-02'),
+            ('playbook1', 'playbooks', '0.1.0', '{}', '2023-01-01'),
+            ('playbook2', 'playbooks', '0.2.0', '{}', '2023-01-02'),
         ]
         self.cursor_mock.fetchall.return_value = mock_entries
 
@@ -560,15 +560,15 @@ steps:
     def test_catalog_list_entries_filtered(self):
         """Test listing catalog entries with resource type filter"""
         mock_entries = [
-            ('playbook1', 'playbook', '0.1.0', '{}', '2023-01-01'),
+            ('playbook1', 'playbooks', '0.1.0', '{}', '2023-01-01'),
         ]
         self.cursor_mock.fetchall.return_value = mock_entries
 
-        entries = self.catalog_service.list_entries(resource_type='playbook')
+        entries = self.catalog_service.list_entries(resource_type='playbooks')
 
         self.assertIsInstance(entries, list)
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]['resource_type'], 'playbook')
+        self.assertEqual(entries[0]['resource_type'], 'playbooks')
 
     def test_event_service_emit(self):
         """Test EventService emit functionality"""
@@ -606,7 +606,7 @@ steps:
         # First call returns None (path not found), second call finds filename
         self.cursor_mock.fetchone.side_effect = [
             None,  # First query with full path fails
-            ('filename.yaml', 'playbook', '0.1.0', 'content', '{}', '{}')  # Second query with filename succeeds
+            ('filename.yaml', 'playbooks', '0.1.0', 'content', '{}', '{}')  # Second query with filename succeeds
         ]
 
         result = self.catalog_service.fetch_entry('some/path/to/filename.yaml', '0.1.0')
@@ -713,7 +713,7 @@ steps:
         # 2. Fetch the registered resource - Create new cursor mock for fetch
         fetch_cursor_mock = Mock()
         mock_fetch_result = (
-            'workflow_test', 'playbook', '0.1.1',
+            'workflow_test', 'playbooks', '0.1.1',
             playbook_content, '{}', '{}'
         )
         fetch_cursor_mock.fetchone.return_value = mock_fetch_result
@@ -729,7 +729,7 @@ steps:
         # 3. List all entries - Create new cursor mock for list
         list_cursor_mock = Mock()
         mock_list_result = [
-            ('workflow_test', 'playbook', '0.1.1', '{}', '2023-01-01')
+            ('workflow_test', 'playbooks', '0.1.1', '{}', '2023-01-01')
         ]
         list_cursor_mock.fetchall.return_value = mock_list_result
 
@@ -770,7 +770,7 @@ def main():
 
         async_execute_success = test_execute_playbook_async()
         if not async_execute_success:
-            logger.error("Asynchronous playbook execution test failed")
+            logger.error("Asynchronous playbooks execution test failed")
             return 1
 
         event_query_success = test_get_event_by_query_param()

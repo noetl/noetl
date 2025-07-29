@@ -235,7 +235,7 @@ You can run NoETL in debug mode to get more detailed logs:
 
 ```bash
 # Run the agent in debug mode
-noetl agent -f playbook.yaml --debug
+noetl agent -f playbooks.yaml --debug
 
 # Run the server in debug mode
 noetl server --reload --debug
@@ -247,7 +247,7 @@ You can use a debugger like `pdb` or an IDE debugger to debug NoETL:
 
 ```bash
 # Using pdb
-python -m pdb -c continue noetl/agent.py -f playbook.yaml
+python -m pdb -c continue noetl/agent.py -f playbooks.yaml
 ```
 
 ## Next Steps

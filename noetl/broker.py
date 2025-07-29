@@ -6,8 +6,8 @@ import tempfile
 import httpx
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
-from noetl.common import render_template, setup_logger, deep_merge
-from noetl.worker import NoETLAgent
+from noetl.common import render_template, setup_logger, deep_merge, get_bool, render_template_bool
+from noetl.worker import Worker
 logger = setup_logger(__name__, include_location=True)
 
 class Broker:
@@ -90,16 +90,16 @@ class Broker:
 
     def execute_playbook_call(self, path: str, version: str = None, input_payload: Dict = None, merge: bool = True) -> Dict:
         """
-        Execute a playbook call.
+        Execute a playbooks call.
 
         Args:
-            path: The path of the playbook to execute
-            version: The version of the playbook to execute (optional, uses latest if not provided)
-            input_payload: The input payload to pass to the playbook (optional)
+            path: The path of the playbooks to execute
+            version: The version of the playbooks to execute (optional, uses latest if not provided)
+            input_payload: The input payload to pass to the playbooks (optional)
             merge: Whether to merge the input payload with the workload (default: True)
 
         Returns:
-            A dictionary containing the results of the playbook execution
+            A dictionary containing the results of the playbooks execution
         """
         try:
             from noetl.server import get_catalog_service
@@ -107,7 +107,7 @@ class Broker:
 
             if not version:
                 version = catalog_service.get_latest_version(path)
-                logger.info(f"Version not specified for playbook '{path}', using latest version: {version}")
+                logger.info(f"Version not specified for playbooks '{path}', using latest version: {version}")
 
             entry = catalog_service.fetch_entry(path, version)
             if not entry:
@@ -124,18 +124,18 @@ class Broker:
 
             try:
                 pgdb_conn = self.agent.pgdb
-                child_agent = NoETLAgent(temp_file_path, mock_mode=self.agent.mock_mode, pgdb=pgdb_conn)
+                child_agent = Worker(temp_file_path, mock_mode=self.agent.mock_mode, pgdb=pgdb_conn)
                 workload = child_agent.playbook.get('workload', {})
                 if input_payload:
                     if merge:
-                        logger.info(f"Merge mode: merging input payload with workload for playbook '{path}'")
+                        logger.info(f"Merge mode: merging input payload with workload for playbooks '{path}'")
                         merged_workload = deep_merge(workload, input_payload)
                         for key, value in merged_workload.items():
                             child_agent.update_context(key, value)
                         child_agent.update_context('workload', merged_workload)
                         child_agent.store_workload(merged_workload)
                     else:
-                        logger.info(f"Override mode: replacing workload keys with input payload for playbook '{path}'")
+                        logger.info(f"Override mode: replacing workload keys with input payload for playbooks '{path}'")
                         merged_workload = workload.copy()
                         for key, value in input_payload.items():
                             merged_workload[key] = value
@@ -144,7 +144,7 @@ class Broker:
                         child_agent.update_context('workload', merged_workload)
                         child_agent.store_workload(merged_workload)
                 else:
-                    logger.info(f"No input payload provided for playbook '{path}'. Using default workload.")
+                    logger.info(f"No input payload provided for playbooks '{path}'. Using default workload.")
                     for key, value in workload.items():
                         child_agent.update_context(key, value)
                     child_agent.update_context('workload', workload)
@@ -163,7 +163,7 @@ class Broker:
                     os.unlink(temp_file_path)
 
         except Exception as e:
-            error_msg = f"Error executing playbook '{path}': {str(e)}"
+            error_msg = f"Error executing playbooks '{path}': {str(e)}"
             logger.error(error_msg, exc_info=True)
             return {
                 'status': 'error',
@@ -181,47 +181,153 @@ class Broker:
         Returns:
             A dictionary of the step result
         """
+        logger.debug("=== BROKER.EXECUTE_STEP: Function entry ===")
+        logger.debug(f"BROKER.EXECUTE_STEP: Parameters - step_name={step_name}, step_with={step_with}")
+        
         step_id = str(uuid.uuid4())
+        logger.debug(f"BROKER.EXECUTE_STEP: Generated step_id={step_id}")
+        
         start_time = datetime.datetime.now()
+        logger.debug(f"BROKER.EXECUTE_STEP: Start time={start_time.isoformat()}")
 
+        logger.debug(f"BROKER.EXECUTE_STEP: Finding step configuration for step_name={step_name}")
         step_config = self.agent.find_step(step_name)
+        logger.debug(f"BROKER.EXECUTE_STEP: Step configuration: {step_config}")
+        
         if not step_config:
             error_msg = f"Step not found: {step_name}"
+            logger.error(f"BROKER.EXECUTE_STEP: {error_msg}")
+            
+            logger.debug(f"BROKER.EXECUTE_STEP: Saving step result with error")
             self.agent.save_step_result(
                 step_id, step_name, None,
                 'error', None, error_msg
             )
+            
+            logger.debug(f"BROKER.EXECUTE_STEP: Writing step_error event log")
             self.write_event_log(
                 'step_error', step_id, step_name, 'step',
                 'error', 0, self.agent.get_context(), None,
                 {'error': error_msg}, None
             )
 
-            return {
+            result = {
                 'id': step_id,
                 'status': 'error',
                 'error': error_msg
             }
+            logger.debug(f"BROKER.EXECUTE_STEP: Returning error result={result}")
+            logger.debug("=== BROKER.EXECUTE_STEP: Function exit with error (step not found) ===")
+            return result
 
-        logger.info(f"Executing step: {step_name}")
-        logger.debug(f"Executing step: step_name={step_name}, step_with={step_with}")
-        logger.debug(f"Executing step: context before update: {self.agent.context}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Checking if step has pass flag")
+        pass_value = step_config.get("pass", False)
+        logger.debug(f"BROKER.EXECUTE_STEP: Raw pass value: {pass_value}")
+        
+        if isinstance(pass_value, str):
+            logger.debug(f"BROKER.EXECUTE_STEP: Pass value is a string, rendering template")
+            pass_value = render_template(self.agent.jinja_env, pass_value, self.agent.get_context(), strict_keys=True)
+            logger.debug(f"BROKER.EXECUTE_STEP: Rendered pass value: {pass_value}")
+            
+        pass_flag = get_bool(pass_value)
+        logger.debug(f"BROKER.EXECUTE_STEP: Final pass flag: {pass_flag}")
+        
+        if pass_flag:
+            logger.info(f"BROKER.EXECUTE_STEP: Step '{step_name}' is marked as pass/skip. Skipping execution.")
+            result = {
+                'id': step_id,
+                'status': 'success',
+                'data': {'message': f"Step '{step_name}' was skipped (pass=True)."}
+            }
+            logger.debug(f"BROKER.EXECUTE_STEP: Created pass result: {result}")
+            
+            logger.debug(f"BROKER.EXECUTE_STEP: Saving step result for passed step")
+            self.agent.save_step_result(
+                step_id, step_name, None,
+                result.get('status', 'success'), result.get('data'), result.get('error')
+            )
+            
+            logger.debug(f"BROKER.EXECUTE_STEP: Updating context with step results")
+            self.agent.update_context(step_name, result.get('data'))
+            self.agent.update_context(step_name + '.result', result.get('data'))
+            self.agent.update_context(step_name + '.status', result.get('status'))
+            self.agent.update_context('result', result.get('data'))
+
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            logger.debug(f"BROKER.EXECUTE_STEP: Step duration: {duration} seconds")
+            
+            logger.debug(f"BROKER.EXECUTE_STEP: Writing step_complete event log for passed step")
+            self.write_event_log(
+                'step_complete', step_id, step_name, 'step',
+                result['status'], duration, self.agent.get_context(), result.get('data'),
+                {'step_type': 'pass'}, None
+            )
+
+            if self.server_url and self.event_reporting_enabled:
+                logger.debug(f"BROKER.EXECUTE_STEP: Reporting step_complete event to server for passed step")
+                report_event({
+                    'event_type': 'step_complete',
+                    'execution_id': self.agent.execution_id,
+                    'step_id': step_id,
+                    'step_name': step_name,
+                    'status': result['status'],
+                    'duration': duration,
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'result': result.get('data'),
+                    'error': result.get('error')
+                }, self.server_url)
+
+            logger.debug(f"BROKER.EXECUTE_STEP: Checking for next step in passed step")
+            next_step = step_config.get("next")
+            logger.debug(f"BROKER.EXECUTE_STEP: Next step: {next_step}")
+            
+            if next_step:
+                final_result = {
+                    **result,
+                    'next_step': next_step
+                }
+                logger.debug(f"BROKER.EXECUTE_STEP: Returning result with next_step: {final_result}")
+                logger.debug("=== BROKER.EXECUTE_STEP: Function exit (pass with next step) ===")
+                return final_result
+                
+            logger.debug(f"BROKER.EXECUTE_STEP: Returning result without next_step: {result}")
+            logger.debug("=== BROKER.EXECUTE_STEP: Function exit (pass without next step) ===")
+            return result
+
+        logger.info(f"BROKER.EXECUTE_STEP: Executing step: {step_name}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Step details - step_name={step_name}, step_with={step_with}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Context before update: {self.agent.context}")
+        
         step_context = self.agent.get_context()
+        logger.debug(f"BROKER.EXECUTE_STEP: Got step context")
+        
         if step_with:
+            logger.debug(f"BROKER.EXECUTE_STEP: Rendering step_with template: {step_with}")
             rendered_with = render_template(self.agent.jinja_env, step_with, step_context)
-            logger.debug(f"Executing step: rendered_with={rendered_with}")
+            logger.debug(f"BROKER.EXECUTE_STEP: Rendered step_with: {rendered_with}")
+            
             if rendered_with:
+                logger.debug(f"BROKER.EXECUTE_STEP: Updating context with rendered_with")
                 step_context.update(rendered_with)
                 for key, value in rendered_with.items():
+                    logger.debug(f"BROKER.EXECUTE_STEP: Updating context key={key}, value={value}")
                     self.agent.update_context(key, value)
 
-        logger.debug(f"Executing step: context after update: {step_context}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Context after update: {step_context}")
+        
+        logger.debug(f"BROKER.EXECUTE_STEP: Writing step_start event log")
         step_event = self.write_event_log(
             'step_start', step_id, step_name, 'step',
             'in_progress', 0, step_context, None,
             {'step_type': 'standard'}, None
         )
+        logger.debug(f"BROKER.EXECUTE_STEP: Step start event: {step_event}")
+        
         if self.server_url and self.event_reporting_enabled:
+            logger.debug(f"BROKER.EXECUTE_STEP: Reporting step_start event to server: {self.server_url}")
+            filtered_context = {k: v for k, v in step_context.items() if not k.startswith('_')}
+            logger.debug(f"BROKER.EXECUTE_STEP: Filtered context for reporting: {filtered_context}")
             report_event({
                 'event_type': 'step_start',
                 'execution_id': self.agent.execution_id,
@@ -229,49 +335,84 @@ class Broker:
                 'step_name': step_name,
                 'status': 'in_progress',
                 'timestamp': datetime.datetime.now().isoformat(),
-                'context': {k: v for k, v in step_context.items() if not k.startswith('_')}
+                'context': filtered_context
             }, self.server_url)
 
+        logger.debug(f"BROKER.EXECUTE_STEP: Determining step type for step_name={step_name}")
+        
         if 'end_loop' in step_config:
+            logger.debug(f"BROKER.EXECUTE_STEP: Step is an end_loop step")
+            logger.debug(f"BROKER.EXECUTE_STEP: Calling self.end_loop_step with step_config={step_config}")
             result = self.end_loop_step(step_config, step_context, step_id)
+            logger.debug(f"BROKER.EXECUTE_STEP: end_loop_step returned result={result}")
+            
         elif 'loop' in step_config:
+            logger.debug(f"BROKER.EXECUTE_STEP: Step is a loop step")
+            logger.debug(f"BROKER.EXECUTE_STEP: Calling self.execute_loop_step with step_config={step_config}")
             result = self.execute_loop_step(step_config, step_context, step_id)
+            logger.debug(f"BROKER.EXECUTE_STEP: execute_loop_step returned result={result}")
+            
+        elif 'transform' in step_config:
+            logger.debug(f"BROKER.EXECUTE_STEP: Step is a transform step")
+            logger.debug(f"BROKER.EXECUTE_STEP: Calling self.execute_transform_step with step_config={step_config}")
+            result = self.execute_transform_step(step_config, step_context, step_id)
+            logger.debug(f"BROKER.EXECUTE_STEP: execute_transform_step returned result={result}")
+            
         else:
+            logger.debug(f"BROKER.EXECUTE_STEP: Step is a standard step")
+            
             if 'call' in step_config:
+                logger.debug(f"BROKER.EXECUTE_STEP: Step has a 'call' attribute")
                 call_config = step_config['call'].copy()
-                logger.debug(f"Using 'call' attribute with type: {call_config.get('type', 'workbook')}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Using 'call' attribute with type: {call_config.get('type', 'workbook')}")
+                
                 merged_fields = []
                 for key, value in step_config.items():
                     if key != 'call' and key not in call_config:
+                        logger.debug(f"BROKER.EXECUTE_STEP: Merging field {key} from step into call")
                         call_config[key] = value
                         merged_fields.append(key)
 
                 if merged_fields:
-                    logger.debug(f"Merged fields from step into call: {', '.join(merged_fields)}")
+                    logger.debug(f"BROKER.EXECUTE_STEP: Merged fields from step into call: {', '.join(merged_fields)}")
 
                 task_name = call_config.get('name') or call_config.get('task')
+                logger.debug(f"BROKER.EXECUTE_STEP: Task name from call config: {task_name}")
+                
                 call_type = call_config.get('type', 'workbook')
+                logger.debug(f"BROKER.EXECUTE_STEP: Call type: {call_type}")
+                
+                logger.debug(f"BROKER.EXECUTE_STEP: Rendering task_with template from call_config.with: {call_config.get('with', {})}")
                 task_with = render_template(self.agent.jinja_env, call_config.get('with', {}), step_context)
+                logger.debug(f"BROKER.EXECUTE_STEP: Rendered task_with: {task_with}")
+                
                 task_context = {**step_context, **task_with}
+                logger.debug(f"BROKER.EXECUTE_STEP: Created task_context by merging step_context and task_with")
+                
             else:
+                logger.debug(f"BROKER.EXECUTE_STEP: Step does not have a 'call' attribute")
                 call_type = step_config.get('type', 'workbook')
-                logger.debug(f"Using direct 'type' attribute: {call_type}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Using direct 'type' attribute: {call_type}")
 
                 task_name = step_config.get('name') or step_config.get('task')
-                logger.debug(f"Extracted task_name: '{task_name}' from step_config: {step_config}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Extracted task_name: '{task_name}' from step_config: {step_config}")
 
                 if not task_name and 'next' in step_config and call_type == 'workbook':
-                    logger.debug(f"Step '{step_name}' appears to be a routing step with no task - treating as no-op")
+                    logger.debug(f"BROKER.EXECUTE_STEP: Step '{step_name}' appears to be a routing step with no task - treating as no-op")
                     result = {
                         'id': step_id,
                         'status': 'success',
                         'data': {'message': f'Routing step {step_name} completed'}
                     }
+                    logger.debug(f"BROKER.EXECUTE_STEP: Created routing step result: {result}")
+                    
+                    logger.debug(f"BROKER.EXECUTE_STEP: Saving routing step result")
                     self.agent.save_step_result(
                         step_id, step_name, None,
                         result.get('status', 'success'), result.get('data'), result.get('error')
                     )
 
+                    logger.debug(f"BROKER.EXECUTE_STEP: Updating context with routing step results")
                     self.agent.update_context(step_name, result.get('data'))
                     self.agent.update_context(step_name + '.result', result.get('data'))
                     self.agent.update_context(step_name + '.status', result.get('status'))
@@ -279,6 +420,9 @@ class Broker:
 
                     end_time = datetime.datetime.now()
                     duration = (end_time - start_time).total_seconds()
+                    logger.debug(f"BROKER.EXECUTE_STEP: Routing step duration: {duration} seconds")
+                    
+                    logger.debug(f"BROKER.EXECUTE_STEP: Writing step_complete event log for routing step")
                     self.write_event_log(
                         'step_complete', step_id, step_name, 'step',
                         result['status'], duration, step_context, result.get('data'),
@@ -286,6 +430,7 @@ class Broker:
                     )
 
                     if self.server_url and self.event_reporting_enabled:
+                        logger.debug(f"BROKER.EXECUTE_STEP: Reporting step_complete event to server for routing step")
                         report_event({
                             'event_type': 'step_complete',
                             'execution_id': self.agent.execution_id,
@@ -298,111 +443,207 @@ class Broker:
                             'error': result.get('error')
                         }, self.server_url)
 
+                    logger.debug(f"BROKER.EXECUTE_STEP: Returning routing step result: {result}")
+                    logger.debug("=== BROKER.EXECUTE_STEP: Function exit (routing step) ===")
                     return result
 
+                logger.debug(f"BROKER.EXECUTE_STEP: Rendering task_with template from step_config.with: {step_config.get('with', {})}")
                 task_with = render_template(self.agent.jinja_env, step_config.get('with', {}), step_context)
+                logger.debug(f"BROKER.EXECUTE_STEP: Rendered task_with: {task_with}")
+                
                 task_context = {**step_context, **task_with}
+                logger.debug(f"BROKER.EXECUTE_STEP: Created task_context by merging step_context and task_with")
+                
                 call_config = step_config
+                logger.debug(f"BROKER.EXECUTE_STEP: Using step_config as call_config")
 
             if call_type == 'workbook':
+                logger.debug(f"BROKER.EXECUTE_STEP: Executing workbook task: {task_name}")
+                logger.info(f"BROKER.EXECUTE_STEP: EXECUTING workbook task: {task_name}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Finding task configuration for task_name={task_name}")
                 task_config = self.agent.find_task(task_name)
-                logger.debug(f"Found task_config for '{task_name}': {task_config}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Found task_config for '{task_name}': {task_config}")
 
                 if task_config:
+                    logger.debug(f"BROKER.EXECUTE_STEP: Task config found, preparing for execution")
                     execution_task_config = task_config.copy()
+                    logger.debug(f"BROKER.EXECUTE_STEP: Copied task_config to execution_task_config")
+                    
                     merged_with = task_config.get('with', {}).copy()
+                    logger.debug(f"BROKER.EXECUTE_STEP: Got task 'with' parameters: {merged_with}")
+                    
                     step_with_params = step_config.get('with', {})
+                    logger.debug(f"BROKER.EXECUTE_STEP: Got step 'with' parameters: {step_with_params}")
+                    
                     merged_with.update(step_with_params)
+                    logger.debug(f"BROKER.EXECUTE_STEP: Merged 'with' parameters: {merged_with}")
+                    
                     execution_task_config['with'] = merged_with
-                    logger.debug(f"Task config for execution: {execution_task_config}")
-                    logger.debug(f"Merged with parameters: step_with={step_with_params}, task_with={task_config.get('with', {})}, merged={merged_with}")
+                    logger.debug(f"BROKER.EXECUTE_STEP: Task config for execution: {execution_task_config}")
+                    logger.debug(f"BROKER.EXECUTE_STEP: Merged with parameters: step_with={step_with_params}, task_with={task_config.get('with', {})}, merged={merged_with}")
                 else:
+                    logger.error(f"BROKER.EXECUTE_STEP: No task config found for task_name: '{task_name}'")
                     execution_task_config = {}
-                    logger.error(f"No task config found for task_name: '{task_name}'")
+                    logger.debug(f"BROKER.EXECUTE_STEP: Using empty execution_task_config")
 
+                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with execution_task_config={execution_task_config}, task_name={task_name}")
+                merged_context = {**step_context}
+                if 'with' in execution_task_config:
+                    task_with = render_template(self.agent.jinja_env, execution_task_config.get('with', {}), step_context)
+                    merged_context.update(task_with)
+                    logger.debug(f"BROKER.EXECUTE_STEP: Created merged_context by combining step_context and rendered task_with: {task_with}")
+                
                 result = execute_task(
                     execution_task_config,
                     task_name,
-                    step_context,
+                    merged_context,
                     self.agent.jinja_env,
                     self.agent.secret_manager,
                     self.write_event_log if self.has_log_event() else None
                 )
-            elif call_type == 'playbook':
+                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+                logger.info(f"BROKER.EXECUTE_STEP: EXECUTED workbook task: {task_name} with status: {result.get('status', 'unknown')}")
+                
+            elif call_type == 'playbooks':
+                logger.debug(f"BROKER.EXECUTE_STEP: Executing playbooks task")
+                logger.info(f"BROKER.EXECUTE_STEP: EXECUTING playbooks task")
                 path = call_config.get('path')
+                logger.debug(f"BROKER.EXECUTE_STEP: Playbooks path: {path}")
+                
                 version = call_config.get('version')
+                logger.debug(f"BROKER.EXECUTE_STEP: Playbooks version: {version}")
 
                 if not path:
-                    error_msg = "Missing 'path' parameter in playbook call."
-                    logger.error(error_msg)
+                    error_msg = "Missing 'path' parameter in playbooks call."
+                    logger.error(f"BROKER.EXECUTE_STEP: {error_msg}")
                     result = {
                         'id': str(uuid.uuid4()),
                         'status': 'error',
                         'error': error_msg
                     }
+                    logger.debug(f"BROKER.EXECUTE_STEP: Created error result for missing path: {result}")
                 else:
+                    logger.debug(f"BROKER.EXECUTE_STEP: Executing playbook call with path={path}, version={version}, input_payload={task_with}")
                     playbook_result = self.execute_playbook_call(
                         path=path,
                         version=version,
                         input_payload=task_with,
                         merge=True
                     )
+                    logger.debug(f"BROKER.EXECUTE_STEP: execute_playbook_call returned result={playbook_result}")
+                    logger.info(f"BROKER.EXECUTE_STEP: EXECUTED playbooks task with path: {path} and status: {playbook_result.get('status', 'unknown')}")
 
+                    result_id = str(uuid.uuid4())
+                    logger.debug(f"BROKER.EXECUTE_STEP: Generated result_id={result_id}")
                     result = {
-                        'id': str(uuid.uuid4()),
+                        'id': result_id,
                         'status': playbook_result.get('status', 'error'),
                         'data': playbook_result.get('data'),
                         'error': playbook_result.get('error')
                     }
+                    logger.debug(f"BROKER.EXECUTE_STEP: Created result from playbook_result: {result}")
+                    
             elif call_type in ['http', 'python', 'duckdb', 'postgres', 'secrets']:
+                logger.debug(f"BROKER.EXECUTE_STEP: Executing {call_type} task")
+                logger.info(f"BROKER.EXECUTE_STEP: EXECUTING {call_type} task")
+                
+                logger.debug(f"BROKER.EXECUTE_STEP: Creating task_config for {call_type} task")
                 task_config = {
                     'type': call_type,
                     'with': call_config.get('with', {})
                 }
-                fields = ['name', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name']
+                logger.debug(f"BROKER.EXECUTE_STEP: Initial task_config: {task_config}")
+                
+                fields = ['name', 'pass', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name', 'project_id', 'region', 'version']
+                logger.debug(f"BROKER.EXECUTE_STEP: Fields to copy from call_config: {fields}")
+                
                 task_config.update({
                     field: call_config.get(field)
                     for field in fields
                     if field in call_config
                 })
+                logger.debug(f"BROKER.EXECUTE_STEP: Final task_config: {task_config}")
 
+                task_name_to_use = task_name or f"step_{call_type}_task"
+                logger.debug(f"BROKER.EXECUTE_STEP: Using task_name: {task_name_to_use}")
+                
+                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with task_config={task_config}, task_name={task_name_to_use}")
                 result = execute_task(
                     task_config,
-                    task_name or f"step_{call_type}_task",
+                    task_name_to_use,
                     task_context,
                     self.agent.jinja_env,
                     self.agent.secret_manager,
                     self.write_event_log if self.has_log_event() else None
                 )
+                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+                logger.info(f"BROKER.EXECUTE_STEP: EXECUTED {call_type} task: {task_name_to_use} with status: {result.get('status', 'unknown')}")
+                
             else:
                 error_msg = f"Unsupported call type: {call_type}"
-                logger.error(error_msg)
+                logger.error(f"BROKER.EXECUTE_STEP: {error_msg}")
+                
+                result_id = str(uuid.uuid4())
+                logger.debug(f"BROKER.EXECUTE_STEP: Generated result_id={result_id}")
+                
                 result = {
-                    'id': str(uuid.uuid4()),
+                    'id': result_id,
                     'status': 'error',
                     'error': error_msg
                 }
+                logger.debug(f"BROKER.EXECUTE_STEP: Created error result for unsupported call type: {result}")
 
+            logger.info(f"BROKER.EXECUTE_STEP: Step '{step_name}' completed with result: {result}")
+            
+            if result.get('status') == 'success':
+                if result.get('data') is None or (isinstance(result.get('data'), dict) and not result.get('data')):
+                    logger.warning(f"BROKER.EXECUTE_STEP: Step '{step_name}' returned empty data: {result.get('data')}")
+                else:
+                    logger.info(f"BROKER.EXECUTE_STEP: Step '{step_name}' returned data: {result.get('data')}")
+            else:
+                logger.warning(f"BROKER.EXECUTE_STEP: Step '{step_name}' failed with error: {result.get('error')}")
+            
+            logger.debug(f"BROKER.EXECUTE_STEP: Saving step result to database")
             self.agent.save_step_result(
                 step_id, step_name, None,
                 result.get('status', 'success'), result.get('data'), result.get('error')
             )
+            logger.debug(f"BROKER.EXECUTE_STEP: Saved step result to database - status: {result.get('status', 'success')}, data: {result.get('data')}, error: {result.get('error')}")
+            
+            logger.debug(f"BROKER.EXECUTE_STEP: Updating context with step results")
             self.agent.update_context(step_name, result.get('data'))
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}, value={result.get('data')}")
+            
             self.agent.update_context(step_name + '.result', result.get('data'))
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.result, value={result.get('data')}")
+            
             self.agent.update_context(step_name + '.status', result.get('status'))
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.status, value={result.get('status')}")
+            
             self.agent.update_context('result', result.get('data'))
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key=result, value={result.get('data')}")
 
             if call_type == 'secrets' and result.get('status') == 'success':
+                logger.debug(f"BROKER.EXECUTE_STEP: Processing successful secrets step")
                 secret_data = result.get('data', {})
+                logger.debug(f"BROKER.EXECUTE_STEP: Secret data: {secret_data}")
+                
                 if isinstance(secret_data, dict) and 'secret_value' in secret_data:
+                    logger.debug(f"BROKER.EXECUTE_STEP: Secret data contains secret_value, creating step_result_obj")
                     step_result_obj = {
                         'secret_value': secret_data['secret_value'],
                         **secret_data
                     }
+                    logger.debug(f"BROKER.EXECUTE_STEP: Created step_result_obj: {step_result_obj}")
+                    
+                    logger.debug(f"BROKER.EXECUTE_STEP: Updating context with step_result_obj")
                     self.agent.update_context(step_name, step_result_obj)
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
+        logger.debug(f"BROKER.EXECUTE_STEP: Step duration: {duration} seconds")
+        
+        logger.debug(f"BROKER.EXECUTE_STEP: Writing step_complete event log")
         self.write_event_log(
             'step_complete', step_id, step_name, 'step',
             result['status'], duration, step_context, result.get('data'),
@@ -410,6 +651,7 @@ class Broker:
         )
 
         if self.server_url and self.event_reporting_enabled:
+            logger.debug(f"BROKER.EXECUTE_STEP: Reporting step_complete event to server")
             report_event({
                 'event_type': 'step_complete',
                 'execution_id': self.agent.execution_id,
@@ -422,7 +664,126 @@ class Broker:
                 'error': result.get('error')
             }, self.server_url)
 
+        logger.debug(f"BROKER.EXECUTE_STEP: Returning result: {result}")
+        logger.info(f"BROKER.EXECUTE_STEP: Step '{step_name}' completed with status: {result.get('status', 'unknown')}")
+        logger.debug("=== BROKER.EXECUTE_STEP: Function exit ===")
         return result
+
+    def execute_transform_step(self, step_config: Dict, context: Dict, step_id: str) -> Dict:
+        """
+        Execute a transform step that applies transformations to data.
+
+        Args:
+            step_config: The step configuration
+            context: The context to render templates
+            step_id: The ID of the step
+
+        Returns:
+            A dictionary of the step result
+        """
+        start_time = datetime.datetime.now()
+        
+        transform_config = step_config.get('transform', {})
+        if not transform_config:
+            error_msg = "Missing transform configuration"
+            self.agent.save_step_result(
+                step_id, step_config.get('step', 'transform'), None,
+                'error', None, error_msg
+            )
+            return {
+                'id': step_id,
+                'status': 'error',
+                'error': error_msg
+            }
+
+        logger.info(f"Processing transform step: {step_config.get('step')}")
+        
+        transform_event = self.write_event_log(
+            'transform_start', step_id, step_config.get('step', 'transform'), 'step.transform',
+            'in_progress', 0, context, None,
+            {'transform_config': transform_config}, None
+        )
+
+        try:
+            transformed_data = {}
+            
+            if 'template' in transform_config:
+                template = transform_config['template']
+                transformed_data = render_template(self.agent.jinja_env, template, context)
+            elif 'mapping' in transform_config:
+                mapping = transform_config['mapping']
+                for target_field, source_template in mapping.items():
+                    transformed_data[target_field] = render_template(self.agent.jinja_env, source_template, context)
+            elif 'script' in transform_config:
+                script = transform_config['script']
+                exec_globals = {'__builtins__': __builtins__, 'context': context}
+                exec_locals = {}
+                exec(script, exec_globals, exec_locals)
+                if 'transform' in exec_locals:
+                    transformed_data = exec_locals['transform'](context)
+                else:
+                    transformed_data = exec_locals.get('result', {})
+            else:
+                error_msg = "Transform configuration must include 'template', 'mapping', or 'script'"
+                raise ValueError(error_msg)
+
+            step_name = step_config.get('step')
+            self.agent.update_context(step_name, transformed_data)
+            
+            self.agent.save_step_result(
+                step_id, step_name, None, 'success', transformed_data, None
+            )
+
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            self.write_event_log(
+                'transform_complete', step_id, step_name, 'step.transform',
+                'success', duration, context, transformed_data,
+                {'transform_config': transform_config}, transform_event
+            )
+
+            if self.server_url and self.event_reporting_enabled:
+                report_event({
+                    'event_type': 'transform_complete',
+                    'execution_id': self.agent.execution_id,
+                    'step_id': step_id,
+                    'step_name': step_name,
+                    'status': 'success',
+                    'duration': duration,
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'result': transformed_data
+                }, self.server_url)
+
+            return {
+                'id': step_id,
+                'status': 'success',
+                'data': transformed_data
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Transform step error: {error_msg}", exc_info=True)
+            
+            self.agent.save_step_result(
+                step_id, step_config.get('step', 'transform'), None,
+                'error', None, error_msg
+            )
+
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            self.write_event_log(
+                'transform_error', step_id, step_config.get('step', 'transform'), 'step.transform',
+                'error', duration, context, None,
+                {'error': error_msg, 'transform_config': transform_config}, transform_event
+            )
+
+            return {
+                'id': step_id,
+                'status': 'error',
+                'error': error_msg
+            }
 
     def end_loop_step(self, step_config: Dict, context: Dict, step_id: str) -> Dict:
         """
@@ -639,10 +1000,7 @@ class Broker:
             iter_event = self.write_event_log(
                 'loop_iteration', f"{loop_id}_{idx}", f"{loop_name}[{idx}]", 'iteration',
                 'in_progress', 0, context, None,
-                {'index': idx, 'item': item}, loop_start_event,
-                loop_id=loop_id, loop_name=loop_name, iterator=iterator,
-                items=items, current_index=idx, current_item=item, results=all_results,
-                worker_id=os.environ.get('WORKER_ID', 'local'), distributed_state='processing'
+                {'index': idx, 'item': item}, loop_start_event
             )
 
             if self.server_url and self.event_reporting_enabled:
@@ -853,46 +1211,88 @@ class Broker:
         Returns:
             A dictionary of workflow results
         """
-        logger.info(f"Starting playbook: {self.agent.playbook.get('name', 'Unnamed')}")
-        self.agent.update_context('execution_start', datetime.datetime.now().isoformat())
+        logger.debug("=== BROKER.RUN: Function entry ===")
+        logger.debug(f"BROKER.RUN: Parameters - mlflow={mlflow}")
+
+        playbook_name = self.agent.playbook.get('name', 'Unnamed')
+        logger.info(f"BROKER.RUN: Starting playbook: {playbook_name}")
+        logger.debug(f"BROKER.RUN: Execution ID: {self.agent.execution_id}")
+        logger.debug(f"BROKER.RUN: Playbook path: {self.agent.playbook_path}")
+        
+        logger.info("=== ENVIRONMENT VARIABLES AT PLAYBOOK EXECUTION ===")
+        for key, value in sorted(os.environ.items()):
+            logger.info(f"ENV: {key}={value}")
+        logger.info("=== END ENVIRONMENT VARIABLES ===")
+        
+        execution_start_time = datetime.datetime.now().isoformat()
+        logger.debug(f"BROKER.RUN: Execution start time: {execution_start_time}")
+        self.agent.update_context('execution_start', execution_start_time)
+        
+        logger.debug("BROKER.RUN: Writing execution_start event log")
         execution_start_event = self.write_event_log(
-            'execution_start', self.agent.execution_id, self.agent.playbook.get('name', 'Unnamed'),
-            'playbook',
+            'execution_start', self.agent.execution_id, playbook_name,
+            'playbooks',
             'in_progress',
             0, self.agent.context,
             None,
             {'playbook_path': self.agent.playbook_path},
             None
         )
-
+        logger.debug(f"BROKER.RUN: Execution start event: {execution_start_event}")
+        
+        steps_override = self.agent.get_context().get('workload', {}).get('steps_override')
+        logger.debug(f"BROKER.RUN: Steps override: {steps_override}")
+        
+        if steps_override and isinstance(steps_override, list):
+            logger.info(f"BROKER.RUN: Using steps_override: {steps_override}")
+            for step_name in steps_override:
+                logger.debug(f"BROKER.RUN: Executing override step: {step_name}")
+                step_result = self.execute_step(step_name, {})
+                logger.debug(f"BROKER.RUN: Override step {step_name} result: {step_result}")
+                if step_result['status'] != 'success':
+                    logger.error(f"BROKER.RUN: Override step {step_name} failed with status: {step_result['status']}")
+                    break
+            logger.debug("BROKER.RUN: Returning step results after steps_override execution")
+            results = self.agent.get_step_results()
+            logger.debug(f"BROKER.RUN: Step results: {results}")
+            logger.debug("=== BROKER.RUN: Function exit (steps_override path) ===")
+            return results
+            
         if self.server_url and self.event_reporting_enabled:
+            logger.debug(f"BROKER.RUN: Reporting execution_start event to server: {self.server_url}")
             report_event({
                 'event_type': 'execution_start',
                 'execution_id': self.agent.execution_id,
-                'playbook_name': self.agent.playbook.get('name', 'Unnamed'),
+                'playbook_name': playbook_name,
                 'status': 'in_progress',
                 'timestamp': datetime.datetime.now().isoformat(),
                 'playbook_path': self.agent.playbook_path
             }, self.server_url)
 
         current_step = 'start'
+        logger.debug(f"BROKER.RUN: Starting execution with step: {current_step}")
+        
         while current_step and current_step != 'end':
+            logger.debug(f"BROKER.RUN: Current step: {current_step}")
             step_config = self.agent.find_step(current_step)
+            
             if not step_config:
-                logger.error(f"Step not found: {current_step}")
+                logger.error(f"BROKER.RUN: Step not found: {current_step}")
+                logger.debug("BROKER.RUN: Writing execution_error event log")
                 self.write_event_log(
                     'execution_error',
-                    f"{self.agent.execution_id}_error", self.agent.playbook.get('name', 'Unnamed'),
-                    'playbook',
+                    f"{self.agent.execution_id}_error", playbook_name,
+                    'playbooks',
                     'error', 0, self.agent.context, None,
                     {'error': f"Step not found: {current_step}"}, execution_start_event
                 )
 
                 if self.server_url and self.event_reporting_enabled:
+                    logger.debug(f"BROKER.RUN: Reporting execution_error event to server: {self.server_url}")
                     report_event({
                         'event_type': 'execution_error',
                         'execution_id': self.agent.execution_id,
-                        'playbook_name': self.agent.playbook.get('name', 'Unnamed'),
+                        'playbook_name': playbook_name,
                         'status': 'error',
                         'timestamp': datetime.datetime.now().isoformat(),
                         'error': f"Step not found: {current_step}"
@@ -900,25 +1300,29 @@ class Broker:
 
                 break
 
+            logger.debug(f"BROKER.RUN: Executing step: {current_step} with params: {self.agent.next_step_with}")
             step_result = self.execute_step(current_step, self.agent.next_step_with)
+            logger.debug(f"BROKER.RUN: Step {current_step} result: {step_result}")
             self.agent.next_step_with = None
 
             if step_result['status'] != 'success':
-                logger.error(f"Step failed: {current_step}, error: {step_result.get('error')}")
+                logger.error(f"BROKER.RUN: Step failed: {current_step}, error: {step_result.get('error')}")
+                logger.debug("BROKER.RUN: Writing execution_error event log")
                 self.write_event_log(
                     'execution_error',
-                    f"{self.agent.execution_id}_error", self.agent.playbook.get('name', 'Unnamed'),
-                    'playbook',
+                    f"{self.agent.execution_id}_error", playbook_name,
+                    'playbooks',
                     'error', 0, self.agent.context, None,
                     {'error': f"Step failed: {current_step}", 'step_error': step_result.get('error')},
                     execution_start_event
                 )
 
                 if self.server_url and self.event_reporting_enabled:
+                    logger.debug(f"BROKER.RUN: Reporting execution_error event to server: {self.server_url}")
                     report_event({
                         'event_type': 'execution_error',
                         'execution_id': self.agent.execution_id,
-                        'playbook_name': self.agent.playbook.get('name', 'Unnamed'),
+                        'playbook_name': playbook_name,
                         'status': 'error',
                         'timestamp': datetime.datetime.now().isoformat(),
                         'error': f"Step failed: {current_step}",
@@ -969,6 +1373,9 @@ class Broker:
                         json.dumps(step_with) if step_with else '{}'
                     )
 
+                    logger.debug(f"EXECUTION TRACKING: Step transition from {step_config.get('step')} to {next_step} with condition: {condition}")
+                    logger.debug(f"EXECUTION TRACKING: Step parameters: {step_with}")
+
                     self.agent.store_transition(params)
                     self.agent.next_step_with = step_with
                     current_step = next_step
@@ -979,11 +1386,30 @@ class Broker:
                     next_step = step_result['next_step']
                     logger.info(f"Using next_step from step result: {next_step}")
 
+                    logger.debug(f"STEP RESULT DEBUG: Full step_result object: {step_result}")
+
+                    if isinstance(next_step, list) and len(next_step) > 0 and isinstance(next_step[0], dict):
+                        step_name = next_step[0].get('step', 'unknown')
+                    elif isinstance(next_step, dict):
+                        step_name = next_step.get('step', 'unknown')
+                    else:
+                        step_name = str(next_step)
+
+                    step_with = {}
+                    if 'params' in step_result:
+                        step_with = step_result['params']
+                        logger.debug(f"EXECUTION DEBUG: Using params from step_result: {step_with}")
+                    elif 'data' in step_result and isinstance(step_result['data'], dict):
+                        step_with = step_result['data']
+                        logger.debug(f"EXECUTION DEBUG: Using data from step_result as params: {step_with}")
+                    else:
+                        logger.debug(f"EXECUTION DEBUG: No params or usable data in step_result, using empty dict")
+
                     self.write_event_log(
-                        'step_transition', f"{self.agent.execution_id}_transition_{next_step}",
-                        f"transition_to_{next_step}", 'transition',
+                        'step_transition', f"{self.agent.execution_id}_transition_{step_name}",
+                        f"transition_to_{step_name}", 'transition',
                         'success', 0, self.agent.context, None,
-                        {'from_step': step_config.get('step'), 'to_step': next_step, 'with': {}, 'condition': 'direct_specification'},
+                        {'from_step': step_config.get('step'), 'to_step': next_step, 'with': step_with, 'condition': 'direct_specification'},
                         execution_start_event
                     )
 
@@ -996,19 +1422,20 @@ class Broker:
                             'condition': 'direct_specification',
                             'status': 'success',
                             'timestamp': datetime.datetime.now().isoformat(),
-                            'with': {}
+                            'with': step_with
                         }, self.server_url)
 
                     params = (
                         self.agent.execution_id,
                         step_config.get('step'),
-                        next_step,
+                        step_name,
                         'direct_specification',
-                        '{}'
+                        json.dumps(step_with)
                     )
-
                     self.agent.store_transition(params)
-                    current_step = next_step
+                    self.agent.next_step_with = step_with
+
+                    current_step = step_name
                 else:
                     next_steps = self.get_next_steps(step_config, self.agent.context)
                     if not next_steps:
@@ -1016,6 +1443,15 @@ class Broker:
                         break
 
                     current_step, step_with, condition = next_steps[0]
+
+                    if isinstance(current_step, list) and len(current_step) > 0 and isinstance(current_step[0], dict):
+                        extracted_step_name = current_step[0].get('step', 'unknown')
+                    elif isinstance(current_step, dict):
+                        extracted_step_name = current_step.get('step', 'unknown')
+                    else:
+                        extracted_step_name = str(current_step)
+
+                    current_step = extracted_step_name
 
                 self.write_event_log(
                     'step_transition', f"{self.agent.execution_id}_transition_{current_step}",
@@ -1056,7 +1492,7 @@ class Broker:
         self.write_event_log(
             'execution_complete',
             f"{self.agent.execution_id}_complete", self.agent.playbook.get('name', 'Unnamed'),
-            'playbook',
+            'playbooks',
             'success', execution_duration, self.agent.context, None,
             {'playbook_path': self.agent.playbook_path}, execution_start_event
         )

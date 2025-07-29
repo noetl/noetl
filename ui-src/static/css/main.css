@@ -10,352 +10,41 @@ body {
 }
 
 /* ==========================================================================
-   Layout Components
+   Layout Components - Used by main.tsx
    ========================================================================== */
 .app-header {
-    background: linear-gradient(to right, #001529, #003a70);
-    color: white;
-    display: flex;
-    align-items: center;
-    padding: 0 24px;
-    line-height: 64px;
+  background: #fff;
+  padding: 0 32px;
+  height: 64px;
+  margin: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
 }
 
-.app-header .logo {
-    font-size: 20px;
-    margin-right: 24px;
-    font-weight: 600;
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  position: relative;
 }
 
-.app-header .logo a {
-    color: white;
-    text-decoration: none;
-    display: flex;
-    align-items: center;
+.logo {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.app-header .logo .fas {
-    margin-right: 10px;
-    font-size: 24px;
-}
-
-.app-header .ant-menu {
-    flex: 1;
-    background: transparent;
-    border-bottom: none;
-}
-
-.app-header .ant-menu-item {
-    margin: 0 4px;
-    border-radius: 4px;
-    transition: all 0.3s;
-}
-
-.app-header .ant-menu-item a {
-    color: rgba(255, 255, 255, 0.85);
-    padding: 0 16px;
-}
-
-.app-header .ant-menu-item.ant-menu-item-selected {
-    background-color: rgba(255, 255, 255, 0.15);
-}
-.app-header .ant-menu-item.ant-menu-item-selected a {
-    color: white;
-}
-
-.app-content {
-    padding: 32px;
-    background: linear-gradient(135deg, #f5f7fa 0%, #f0f2f5 100%);
-}
-
-.page-title-container {
-    margin-bottom: 24px;
-}
-
-.page-title {
-    font-size: 28px;
-    margin-bottom: 8px;
-    color: #003a70;
-}
-
-.page-subtitle {
-    color: rgba(0, 0, 0, 0.45);
-    font-size: 16px;
-}
-
-.page-actions {
-    text-align: right;
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-}
-
-/* ==========================================================================
-   Card & Panel Styles
-   ========================================================================== */
-.ant-card.styled-card {
-    margin-bottom: 24px;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 1px 2px -2px rgba(0, 0, 0, 0.16), 0 3px 6px 0 rgba(0, 0, 0, 0.12), 0 5px 12px 4px rgba(0, 0, 0, 0.09);
-}
-
-.ant-card.styled-card .ant-card-head {
-    background: linear-gradient(to right, #fafafa, #f5f5f5);
-    padding: 16px 24px;
-    border-bottom: 1px solid #f0f0f0;
-    font-size: 18px;
-    font-weight: 600;
-}
-
-.ant-card.styled-card .ant-card-head .fas {
-    margin-right: 10px;
-    color: #1890ff;
-}
-
-.ant-card.styled-card .ant-card-body {
-    padding: 24px;
-}
-
-/* ==========================================================================
-   Execution View Specifics
-   ========================================================================== */
-.execution-status {
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    padding: 16px;
-    display: flex;
-    align-items: center;
-    transition: all 0.3s ease;
-}
-
-.execution-status.status-running { background-color: #e6f7ff; border-left: 4px solid #1890ff; }
-.execution-status.status-success { background-color: #f6ffed; border-left: 4px solid #52c41a; }
-.execution-status.status-error   { background-color: #fff1f0; border-left: 4px solid #f5222d; }
-
-.execution-status .status-text { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-.execution-status .status-details { margin-bottom: 0; color: rgba(0, 0, 0, 0.65); }
-
-.step-status {
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 16px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
-    transition: all 0.3s;
-    border-left: 4px solid;
-}
-.step-status.step-running { border-color: #1890ff; background-color: #e6f7ff; }
-.step-status.step-success { border-color: #52c41a; background-color: #f6ffed; }
-.step-status.step-error   { border-color: #f5222d; background-color: #fff1f0; }
-
-.step-status .error-message {
-    margin-top: 12px;
-    color: #f5222d;
-    background-color: #fff1f0;
-    padding: 8px 12px;
-    border-radius: 4px;
-    border-left: 4px solid #ff4d4f;
-}
-
-/* ==========================================================================
-   Editor View Specifics
-   ========================================================================== */
-.workflow-canvas {
-    width: 100%;
-    height: 600px;
-    background-color: #fdfdfd;
-}
-
-.properties-panel .placeholder {
-    text-align: center;
-    color: rgba(0, 0, 0, 0.45);
-}
-.properties-panel .placeholder .fas {
-    font-size: 24px;
-    margin-bottom: 12px;
-    opacity: 0.5;
-}
-
-#workload-editor, #yaml-editor {
-    height: 500px;
-    border: 1px solid #d9d9d9;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-/* ReactFlow Node Styles */
-.react-flow .node {
-    border-radius: 8px;
-    padding: 10px 15px;
-    font-size: 12px;
-    text-align: center;
-    border-width: 2px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-.react-flow .node-step {
-    background: #e6f7ff;
-    border-color: #91d5ff;
-    color: #003a70;
-}
-.react-flow .node-task {
-    background: #f6ffed;
-    border-color: #b7eb8f;
-    color: #389e0d;
-}
-.react-flow .node-condition {
-    background: #fffbe6;
-    border-color: #ffe58f;
-    color: #d46b08;
-}
-
-/* ==========================================================================
-   Modal Styles
-   ========================================================================== */
-.ant-modal-root { display: none; }
-.ant-modal-mask { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000; height: 100%; background-color: rgba(0, 0, 0, 0.45); }
-.ant-modal-wrap { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000; overflow: auto; outline: 0; -webkit-overflow-scrolling: touch; }
-.ant-modal { position: relative; width: auto; max-width: calc(100vw - 32px); margin: 100px auto; width: 520px; }
-
-.ant-modal-content {
-    position: relative;
-    background-color: #fff;
-    border-radius: 8px;
-    box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.12), 
-                0 6px 16px 0 rgba(0, 0, 0, 0.08), 
-                0 9px 28px 8px rgba(0, 0, 0, 0.05);
-}
-
-.ant-modal-header {
-    padding: 16px 24px;
-    border-bottom: 1px solid #f0f0f0;
-    border-radius: 8px 8px 0 0;
-    background: linear-gradient(to right, #fafafa, #f5f5f5);
-}
-
-.ant-modal-title {
-    margin: 0;
-    font-size: 16px;
-    line-height: 22px;
-    font-weight: 500;
-    color: rgba(0, 0, 0, 0.85);
-}
-
-.ant-modal-close {
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 10;
-    padding: 0;
-    color: rgba(0, 0, 0, 0.45);
-    font-weight: 700;
-    line-height: 1;
-    text-decoration: none;
-    background: transparent;
-    border: 0;
-    outline: 0;
-    cursor: pointer;
-    transition: color 0.3s;
-}
-
-.ant-modal-close-x {
-    display: block;
-    width: 56px;
-    height: 56px;
-    font-size: 16px;
-    font-style: normal;
-    line-height: 56px;
-    text-align: center;
-    text-transform: none;
-    text-rendering: auto;
-}
-
-.ant-modal-body {
-    padding: 24px;
-    font-size: 14px;
-    line-height: 1.5;
-    word-wrap: break-word;
-}
-
-.ant-modal-footer {
-    padding: 10px 16px;
-    text-align: right;
-    background: transparent;
-    border-top: 1px solid #f0f0f0;
-    border-radius: 0 0 8px 8px;
-}
-
-.ant-modal-footer .ant-btn + .ant-btn {
-    margin-left: 8px;
-}
-
-/* Tab styles for the modal */
-.ant-tabs-nav {
-    margin-bottom: 16px;
-    border-bottom: 1px solid #f0f0f0;
-    display: flex;
-}
-
-.ant-tabs-nav-list {
-    display: flex;
-    flex: 1;
-}
-
-.ant-tabs-tab {
-    padding: 8px 16px;
-    margin-right: 8px;
-    cursor: pointer;
-    border: 1px solid #f0f0f0;
-    border-bottom: none;
-    border-radius: 4px 4px 0 0;
-    background-color: #f5f5f5;
-    transition: all 0.3s;
-}
-
-.ant-tabs-tab-active {
-    background-color: white;
-    position: relative;
-    bottom: -1px;
-}
-
-.ant-tabs-tab-btn {
-    font-weight: 500;
-    color: rgba(0, 0, 0, 0.65);
-}
-
-.ant-tabs-tab-active .ant-tabs-tab-btn {
-    color: #1890ff;
-}
-
-.ant-tabs-tabpane {
-    display: none;
-}
-
-.ant-tabs-tabpane-active {
-    display: block;
-}
-
-/* Form styles for the modal */
-.ant-form-item {
-    margin-bottom: 16px;
-}
-
-.ant-form-item-label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-}
-
-.ant-checkbox-wrapper {
-    display: flex;
-    align-items: center;
-    cursor: pointer;
-}
-
-.ant-checkbox {
-    margin-right: 8px;
-}
-
-.ant-checkbox-input {
-    margin-right: 4px;
+.centered-menu {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  background: transparent;
+  border-bottom: none;
+  font-size: 16px;
+  display: flex;
 }

@@ -32,4 +32,4 @@ jobs:
             @semantic-release/git@10.0.0
             conventional-changelog-conventionalcommits@4.6.3
         env:
-          GITHUB_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ google_secret_manager.SEMANTIC_RELEASE_TOKEN }}

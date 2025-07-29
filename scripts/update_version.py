@@ -167,7 +167,6 @@ def main():
     print_colored("NoETL Version Update Tool", Colors.BLUE)
     print_colored(f"Project root: {project_root}", Colors.BLUE)
 
-    # Get current version
     current_version = get_current_version(pyproject_path)
     if not current_version:
         print_colored("Could not determine current version", Colors.RED)
@@ -175,7 +174,6 @@ def main():
 
     print_colored(f"Current version: {current_version}", Colors.BLUE)
 
-    # Determine new version
     if not args.version:
         print_colored("Please specify a new version or increment type:", Colors.YELLOW)
         print("  python update_version.py 1.2.3")
