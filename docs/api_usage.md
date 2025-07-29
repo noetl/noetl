@@ -58,7 +58,7 @@ Before executing a playbook through the NoETL API, you need to register it in th
 curl -X POST "http://localhost:8082/catalog/register" \
   -H "Content-Type: application/json" \
   -d '{
-    "content_base64": "'"$(base64 -i ./path/to/playbook.yaml)"'"
+    "content_base64": "'"$(base64 -i ./path/to/playbooks.yaml)"'"
   }'
 ```
 
@@ -70,7 +70,7 @@ To execute a playbook synchronously:
 curl -X POST "http://localhost:8082/playbook/execute" \
   -H "Content-Type: application/json" \
   -d '{
-    "path": "workflows/example/playbook",
+    "path": "workflows/example/playbooks",
     "version": "0.1.0",
     "input_payload": {
       "param1": "value1",
@@ -90,7 +90,7 @@ To execute a playbook asynchronously:
 curl -X POST "http://localhost:8082/playbook/execute-async" \
   -H "Content-Type: application/json" \
   -d '{
-    "path": "workflows/example/playbook",
+    "path": "workflows/example/playbooks",
     "version": "0.1.0",
     "input_payload": {
       "param1": "value1",
@@ -130,7 +130,7 @@ Execute a playbook synchronously.
 
 ```json
 {
-  "path": "workflows/example/playbook",
+  "path": "workflows/example/playbooks",
   "version": "0.1.0",
   "input_payload": {
     "param1": "value1",
@@ -170,7 +170,7 @@ Execute a playbook asynchronously.
 
 ```json
 {
-  "path": "workflows/example/playbook",
+  "path": "workflows/example/playbooks",
   "version": "0.1.0",
   "input_payload": {
     "param1": "value1",
@@ -217,7 +217,7 @@ Register a playbook in the catalog.
 ```json
 {
   "status": "success",
-  "path": "workflows/example/playbook",
+  "path": "workflows/example/playbooks",
   "version": "0.1.0"
 }
 ```

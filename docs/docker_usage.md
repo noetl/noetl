@@ -111,14 +111,14 @@ Once the NoETL server is running in Docker, you can access it at:
 You can execute NoETL commands inside the Docker container:
 
 ```bash
-# Execute a playbook directly
-docker exec -it noetl noetl agent -f /path/to/playbook.yaml
+# Execute a playbooks directly
+docker exec -it noetl noetl agent -f /path/to/playbooks.yaml
 
-# Register a playbook in the catalog
-docker exec -it noetl noetl playbook --register /path/to/playbook.yaml
+# Register a playbooks in the catalog
+docker exec -it noetl noetl playbooks --register /path/to/playbooks.yaml
 
-# Execute a playbook from the catalog
-docker exec -it noetl noetl playbook --execute --path "workflows/example/playbook"
+# Execute a playbooks from the catalog
+docker exec -it noetl noetl playbooks --execute --path "workflows/example/playbook"
 ```
 
 ### Using the API
@@ -126,18 +126,18 @@ docker exec -it noetl noetl playbook --execute --path "workflows/example/playboo
 You can also use the NoETL API to execute playbooks:
 
 ```bash
-# Register a playbook
+# Register a playbooks
 curl -X POST "http://localhost:8082/catalog/register" \
   -H "Content-Type: application/json" \
   -d '{
-    "content_base64": "'"$(base64 -i ./path/to/playbook.yaml)"'"
+    "content_base64": "'"$(base64 -i ./path/to/playbooks.yaml)"'"
   }'
 
-# Execute a playbook
+# Execute a playbooks
 curl -X POST "http://localhost:8082/playbook/execute" \
   -H "Content-Type: application/json" \
   -d '{
-    "path": "workflows/example/playbook",
+    "path": "workflows/example/playbooks",
     "version": "0.1.0",
     "input_payload": {
       "param1": "value1",

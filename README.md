@@ -61,15 +61,15 @@ NoETL has a command-line interface for executing playbooks:
 
 - Register a playbook in the catalog
 ```bash
-noetl playbook --register ./<path to playbook folder>/playbook.yaml
+noetl playbooks --register ./<path to playbooks folder>/playbooks.yaml
 ```
 - Execute a playbook from the catalog
 ```bash
-noetl playbook --execute --path "workflows/example/playbook"
+noetl playbooks --execute --path "workflows/example/playbook"
 ```
 - Execute a playbook directly
 ```bash
-noetl agent -f ./<path to playbook folder>/playbook.yaml
+noetl agent -f ./<path to playbooks folder>/playbooks.yaml
 ```
 
 ### 3. Docker Deployment
@@ -102,7 +102,7 @@ For examples of NoETL playbooks and detailed explanations, see the [Examples Gui
 To run a playbook:
 
 ```bash
-noetl agent -f path/to/playbook.yaml
+noetl agent -f path/to/playbooks.yaml
 ```
 
 ## Documentation

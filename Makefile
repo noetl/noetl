@@ -52,7 +52,7 @@ docker-login:
 .PHONY: build
 build:
 	@echo "Building UI assets"
-	@bash scripts/build_ui.sh
+	set -a; [ -f .env.docker ] && . .env.docker; set +a; bash scripts/build_ui.sh
 	@echo "Building Docker images"
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build
 
@@ -65,11 +65,18 @@ rebuild:
 
 .PHONY: up
 up:
-	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) up -d
+	set -a; [ -f .env.docker ] && . .env.docker; set +a; docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) up -d
 
 .PHONY: down
 down:
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) down
+
+.PHONY: db-up db-down
+db-up:
+	docker compose up -d db
+
+db-down:
+	docker compose down
 
 .PHONY: restart
 restart: down up
@@ -150,6 +157,11 @@ publish:
 clean-dist:
 	rm -rf dist *.egg-info .pytest_cache .mypy_cache .venv
 
+
+.PHONY: ui
+ui:
+	set -a; [ -f .env ] && . .env; set +a; \
+	cd ui-src && npm install && VITE_API_BASE_URL=$$VITE_API_BASE_URL npm run dev
 
 #[GCP]##################################################################################################################
 .PHONY: gcp-credentials

@@ -130,7 +130,7 @@ Results Aggregation
 ```yaml
 - step: run_playbook_a
   call:
-    type: playbook
+    type: playbooks
     path: workflows/examples/playbook_a
   next:
     - step: run_playbook_b
@@ -142,7 +142,7 @@ Results Aggregation
 ```yaml
 - step: run_playbook_b
   call:
-    type: playbook
+    type: playbooks
     path: workflows/examples/playbook_b
     with:
       input_data: "{{ previous_step_result }}"
@@ -276,17 +276,17 @@ export POSTGRES_DB="noetl"
 ### 1. Register All Required Playbooks
 ```bash
 # Register child playbooks first
-noetl playbook --register playbook/secrets_test.yaml --port 8080
-noetl playbook --register playbook/weather_loop_example.yaml --port 8080
-noetl playbook --register playbook/load_dict_test.yaml --port 8080
+noetl playbooks --register playbooks/secrets_test.yaml --port 8080
+noetl playbooks --register playbooks/weather_loop_example.yaml --port 8080
+noetl playbooks --register playbooks/load_dict_test.yaml --port 8080
 
-# Register the orchestrator playbook
-noetl playbook --register playbook/multi_playbook_example.yaml --port 8080
+# Register the orchestrator playbooks
+noetl playbooks --register playbooks/multi_playbook_example.yaml --port 8080
 ```
 
 ### 2. Execute the Orchestration Workflow
 ```bash
-noetl playbook --execute --path "workflows/examples/multi_playbook_example" --port 8080 --payload '{
+noetl playbooks --execute --path "workflows/examples/multi_playbook_example" --port 8080 --payload '{
   "GOOGLE_CLOUD_PROJECT": "my-gcp-project",
   "secret_name": "projects/my-project/secrets/postgres-dev-password",
   "ENVIRONMENT": "dev",

@@ -322,7 +322,7 @@ This section explains how to exit from Google Cloud service account impersonatio
 
 ### Why Exit from Impersonation?
 
-When you're impersonating a service account, you're acting as that service account. However, some operations, such as granting permissions to a service account, require to be authenticated as a user with sufficient permissions, and not the service account itself. In these cases, exit from impersonation and return to your regular user account.
+When you're impersonating a service account, you're acting as that service account. However, some operations, such as granting permissions to a service account, require to be authenticated as a user with sufficient permissions, and not the service account itself. In these cases, exit impersonation and return to your regular user account.
 
 If you encounter permission errors while using an impersonated service account, such as "Permission denied" for Google Cloud Storage or Secret Manager operations, exit impersonation, grant the necessary permissions to the service account, and then re-enter impersonation.
 
@@ -430,3 +430,4 @@ gcloud config set auth/impersonate_service_account noetl-service-account@noetl-d
 3. **Keep your authentication contexts separate** to avoid confusion and potential security issues
 4. **Always be aware of which account you're currently using**, especially when performing sensitive operations
 5. **Use service accounts only for the specific tasks** they're designed for
+

@@ -44,6 +44,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="/opt/noetl:$PYTHONPATH"
 ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
-EXPOSE 8080
+ENV NOETL_ENABLE_UI=false
 
-CMD ["python", "-m", "uvicorn", "noetl.main:create_app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "noetl.main", "server", "--host", "0.0.0.0", "--port", "8080"]

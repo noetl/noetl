@@ -1,0 +1,654 @@
+# NoETL DSL Playbook for Google Storage, DuckDB, and Postgres operations
+# Doc: docs/examples/gs_duckdb_postgres_example.md
+# Usage:
+# noetl playbooks --register playbooks/gs_duckdb_postgres_example.yaml --port 8080
+# noetl playbooks --execute --path "workflows/examples/gs_duckdb_postgres_example"
+# noetl playbooks --execute --path "workflows/examples/gs_duckdb_postgres_example" --port 8080 --payload '{
+#  "GOOGLE_CLOUD_PROJECT": "noetl-demo-19700101",
+#  "GCS_KEY_ID_SECRET": "s3_access_key_id",
+#  "GCS_SECRET_KEY_SECRET": "s3_secret_access_key",
+#  "POSTGRES_HOST": "db",
+#  "POSTGRES_PORT": "5432",
+#  "POSTGRES_USER": "demo",
+#  "POSTGRES_PASSWORD": "demo",
+#  "POSTGRES_DB": "demo_noetl"
+# }'
+
+apiVersion: noetl.io/v1
+kind: Playbook
+name: gs_duckdb_postgres_example
+path: examples/gs_duckdb_postgres_example
+
+workload:
+  jobId: "{{ job.uuid }}"
+  execution_id: "{{ job.uuid }}"
+  gs_project_id: "noetl-demo-19700101"
+  gs_bucket: "noetl-demo-19700101"
+  gcs_key_id_secret: "{{ env.GCS_KEY_ID_SECRET | default('s3_access_key_id') }}"
+  gcs_secret_key_secret: "{{ env.GCS_SECRET_KEY_SECRET | default('s3_secret_access_key') }}"
+  pg_password_secret: "postgres-dev-password"
+  source_csv_path: "data/test/test_data.csv"
+  local_csv_path: "/tmp/test_data.csv"
+  local_parquet_path: "/tmp/test_data.parquet"
+  gs_csv_path: "uploads/test_data.csv"
+  gs_parquet_path: "uploads/test_data.parquet"
+  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  source_table_name: "test_data_table"
+  table_name: "test_data"
+
+workflow:
+  - step: start
+    desc: "Start GS DuckDB Postgres Example Workflow"
+    next:
+      - step: setup_duckdb_infrastructure
+
+  - step: setup_duckdb_infrastructure
+    desc: "Create DuckDB directory structure and database file"
+    type: workbook
+    task: setup_duckdb_task
+    next:
+      - step: get_gcs_key_id
+
+  - step: get_gcs_key_id
+    desc: "Retrieve GCS HMAC Key ID from Google Secret Manager"
+    type: secrets
+    provider: google
+    project_id: "noetl-demo-19700101"
+    secret_name: "s3_access_key_id"
+    next:
+      - step: get_gcs_secret_key
+
+  - step: get_gcs_secret_key
+    desc: "Retrieve GCS HMAC Secret Key from Google Secret Manager"
+    type: secrets
+    provider: google
+    project_id: "noetl-demo-19700101"
+    secret_name: "s3_secret_access_key"
+    next:
+      - step: get_pg_password
+
+  - step: get_pg_password
+    desc: "Retrieve Postgres Password from Google Secret Manager"
+    type: secrets
+    provider: google
+    project_id: "noetl-demo-19700101"
+    secret_name: "postgres-dev-password"
+    next:
+      - step: create_gcs_secret
+
+  - step: create_gcs_secret
+    desc: "Create Duckdb secret for GCS authentication"
+    type: workbook
+    task: create_gcs_secret_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: create_pg_secret
+
+  - step: create_pg_secret
+    desc: "Create Duckdb secret for Postgres authentication"
+    type: workbook
+    task: create_pg_secret_task
+    with:
+      pg_user: "{{ workload.pg_user }}"
+      pg_password: "{{ get_pg_password.secret_value }}"
+      execution_id: "{{ workload.execution_id }}"
+    next:
+      - step: test_gcs_credentials
+
+
+  - step: test_gcs_credentials
+    desc: "Test GCS credentials by attempting to list bucket or create a test file"
+    type: workbook
+    task: test_gcs_credentials
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: read_from_postgres
+
+  - step: read_from_postgres
+    desc: "Read data from Postgres test_data_table and store on local filesystem"
+    type: workbook
+    task: read_from_postgres_task
+    with:
+      pg_user: "{{ get_pg_user.secret_value }}"
+      pg_password: "{{ get_pg_password.secret_value }}"
+      execution_id: "{{ workload.execution_id }}"
+    next:
+      - step: upload_csv_to_gs
+
+  - step: upload_csv_to_gs
+    desc: "Upload CSV file to Google Storage bucket"
+    type: workbook
+    task: upload_csv_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: download_and_convert
+
+  - step: download_and_convert
+    desc: "Download CSV from GS and convert to Parquet"
+    type: workbook
+    task: download_convert_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: create_postgres_table
+
+  - step: create_postgres_table
+    desc: "Create table in Postgres"
+    type: workbook
+    task: create_table_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: load_data_to_postgres
+
+  - step: load_data_to_postgres
+    desc: "Load data from Parquet to Postgres"
+    type: workbook
+    task: load_data_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: upload_parquet_to_gs
+
+  - step: upload_parquet_to_gs
+    desc: "Upload Parquet file to Google Storage bucket"
+    type: workbook
+    task: upload_parquet_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: advanced_file_operations
+
+  - step: advanced_file_operations
+    desc: "Advanced file operations with Duckdb"
+    type: workbook
+    task: advanced_file_operations_task
+    with:
+      key_id: "{{ get_gcs_key_id.secret_value }}"
+      secret_key: "{{ get_gcs_secret_key.secret_value }}"
+    next:
+      - step: delete_secrets
+
+  - step: delete_secrets
+    desc: "Delete all secrets created during workflow"
+    type: workbook
+    task: delete_secrets_task
+    with:
+      execution_id: "{{ workload.execution_id }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of workflow"
+
+workbook:
+  - name: setup_duckdb_task
+    type: python
+    code: |
+      def main():
+          import os
+
+          # Get the data directory from environment variable
+          data_dir = os.environ.get('NOETL_DATA_DIR', '/opt/noetl/data')
+          duckdb_dir = os.path.join(data_dir, 'noetldb')
+
+          # Create the directory structure if it doesn't exist
+          os.makedirs(duckdb_dir, exist_ok=True)
+
+          return {
+              'status': 'success',
+              'directory_created': duckdb_dir,
+              'message': 'DuckDB directory structure created. Action.py will handle execution-specific database files.'
+          }
+
+  - name: create_pg_secret_task
+    type: duckdb
+    with:
+      pg_user: "demo"
+      pg_password: "demo"
+      execution_id: "{{ execution_id }}"
+      pg_host: "db"
+      pg_port: "5432"
+      pg_db: "demo_noetl"
+    command: |
+      INSTALL postgres;
+      LOAD postgres;
+      CREATE OR REPLACE SECRET postgres_secret (
+          TYPE POSTGRES,
+          HOST 'db',
+          PORT 5432,
+          DATABASE 'demo_noetl',
+          USER 'demo',
+          PASSWORD 'demo'
+      );
+
+      -- Test the secret by creating a simple table
+      CREATE TABLE test_pg_secret AS
+      SELECT 'Postgres secret created successfully' as status, CURRENT_TIMESTAMP as timestamp;
+
+  - name: read_from_postgres_task
+    type: duckdb
+    with:
+      key_id: "{{ key_id }}"
+      secret_key: "{{ secret_key }}"
+      pg_user: "demo"
+      pg_password: "demo"
+      execution_id: "{{ execution_id }}"
+      db_host: "db"
+      db_port: "5432"
+      db_user: "demo"
+      db_password: "demo"
+      db_name: "demo_noetl"
+    command: |
+      -- Install and load Postgres extension
+      INSTALL postgres;
+      LOAD postgres;
+      INSTALL httpfs;
+      LOAD httpfs;
+      set s3_endpoint='storage.googleapis.com';
+      set s3_region='auto';
+      set s3_url_style='path';
+      set s3_use_ssl=true;
+      -- set s3_access_key_id='{{ key_id }}';
+      -- set s3_secret_access_key='{{ secret_key }}';
+
+
+
+      -- Create DuckDB secret for GCS access using S3-compatible interface
+      CREATE OR REPLACE SECRET s3_secret (
+          TYPE S3,
+          KEY_ID '{{ key_id }}',
+          SECRET '{{ secret_key }}'
+      );
+      -- Use the existing Postgres secret to attach database
+      ATTACH DATABASE 'postgres_secret' AS postgres_db (TYPE postgres);
+
+      -- Read data from test_data_table in the public schema (default)
+      -- The table is in public schema as confirmed by the error message
+      DROP TABLE IF EXISTS temp_csv;
+      CREATE TABLE temp_csv AS
+      SELECT * FROM postgres_db.{{ workload.source_table_name }};
+
+      -- Show the data
+      SELECT * FROM temp_csv;
+      DESCRIBE temp_csv;
+
+      -- Save to local CSV file
+      COPY temp_csv TO '{{ workload.local_csv_path }}' (FORMAT CSV, HEADER);
+
+      -- Clean up
+      DROP TABLE temp_csv;
+
+  - name: delete_secrets_task
+    type: duckdb
+    with:
+      execution_id: "{{ execution_id }}"
+    command: |
+      -- Drop DuckDB secrets created during the workflow
+      DROP SECRET IF EXISTS s3_secret;
+      DROP SECRET IF EXISTS postgres_secret;
+
+      -- Confirm secrets are removed
+      SELECT 'All DuckDB secrets cleaned up' as status;
+
+  - name: create_gcs_secret_task
+    type: duckdb
+    with:
+      key_id: "{{ key_id }}"
+      secret_key: "{{ secret_key }}"
+    command: |
+      -- Install httpfs extension for cloud storage operations
+      INSTALL httpfs;
+      LOAD httpfs;
+
+      -- Drop existing secret if it exists
+      DROP SECRET IF EXISTS gcs_secret;
+      set s3_endpoint='storage.googleapis.com';
+      set s3_region='auto';
+      set s3_url_style='path';
+      set s3_use_ssl=true;
+      -- set s3_access_key_id='{{ key_id }}';
+      -- set s3_secret_access_key='{{ secret_key }}';
+
+
+
+      -- Create DuckDB secret for GCS access using S3-compatible interface
+      CREATE OR REPLACE SECRET s3_secret (
+          TYPE S3,
+          KEY_ID '{{ key_id }}',
+          SECRET '{{ secret_key }}',
+          ENDPOINT 'storage.googleapis.com'
+      );
+
+      -- Test the secret by creating a simple table (drop first if exists)
+      DROP TABLE IF EXISTS test_gcs_secret;
+      CREATE TABLE test_gcs_secret AS
+      SELECT 'GCS secret created successfully' as status, CURRENT_TIMESTAMP as timestamp;
+      DROP TABLE IF EXISTS gcs_test;
+      CREATE TABLE gcs_test AS
+      SELECT 'test' AS message, CURRENT_TIMESTAMP AS timestamp;
+
+      -- Test by uploading a small test file to verify credentials work
+      -- The s3_secret should be automatically used for GCS operations
+      COPY gcs_test TO 'gs://{{ workload.gs_bucket }}/test_connection1.csv' (FORMAT CSV, HEADER);
+
+      -- Verify we can read it back
+      SELECT 'GCS credentials test successful' AS status, * FROM read_csv_auto('gs://{{ workload.gs_bucket }}/test_connection1.csv');
+
+  - name: test_gcs_credentials
+    desc: "Test GCS credentials using the created secret"
+    type: duckdb
+    with:
+      key_id: "{{ key_id }}"
+      secret_key: "{{ secret_key }}"
+    command: |
+      INSTALL httpfs;
+      LOAD httpfs;
+
+      -- Drop existing secret if it exists
+      DROP SECRET IF EXISTS s3_secret;
+      set s3_endpoint='storage.googleapis.com';
+      set s3_region='auto';
+      set s3_url_style='path';
+      set s3_use_ssl=true;
+
+      -- Create DuckDB secret for GCS access using S3-compatible interface
+      CREATE OR REPLACE SECRET s3_secret (
+          TYPE S3,
+          KEY_ID '{{ key_id }}',
+          SECRET '{{ secret_key }}',
+          ENDPOINT 'storage.googleapis.com'
+      );
+
+      -- Test the secret by creating a simple table (drop first if exists)
+      DROP TABLE IF EXISTS test_gcs_secret;
+      CREATE TABLE test_gcs_secret AS
+      SELECT 'GCS secret created successfully' as status, CURRENT_TIMESTAMP as timestamp;
+      DROP TABLE IF EXISTS gcs_test;
+      CREATE TABLE gcs_test AS
+      SELECT 'test' AS message, CURRENT_TIMESTAMP AS timestamp;
+
+      -- Test by uploading a small test file to verify credentials work
+      -- The s3_secret should be automatically used for GCS operations
+      COPY gcs_test TO 'gs://{{ workload.gs_bucket }}/test_connection.csv' (FORMAT CSV, HEADER);
+
+      -- Verify we can read it back
+      SELECT 'GCS credentials test successful' AS status, * FROM read_csv_auto('gs://{{ workload.gs_bucket }}/test_connection.csv');
+
+      -- Show the created secret to verify it exists
+      SHOW SECRETS;
+
+  - name: upload_csv_task
+    type: duckdb
+    with:
+      key_id: "{{ key_id }}"
+      secret_key: "{{ secret_key }}"
+    command: |
+      -- Install and load necessary extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+      set s3_endpoint='storage.googleapis.com';
+      set s3_region='auto';
+      set s3_url_style='path';
+      set s3_use_ssl=true;
+      CREATE OR REPLACE SECRET s3_secret (
+          TYPE S3,
+          KEY_ID '{{ key_id }}',
+          SECRET '{{ secret_key }}',
+          ENDPOINT 'storage.googleapis.com'
+      );
+      -- The s3_secret will be automatically used for GCS operations
+      -- Read CSV file from local filesystem using auto-detection
+      DROP TABLE IF EXISTS temp_csv;
+      CREATE TABLE temp_csv AS 
+      SELECT * FROM read_csv_auto('{{ workload.source_csv_path }}', 
+                                 all_varchar=false,  
+                                 sample_size=-1);    
+
+      -- Show the data and inferred types
+      SELECT * FROM temp_csv;
+      DESCRIBE temp_csv;
+
+      -- Upload to Google Storage using the secret
+      COPY temp_csv TO 'gs://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}' (FORMAT CSV, HEADER);
+
+      -- Clean up
+      DROP TABLE temp_csv;
+
+  - name: download_convert_task
+    type: duckdb
+    with:
+      key_id: "{{ key_id }}"
+      secret_key: "{{ secret_key }}"
+    command: |
+      -- Install and load necessary extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+      INSTALL parquet;
+      LOAD parquet;
+      INSTALL httpfs;
+      LOAD httpfs;
+      set s3_endpoint='storage.googleapis.com';
+      set s3_region='auto';
+      set s3_url_style='path';
+      set s3_use_ssl=true;
+      CREATE OR REPLACE SECRET s3_secret (
+          TYPE S3,
+          KEY_ID '{{ key_id }}',
+          SECRET '{{ secret_key }}',
+          ENDPOINT 'storage.googleapis.com'
+      );
+      -- Download CSV from Google Storage using the secret
+      DROP TABLE IF EXISTS temp_csv;
+      CREATE TABLE temp_csv AS 
+      SELECT * FROM read_csv_auto('gs://{{ workload.gs_bucket }}/{{ workload.gs_csv_path }}', 
+                                 sample_size=1000,    
+                                 all_varchar=false);  
+
+      -- Show the data and inferred schema
+      SELECT * FROM temp_csv;
+      DESCRIBE temp_csv;
+
+      -- Convert to Parquet and save locally with compression
+      COPY temp_csv TO '{{ workload.local_parquet_path }}' (
+        FORMAT PARQUET, 
+        COMPRESSION ZSTD,
+        ROW_GROUP_SIZE 100000
+      );
+
+      -- Clean up
+      DROP TABLE temp_csv;
+
+  - name: create_table_task
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    command: |
+      -- SHOWCASE: This task uses direct authentication as an alternative to secrets
+      -- The following SQL demonstrates direct connection to Postgres
+      -- without using secrets for authentication
+
+      -- Drop table if it exists
+      DROP TABLE IF EXISTS {{ workload.table_name }};
+
+      -- Create table with appropriate columns based on test_data_table schema
+      CREATE TABLE {{ workload.table_name }} (
+        id INTEGER,
+        name VARCHAR(100),
+        age INTEGER,
+        created_at TIMESTAMP,
+        is_active BOOLEAN,
+        meta_data JSONB,
+        description TEXT
+      );
+
+  - name: load_data_task
+    type: duckdb
+    command: |
+      -- Install and load extensions
+      INSTALL parquet;
+      LOAD parquet;
+      INSTALL postgres;
+      LOAD postgres;
+
+      -- Use the Postgres secret to attach database
+      ATTACH DATABASE 'postgres_secret' AS postgres_db (TYPE postgres);
+
+      -- Load Parquet file into DuckDB
+      DROP TABLE IF EXISTS temp_parquet;
+      CREATE TABLE temp_parquet AS
+      SELECT * FROM read_parquet('{{ workload.local_parquet_path }}',
+                                binary_as_string=true,
+                                file_row_number=true);
+
+      -- Show the data and schema
+      SELECT * FROM temp_parquet;
+      DESCRIBE temp_parquet;
+
+      -- Get Parquet file metadata and schema
+      SELECT * FROM parquet_metadata('{{ workload.local_parquet_path }}');
+      SELECT * FROM parquet_schema('{{ workload.local_parquet_path }}');
+
+      -- Insert data into Postgres with proper type handling
+      INSERT INTO postgres_db.{{ workload.table_name }}
+      SELECT
+        CASE WHEN id IS NULL THEN NULL ELSE id::INTEGER END,
+        name,
+        CASE WHEN age IS NULL OR TRIM(age::VARCHAR) = '' THEN NULL ELSE age::INTEGER END,
+        CURRENT_TIMESTAMP AS created_at,
+        TRUE AS is_active,
+        CASE WHEN meta_data IS NULL OR TRIM(meta_data::VARCHAR) = '' THEN NULL ELSE meta_data::JSON END,
+        description
+      FROM temp_parquet;
+
+      -- Verify data in Postgres
+      SELECT * FROM postgres_db.{{ workload.table_name }};
+
+      -- Clean up
+      DROP TABLE temp_parquet;
+
+  - name: upload_parquet_task
+    type: duckdb
+    with:
+      key_id: "{{ key_id }}"
+      secret_key: "{{ secret_key }}"
+      pg_user: "demo"
+      pg_password: "demo"
+      execution_id: "{{ execution_id }}"
+      db_host: "db"
+      db_port: "5432"
+      db_user: "demo"
+      db_password: "demo"
+      db_name: "demo_noetl"
+    command: |
+      -- Install and load Postgres extension
+      INSTALL postgres;
+      LOAD postgres;
+      INSTALL httpfs;
+      LOAD httpfs;
+      INSTALL parquet;
+      LOAD parquet;
+      set s3_endpoint='storage.googleapis.com';
+      set s3_region='auto';
+      set s3_url_style='path';
+      set s3_use_ssl=true;
+
+      -- Create DuckDB secret for GCS access using S3-compatible interface
+      CREATE OR REPLACE SECRET s3_secret (
+          TYPE S3,
+          KEY_ID '{{ key_id }}',
+          SECRET '{{ secret_key }}',
+          ENDPOINT 'storage.googleapis.com'
+      );
+
+      -- Use the GCS secret for all operations
+      -- Example 1: Reading multiple files
+      DROP TABLE IF EXISTS sample_data;
+      CREATE TABLE sample_data AS
+      SELECT 1 AS id, 'Example 1' AS name
+      UNION ALL
+      SELECT 2 AS id, 'Example 2' AS name;
+
+      COPY (SELECT * FROM sample_data WHERE id = 1) TO '/tmp/sample1.csv' (FORMAT CSV, HEADER);
+      COPY (SELECT * FROM sample_data WHERE id = 2) TO '/tmp/sample2.csv' (FORMAT CSV, HEADER);
+
+      DROP TABLE IF EXISTS multi_file_read;
+      CREATE TABLE multi_file_read AS
+      SELECT * FROM read_csv(['/tmp/sample1.csv', '/tmp/sample2.csv'], header = true);
+
+      SELECT 'Reading multiple files:' AS operation, * FROM multi_file_read;
+
+      -- Example 2: Reading compressed files
+      COPY sample_data TO '/tmp/sample_compressed.csv.gz' (FORMAT CSV, HEADER);
+
+      DROP TABLE IF EXISTS compressed_file_read;
+      CREATE TABLE compressed_file_read AS
+      SELECT * FROM '/tmp/sample_compressed.csv.gz';
+
+      SELECT 'Reading compressed file:' AS operation, * FROM compressed_file_read;
+
+      -- Example 3: Using glob patterns
+      DROP TABLE IF EXISTS glob_pattern_read;
+      CREATE TABLE glob_pattern_read AS
+      SELECT * FROM read_csv('/tmp/sample*.csv', header = true);
+
+      SELECT 'Reading with glob pattern:' AS operation, * FROM glob_pattern_read;
+
+      -- Upload Parquet to Google Storage using the secret
+      COPY sample_data TO 'gs://{{ workload.gs_bucket }}/{{ workload.gs_parquet_path }}' (FORMAT PARQUET);
+
+      -- Clean up
+      DROP TABLE sample_data;
+      DROP TABLE multi_file_read;
+      DROP TABLE compressed_file_read;
+      DROP TABLE glob_pattern_read;
+
+
+  - name: advanced_file_operations_task
+    type: duckdb
+    command: |
+      -- Install and load extensions
+      INSTALL httpfs;
+      LOAD httpfs;
+      INSTALL parquet;
+      LOAD parquet;
+
+      -- Use the GCS secret for operations
+      -- Create test data
+      DROP TABLE IF EXISTS test_data;
+      CREATE TABLE test_data AS
+      SELECT 1 AS id, 'Test 1' AS name, 100 AS value
+      UNION ALL
+      SELECT 2 AS id, 'Test 2' AS name, 200 AS value;
+
+      -- Save as CSV
+      COPY test_data TO '/tmp/advanced_test.csv' (FORMAT CSV, HEADER);
+
+      -- Read using auto-detection
+      DROP TABLE IF EXISTS auto_read;
+      CREATE TABLE auto_read AS
+      SELECT * FROM read_csv_auto('/tmp/advanced_test.csv');
+
+      SELECT 'Advanced operations complete:' AS operation, * FROM auto_read;
+
+      -- Clean up
+      DROP TABLE test_data;
+      DROP TABLE auto_read;

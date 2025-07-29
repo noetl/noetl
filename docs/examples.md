@@ -16,7 +16,7 @@ Each example has:
 
 This example fetches weather data for a city and checks if the temperature exceeds a threshold.
 
-- **Playbook**: [weather.yaml](../playbook/weather_example.yaml)
+- **Playbook**: [weather.yaml](../examples/weather/weather_example.yaml)
 - **Documentation**: [Weather Example Documentation](examples/weather_example.md)
 
 **Key Features:**
@@ -29,7 +29,7 @@ This example fetches weather data for a city and checks if the temperature excee
 
 This example demonstrates an advanced weather data workflow that iterates over multiple cities, fetches weather data for each, and processes city districts.
 
-- **Playbook**: [weather_example.yaml](../playbook/weather_loop_example.yaml)
+- **Playbook**: [weather_example.yaml](../examples/weather/weather_loop_example.yaml)
 - **Documentation**: [Weather Example with Loops Documentation](examples/weather_loop_example.md)
 
 **Key Features:**
@@ -45,7 +45,7 @@ This example demonstrates an advanced weather data workflow that iterates over m
 
 This example demonstrates how to work with Postres JSONB data type.
 
-- **Playbook**: [postgres_test.yaml](../playbook/postgres_test.yaml)
+- **Playbook**: [postgres_test.yaml](../examples/postgres/postgres_test.yaml)
 - **Documentation**: [Postres JSONB Example Documentation](examples/postgres_test_example.md)
 
 **Key Features:**
@@ -58,7 +58,7 @@ This example demonstrates how to work with Postres JSONB data type.
 
 This example demonstrates how to use DuckDB to load dictionary data and interact with a Postres database.
 
-- **Playbook**: [load_dict_test.yaml](../playbook/load_dict_test.yaml)
+- **Playbook**: [load_dict_test.yaml](../examples/duckdb/load_dict_test.yaml)
 - **Documentation**: [DuckDB Dictionary Loading Example Documentation](examples/load_dict_test_example.md)
 
 **Key Features:**
@@ -73,7 +73,7 @@ This example demonstrates how to use DuckDB to load dictionary data and interact
 
 This example demonstrates how to use Google Cloud Secret Manager to securely access Google Cloud Storage.
 
-- **Playbook**: [gcs_secrets_example.yaml](../playbook/gcs_secrets_example.yaml)
+- **Playbook**: [gcs_secrets_example.yaml](../examples/google_secret_manager/gcs_secrets_example.yaml)
 - **Documentation**: [GCS Secrets Example Documentation](examples/gcs_secrets_example.md)
 
 **Key Features:**
@@ -88,7 +88,7 @@ This example demonstrates how to use Google Cloud Secret Manager to securely acc
 
 This example demonstrates how to use multiple playbooks together, with one playbook calling another.
 
-- **Playbook**: [multi_playbook_example.yaml](../playbook/multi_playbook_example.yaml)
+- **Playbook**: [multi_playbook_example.yaml](../examples/batch/multi_playbook_example.yaml)
 - **Documentation**: [Multi-Playbook Example Documentation](examples/multi_playbook_example.md)
 
 **Key Features:**
@@ -101,7 +101,7 @@ This example demonstrates how to use multiple playbooks together, with one playb
 
 This example demonstrates how to work with secrets in NoETL.
 
-- **Playbook**: [secrets_test.yaml](../playbook/secrets_test.yaml)
+- **Playbook**: [secrets_test.yaml](../examples/google_secret_manager/secrets_test.yaml)
 - **Documentation**: [Secrets Test Example Documentation](examples/secrets_test_example.md)
 
 **Key Features:**
@@ -116,7 +116,7 @@ This example demonstrates how to work with secrets in NoETL.
 
 This example demonstrates how to integrate Google Cloud Storage, DuckDB, and Postres for data processing.
 
-- **Playbook**: [gs_duckdb_postgres_example.yaml](../playbook/gs_duckdb_postgres_example.yaml)
+- **Playbook**: [gs_duckdb_postgres_example.yaml](../examples/duckdb/gs_duckdb_postgres_example.yaml)
 - **Documentation**: [GS DuckDB Postgres Example Documentation](examples/gs_duckdb_postgres_example.md)
 
 **Key Features:**
@@ -132,14 +132,14 @@ This example demonstrates how to integrate Google Cloud Storage, DuckDB, and Pos
 
 | Category | Example | Playbook | Documentation |
 |----------|---------|----------|--------------|
-| **Basic** | Weather API | [weather.yaml](../playbook/weather_example.yaml) | [Weather Example](examples/weather_example.md) |
-| **Basic** | Weather with Loops | [weather_example.yaml](../playbook/weather_loop_example.yaml) | [Weather Example with Loops](examples/weather_loop_example.md) |
-| **Database** | Postres JSONB | [postgres_test.yaml](../playbook/postgres_test.yaml) | [Postres JSONB Example](examples/postgres_test_example.md) |
-| **Database** | DuckDB Dictionary Loading | [load_dict_test.yaml](../playbook/load_dict_test.yaml) | [DuckDB Dictionary Loading Example](examples/load_dict_test_example.md) |
-| **Cloud** | GCS Secrets | [gcs_secrets_example.yaml](../playbook/gcs_secrets_example.yaml) | [GCS Secrets Example](examples/gcs_secrets_example.md) |
-| **Advanced** | Multi-Playbook | [multi_playbook_example.yaml](../playbook/multi_playbook_example.yaml) | [Multi-Playbook Example](examples/multi_playbook_example.md) |
-| **Advanced** | Secrets Test | [secrets_test.yaml](../playbook/secrets_test.yaml) | [Secrets Test Example](examples/secrets_test_example.md) |
-| **Integration** | GS DuckDB Postgres | [gs_duckdb_postgres_example.yaml](../playbook/gs_duckdb_postgres_example.yaml) | [GS DuckDB Postgres Example](examples/gs_duckdb_postgres_example.md) |
+| **Basic** | Weather API | [weather.yaml](../examples/weather/weather_example.yaml) | [Weather Example](examples/weather_example.md) |
+| **Basic** | Weather with Loops | [weather_example.yaml](../examples/weather/weather_loop_example.yaml) | [Weather Example with Loops](examples/weather_loop_example.md) |
+| **Database** | Postres JSONB | [postgres_test.yaml](../examples/postgres/postgres_test.yaml) | [Postres JSONB Example](examples/postgres_test_example.md) |
+| **Database** | DuckDB Dictionary Loading | [load_dict_test.yaml](../examples/duckdb/load_dict_test.yaml) | [DuckDB Dictionary Loading Example](examples/load_dict_test_example.md) |
+| **Cloud** | GCS Secrets | [gcs_secrets_example.yaml](../examples/google_secret_manager/gcs_secrets_example.yaml) | [GCS Secrets Example](examples/gcs_secrets_example.md) |
+| **Advanced** | Multi-Playbook | [multi_playbook_example.yaml](../examples/batch/multi_playbook_example.yaml) | [Multi-Playbook Example](examples/multi_playbook_example.md) |
+| **Advanced** | Secrets Test | [secrets_test.yaml](../examples/google_secret_manager/secrets_test.yaml) | [Secrets Test Example](examples/secrets_test_example.md) |
+| **Integration** | GS DuckDB Postgres | [gs_duckdb_postgres_example.yaml](../examples/duckdb/gs_duckdb_postgres_example.yaml) | [GS DuckDB Postgres Example](examples/gs_duckdb_postgres_example.md) |
 
 ## Next Steps
 

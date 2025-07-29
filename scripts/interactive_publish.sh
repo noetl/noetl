@@ -1,6 +1,5 @@
 #!/bin/bash
 # Interactive NoETL Publishing Workflow
-# This script provides interactive process for publishing NoETL to PyPI
 
 set -e
 

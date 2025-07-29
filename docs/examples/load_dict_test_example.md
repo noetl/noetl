@@ -133,8 +133,8 @@ The workbook includes the following parameters:
 
 ### Running the Playbook
 ```bash
-noetl playbook --register playbook/load_dict_test.yaml --port 8080
-noetl playbook --execute --path "workflows/data/load_dict_test"
+noetl playbooks --register playbooks/load_dict_test.yaml --port 8080
+noetl playbooks --execute --path "workflows/data/load_dict_test"
 ```
 
 ### Environment Variables Setup
