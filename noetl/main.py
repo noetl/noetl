@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from noetl.server import router as server_router
 from noetl.system import router as system_router
-from noetl.common import deep_merge, setup_logger
+from noetl.common import deep_merge, setup_logger, DateTimeEncoder
 from noetl.worker import Worker
 from noetl.schema import DatabaseSchema
 
@@ -73,7 +73,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         return {"status": "ok"}
 
     if enable_ui and ui_build_path.exists():
-        # Serve specific files first
         @app.get("/favicon.ico", include_in_schema=False)
         async def favicon():
             favicon_file = ui_build_path / "favicon.ico"
@@ -81,15 +80,12 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 return FileResponse(favicon_file)
             return FileResponse(ui_build_path / "index.html")
         
-        # Mount static files for assets
         app.mount("/assets", StaticFiles(directory=ui_build_path / "assets"), name="assets")
         
-        # Catch-all route for SPA routing - this handles all other routes
         @app.get("/{catchall:path}", include_in_schema=False)
         async def spa_catchall(catchall: str):
             return FileResponse(ui_build_path / "index.html")
         
-        # Root route
         @app.get("/", include_in_schema=False)
         async def root():
             return FileResponse(ui_build_path / "index.html")
@@ -117,7 +113,6 @@ def run_server(
 
     _enable_ui = not no_ui
 
-    # Configure logging based on debug flag
     log_level = "debug" if debug else "info"
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
@@ -129,7 +124,6 @@ def run_server(
     debug_status = "enabled" if debug else "disabled"
     logger.info(f"Starting NoETL API server at http://{host}:{port} (UI {ui_status}, Debug {debug_status})")
     
-    # Print all environment variables when server starts
     logger.info("=== ENVIRONMENT VARIABLES AT SERVER STARTUP ===")
     for key, value in sorted(os.environ.items()):
         logger.info(f"ENV: {key}={value}")
@@ -319,8 +313,132 @@ def manage_playbook(
 
                 if result.get("status") == "success":
                     logger.info(f"Execution ID: {result.get('execution_id')}")
-                    logger.info(f"Result: {json.dumps(result.get('result'), indent=2)}")
+
+                    execution_result = result.get('result', {})
+
+                    print("\n" + "="*80)
+                    print("EXECUTION REPORT")
+                    print("="*80)
+                    print(f"Playbook Path: {path}")
+                    print(f"Version: {version or 'latest'}")
+                    print(f"Execution ID: {result.get('execution_id')}")
+                    print(f"Status: SUCCESS")
+                    print("-"*80)
+
+                    step_count = 0
+                    success_count = 0
+                    error_count = 0
+                    skipped_count = 0
+
+                    for step_name, step_result in execution_result.items():
+                        step_count += 1
+
+                        if isinstance(step_result, dict):
+                            status = step_result.get('status', None)
+
+                            if status is None:
+                                if ('message' in step_result or
+                                    'secret_value' in step_result or
+                                    'directory_created' in step_result or
+                                    any(key.startswith('command_') for key in step_result.keys())):
+                                    status = 'success'
+                                elif 'error' in step_result:
+                                    status = 'error'
+                                else:
+                                    status = 'unknown'
+
+                            if status == 'success':
+                                success_count += 1
+                                print(f"✓ {step_name}: SUCCESS")
+
+                                if 'message' in step_result:
+                                    print(f"  └─ {step_result['message']}")
+
+                                if 'secret_value' in step_result:
+                                    masked_secret = step_result['secret_value'][:8] + "..." if len(step_result['secret_value']) > 8 else "***"
+                                    print(f"  └─ Secret retrieved: {masked_secret}")
+                                    if 'provider' in step_result:
+                                        print(f"  └─ Provider: {step_result['provider']}")
+
+                                if 'directory_created' in step_result:
+                                    print(f"  └─ Directory: {step_result['directory_created']}")
+
+                                command_executed = False
+                                records_processed = 0
+                                export_message = None
+                                setup_commands = 0
+
+                                for key, value in step_result.items():
+                                    if key.startswith('command_') and isinstance(value, list):
+                                        if value:
+                                            command_executed = True
+                                            if isinstance(value[0], list) and len(value[0]) > 0:
+                                                content = str(value[0][0])
+                                                if "Exporting" in content:
+                                                    export_message = content
+                                                elif content.isdigit():
+                                                    records_processed = int(content)
+                                                elif content == "Export completed":
+                                                    pass
+                                        else:
+                                            setup_commands += 1
+                                    elif key.startswith('command_') and isinstance(value, dict):
+                                        if value.get('status') == 'skipped':
+                                            print(f"  └─ {key}: SKIPPED - {value.get('message', 'No details')}")
+
+                                if setup_commands > 0:
+                                    print(f"  └─ Setup commands: {setup_commands} executed")
+
+                                if export_message:
+                                    if "/" in export_message:
+                                        filename = export_message.split("/")[-1].replace(".csv", "")
+                                        print(f"  └─ Exported: {filename}")
+                                    if records_processed > 0:
+                                        print(f"  └─ Records: {records_processed}")
+
+                                for key, value in step_result.items():
+                                    if (key not in ['status', 'message', 'secret_value', 'provider', 'directory_created'] and
+                                        not key.startswith('command_') and
+                                        isinstance(value, (str, int, float)) and
+                                        len(str(value)) < 100):
+                                        print(f"  └─ {key}: {value}")
+
+                            elif status == 'error':
+                                error_count += 1
+                                print(f"✗ {step_name}: ERROR")
+                                if 'error' in step_result:
+                                    print(f"  └─ {step_result['error']}")
+                            elif status == 'skipped':
+                                skipped_count += 1
+                                print(f"⊘ {step_name}: SKIPPED")
+                                if 'message' in step_result:
+                                    print(f"  └─ {step_result['message']}")
+                            else:
+                                print(f"? {step_name}: {status.upper()}")
+                        else:
+                            print(f"- {step_name}: {step_result}")
+
+                    print("-"*80)
+                    print(f"SUMMARY: {step_count} steps total")
+                    print(f"  ✓ Success: {success_count}")
+                    if error_count > 0:
+                        print(f"  ✗ Errors: {error_count}")
+                    if skipped_count > 0:
+                        print(f"  ⊘ Skipped: {skipped_count}")
+                    print("="*80)
+
+                    logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
+
                 else:
+                    print("\n" + "="*80)
+                    print("EXECUTION REPORT")
+                    print("="*80)
+                    print(f"Playbook Path: {path}")
+                    print(f"Version: {version or 'latest'}")
+                    print(f"Status: FAILED")
+                    print(f"Error: {result.get('error', 'Unknown error')}")
+                    print("="*80)
+
                     logger.error(f"Execution failed: {result.get('error')}.")
                     raise typer.Exit(code=1)
             else:
