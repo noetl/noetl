@@ -6,10 +6,10 @@ import logging
 import base64
 import requests
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import FileResponse
 from noetl.server import router as server_router
 from noetl.system import router as system_router
 from noetl.common import deep_merge, setup_logger, DateTimeEncoder
@@ -20,24 +20,14 @@ logger = setup_logger(__name__, include_location=True)
 
 cli_app = typer.Typer()
 
-
 _enable_ui = True
 
 def create_app() -> FastAPI:
-    """
-    This function is the factory for Uvicorn.
-    """
     global _enable_ui
 
     return _create_app(_enable_ui)
 
 def _create_app(enable_ui: bool = True) -> FastAPI:
-    """
-    Creates the main FastAPI application instance.
-
-    Args:
-        enable_ui: Whether to enable UI components (default: True)
-    """
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
@@ -313,8 +303,29 @@ def manage_playbook(
 
                 if result.get("status") == "success":
                     logger.info(f"Execution ID: {result.get('execution_id')}")
-
                     execution_result = result.get('result', {})
+                    logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        print("\n" + "="*60)
+                        print("RAW EXECUTION DATA (DEBUG)")
+                        print("="*60)
+                        for step_name, step_result in execution_result.items():
+                            if isinstance(step_result, dict):
+                                print(f"\n--- {step_name} ---")
+                                command_count = 0
+                                for key, value in step_result.items():
+                                    if key.startswith('command_'):
+                                        command_count += 1
+                                        if isinstance(value, list):
+                                            if value:
+                                                print(f"  {key}: {value}")
+                                            else:
+                                                print(f"  {key}: [] (DDL/DML command - no result data)")
+                                        elif isinstance(value, dict):
+                                            print(f"  {key}: {value}")
+                                if command_count == 0:
+                                    print(f"  No DuckDB commands in this step")
+                        print("="*60)
 
                     print("\n" + "="*80)
                     print("EXECUTION REPORT")
@@ -426,8 +437,6 @@ def manage_playbook(
                     if skipped_count > 0:
                         print(f"  ⊘ Skipped: {skipped_count}")
                     print("="*80)
-
-                    logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
 
                 else:
                     print("\n" + "="*80)
