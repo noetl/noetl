@@ -502,10 +502,10 @@ def get_pgdb_connection(
     user = user or os.environ.get('NOETL_USER', 'noetl')
     password = password or os.environ.get('NOETL_PASSWORD', 'noetl')
     host = host or os.environ.get('POSTGRES_HOST', 'localhost')
-    port = port or os.environ.get('POSTGRES_PORT', '5434')
+    port = port or os.environ.get('POSTGRES_PORT', '5432')
     schema = schema or os.environ.get('NOETL_SCHEMA', 'noetl')
 
-    return f"dbname={db_name} user={user} password={password} host={host} port={port} options='-c search_path={schema}'"
+    return f"dbname={db_name} user={user} password={password} host={host} port={port} hostaddr='' gssencmode=disable options='-c search_path={schema}'"
 
 #===================================
 # postgres pool
@@ -563,7 +563,14 @@ def initialize_db_pool():
     return db_pool
 
 @contextmanager
-def get_db_connection():
+def get_db_connection(optional=False):
+    """
+    Get a database connection from the pool or create a new one.
+    
+    Args:
+        optional (bool): If True, return None instead of raising an exception when the connection fails.
+                         This allows the application to continue without a database connection.
+    """
     pool = initialize_db_pool()
     if pool:
         try:
@@ -582,7 +589,11 @@ def get_db_connection():
         yield conn
     except Exception as e:
         logger.error(f"Connection failed: {e}")
-        raise
+        if optional:
+            logger.warning("Database connection is optional, continuing without it.")
+            yield None
+        else:
+            raise
     finally:
         if conn:
             conn.close()
