@@ -153,10 +153,18 @@ logger = setup_logger(__name__, include_location=True)
 #  jinja2 template rendering
 #===================================
 
-def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None, strict_keys: bool = False) -> Any:
+def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None) -> Any:
     """
     Render a template using the Jinja2 environment.
-    If strict_keys is True, check that all referenced keys exist before rendering.
+
+    Args:
+        env: The Jinja2 environment
+        template: The template to render
+        context: The context to use for rendering
+        rules: Additional rules for rendering
+
+    Returns:
+        The rendered template
     """
     if isinstance(template, str) and '{{' in template and '}}' in template:
         logger.debug(f"Render template: {template}")
@@ -193,33 +201,13 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                                 break
                         if valid_path:
                             return value
-            if strict_keys:
-                from jinja2 import meta
-                ast = env.parse(template)
-                referenced = meta.find_undeclared_variables(ast)
-                for key in referenced:
-                    parts = key.split('.')
-                    ctx = render_ctx
-                    for part in parts:
-                        if isinstance(ctx, dict) and part in ctx:
-                            ctx = ctx[part]
-                        else:
-                            return False
+
             template_obj = env.from_string(template)
             try:
                 rendered = template_obj.render(**render_ctx)
             except Exception as e:
-                if "has no attribute" in str(e) or "is undefined" in str(e):
-                    logger.warning(f"Template rendering warning: {e}, template: {template}")
-                    if template.strip().startswith('{{') and template.strip().endswith('}}'):
-                        return ""
-                else:
-                    logger.error(f"Template rendering error: {e}, template: {template}")
+                logger.error(f"Template rendering error: {e}, template: {template}")
                 return None
-
-            import re
-            if isinstance(rendered, str):
-                rendered = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', rendered)
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
                     (rendered.startswith('{') and rendered.endswith('}')):
@@ -238,9 +226,9 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     elif isinstance(template, dict):
         if not template:
             return template
-        return {k: render_template(env, v, render_ctx, rules, strict_keys) for k, v in template.items()}
+        return {k: render_template(env, v, render_ctx, rules) for k, v in template.items()}
     elif isinstance(template, list):
-        return [render_template(env, item, render_ctx, rules, strict_keys) for item in template]
+        return [render_template(env, item, render_ctx, rules) for item in template]
     return template
 
 def quote_jinja2_expressions(yaml_text):

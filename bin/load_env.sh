@@ -20,6 +20,12 @@ if [[ -f "$ENV_COMMON" ]]; then
     set +a
 fi
 
+  # Special case for tradetrend environment
+  if [ "$ENV" = "tradetrend" ]; then
+    echo "Setting up PostgreSQL port 5432 for tradetrend environment"
+    export POSTGRES_PORT=5432
+  fi
+
 if [[ -f "$ENV_FILE" ]]; then
     echo "Loading${ENV:+ $ENV} environment variables from $ENV_FILE"
     set -a

@@ -487,10 +487,16 @@ class Broker:
                     logger.debug(f"BROKER.EXECUTE_STEP: Using empty execution_task_config")
 
                 logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with execution_task_config={execution_task_config}, task_name={task_name}")
+                merged_context = {**step_context}
+                if 'with' in execution_task_config:
+                    task_with = render_template(self.agent.jinja_env, execution_task_config.get('with', {}), step_context)
+                    merged_context.update(task_with)
+                    logger.debug(f"BROKER.EXECUTE_STEP: Created merged_context by combining step_context and rendered task_with: {task_with}")
+                
                 result = execute_task(
                     execution_task_config,
                     task_name,
-                    step_context,
+                    merged_context,
                     self.agent.jinja_env,
                     self.agent.secret_manager,
                     self.write_event_log if self.has_log_event() else None
@@ -587,24 +593,35 @@ class Broker:
                 }
                 logger.debug(f"BROKER.EXECUTE_STEP: Created error result for unsupported call type: {result}")
 
+            logger.info(f"BROKER.EXECUTE_STEP: Step '{step_name}' completed with result: {result}")
+            
+            if result.get('status') == 'success':
+                if result.get('data') is None or (isinstance(result.get('data'), dict) and not result.get('data')):
+                    logger.warning(f"BROKER.EXECUTE_STEP: Step '{step_name}' returned empty data: {result.get('data')}")
+                else:
+                    logger.info(f"BROKER.EXECUTE_STEP: Step '{step_name}' returned data: {result.get('data')}")
+            else:
+                logger.warning(f"BROKER.EXECUTE_STEP: Step '{step_name}' failed with error: {result.get('error')}")
+            
             logger.debug(f"BROKER.EXECUTE_STEP: Saving step result to database")
             self.agent.save_step_result(
                 step_id, step_name, None,
                 result.get('status', 'success'), result.get('data'), result.get('error')
             )
+            logger.debug(f"BROKER.EXECUTE_STEP: Saved step result to database - status: {result.get('status', 'success')}, data: {result.get('data')}, error: {result.get('error')}")
             
             logger.debug(f"BROKER.EXECUTE_STEP: Updating context with step results")
             self.agent.update_context(step_name, result.get('data'))
-            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}")
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}, value={result.get('data')}")
             
             self.agent.update_context(step_name + '.result', result.get('data'))
-            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.result")
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.result, value={result.get('data')}")
             
             self.agent.update_context(step_name + '.status', result.get('status'))
-            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.status")
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.status, value={result.get('status')}")
             
             self.agent.update_context('result', result.get('data'))
-            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key=result")
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key=result, value={result.get('data')}")
 
             if call_type == 'secrets' and result.get('status') == 'success':
                 logger.debug(f"BROKER.EXECUTE_STEP: Processing successful secrets step")
@@ -1202,7 +1219,6 @@ class Broker:
         logger.debug(f"BROKER.RUN: Execution ID: {self.agent.execution_id}")
         logger.debug(f"BROKER.RUN: Playbook path: {self.agent.playbook_path}")
         
-        # Print all environment variables when playbook starts executing
         logger.info("=== ENVIRONMENT VARIABLES AT PLAYBOOK EXECUTION ===")
         for key, value in sorted(os.environ.items()):
             logger.info(f"ENV: {key}={value}")
@@ -1357,6 +1373,9 @@ class Broker:
                         json.dumps(step_with) if step_with else '{}'
                     )
 
+                    logger.debug(f"EXECUTION TRACKING: Step transition from {step_config.get('step')} to {next_step} with condition: {condition}")
+                    logger.debug(f"EXECUTION TRACKING: Step parameters: {step_with}")
+
                     self.agent.store_transition(params)
                     self.agent.next_step_with = step_with
                     current_step = next_step
@@ -1366,6 +1385,8 @@ class Broker:
                 if 'next_step' in step_result:
                     next_step = step_result['next_step']
                     logger.info(f"Using next_step from step result: {next_step}")
+
+                    logger.debug(f"STEP RESULT DEBUG: Full step_result object: {step_result}")
 
                     if isinstance(next_step, list) and len(next_step) > 0 and isinstance(next_step[0], dict):
                         step_name = next_step[0].get('step', 'unknown')
@@ -1377,8 +1398,12 @@ class Broker:
                     step_with = {}
                     if 'params' in step_result:
                         step_with = step_result['params']
+                        logger.debug(f"EXECUTION DEBUG: Using params from step_result: {step_with}")
                     elif 'data' in step_result and isinstance(step_result['data'], dict):
                         step_with = step_result['data']
+                        logger.debug(f"EXECUTION DEBUG: Using data from step_result as params: {step_with}")
+                    else:
+                        logger.debug(f"EXECUTION DEBUG: No params or usable data in step_result, using empty dict")
 
                     self.write_event_log(
                         'step_transition', f"{self.agent.execution_id}_transition_{step_name}",
