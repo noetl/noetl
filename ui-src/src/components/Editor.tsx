@@ -57,7 +57,7 @@ const CodeEditor: React.FC<{
         const end = textarea.selectionEnd;
         const newValue = value.substring(0, start) + '  ' + value.substring(end);
         onChange(newValue);
-        
+
         // Set cursor position after the tab
         setTimeout(() => {
           textarea.selectionStart = textarea.selectionEnd = start + 2;
@@ -105,6 +105,7 @@ const PlaybookEditor: React.FC = () => {
   // Get playbooks ID from URL parameters
   const urlParams = new URLSearchParams(window.location.search);
   const playbookId = urlParams.get('id');
+  console.log('Playbook ID from URL:', playbookId);
 
   useEffect(() => {
     if (playbookId) {

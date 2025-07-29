@@ -119,7 +119,7 @@ class APIService {
   }
 
   async getPlaybook(id: string): Promise<PlaybookData> {
-    const response = await apiClient.get(`/catalog/playbooks/${id}`);
+    const response = await apiClient.get(`/catalog/playbooks?id=${id}`);
     return response.data;
   }
 
@@ -155,12 +155,17 @@ class APIService {
     return response.data;
   }
 
+  async executePlaybookWithPayload(requestBody: any): Promise<{ execution_id: string }> {
+    const response = await apiClient.post('/agent/execute', requestBody);
+    return response.data;
+  }
+
   async stopExecution(id: string): Promise<void> {
     await apiClient.post(`/executions/${id}/stop`);
   }
 
   async getPlaybookContent(id: string): Promise<string> {
-    const response = await apiClient.get(`/catalog/playbooks/${id}/content`);
+    const response = await apiClient.get(`/catalog/playbooks/content?id=${id}`);
     return response.data.content;
   }
 

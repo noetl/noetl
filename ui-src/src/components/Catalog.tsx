@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Layout, Row, Col, Input, Card, Button, Typography, Space, Spin, Alert, Tag, message } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined } from '@ant-design/icons';
+import { Layout, Row, Col, Input, Card, Button, Typography, Space, Spin, Alert, Tag, message, Modal, Tabs, Upload, Checkbox } from 'antd';
+import { SearchOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined, FileTextOutlined, UploadOutlined } from '@ant-design/icons';
 import { apiService } from '../services/api';
 import { PlaybookData, VisualizationWidget } from '../types';
 import WidgetRenderer from './WidgetRenderer';
@@ -9,6 +9,8 @@ import {useNavigate} from "react-router-dom";
 const { Content } = Layout;
 const { Title, Text } = Typography;
 const { Search } = Input;
+const { TextArea } = Input;
+const { TabPane } = Tabs;
 
 const Catalog: React.FC = () => {
   const navigate = useNavigate();
@@ -19,6 +21,15 @@ const Catalog: React.FC = () => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Payload modal state
+  const [payloadModalVisible, setPayloadModalVisible] = useState(false);
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string | null>(null);
+  const [selectedPlaybookVersion, setSelectedPlaybookVersion] = useState<string | null>(null);
+  const [payloadJson, setPayloadJson] = useState('');
+  const [payloadFile, setPayloadFile] = useState<File | null>(null);
+  const [mergePayload, setMergePayload] = useState(false);
+  const [activePayloadTab, setActivePayloadTab] = useState('json');
 
   // Debounced search function
   const debounceSearch = useCallback(
@@ -113,6 +124,78 @@ const Catalog: React.FC = () => {
     }
   };
 
+  const handleViewPayload = (playbookId: string, version: string) => {
+    setSelectedPlaybookId(playbookId);
+    setSelectedPlaybookVersion(version);
+    setPayloadModalVisible(true);
+    // Reset form
+    setPayloadJson('');
+    setPayloadFile(null);
+    setMergePayload(false);
+    setActivePayloadTab('json');
+  };
+
+  const handleExecuteWithPayload = async () => {
+    if (!selectedPlaybookId || !selectedPlaybookVersion) {
+      message.error('No playbook selected');
+      return;
+    }
+
+    let payloadObject = null;
+
+    try {
+      if (activePayloadTab === 'json' && payloadJson.trim()) {
+        payloadObject = JSON.parse(payloadJson);
+      } else if (activePayloadTab === 'file' && payloadFile) {
+        const fileText = await payloadFile.text();
+        payloadObject = JSON.parse(fileText);
+      }
+    } catch (error) {
+      message.error('Invalid JSON format. Please check your input.');
+      return;
+    }
+
+    const requestBody: any = {
+      path: selectedPlaybookId,
+      version: selectedPlaybookVersion,
+      sync_to_postgres: true,
+      merge: mergePayload,
+    };
+
+    if (payloadObject) {
+      requestBody.input_payload = payloadObject;
+    }
+
+    try {
+      setPayloadModalVisible(false);
+      message.info(`Executing playbook "${selectedPlaybookId}"...`);
+      
+      const response = await apiService.executePlaybookWithPayload(requestBody);
+      message.success(`Execution started. ID: ${response.execution_id}`);
+      
+      // Navigate to execution page
+      navigate(`/execution/${response.execution_id}`);
+    } catch (error) {
+      console.error('Failed to execute playbook with payload:', error);
+      message.error('Failed to execute playbook. Please try again.');
+    }
+  };
+
+  const handleClosePayloadModal = () => {
+    setPayloadModalVisible(false);
+    setSelectedPlaybookId(null);
+    setSelectedPlaybookVersion(null);
+    setPayloadJson('');
+    setPayloadFile(null);
+    setMergePayload(false);
+    setActivePayloadTab('json');
+  };
+
+  const handleFileUpload = (file: File) => {
+    setPayloadFile(file);
+    return false; // Prevent auto upload
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'green';
@@ -166,54 +249,77 @@ const Catalog: React.FC = () => {
           </Row>
         )}
 
-        {/* Playbooks grid */}
-        <Row gutter={[16, 16]}>
+        {/* Playbooks list */}
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           {playbooks.map((playbook) => (
-            <Col key={playbook.id} xs={24} sm={12} md={8} lg={6}>
-              <Card
-                title={playbook.name}
-                extra={<Tag color={getStatusColor(playbook.status)}>{playbook.status}</Tag>}
-                  actions={[
+            <Card
+              key={playbook.id}
+              size="small"
+              style={{ width: '100%' }}
+            >
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <Space direction="horizontal" size="large" style={{ width: '100%' }}>
+                    <div>
+                      <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
+                        {playbook.name}
+                        <Tag color={getStatusColor(playbook.status)} style={{ marginLeft: 8 }}>
+                          {playbook.status}
+                        </Tag>
+                      </Title>
+                      <Space direction="horizontal" size="large">
+                        <Text type="secondary">Path: {playbook.id}</Text>
+                        <Text type="secondary">Version: {playbook.resource_version}</Text>
+                        <Text type="secondary">Tasks: {playbook.tasks_count}</Text>
+                        <Text type="secondary">
+                          Updated: {new Date(playbook.updated_at).toLocaleDateString()}
+                        </Text>
+                      </Space>
+                      {playbook.description && (
+                        <div style={{ marginTop: 4 }}>
+                          <Text type="secondary">{playbook.description}</Text>
+                        </div>
+                      )}
+                    </div>
+                  </Space>
+                </Col>
+                <Col>
+                  <Space>
                     <Button
-                      key="view"
                       type="text"
                       icon={<EyeOutlined />}
                       onClick={() => console.log('View playbooks', playbook.id)}
                     >
                       View
-                    </Button>,
-                <Button
-                  key="edit"
-                  type="text"
-                  icon={<EditOutlined />}
-                  onClick={() => navigate(`/editor?id=${playbook.id}&version=${playbook.resource_version}`)}
-                >
-                  Edit
-                </Button>,
+                    </Button>
                     <Button
-                      key="execute"
                       type="text"
+                      icon={<EditOutlined />}
+                      onClick={() => navigate(`/editor?id=${playbook.id}`)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="text"
+                      icon={<FileTextOutlined />}
+                      onClick={() => handleViewPayload(playbook.id, playbook.resource_version)}
+                    >
+                      Payload
+                    </Button>
+                    <Button
+                      type="primary"
                       icon={<PlayCircleOutlined />}
                       onClick={() => handleExecutePlaybook(playbook.id)}
                       disabled={playbook.status !== 'active'}
                     >
                       Execute
                     </Button>
-                  ]}
-              >
-              <Space direction="vertical" size="small">
-                <Text type="secondary">Path: {playbook.id}</Text>
-                <Text type="secondary">Version: {playbook.resource_version}</Text>
-                <Text type="secondary">{playbook.description || 'No description'}</Text>
-                <Text type="secondary">Tasks: {playbook.tasks_count}</Text>
-                <Text type="secondary">
-                  Updated: {new Date(playbook.updated_at).toLocaleDateString()}
-                </Text>
-              </Space>
-              </Card>
-            </Col>
+                  </Space>
+                </Col>
+              </Row>
+            </Card>
           ))}
-        </Row>
+        </Space>
 
         {playbooks.length === 0 && !loading && (
           <Alert
@@ -224,6 +330,62 @@ const Catalog: React.FC = () => {
           />
         )}
       </Space>
+
+      {/* Payload Modal */}
+      <Modal
+        title={`Execute Playbook with Payload: ${selectedPlaybookId || ''}`}
+        open={payloadModalVisible}
+        onCancel={handleClosePayloadModal}
+        width={700}
+        footer={[
+          <Button key="cancel" onClick={handleClosePayloadModal}>
+            Cancel
+          </Button>,
+          <Button key="execute" type="primary" onClick={handleExecuteWithPayload}>
+            Execute with Payload
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Tabs activeKey={activePayloadTab} onChange={setActivePayloadTab}>
+            <TabPane tab="JSON Input" key="json">
+              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                <Text>Enter JSON payload:</Text>
+                <TextArea
+                  rows={8}
+                  placeholder='{"key": "value", "param": "example"}'
+                  value={payloadJson}
+                  onChange={(e) => setPayloadJson(e.target.value)}
+                />
+              </Space>
+            </TabPane>
+            <TabPane tab="File Upload" key="file">
+              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                <Text>Upload JSON file:</Text>
+                <Upload
+                  beforeUpload={handleFileUpload}
+                  maxCount={1}
+                  accept=".json"
+                  fileList={payloadFile ? [{ uid: '1', name: payloadFile.name, status: 'done' }] : []}
+                  onRemove={() => setPayloadFile(null)}
+                >
+                  <Button icon={<UploadOutlined />}>Select JSON File</Button>
+                </Upload>
+                {payloadFile && (
+                  <Text type="secondary">Selected: {payloadFile.name}</Text>
+                )}
+              </Space>
+            </TabPane>
+          </Tabs>
+          
+          <Checkbox
+            checked={mergePayload}
+            onChange={(e) => setMergePayload(e.target.checked)}
+          >
+            Merge with existing payload
+          </Checkbox>
+        </Space>
+      </Modal>
     </Content>
   );
 };
