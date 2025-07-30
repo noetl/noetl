@@ -165,7 +165,7 @@ class APIService {
   }
 
   async getPlaybookContent(id: string): Promise<string> {
-    const response = await apiClient.get(`/catalog/playbooks/content?id=${id}`);
+    const response = await apiClient.get(`/catalog/playbooks/content?playbook_id=${id}`);
     return response.data.content;
   }
 
