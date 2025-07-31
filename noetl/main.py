@@ -50,6 +50,8 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         logger.info("NoETL user and database schema initialized.")
     except Exception as e:
         logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
+        logger.warning("Database connection failed. Some features requiring database access will be limited.")
+        logger.warning("Playbook registration will work in memory-only mode.")
         logger.warning("Continuing with server startup despite database initialization error.")
 
     package_dir = Path(__file__).parent
@@ -161,7 +163,7 @@ def run_agent(
                 raise typer.Exit(code=1)
         pgdb_conn = postgres or os.environ.get("NOETL_PGDB")
         if not pgdb_conn:
-            pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'demo_noetl')} user={os.environ.get('POSTGRES_USER', 'demo')} password={os.environ.get('POSTGRES_PASSWORD', 'demo')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
+            pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'demo_noetl')} user={os.environ.get('POSTGRES_USER', 'demo')} password={os.environ.get('POSTGRES_PASSWORD', 'demo')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5432')} hostaddr='' gssencmode=disable"
             logger.info(f"Using default Postgres connection string: {pgdb_conn}")
 
         if duckdb:

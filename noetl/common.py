@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone, date
 import random
 import string
 from typing import Dict, Any, Optional, List, Union
-from jinja2 import Environment, StrictUndefined, BaseLoader
 import psycopg
 from psycopg.rows import dict_row
 from contextlib import contextmanager
@@ -147,135 +146,6 @@ def setup_logger(name: str, include_location=False, use_json=False):
 
 
 logger = setup_logger(__name__, include_location=True)
-
-
-#===================================
-#  jinja2 template rendering
-#===================================
-
-def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None) -> Any:
-    """
-    Render a template using the Jinja2 environment.
-
-    Args:
-        env: The Jinja2 environment
-        template: The template to render
-        context: The context to use for rendering
-        rules: Additional rules for rendering
-
-    Returns:
-        The rendered template
-    """
-    if isinstance(template, str) and '{{' in template and '}}' in template:
-        logger.debug(f"Render template: {template}")
-        logger.debug(f"Render template context keys: {list(context.keys())}")
-        if 'city' in context:
-            logger.debug(f"Render template city value: {context['city']}, Type: {type(context['city'])}")
-        if rules:
-            logger.debug(f"Render template rules: {rules}")
-
-    render_ctx = dict(context)
-    if rules:
-        render_ctx.update(rules)
-
-    if isinstance(template, str) and '{{' in template and '}}' in template:
-        try:
-            expr = template.strip()
-            if expr == '{{}}':
-                return ""
-            if expr.startswith('{{') and expr.endswith('}}'):
-                var_path = expr[2:-2].strip()
-                if not any(op in var_path for op in ['==', '!=', '<', '>', '+', '-', '*', '/', '|', ' if ', ' else ']):
-                    if '.' not in var_path and var_path.strip() in render_ctx:
-                        return render_ctx.get(var_path.strip())
-                    elif '.' in var_path:
-                        parts = var_path.split('.')
-                        value = render_ctx
-                        valid_path = True
-                        for part in parts:
-                            part = part.strip()
-                            if isinstance(value, dict) and part in value:
-                                value = value.get(part)
-                            else:
-                                valid_path = False
-                                break
-                        if valid_path:
-                            return value
-
-            template_obj = env.from_string(template)
-            try:
-                rendered = template_obj.render(**render_ctx)
-            except Exception as e:
-                logger.error(f"Template rendering error: {e}, template: {template}")
-                return None
-
-            if (rendered.startswith('[') and rendered.endswith(']')) or \
-                    (rendered.startswith('{') and rendered.endswith('}')):
-                try:
-                    return json.loads(rendered)
-                except json.JSONDecodeError:
-                    pass
-
-            if rendered.strip() == "":
-                return ""
-
-            return rendered
-        except Exception as e:
-            logger.error(f"Template rendering error: {e}, template: {template}")
-            return ""
-    elif isinstance(template, dict):
-        if not template:
-            return template
-        return {k: render_template(env, v, render_ctx, rules) for k, v in template.items()}
-    elif isinstance(template, list):
-        return [render_template(env, item, render_ctx, rules) for item in template]
-    return template
-
-def quote_jinja2_expressions(yaml_text):
-    """
-    Jinja2 expressions to double quotes.
-    """
-    jinja_expr_pattern = re.compile(r'''
-        ^(\s*[^:\n]+:\s*)         # YAML key and colon with optional indent
-        (?!["'])                  # Not already quoted
-        (.*{{.*}}.*?)             # Contains Jinja2 template
-        (?<!["'])\s*$             # Not ending with a quote
-    ''', re.VERBOSE)
-
-    def replacer(match):
-        key_part = match.group(1)
-        value_part = match.group(2).strip()
-        return f'{key_part}"{value_part}"'
-
-    fixed_lines = []
-    for line in yaml_text.splitlines():
-        fixed_line = jinja_expr_pattern.sub(replacer, line)
-        fixed_lines.append(fixed_line)
-    return "\n".join(fixed_lines)
-
-
-def render_template_bool(jinja_env, template_str, context):
-    try:
-        from jinja2 import meta
-        ast = jinja_env.parse(template_str)
-        referenced = meta.find_undeclared_variables(ast)
-        for key in referenced:
-            parts = key.split('.')
-            ctx = context
-            valid_path = True
-            for part in parts:
-                if isinstance(ctx, dict) and part in ctx:
-                    ctx = ctx[part]
-                else:
-                    valid_path = False
-                    break
-            if not valid_path:
-                return False
-
-        return render_template(jinja_env, template_str, context)
-    except Exception as e:
-        logger.debug(f"Error in render_template_bool: {str(e)}")
-        return False
 
 #===================================
 #  time calendar
@@ -502,53 +372,14 @@ def get_pgdb_connection(
     user = user or os.environ.get('NOETL_USER', 'noetl')
     password = password or os.environ.get('NOETL_PASSWORD', 'noetl')
     host = host or os.environ.get('POSTGRES_HOST', 'localhost')
-    port = port or os.environ.get('POSTGRES_PORT', '5434')
+    port = port or os.environ.get('POSTGRES_PORT', '5432')
     schema = schema or os.environ.get('NOETL_SCHEMA', 'noetl')
 
-    return f"dbname={db_name} user={user} password={password} host={host} port={port} options='-c search_path={schema}'"
+    return f"dbname={db_name} user={user} password={password} host={host} port={port} hostaddr='' gssencmode=disable options='-c search_path={schema}'"
 
 #===================================
 # postgres pool
 #===================================
-def safe_render_template_bool(jinja_env, template_str, context, default=False):
-    """
-    Safely renders a template string as a boolean with a default value for missing paths.
-
-    Args:
-        jinja_env: Jinja2 environment
-        template_str: Template string to render
-        context: Context dictionary for rendering
-        default: Default value to return if path doesn't exist (default: False)
-
-    Returns:
-        Rendered boolean value or default if path doesn't exist
-    """
-    try:
-        from jinja2 import meta
-        ast = jinja_env.parse(template_str)
-        referenced = meta.find_undeclared_variables(ast)
-
-        for key in referenced:
-            parts = key.split('.')
-            ctx = context
-            for part in parts:
-                if isinstance(ctx, dict) and part in ctx:
-                    ctx = ctx[part]
-                else:
-                    logger.debug(f"Path '{key}' not found in context, returning default {default}")
-                    return default
-
-        result = render_template(jinja_env, template_str, context)
-        if isinstance(result, bool):
-            return result
-        elif isinstance(result, str):
-            result = result.strip().lower()
-            return result in ("true", "1", "yes", "on", "y", "t")
-        else:
-            return bool(result)
-    except Exception as e:
-        logger.debug(f"Error in safe_render_template_bool: {str(e)}")
-        return default
 db_pool = None
 
 def initialize_db_pool():
@@ -563,7 +394,14 @@ def initialize_db_pool():
     return db_pool
 
 @contextmanager
-def get_db_connection():
+def get_db_connection(optional=False):
+    """
+    Get a database connection from the pool or create a new one.
+    
+    Args:
+        optional (bool): If True, return None instead of raising an exception when the connection fails.
+                         This allows the application to continue without a database connection.
+    """
     pool = initialize_db_pool()
     if pool:
         try:
@@ -582,7 +420,11 @@ def get_db_connection():
         yield conn
     except Exception as e:
         logger.error(f"Connection failed: {e}")
-        raise
+        if optional:
+            logger.warning("Database connection is optional, continuing without it.")
+            yield None
+        else:
+            raise
     finally:
         if conn:
             conn.close()
