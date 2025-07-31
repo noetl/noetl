@@ -5,7 +5,7 @@ import uuid
 import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
-from noetl.common import render_template
+from noetl.render import render_template
 from noetl.secret import SecretManager
 from noetl.sqlcmd import *
 from noetl.common import setup_logger
@@ -82,7 +82,6 @@ class Worker:
         self.parse_playbook()
         logger.debug("=== WORKER.__INIT__: Function exit ===")
         
-        # Print all environment variables when worker is initialized
         logger.info("=== ENVIRONMENT VARIABLES ===")
         for key, value in sorted(os.environ.items()):
             logger.info(f"ENV: {key}={value}")
