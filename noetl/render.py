@@ -1,10 +1,25 @@
 import re
 import json
 import logging
+import base64
 from typing import Any, Dict, List, Union
 from jinja2 import Environment, meta, StrictUndefined, BaseLoader
 
 logger = logging.getLogger(__name__)
+
+def add_b64encode_filter(env: Environment) -> Environment:
+    """
+    Add the b64encode filter to a Jinja2 environment.
+    
+    Args:
+        env: The Jinja2 environment
+        
+    Returns:
+        The Jinja2 environment with the b64encode filter added
+    """
+    if 'b64encode' not in env.filters:
+        env.filters['b64encode'] = lambda s: base64.b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else base64.b64encode(str(s).encode('utf-8')).decode('utf-8')
+    return env
 
 
 def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None) -> Any:
@@ -20,6 +35,8 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     Returns:
         The rendered template
     """
+    # Ensure the environment has the b64encode filter
+    env = add_b64encode_filter(env)
     if isinstance(template, str) and '{{' in template and '}}' in template:
         logger.debug(f"Render template: {template}")
         logger.debug(f"Render template context keys: {list(context.keys())}")
@@ -136,6 +153,8 @@ def render_sql_template(env: Environment, sql_template: str, context: Dict) -> s
     Returns:
         Rendered SQL string with comments preserved
     """
+    # Ensure the environment has the b64encode filter
+    env = add_b64encode_filter(env)
     if not sql_template or not isinstance(sql_template, str):
         return sql_template
 

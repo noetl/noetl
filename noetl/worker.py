@@ -30,6 +30,7 @@ class Worker:
         logger.debug("WORKER.__INIT__: Setting up Jinja environment")
         self.jinja_env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self.jinja_env.filters['to_json'] = lambda obj: json.dumps(obj)
+        self.jinja_env.filters['b64encode'] = lambda s: __import__('base64').b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else __import__('base64').b64encode(str(s).encode('utf-8')).decode('utf-8')
         self.jinja_env.globals['now'] = lambda: datetime.datetime.now().isoformat()
         self.jinja_env.globals['env'] = os.environ
         self.next_step_with = None
