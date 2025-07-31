@@ -5,7 +5,7 @@ import uuid
 import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
-from noetl.common import render_template
+from noetl.render import render_template
 from noetl.secret import SecretManager
 from noetl.sqlcmd import *
 from noetl.common import setup_logger
@@ -30,6 +30,7 @@ class Worker:
         logger.debug("WORKER.__INIT__: Setting up Jinja environment")
         self.jinja_env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self.jinja_env.filters['to_json'] = lambda obj: json.dumps(obj)
+        self.jinja_env.filters['b64encode'] = lambda s: __import__('base64').b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else __import__('base64').b64encode(str(s).encode('utf-8')).decode('utf-8')
         self.jinja_env.globals['now'] = lambda: datetime.datetime.now().isoformat()
         self.jinja_env.globals['env'] = os.environ
         self.next_step_with = None
@@ -82,7 +83,6 @@ class Worker:
         self.parse_playbook()
         logger.debug("=== WORKER.__INIT__: Function exit ===")
         
-        # Print all environment variables when worker is initialized
         logger.info("=== ENVIRONMENT VARIABLES ===")
         for key, value in sorted(os.environ.items()):
             logger.info(f"ENV: {key}={value}")

@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import datetime
 import httpx
@@ -6,8 +7,8 @@ import psycopg
 import json
 from typing import Dict, Any
 from jinja2 import Environment
-from noetl.common import render_template, setup_logger
-from noetl.common import DateTimeEncoder
+from noetl.common import DateTimeEncoder, setup_logger
+from noetl.render import render_template
 
 try:
     import duckdb
@@ -344,6 +345,46 @@ def execute_python_task(task_config: Dict, context: Dict, jinja_env: Environment
         logger.debug("=== ACTION.EXECUTE_PYTHON_TASK: Function exit (error) ===")
         return result
 
+
+def sql_split(sql_text):
+    commands = []
+    current_command = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+
+    while i < len(sql_text):
+        char = sql_text[i]
+
+        if char == "'" and not in_double_quote:
+            if i > 0 and sql_text[i - 1] == '\\':
+                pass
+            else:
+                in_single_quote = not in_single_quote
+        elif char == '"' and not in_single_quote:
+            if i > 0 and sql_text[i - 1] == '\\':
+                pass
+            else:
+                in_double_quote = not in_double_quote
+        elif char == ';' and not in_single_quote and not in_double_quote:
+            cmd = ''.join(current_command).strip()
+            if cmd:
+                commands.append(cmd)
+            current_command = []
+            i += 1
+            continue
+
+        current_command.append(char)
+        i += 1
+
+    cmd = ''.join(current_command).strip()
+    if cmd:
+        commands.append(cmd)
+
+    return commands
+
+
+
 def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
     """
     Execute a DuckDB task.
@@ -390,6 +431,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
 
     try:
         commands = task_config.get('command', task_config.get('commands', []))
+
         if isinstance(commands, str):
             commands_rendered = render_template(jinja_env, commands, {**context, **task_with})
             cmd_lines = []
@@ -398,7 +440,8 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                 if line and not line.startswith('--'):
                     cmd_lines.append(line)
             commands_text = ' '.join(cmd_lines)
-            commands = [cmd.strip() for cmd in commands_text.split(';') if cmd.strip()]
+            commands = sql_split(commands_text)
+            # commands = [cmd.strip() for cmd in commands_text.split(';') if cmd.strip()]
 
         bucket = task_with.get('bucket', context.get('bucket', ''))
         blob_path = task_with.get('blob', '')
@@ -540,13 +583,30 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                 if isinstance(cmd, str) and ('{{' in cmd or '}}' in cmd):
                     cmd = render_template(jinja_env, cmd, context)
                     if "CREATE SECRET" in cmd or "CREATE OR REPLACE CHAIN" in cmd:
-                        import re
                         cmd = re.sub(r"{{[^}]*\|\s*default\(['\"]([^'\"]*)['\"].*?}}", r"\1", cmd)
                         cmd = re.sub(r"default\('([^']*)'\)", r'default("\1")', cmd)
                         cmd = re.sub(r"(HOST|DATABASE|USER|PASSWORD|ENDPOINT|REGION|URL_STYLE|KEY_ID|SECRET_KEY) '([^']*)'", r'\1 "\2"', cmd)
 
                 logger.info(f"Executing DuckDB command: {cmd}")
 
+                # very special case fordecimal separator in CAST operations
+                # users need to avoid use that and istead duckdb support, and we support rendering like
+                # , 'max_delta_t_d': 'NUMERIC'
+                # , 'max_delta_aggressor': 'NUMERIC'
+                # }
+                # , header = { % if header %}true
+                # { % else %}false
+                # { % endif %}
+                # , delim = '{{ delim }}'
+                # , decimal_separator = '{{ decimal_separator }}'
+                decimal_separator = task_with.get('decimal_separator')
+                if decimal_separator and decimal_separator != '.':
+                    cast_pattern = r'CAST\s*\(\s*([^\s]+)\s+AS\s+NUMERIC[^)]*\)'
+                    def replace_cast(match):
+                        column = match.group(1)
+                        return f"CAST(REPLACE({column}, '{decimal_separator}', '.') AS NUMERIC)"
+                    cmd = re.sub(cast_pattern, replace_cast, cmd, flags=re.IGNORECASE)
+                
                 if cmd.strip().upper().startswith("ATTACH"):
                     try:
                         attach_parts = cmd.strip().split(" AS ")
@@ -561,6 +621,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                                 continue
                             except Exception:
                                 logger.info(f"Attaching database as '{db_alias}'.")
+                                
                         result = duckdb_con.execute(cmd).fetchall()
                         results[f"command_{i}"] = {"status": "success", "message": f"Database attached"}
                     except Exception as attach_error:
@@ -572,7 +633,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                         if len(detach_parts) >= 2:
                             detach_alias = detach_parts[1].rstrip(';')
                             logger.info(f"Detaching database '{detach_alias}'.")
-
+                            
                         result = duckdb_con.execute(cmd).fetchall()
                         results[f"command_{i}"] = {"status": "success", "message": f"Database detached"}
                     except Exception as detach_error:

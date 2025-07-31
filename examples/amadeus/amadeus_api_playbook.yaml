@@ -4,11 +4,15 @@
 # 2. Convert natural language queries to Amadeus API calls using OpenAI REST API
 # 3. Execute Amadeus API calls using REST endpoints
 # 4. Convert Amadeus API responses to natural language using OpenAI REST API
-# 5. Store all events and results in Postgres tables
+# 5. Store all events and results in Postgres tables with optional base64 encoding for markdown text
 #
 # Usage:
 # noetl playbooks --register playbooks/amadeus_api_playbook.yaml --port 8080
 # noetl playbooks --execute --path "amadeus/amadeus_api" --payload '{"query": "I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult"}'
+#
+# Note: This playbook includes options to store markdown text as-is or convert it to base64 encoding.
+# To change this behavior, modify the 'encode_as_base64' parameter in the insert_final_result_task
+# and store_openai_response_event_task. Set to 'true' to encode as base64, 'false' to keep as text.
 
 apiVersion: noetl.io/v1
 kind: Playbook
@@ -377,6 +381,9 @@ workbook:
 
   - name: store_openai_response_event_task
     type: postgres
+    with:
+      # Set to true to encode response as base64, false to keep as text
+      encode_as_base64: true
     command: |
       INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)
       VALUES (
@@ -385,7 +392,11 @@ workbook:
         'openai',
         '{{ {"amadeus_response_base64": execute_amadeus_query.data | tojson | b64encode, "model": "gpt-4o", "system_prompt": "amadeus_response_to_natural_language"} | tojson }}',
         {% if translate_amadeus_response.data is defined %}
-          '{{ {"response_base64": translate_amadeus_response.data | tojson | b64encode} | tojson }}'
+          {% if encode_as_base64 %}
+            '{{ {"response_base64": translate_amadeus_response.data | tojson | b64encode, "is_base64_encoded": true} | tojson }}'
+          {% else %}
+            '{{ {"response": translate_amadeus_response.data, "is_base64_encoded": false} | tojson }}'
+          {% endif %}
         {% else %}
           NULL
         {% endif %},
@@ -396,10 +407,17 @@ workbook:
 
   - name: insert_final_result_task
     type: postgres
+    with:
+      # Set to true to encode markdown text as base64, false to keep as text
+      encode_as_base64: true
     command: |
       INSERT INTO api_results (execution_id, source, result)
       VALUES (
         '{{ job.uuid }}',
         'amadeus_api',
-        '{{ {"query": workload.query, "natural_language_result": result, "execution_id": job.uuid} | tojson }}'
+        {% if encode_as_base64 %}
+          '{{ {"query": workload.query, "natural_language_result": result | b64encode, "execution_id": job.uuid, "is_base64_encoded": true} | tojson }}'
+        {% else %}
+          '{{ {"query": workload.query, "natural_language_result": result, "execution_id": job.uuid, "is_base64_encoded": false} | tojson }}'
+        {% endif %}
       );

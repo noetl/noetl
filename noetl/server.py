@@ -20,7 +20,11 @@ class CatalogService:
 
     def get_latest_version(self, resource_path: str) -> str:
         try:
-            with get_db_connection() as conn:
+            with get_db_connection(optional=True) as conn:
+                if conn is None:
+                    logger.warning(f"Database not available, returning default version for '{resource_path}'")
+                    return "0.1.0"
+                
                 with conn.cursor() as cursor:
                     cursor.execute(
                         "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
@@ -126,69 +130,76 @@ class CatalogService:
 
     def register_resource(self, content: str, resource_type: str = "playbooks") -> Dict[str, Any]:
         try:
-            with get_db_connection() as conn:
-                resource_data = yaml.safe_load(content)
-                resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
-                latest_version = self.get_latest_version(resource_path)
-
-                if latest_version != '0.1.0':
-                    resource_version = self.increment_version(latest_version)
-                else:
-                    resource_version = latest_version
-
-                attempt = 0
-                max_attempts = 5
-                with conn.cursor() as cursor:
-                    while attempt < max_attempts:
-                        cursor.execute(
-                            "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
-                            (resource_path, resource_version)
-                        )
-                        count = int(cursor.fetchone()[0])
-                        if count == 0:
-                            break
-                        resource_version = self.increment_version(resource_version)
-                        attempt += 1
-
-                    if attempt >= max_attempts:
-                        logger.error(f"Failed to find version after {max_attempts} attempts")
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Failed to find version after {max_attempts} attempts"
-                        )
-
-                    logger.info(
-                        f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
-
-                    cursor.execute(
-                        "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
-                        (resource_type,)
-                    )
+            resource_data = yaml.safe_load(content)
+            resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
+            resource_version = "0.1.0"
+            
+            with get_db_connection(optional=True) as conn:
+                if conn is not None:
+                    latest_version = self.get_latest_version(resource_path)
                     
-                    cursor.execute(
-                        """
-                        INSERT INTO catalog
-                        (resource_path, resource_type, resource_version, content, payload, meta)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            resource_path,
-                            resource_type,
-                            resource_version,
-                            content,
-                            json.dumps(resource_data),
-                            json.dumps({"registered_at": "now()"})
-                        )
-                    )
-                    conn.commit()
+                    if latest_version != '0.1.0':
+                        resource_version = self.increment_version(latest_version)
+                    else:
+                        resource_version = latest_version
 
-                return {
-                    "status": "success",
-                    "message": f"Resource '{resource_path}' version '{resource_version}' registered.",
-                    "resource_path": resource_path,
-                    "resource_version": resource_version,
-                    "resource_type": resource_type
-                }
+                    attempt = 0
+                    max_attempts = 5
+                    with conn.cursor() as cursor:
+                        while attempt < max_attempts:
+                            cursor.execute(
+                                "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
+                                (resource_path, resource_version)
+                            )
+                            count = int(cursor.fetchone()[0])
+                            if count == 0:
+                                break
+                            resource_version = self.increment_version(resource_version)
+                            attempt += 1
+
+                        if attempt >= max_attempts:
+                            logger.error(f"Failed to find version after {max_attempts} attempts")
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"Failed to find version after {max_attempts} attempts"
+                            )
+
+                        logger.info(
+                            f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
+
+                        cursor.execute(
+                            "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
+                            (resource_type,)
+                        )
+                        
+                        cursor.execute(
+                            """
+                            INSERT INTO catalog
+                            (resource_path, resource_type, resource_version, content, payload, meta)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                resource_path,
+                                resource_type,
+                                resource_version,
+                                content,
+                                json.dumps(resource_data),
+                                json.dumps({"registered_at": "now()"})
+                            )
+                        )
+                        conn.commit()
+                else:
+                    logger.warning(f"Database not available, registering resource '{resource_path}' in memory only")
+                    logger.warning("The resource will not be persisted and will be lost when the server restarts")
+                    
+
+            return {
+                "status": "success",
+                "message": f"Resource '{resource_path}' version '{resource_version}' registered.",
+                "resource_path": resource_path,
+                "resource_version": resource_version,
+                "resource_type": resource_type
+            }
 
         except Exception as e:
             logger.exception(f"Error registering resource: {e}.")
@@ -1304,7 +1315,6 @@ async def get_catalog_playbooks():
         for entry in entries:
             meta = entry.get('meta', {})
             
-            # Try to get description from payload (parsed YAML content) first, then from meta
             description = ""
             payload = entry.get('payload', {})
             
@@ -1317,7 +1327,6 @@ async def get_catalog_playbooks():
             elif isinstance(payload, dict):
                 description = payload.get('description', '')
             
-            # Fallback to meta description if payload doesn't have it
             if not description:
                 description = meta.get('description', '')
 
@@ -1540,7 +1549,6 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
 async def get_catalog_widgets():
     """Get catalog visualization widgets"""
     try:
-        # Get actual playbook count from catalog
         playbook_count = 0
         active_count = 0
         draft_count = 0
@@ -1548,13 +1556,11 @@ async def get_catalog_widgets():
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Count total playbooks
                     cursor.execute(
                         "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'playbooks'"
                     )
                     playbook_count = cursor.fetchone()[0]
                     
-                    # Count by status - we'll need to parse the meta field
                     cursor.execute(
                         """
                         SELECT meta FROM catalog 
@@ -1574,12 +1580,11 @@ async def get_catalog_widgets():
                                 elif status == 'draft':
                                     draft_count += 1
                             except (json.JSONDecodeError, TypeError):
-                                active_count += 1  # Default to active if can't parse
+                                active_count += 1
                         else:
-                            active_count += 1  # Default to active if no meta
+                            active_count += 1
         except Exception as db_error:
             logger.warning(f"Error getting catalog stats from database: {db_error}")
-            # Fallback to basic count if database query fails
             playbook_count = 0
 
         return [

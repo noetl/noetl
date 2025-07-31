@@ -6,7 +6,8 @@ import tempfile
 import httpx
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
-from noetl.common import render_template, setup_logger, deep_merge, get_bool, render_template_bool
+from noetl.render import render_template
+from noetl.common import setup_logger, deep_merge, get_bool
 from noetl.worker import Worker
 logger = setup_logger(__name__, include_location=True)
 

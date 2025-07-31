@@ -48,17 +48,17 @@ class DatabaseSchema:
                 postgres_password = os.environ.get('POSTGRES_PASSWORD')
                 db_name = os.environ.get('POSTGRES_DB', 'postgres')
                 host = os.environ.get('POSTGRES_HOST', 'localhost')
-                port = os.environ.get('POSTGRES_PORT', '5434')
-                self.admin_conn = f"dbname={db_name} user={postgres_user} password={postgres_password} host={host} port={port}"
+                port = os.environ.get('POSTGRES_PORT', '5432')
+                self.admin_conn = f"dbname={db_name} user={postgres_user} password={postgres_password} host={host} port={port} hostaddr='' gssencmode=disable"
                 logger.info(f"Using admin connection: dbname={db_name} user={postgres_user} host={host} port={port}")
 
 
             if self.pgdb is None:
                 db_name = os.environ.get('POSTGRES_DB', 'postgres')
                 host = os.environ.get('POSTGRES_HOST', 'localhost')
-                port = os.environ.get('POSTGRES_PORT', '5434')
+                port = os.environ.get('POSTGRES_PORT', '5432')
 
-                self.pgdb = f"dbname={db_name} user={self.noetl_user} password={self.noetl_password} host={host} port={port}"
+                self.pgdb = f"dbname={db_name} user={self.noetl_user} password={self.noetl_password} host={host} port={port} hostaddr='' gssencmode=disable"
                 logger.info(f"NoETL connection: dbname={db_name} user={self.noetl_user} host={host} port={port}")
 
             if self.auto_setup:
@@ -394,7 +394,7 @@ class DatabaseSchema:
             return False
 
     def drop_noetl_schema(self):
-        """Drop the entire noetl schema and all its objects (use with caution)"""
+        """Drop the entire noetl schema and all its objects"""
         try:
             logger.warning(f"Dropping schema '{self.noetl_schema}' and all its objects.")
             self.admin_connection = psycopg.connect(self.admin_conn)
