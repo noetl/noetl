@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import datetime
 import httpx
@@ -582,13 +583,30 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                 if isinstance(cmd, str) and ('{{' in cmd or '}}' in cmd):
                     cmd = render_template(jinja_env, cmd, context)
                     if "CREATE SECRET" in cmd or "CREATE OR REPLACE CHAIN" in cmd:
-                        import re
                         cmd = re.sub(r"{{[^}]*\|\s*default\(['\"]([^'\"]*)['\"].*?}}", r"\1", cmd)
                         cmd = re.sub(r"default\('([^']*)'\)", r'default("\1")', cmd)
                         cmd = re.sub(r"(HOST|DATABASE|USER|PASSWORD|ENDPOINT|REGION|URL_STYLE|KEY_ID|SECRET_KEY) '([^']*)'", r'\1 "\2"', cmd)
 
                 logger.info(f"Executing DuckDB command: {cmd}")
 
+                # very special case fordecimal separator in CAST operations
+                # users need to avoid use that and istead duckdb support, and we support rendering like
+                # , 'max_delta_t_d': 'NUMERIC'
+                # , 'max_delta_aggressor': 'NUMERIC'
+                # }
+                # , header = { % if header %}true
+                # { % else %}false
+                # { % endif %}
+                # , delim = '{{ delim }}'
+                # , decimal_separator = '{{ decimal_separator }}'
+                decimal_separator = task_with.get('decimal_separator')
+                if decimal_separator and decimal_separator != '.':
+                    cast_pattern = r'CAST\s*\(\s*([^\s]+)\s+AS\s+NUMERIC[^)]*\)'
+                    def replace_cast(match):
+                        column = match.group(1)
+                        return f"CAST(REPLACE({column}, '{decimal_separator}', '.') AS NUMERIC)"
+                    cmd = re.sub(cast_pattern, replace_cast, cmd, flags=re.IGNORECASE)
+                
                 if cmd.strip().upper().startswith("ATTACH"):
                     try:
                         attach_parts = cmd.strip().split(" AS ")
@@ -603,6 +621,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                                 continue
                             except Exception:
                                 logger.info(f"Attaching database as '{db_alias}'.")
+                                
                         result = duckdb_con.execute(cmd).fetchall()
                         results[f"command_{i}"] = {"status": "success", "message": f"Database attached"}
                     except Exception as attach_error:
@@ -614,7 +633,7 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                         if len(detach_parts) >= 2:
                             detach_alias = detach_parts[1].rstrip(';')
                             logger.info(f"Detaching database '{detach_alias}'.")
-
+                            
                         result = duckdb_con.execute(cmd).fetchall()
                         results[f"command_{i}"] = {"status": "success", "message": f"Database detached"}
                     except Exception as detach_error:
