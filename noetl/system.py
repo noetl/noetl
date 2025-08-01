@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
-from noetl.common import setup_logger
+from noetl.logger import setup_logger
 
 logger = setup_logger(__name__)
 

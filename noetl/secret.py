@@ -8,7 +8,7 @@ import boto3
 from botocore.exceptions import ClientError
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
-from noetl.common import setup_logger
+from noetl.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

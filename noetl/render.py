@@ -2,10 +2,13 @@ import re
 import json
 import logging
 import base64
-from typing import Any, Dict, List, Union
+import traceback
+from typing import Any, Dict, List, Union, Optional
 from jinja2 import Environment, meta, StrictUndefined, BaseLoader
+from noetl.logger import log_error
 
 logger = logging.getLogger(__name__)
+
 
 def add_b64encode_filter(env: Environment) -> Environment:
     """
@@ -81,10 +84,64 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
             template_obj = env.from_string(template)
             try:
-                rendered = template_obj.render(**render_ctx)
+                custom_context = render_ctx.copy()
+
+                class TaskResultProxy:
+                    def __init__(self, data):
+                        self._data = data
+
+                    def __getattr__(self, name):
+                        if name == 'data' and name not in self._data:
+                            return self
+                        elif name == 'result' and name not in self._data:
+                            return self
+                        elif name == 'is_defined':
+                            return True
+                        elif name.startswith('command_') and name in self._data:
+                            return self._data[name]
+                        elif name in self._data:
+                            return self._data[name]
+                        raise AttributeError(f"'{type(self._data).__name__}' object has no attribute '{name}'")
+
+                for key, value in render_ctx.items():
+                    if isinstance(value, dict) and (
+                        ('data' not in value and any(k.startswith('command_') for k in value.keys())) or
+                        ('result' not in value and any(k.startswith('command_') for k in value.keys()))
+                    ):
+                        custom_context[key] = TaskResultProxy(value)
+
+                if 'result' in render_ctx and isinstance(render_ctx['result'], dict):
+                    custom_context['result'] = TaskResultProxy(render_ctx['result'])
+
+                rendered = template_obj.render(**custom_context)
                 logger.debug(f"render_template: Successfully rendered: {rendered}")
             except Exception as e:
-                logger.error(f"Template rendering error: {e}, template: {template}")
+                error_msg = f"Template rendering error: {e}, template: {template}"
+                logger.error(error_msg)
+                
+                log_error(
+                    error=e,
+                    error_type="template_rendering",
+                    template_string=template,
+                    context_data=render_ctx,
+                    input_data={"template": template}
+                )
+                
+                if "'dict object' has no attribute 'data'" in str(e) or "'dict object' has no attribute 'result'" in str(e):
+                    try:
+                        var_path_match = re.search(r'{{(.*?)}}', template)
+                        if var_path_match:
+                            var_path = var_path_match.group(1).strip()
+                            fixed_path = var_path.replace('.data.', '.').replace('.result.', '.')
+                            fixed_template = template.replace(var_path, fixed_path)
+                            logger.info(f"Attempting fallback rendering with modified path: {fixed_template}")
+                            fixed_obj = env.from_string(fixed_template)
+                            rendered = fixed_obj.render(**render_ctx)
+                            logger.info(f"Fallback rendering succeeded: {rendered}")
+                            return rendered
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback rendering also failed: {fallback_error}")
+
                 return template
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
@@ -99,7 +156,17 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
             return rendered
         except Exception as e:
-            logger.error(f"Template rendering error: {e}, template: {template}")
+            error_msg = f"Template rendering error: {e}, template: {template}"
+            logger.error(error_msg)
+            
+            log_error(
+                error=e,
+                error_type="template_rendering",
+                template_string=template,
+                context_data=render_ctx,
+                input_data={"template": template}
+            )
+            
             return template
     elif isinstance(template, dict):
         if not template:
@@ -179,8 +246,18 @@ def render_sql_template(env: Environment, sql_template: str, context: Dict) -> s
         return final_sql
 
     except Exception as e:
-        logger.error(f"Error rendering SQL template: {e}")
+        error_msg = f"Error rendering SQL template: {e}"
+        logger.error(error_msg)
         logger.debug(f"Failed template: {sql_template[:200]}...")
+        
+        log_error(
+            error=e,
+            error_type="sql_template_rendering",
+            template_string=sql_template,
+            context_data=context,
+            input_data={"sql_template": sql_template}
+        )
+        
         raise
 
 

@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from noetl.server import router as server_router
 from noetl.system import router as system_router
-from noetl.common import deep_merge, setup_logger, DateTimeEncoder
+from noetl.common import deep_merge, DateTimeEncoder
+from noetl.logger import setup_logger
 from noetl.worker import Worker
 from noetl.schema import DatabaseSchema
 

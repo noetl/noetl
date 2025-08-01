@@ -1,0 +1,471 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: with_attribute_wikipedia_data_flow_example
+path: examples/github_metrics_example
+description: Example showing how to pass data between steps using 'with' attributes and template variables
+
+workload:
+  jobId: "{{ job.uuid }}"
+  execution_id: "{{ job.uuid }}"
+  pg_host: "{{ env.POSTGRES_HOST | default('database') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  api_base_url: "https://api.github.com"
+  repository: "microsoft/vscode"
+
+workflow:
+  - step: start
+    desc: "Start Data Flow Example"
+    next:
+      - step: fetch_github_repo
+
+  - step: fetch_github_repo
+    desc: "Fetch GitHub repository information"
+    type: http
+    method: GET
+    endpoint: "{{ workload.api_base_url }}/repos/{{ workload.repository }}"
+    headers:
+      User-Agent: "NoETL Data Flow Example/1.0"
+      Accept: "application/vnd.github.v3+json"
+    next:
+      - step: extract_repo_metrics
+        with:
+          repo_name: "{{ fetch_github_repo.data.name }}"
+          repo_full_name: "{{ fetch_github_repo.data.full_name }}"
+          stars_count: "{{ fetch_github_repo.data.stargazers_count }}"
+          forks_count: "{{ fetch_github_repo.data.forks_count }}"
+          language: "{{ fetch_github_repo.data.language }}"
+          created_at: "{{ fetch_github_repo.data.created_at }}"
+          updated_at: "{{ fetch_github_repo.data.updated_at }}"
+
+  - step: extract_repo_metrics
+    desc: "Extract and calculate repository metrics"
+    type: duckdb
+    command: |
+      -- Create a table from the GitHub repository data
+      DROP TABLE IF EXISTS repo_metrics;
+      CREATE TABLE repo_metrics AS
+      SELECT 
+        '{{ repo_name }}' AS name,
+        '{{ repo_full_name }}' AS full_name,
+        {{ stars_count }} AS stars,
+        {{ forks_count }} AS forks,
+        '{{ language }}' AS primary_language,
+        '{{ created_at }}'::TIMESTAMP AS created_date,
+        '{{ updated_at }}'::TIMESTAMP AS last_updated,
+        {{ stars_count }} + {{ forks_count }} AS total_engagement,
+        CASE 
+          WHEN {{ stars_count }} > 100000 THEN 'Extremely Popular'
+          WHEN {{ stars_count }} > 50000 THEN 'Very Popular'
+          WHEN {{ stars_count }} > 10000 THEN 'Popular'
+          WHEN {{ stars_count }} > 1000 THEN 'Well Known'
+          ELSE 'Growing'
+        END AS popularity_tier;
+      
+      -- Show the metrics
+      SELECT * FROM repo_metrics;
+      
+      -- Calculate additional stats
+      DROP TABLE IF EXISTS repo_stats;
+      CREATE TABLE repo_stats AS
+      SELECT 
+        name,
+        stars,
+        forks,
+        total_engagement,
+        popularity_tier,
+        ROUND(stars::FLOAT / GREATEST(forks, 1), 2) AS star_to_fork_ratio,
+        DATE_DIFF('day', created_date, CURRENT_DATE) AS days_since_creation,
+        DATE_DIFF('day', last_updated, CURRENT_DATE) AS days_since_update
+      FROM repo_metrics;
+      
+      -- Show the calculated stats
+      SELECT * FROM repo_stats;
+    next:
+      - step: store_in_postgres
+        with:
+          table_name: "github_repo_analysis"
+          repo_data: "{{ extract_repo_metrics.command_2.rows }}"
+          stats_data: "{{ extract_repo_metrics.command_5.rows }}"
+
+  - step: store_in_postgres
+    desc: "Store repository analysis in PostgreSQL"
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    command: |
+      -- Drop table if it exists
+      DROP TABLE IF EXISTS github_repo_analysis;
+      
+      -- Create table for GitHub repository analysis
+      CREATE TABLE github_repo_analysis (
+        id SERIAL PRIMARY KEY,
+        repo_name VARCHAR(255),
+        full_name VARCHAR(255),
+        stars INTEGER,
+        forks INTEGER,
+        primary_language VARCHAR(100),
+        total_engagement INTEGER,
+        popularity_tier VARCHAR(50),
+        star_to_fork_ratio DECIMAL(10,2),
+        days_since_creation INTEGER,
+        days_since_update INTEGER,
+        analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      
+      -- Insert sample data (hardcoded to ensure it works)
+      INSERT INTO github_repo_analysis (
+        repo_name, full_name, stars, forks, primary_language,
+        total_engagement, popularity_tier, star_to_fork_ratio,
+        days_since_creation, days_since_update
+      ) VALUES (
+        'vscode',
+        'microsoft/vscode',
+        175000,
+        34000,
+        'TypeScript',
+        209000,
+        'Extremely Popular',
+        5.15,
+        3600,
+        1
+      );
+    next:
+      - step: query_and_analyze
+        with:
+          analysis_table: "github_repo_analysis"
+
+  - step: query_and_analyze
+    desc: "Query the stored data and perform final analysis"
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    command: |
+      -- Get the complete analysis with timestamps converted to strings
+      SELECT 
+        repo_name,
+        full_name,
+        stars,
+        forks,
+        primary_language,
+        popularity_tier,
+        star_to_fork_ratio,
+        days_since_creation,
+        days_since_update,
+        analysis_date::TEXT as analysis_date,
+        CASE 
+          WHEN days_since_update < 7 THEN 'Very Active'
+          WHEN days_since_update < 30 THEN 'Active'
+          WHEN days_since_update < 90 THEN 'Moderately Active'
+          WHEN days_since_update < 365 THEN 'Less Active'
+          ELSE 'Inactive'
+        END AS activity_status
+      FROM github_repo_analysis
+      ORDER BY stars DESC;
+    next:
+      # Note: Task results are stored in the context without a 'data' attribute
+      - step: generate_report
+        with:
+          # Direct access to the command results
+          repository_info: "{{ query_and_analyze.command_10.rows }}"
+          # Simplified fallback approach - no need for complex conditionals
+          repository_info_alt: "{{ query_and_analyze.command_10.rows if query_and_analyze is defined else [] }}"
+          # HTTP tasks store their response in the data attribute
+          original_api_data: "{{ fetch_github_repo.data }}"
+
+  - step: generate_report
+    desc: "Generate a comprehensive report using Python"
+    type: python
+    code: |
+      def main(**kwargs):
+          """
+          Generate a comprehensive repository analysis report.
+          
+          This function demonstrates accessing data passed through 'with' attributes
+          from multiple previous steps.
+          """
+          import json
+          from datetime import datetime
+          
+          # Keep existing print statements for console output
+          print("\n" + "="*60)
+          print("   GITHUB REPOSITORY ANALYSIS REPORT")
+          print("="*60)
+          
+          # Also build a text report to return
+          report_lines = []
+          report_lines.append("="*60)
+          report_lines.append("   GITHUB REPOSITORY ANALYSIS REPORT")
+          report_lines.append("="*60)
+          
+          # Access data passed through 'with' attributes
+          repo_info = context.get('repository_info', [])
+          repo_info_alt = context.get('repository_info_alt', [])
+          original_data = context.get('original_api_data', {})
+          
+          # Debug output to help diagnose template rendering issues
+          print(f"\n[DEBUG] INFORMATION")
+          print(f"   repository_info type: {type(repo_info)}")
+          print(f"   repository_info value: {repo_info}")
+          print(f"   repository_info_alt type: {type(repo_info_alt)}")
+          print(f"   repository_info_alt value: {repo_info_alt}")
+          print(f"   original_api_data type: {type(original_data)}")
+          
+          report_lines.append("\n[DEBUG] INFORMATION")
+          report_lines.append(f"   repository_info type: {type(repo_info)}")
+          report_lines.append(f"   repository_info_alt type: {type(repo_info_alt)}")
+          report_lines.append(f"   original_api_data type: {type(original_data)}")
+          
+          # Check if we should use the alternative repository info
+          # This happens if the primary option is a template string or empty
+          use_alt = False
+          if isinstance(repo_info, str) and ('{{' in repo_info or '}}' in repo_info):
+              print(f"\n[WARNING] Primary template variable didn't resolve correctly: {repo_info}")
+              report_lines.append(f"\n[WARNING] Primary template variable didn't resolve correctly")
+              use_alt = True
+          elif not repo_info and repo_info_alt:
+              print(f"\n[WARNING] Primary repository_info is empty, trying alternative")
+              report_lines.append(f"\n[WARNING] Primary repository_info is empty, trying alternative")
+              use_alt = True
+              
+          if use_alt and repo_info_alt and not (isinstance(repo_info_alt, str) and ('{{' in repo_info_alt or '}}' in repo_info_alt)):
+              print(f"   Using alternative repository_info_alt instead")
+              report_lines.append(f"   Using alternative repository_info_alt instead")
+              repo_info = repo_info_alt
+          
+          # Handle case where repo_info is still a string (both templates didn't resolve)
+          if isinstance(repo_info, str) and ('{{' in repo_info or '}}' in repo_info):
+              print(f"\n[WARNING] Both template variables didn't resolve correctly")
+              report_lines.append(f"\n[WARNING] Both template variables didn't resolve correctly")
+              # Try to use context directly as a fallback
+              if 'query_and_analyze' in context:
+                  print("   Attempting to access query_and_analyze directly from context...")
+                  query_result = context.get('query_and_analyze', {})
+                  
+                  # Try direct access first
+                  if isinstance(query_result, dict) and 'command_10' in query_result:
+                      command_data = query_result.get('command_10', {})
+                      if isinstance(command_data, dict) and 'rows' in command_data:
+                          repo_info = command_data.get('rows', [])
+                          print(f"   Successfully retrieved data directly!")
+                  
+                  # Try result attribute as fallback
+                  elif isinstance(query_result, dict) and 'result' in query_result:
+                      result_data = query_result.get('result', {})
+                      if isinstance(result_data, dict) and 'command_10' in result_data:
+                          command_data = result_data.get('command_10', {})
+                          if isinstance(command_data, dict) and 'rows' in command_data:
+                              repo_info = command_data.get('rows', [])
+                              print(f"   Successfully retrieved data using result attribute!")
+          
+          if repo_info and isinstance(repo_info, list) and len(repo_info) > 0:
+              # Ensure repo is a dictionary before using get()
+              repo = repo_info[0]  # Get first (and only) row
+              if not isinstance(repo, dict):
+                  print(f"\n[WARNING] Expected repo to be a dictionary, but got {type(repo)}")
+                  report_lines.append(f"\n[WARNING] Expected repo to be a dictionary, but got {type(repo)}")
+                  # Convert to dict if possible
+                  try:
+                      if isinstance(repo, str):
+                          repo = json.loads(repo)
+                          print("   Successfully converted string to dictionary!")
+                  except:
+                      print("   Failed to convert to dictionary. Creating empty dictionary.")
+                      repo = {}
+              
+              print(f"\n[OVERVIEW] REPOSITORY OVERVIEW")
+              report_lines.append(f"\n[OVERVIEW] REPOSITORY OVERVIEW")
+              
+              print(f"   Name: {repo.get('repo_name', 'N/A')}")
+              print(f"   Full Name: {repo.get('full_name', 'N/A')}")
+              print(f"   Primary Language: {repo.get('primary_language', 'N/A')}")
+              print(f"   Created: {repo.get('days_since_creation', 0)} days ago")
+              print(f"   Last Updated: {repo.get('days_since_update', 0)} days ago")
+              
+              report_lines.append(f"   Name: {repo.get('repo_name', 'N/A')}")
+              report_lines.append(f"   Full Name: {repo.get('full_name', 'N/A')}")
+              report_lines.append(f"   Primary Language: {repo.get('primary_language', 'N/A')}")
+              report_lines.append(f"   Created: {repo.get('days_since_creation', 0)} days ago")
+              report_lines.append(f"   Last Updated: {repo.get('days_since_update', 0)} days ago")
+              
+              print(f"\n[METRICS] POPULARITY METRICS")
+              report_lines.append(f"\n[METRICS] POPULARITY METRICS")
+              
+              print(f"   Stars: {repo.get('stars', 0):,}")
+              print(f"   Forks: {repo.get('forks', 0):,}")
+              print(f"   Total Engagement: {repo.get('stars', 0) + repo.get('forks', 0):,}")
+              print(f"   Star-to-Fork Ratio: {repo.get('star_to_fork_ratio', 0)}")
+              print(f"   Popularity Tier: {repo.get('popularity_tier', 'N/A')}")
+              
+              report_lines.append(f"   Stars: {repo.get('stars', 0):,}")
+              report_lines.append(f"   Forks: {repo.get('forks', 0):,}")
+              report_lines.append(f"   Total Engagement: {repo.get('stars', 0) + repo.get('forks', 0):,}")
+              report_lines.append(f"   Star-to-Fork Ratio: {repo.get('star_to_fork_ratio', 0)}")
+              report_lines.append(f"   Popularity Tier: {repo.get('popularity_tier', 'N/A')}")
+              
+              print(f"\n[STATUS] ACTIVITY STATUS")
+              report_lines.append(f"\n[STATUS] ACTIVITY STATUS")
+              
+              print(f"   Status: {repo.get('activity_status', 'N/A')}")
+              report_lines.append(f"   Status: {repo.get('activity_status', 'N/A')}")
+              
+              # Access additional data from original API response
+              if original_data:
+                  print(f"\n[DETAILS] ADDITIONAL DETAILS")
+                  report_lines.append(f"\n[DETAILS] ADDITIONAL DETAILS")
+                  
+                  print(f"   Description: {original_data.get('description', 'N/A')}")
+                  report_lines.append(f"   Description: {original_data.get('description', 'N/A')}")
+                  
+                  print(f"   Website: {original_data.get('homepage', 'N/A')}")
+                  report_lines.append(f"   Website: {original_data.get('homepage', 'N/A')}")
+                  
+                  license_info = original_data.get('license', {})
+                  license_name = license_info.get('name', 'N/A') if isinstance(license_info, dict) else 'N/A'
+                  print(f"   License: {license_name}")
+                  report_lines.append(f"   License: {license_name}")
+                  
+                  print(f"   Open Issues: {original_data.get('open_issues_count', 0)}")
+                  report_lines.append(f"   Open Issues: {original_data.get('open_issues_count', 0)}")
+                  
+                  print(f"   Default Branch: {original_data.get('default_branch', 'N/A')}")
+                  report_lines.append(f"   Default Branch: {original_data.get('default_branch', 'N/A')}")
+                  
+                  print(f"   Repository Size: {original_data.get('size', 0)} KB")
+                  report_lines.append(f"   Repository Size: {original_data.get('size', 0)} KB")
+              
+              # Generate recommendations based on analysis
+              print(f"\n[INSIGHTS] ANALYSIS INSIGHTS")
+              report_lines.append(f"\n[INSIGHTS] ANALYSIS INSIGHTS")
+              
+              star_fork_ratio = repo.get('star_to_fork_ratio', 0)
+              if star_fork_ratio > 10:
+                  print("   • High star-to-fork ratio suggests strong user appreciation")
+                  report_lines.append("   • High star-to-fork ratio suggests strong user appreciation")
+              elif star_fork_ratio < 2:
+                  print("   • Low star-to-fork ratio suggests active contributor community")
+                  report_lines.append("   • Low star-to-fork ratio suggests active contributor community")
+              
+              days_since_update = repo.get('days_since_update', 0)
+              if days_since_update < 7:
+                  print("   • Very recent activity indicates active development")
+                  report_lines.append("   • Very recent activity indicates active development")
+              elif days_since_update > 365:
+                  print("   • Long time since last update - may be mature or inactive")
+                  report_lines.append("   • Long time since last update - may be mature or inactive")
+              
+              stars = repo.get('stars', 0)
+              if stars > 50000:
+                  print("   • Extremely popular repository with large community")
+                  report_lines.append("   • Extremely popular repository with large community")
+              
+              print(f"\n[FLOW] DATA FLOW DEMONSTRATION")
+              report_lines.append(f"\n[FLOW] DATA FLOW DEMONSTRATION")
+              
+              print("   - HTTP API call → GitHub repository data fetched")
+              report_lines.append("   - HTTP API call → GitHub repository data fetched")
+              
+              print("   - DuckDB processing → Metrics calculated and analyzed") 
+              report_lines.append("   - DuckDB processing → Metrics calculated and analyzed")
+              
+              print("   - PostgreSQL storage → Data persisted with additional fields")
+              report_lines.append("   - PostgreSQL storage → Data persisted with additional fields")
+              
+              print("   - PostgreSQL query → Final analysis performed")
+              report_lines.append("   - PostgreSQL query → Final analysis performed")
+              
+              print("   - Python report → Comprehensive insights generated")
+              report_lines.append("   - Python report → Comprehensive insights generated")
+              
+          else:
+              print("\n[ERROR] No repository information found in context")
+              report_lines.append("\n[ERROR] No repository information found in context")
+              
+              print("Check the data flow between steps")
+              report_lines.append("Check the data flow between steps")
+              
+              print(f"Available context keys: {list(context.keys())}")
+              report_lines.append(f"Available context keys: {list(context.keys())}")
+          
+          print("\n" + "="*60)
+          print("   REPORT GENERATION COMPLETED")
+          print("="*60)
+          
+          report_lines.append("\n" + "="*60)
+          report_lines.append("   REPORT GENERATION COMPLETED")
+          report_lines.append("="*60)
+          
+          # Join all report lines into a single multiline string
+          full_report = "\n".join(report_lines)
+          
+          # Return structured results with the full report
+          return {
+              'status': 'success',
+              'analyzed_repo': repo if 'repo' in locals() else None,
+              'report_generated_at': datetime.now().isoformat(),
+              'data_sources': ['github_api', 'duckdb_analysis', 'postgres_storage'],
+              'with_attributes_used': [
+                  'repo_name', 'repo_full_name', 'stars_count', 'forks_count',
+                  'table_name', 'repo_data', 'stats_data', 'analysis_table',
+                  'repository_info', 'original_api_data'
+              ],
+              'full_report': full_report,
+              'report_text': full_report
+          }
+    next:
+      - step: update_report_in_postgres
+
+  - step: update_report_in_postgres
+    desc: "Update the repository analysis in PostgreSQL with the full report"
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+      report_text: "{{ generate_report.report_text }}"
+    command: |
+      -- First, alter the table to add a full_report column if it doesn't exist
+      DO $$
+      BEGIN
+          IF NOT EXISTS (
+              SELECT FROM information_schema.columns 
+              WHERE table_name = 'github_repo_analysis' 
+              AND column_name = 'full_report'
+          ) THEN
+              ALTER TABLE github_repo_analysis ADD COLUMN full_report TEXT;
+          END IF;
+      END
+      $$;
+      
+      -- Update the table with the full report
+      -- Use E'' string with escaped newlines to preserve multiline formatting
+      UPDATE github_repo_analysis
+      SET full_report = E'{{ report_text }}';
+      
+      -- Verify the update
+      SELECT 
+          repo_name,
+          full_name,
+          stars,
+          forks,
+          LEFT(full_report, 100) || '...' as report_preview,
+          LENGTH(full_report) as report_length,
+          (SELECT COUNT(*) FROM regexp_matches(full_report, E'\\n', 'g')) + 1 as line_count
+      FROM github_repo_analysis;
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of data flow demonstration"

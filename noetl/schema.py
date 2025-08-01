@@ -1,9 +1,11 @@
 import os
 import json
 import uuid
-from typing import List, Optional
+import traceback
+from typing import List, Optional, Dict, Any, Union
 import psycopg
-from noetl.common import setup_logger
+from noetl.common import make_serializable
+from noetl.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -315,6 +317,35 @@ class DatabaseSchema:
                     PRIMARY KEY (execution_id, from_step, to_step, condition)
                 )
             """)
+            
+            logger.info("Creating error_log table.")
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.error_log (
+                    error_id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    error_type VARCHAR(50),
+                    error_message TEXT,
+                    execution_id VARCHAR,
+                    step_id VARCHAR,
+                    step_name VARCHAR,
+                    template_string TEXT,
+                    context_data JSONB,
+                    stack_trace TEXT,
+                    input_data JSONB,
+                    output_data JSONB,
+                    severity VARCHAR(20) DEFAULT 'error',
+                    resolved BOOLEAN DEFAULT FALSE,
+                    resolution_notes TEXT,
+                    resolution_timestamp TIMESTAMP
+                )
+            """)
+            
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON {self.noetl_schema}.error_log (timestamp);
+                CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON {self.noetl_schema}.error_log (error_type);
+                CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON {self.noetl_schema}.error_log (execution_id);
+                CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON {self.noetl_schema}.error_log (resolved);
+            """)
 
             self.conn.commit()
             logger.info("Postgres database tables initialized in noetl schema.")
@@ -414,6 +445,176 @@ class DatabaseSchema:
                 self.admin_connection.close()
                 self.admin_connection = None
 
+    def log_error(self, 
+                error_type: str, 
+                error_message: str, 
+                execution_id: str = None, 
+                step_id: str = None, 
+                step_name: str = None,
+                template_string: str = None, 
+                context_data: Dict = None, 
+                stack_trace: str = None, 
+                input_data: Any = None, 
+                output_data: Any = None,
+                severity: str = "error") -> Optional[int]:
+        """
+        Log an error to the error_log table.
+        
+        Args:
+            error_type: The type of error (e.g., "template_rendering", "sql_rendering")
+            error_message: The error message
+            execution_id: The ID of the execution where the error occurred
+            step_id: The ID of the step where the error occurred
+            step_name: The name of the step where the error occurred
+            template_string: The template that failed to render
+            context_data: The context data used for rendering
+            stack_trace: The stack trace of the error
+            input_data: The input data related to the error
+            output_data: The output data related to the error
+            severity: The severity of the error (default: "error")
+            
+        Returns:
+            The error_id of the inserted record, or None if insertion failed
+        """
+        try:
+            if stack_trace is None and error_type == "template_rendering":
+                stack_trace = ''.join(traceback.format_stack())
+            
+            context_data_json = json.dumps(make_serializable(context_data)) if context_data else None
+            input_data_json = json.dumps(make_serializable(input_data)) if input_data else None
+            output_data_json = json.dumps(make_serializable(output_data)) if output_data else None
+            
+            if not self.conn or self.conn.closed:
+                self.initialize_connection()
+                
+            with self.conn.cursor() as cursor:
+                cursor.execute(f"""
+                    INSERT INTO {self.noetl_schema}.error_log (
+                        error_type, error_message, execution_id, step_id, step_name,
+                        template_string, context_data, stack_trace, input_data, output_data, severity
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
+                    ) RETURNING error_id
+                """, (
+                    error_type, error_message, execution_id, step_id, step_name,
+                    template_string, context_data_json, stack_trace, input_data_json, output_data_json, severity
+                ))
+                
+                error_id = cursor.fetchone()[0]
+                self.conn.commit()
+                logger.info(f"Logged error to error_log table with error_id: {error_id}")
+                return error_id
+                
+        except Exception as e:
+            logger.error(f"Failed to log error to error_log table: {e}", exc_info=True)
+            if self.conn:
+                try:
+                    self.conn.rollback()
+                except:
+                    pass
+            return None
+    
+    def mark_error_resolved(self, error_id: int, resolution_notes: str = None) -> bool:
+        """
+        Mark an error as resolved in the error_log table.
+        
+        Args:
+            error_id: The ID of the error to mark as resolved
+            resolution_notes: Notes on how the error was resolved
+            
+        Returns:
+            True if the error was marked as resolved, False otherwise
+        """
+        try:
+            if not self.conn or self.conn.closed:
+                self.initialize_connection()
+                
+            with self.conn.cursor() as cursor:
+                cursor.execute(f"""
+                    UPDATE {self.noetl_schema}.error_log
+                    SET resolved = TRUE, 
+                        resolution_notes = %s,
+                        resolution_timestamp = CURRENT_TIMESTAMP
+                    WHERE error_id = %s
+                """, (resolution_notes, error_id))
+                
+                self.conn.commit()
+                logger.info(f"Marked error with error_id {error_id} as resolved")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to mark error as resolved: {e}", exc_info=True)
+            if self.conn:
+                try:
+                    self.conn.rollback()
+                except:
+                    pass
+            return False
+    
+    def get_errors(self, 
+                  error_type: str = None, 
+                  execution_id: str = None, 
+                  resolved: bool = None, 
+                  limit: int = 100, 
+                  offset: int = 0) -> List[Dict]:
+        """
+        Get errors from the error_log table with optional filtering.
+        
+        Args:
+            error_type: Filter by error type
+            execution_id: Filter by execution ID
+            resolved: Filter by resolved status
+            limit: Maximum number of errors to return
+            offset: Offset for pagination
+            
+        Returns:
+            A list of error records as dictionaries
+        """
+        try:
+            if not self.conn or self.conn.closed:
+                self.initialize_connection()
+                
+            query = f"SELECT * FROM {self.noetl_schema}.error_log WHERE 1=1"
+            params = []
+            
+            if error_type:
+                query += " AND error_type = %s"
+                params.append(error_type)
+                
+            if execution_id:
+                query += " AND execution_id = %s"
+                params.append(execution_id)
+                
+            if resolved is not None:
+                query += " AND resolved = %s"
+                params.append(resolved)
+                
+            query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+            
+            with self.conn.cursor() as cursor:
+                cursor.execute(query, params)
+                columns = [desc[0] for desc in cursor.description]
+                errors = []
+                
+                for row in cursor.fetchall():
+                    error_dict = dict(zip(columns, row))
+                    
+                    for field in ['context_data', 'input_data', 'output_data']:
+                        if error_dict.get(field) and isinstance(error_dict[field], str):
+                            try:
+                                error_dict[field] = json.loads(error_dict[field])
+                            except:
+                                pass
+                    
+                    errors.append(error_dict)
+                
+                return errors
+                
+        except Exception as e:
+            logger.error(f"Failed to get errors from error_log table: {e}", exc_info=True)
+            return []
+    
     def close(self):
         if self.conn:
             try:

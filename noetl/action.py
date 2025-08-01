@@ -5,9 +5,12 @@ import datetime
 import httpx
 import psycopg
 import json
+import traceback
 from typing import Dict, Any
+from decimal import Decimal
 from jinja2 import Environment
-from noetl.common import DateTimeEncoder, setup_logger
+from noetl.common import DateTimeEncoder, make_serializable
+from noetl.logger import setup_logger, log_error
 from noetl.render import render_template
 
 try:
@@ -640,8 +643,38 @@ def execute_duckdb_task(task_config: Dict, context: Dict, jinja_env: Environment
                         logger.warning(f"Error in DETACH command: {detach_error}.")
                         results[f"command_{i}"] = {"status": "warning", "message": f"DETACH operation failed: {str(detach_error)}"}
                 else:
-                    result = duckdb_con.execute(cmd).fetchall()
-                    results[f"command_{i}"] = result
+                    cursor = duckdb_con.execute(cmd)
+                    result = cursor.fetchall()
+                    
+                    if cmd.strip().upper().startswith("SELECT") or "RETURNING" in cmd.upper():
+                        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                        result_data = []
+                        for row in result:
+                            row_dict = {}
+                            for j, col_name in enumerate(column_names):
+                                if isinstance(row[j], dict) or (isinstance(row[j], str) and (row[j].startswith('{') or row[j].startswith('['))):
+                                    try:
+                                        row_dict[col_name] = row[j]
+                                    except:
+                                        row_dict[col_name] = row[j]
+                                elif isinstance(row[j], Decimal):
+                                    row_dict[col_name] = float(row[j])
+                                else:
+                                    row_dict[col_name] = row[j]
+                            result_data.append(row_dict)
+                        
+                        results[f"command_{i}"] = {
+                            "status": "success",
+                            "rows": result_data,
+                            "row_count": len(result),
+                            "columns": column_names
+                        }
+                    else:
+                        results[f"command_{i}"] = {
+                            "status": "success",
+                            "message": f"Command executed successfully",
+                            "raw_result": result
+                        }
 
         elif bucket and blob_path and table:
             temp_table = f"temp_{table}_{int(time.time())}"
@@ -821,9 +854,21 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     start_time = datetime.datetime.now()
 
     try:
+        # Pre-process any text variables in task_with to escape special characters for SQL
+        processed_task_with = task_with.copy()
+        for key, value in task_with.items():
+            if isinstance(value, str):
+                # Escape special characters in string values that might cause SQL syntax errors
+                # Replace angle brackets, quotes, and other problematic characters
+                processed_value = value.replace('<', '\\<').replace('>', '\\>')
+                processed_value = processed_value.replace("'", "''")  # Double single quotes for SQL
+                processed_task_with[key] = processed_value
+                if value != processed_value:
+                    logger.debug(f"Escaped special characters in {key} for SQL compatibility")
+
         commands = task_config.get('command', task_config.get('commands', []))
         if isinstance(commands, str):
-            commands_rendered = render_template(jinja_env, commands, {**context, **task_with})
+            commands_rendered = render_template(jinja_env, commands, {**context, **processed_task_with})
             commands = []
             current_command = []
             dollar_quote = False
@@ -926,6 +971,8 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
                                             row_dict[col_name] = row[i]
                                         except:
                                             row_dict[col_name] = row[i]
+                                    elif isinstance(row[i], Decimal):
+                                        row_dict[col_name] = float(row[i])
                                     else:
                                         row_dict[col_name] = row[i]
                                 result_data.append(row_dict)
@@ -1040,6 +1087,19 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         error_msg = f"Task not found: {task_name}"
         logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")
 
+        # Log error to database error_log table
+        try:
+            log_error(
+                error=Exception(error_msg),
+                error_type="task_execution",
+                template_string=f"Task: {task_name}",
+                context_data=context,
+                input_data=None,
+                step_name=task_name
+            )
+        except Exception as e:
+            logger.error(f"ACTION.EXECUTE_TASK: Failed to log error to database: {e}")
+
         if log_event_callback:
             logger.debug(f"ACTION.EXECUTE_TASK: Writing task_error event log for missing task")
             log_event_callback(
@@ -1099,6 +1159,19 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
     elif task_type == 'secrets':
         if not secret_manager:
             error_msg = "SecretManager is required for secrets tasks."
+            
+            # Log error to database error_log table
+            try:
+                log_error(
+                    error=Exception(error_msg),
+                    error_type="task_execution",
+                    template_string=f"Task: {task_name}, Type: {task_type}",
+                    context_data=context,
+                    input_data=task_with,
+                    step_name=task_name
+                )
+            except Exception as e:
+                logger.error(f"ACTION.EXECUTE_TASK: Failed to log error to database: {e}")
 
             if log_event_callback:
                 log_event_callback(
@@ -1117,6 +1190,18 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
     else:
         error_msg = f"Unsupported task type: {task_type}"
         logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")
+        
+        try:
+            log_error(
+                error=Exception(error_msg),
+                error_type="task_execution",
+                template_string=f"Task: {task_name}, Type: {task_type}",
+                context_data=context,
+                input_data=task_with,
+                step_name=task_name
+            )
+        except Exception as e:
+            logger.error(f"ACTION.EXECUTE_TASK: Failed to log error to database: {e}")
 
         if log_event_callback:
             logger.debug(f"ACTION.EXECUTE_TASK: Writing task_error event log for unsupported task type")
