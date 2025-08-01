@@ -868,32 +868,6 @@ async def list_resources(
             detail=f"Error listing resources: {e}"
         )
 
-@router.get("/catalog/{path:path}/{version}", response_class=JSONResponse)
-async def get_resource(
-    request: Request,
-    path: str,
-    version: str
-):
-    try:
-        catalog_service = get_catalog_service()
-        entry = catalog_service.fetch_entry(path, version)
-        if not entry:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Resource '{path}' with version '{version}' not found."
-            )
-        return entry
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error fetching resource: {e}.")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching resource: {e}."
-        )
-
-
 @router.get("/events/by-execution/{execution_id}", response_class=JSONResponse)
 async def get_events_by_execution(
     request: Request,
@@ -1463,29 +1437,6 @@ async def execute_playbook(request: Request):
         logger.error(f"Error executing playbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/catalog/playbooks", response_class=JSONResponse)
-async def get_catalog_playbook(
-    playbook_id: str = Query(..., alias="playbook_id"),
-    # entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
-):
-    try:
-        entry: Dict[str, Any] = get_playbook_entry_from_catalog(playbook_id=playbook_id)
-        meta = entry.get('meta', {})
-        playbook_data = {
-            "id": entry.get('resource_path', ''),
-            "name": entry.get('resource_path', '').split('/')[-1],
-            "description": meta.get('description', ''),
-            "created_at": entry.get('timestamp', ''),
-            "updated_at": entry.get('timestamp', ''),
-            "status": meta.get('status', 'active'),
-            "tasks_count": meta.get('tasks_count', 0),
-            "version": entry.get('resource_version', '')
-        }
-        return playbook_data
-    except Exception as e:
-        logger.error(f"Error processing playbooks entry: {e}")
-        raise HTTPException(status_code=500, detail="Error processing playbooks data.")
-
 @router.get("/catalog/playbooks/content", response_class=JSONResponse)
 async def get_catalog_playbook_content(playbook_id: str = Query(..., alias="playbook_id")):
     """Get playbooks content"""
@@ -1513,6 +1464,29 @@ async def get_catalog_playbook_content(playbook_id: str = Query(..., alias="play
     except Exception as e:
         logger.error(f"Error getting playbooks content: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/catalog/playbooks", response_class=JSONResponse)
+async def get_catalog_playbook(
+    playbook_id: str = Query(..., alias="playbook_id"),
+    # entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
+):
+    try:
+        entry: Dict[str, Any] = get_playbook_entry_from_catalog(playbook_id=playbook_id)
+        meta = entry.get('meta', {})
+        playbook_data = {
+            "id": entry.get('resource_path', ''),
+            "name": entry.get('resource_path', '').split('/')[-1],
+            "description": meta.get('description', ''),
+            "created_at": entry.get('timestamp', ''),
+            "updated_at": entry.get('timestamp', ''),
+            "status": meta.get('status', 'active'),
+            "tasks_count": meta.get('tasks_count', 0),
+            "version": entry.get('resource_version', '')
+        }
+        return playbook_data
+    except Exception as e:
+        logger.error(f"Error processing playbooks entry: {e}")
+        raise HTTPException(status_code=500, detail="Error processing playbooks data.")
 
 @router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
 async def save_catalog_playbook_content(playbook_id: str, request: Request):
@@ -1730,3 +1704,29 @@ async def get_execution(execution_id: str):
 async def api_health():
     """API health check endpoint"""
     return {"status": "ok"}
+
+@router.get("/catalog/{path:path}/{version}", response_class=JSONResponse)
+async def get_resource(
+    request: Request,
+    path: str,
+    version: str
+):
+    try:
+        catalog_service = get_catalog_service()
+        entry = catalog_service.fetch_entry(path, version)
+        if not entry:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Resource '{path}' with version '{version}' not found."
+            )
+        return entry
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching resource: {e}.")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching resource: {e}."
+        )
+
