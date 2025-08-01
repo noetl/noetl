@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
-from noetl.common import setup_logger, deep_merge, get_pgdb_connection, get_db_connection
+from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
+from noetl.logger import setup_logger
 from noetl.worker import Worker
 from noetl.broker import Broker
 

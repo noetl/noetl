@@ -1,0 +1,216 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: wikipedia_duckdb_postgres_example
+path: examples/wikipedia_duckdb_postgres_example
+description: Example how to call Wikipedia API, process data in DuckDB, store in Postgres, and access results in Python
+
+workload:
+  jobId: "{{ job.uuid }}"
+  execution_id: "{{ job.uuid }}"
+  pg_host: "{{ env.POSTGRES_HOST | default('database') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  table_name: "wikipedia_articles"
+
+workflow:
+  - step: start
+    desc: "Start Wikipedia DuckDB Postgres Example Workflow"
+    next:
+      - step: fetch_wikipedia_data
+
+  - step: fetch_wikipedia_data
+    desc: "Fetch data from Wikipedia API"
+    type: http
+    method: GET
+    endpoint: "https://en.wikipedia.org/api/rest_v1/page/summary/NoSQL"
+    headers:
+      User-Agent: "NoETL Example/1.0"
+      Accept: "application/json"
+    next:
+      - step: process_in_duckdb
+
+  - step: process_in_duckdb
+    desc: "Process Wikipedia data in DuckDB"
+    type: duckdb
+    command: |
+      -- Create a table from the Wikipedia API response
+      DROP TABLE IF EXISTS wiki_data;
+      CREATE TABLE wiki_data AS
+      SELECT 
+        '{{ fetch_wikipedia_data.data.title }}' AS title,
+        '{{ fetch_wikipedia_data.data.extract }}' AS extract,
+        '{{ fetch_wikipedia_data.data.description }}' AS description,
+        '{{ fetch_wikipedia_data.data.timestamp }}' AS last_updated;
+      
+      -- Show the data
+      SELECT * FROM wiki_data;
+      
+      -- Create a table with word counts from the extract
+      DROP TABLE IF EXISTS word_counts;
+      CREATE TABLE word_counts AS
+      WITH split_words AS (
+        SELECT string_split(lower(regexp_replace(extract, '[^\w\s]', ' ', 'g')), ' ') AS word_array
+        FROM wiki_data
+      ),
+      words AS (
+        SELECT trim(word) AS word
+        FROM split_words,
+        unnest(word_array) AS t(word)
+        WHERE trim(word) != '' AND length(trim(word)) > 3
+      )
+      SELECT 
+        word,
+        COUNT(*) AS count
+      FROM words
+      GROUP BY word
+      ORDER BY count DESC
+      LIMIT 10;
+      
+      -- Show the word counts
+      SELECT * FROM word_counts;
+    next:
+      - step: create_postgres_table
+
+  - step: create_postgres_table
+    desc: "Create table in Postgres"
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    command: |
+      -- Drop table if it exists
+      DROP TABLE IF EXISTS {{ workload.table_name }};
+      
+      -- Create table for Wikipedia article data
+      CREATE TABLE {{ workload.table_name }} (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255),
+        description TEXT,
+        extract TEXT,
+        last_updated TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    next:
+      - step: insert_into_postgres
+
+  - step: insert_into_postgres
+    desc: "Insert data into PostgreSQL table"
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    command: |
+      -- Insert data from Wikipedia API into the table
+      INSERT INTO {{ workload.table_name }} (title, description, extract, last_updated)
+      VALUES (
+        '{{ fetch_wikipedia_data.data.title }}',
+        '{{ fetch_wikipedia_data.data.description }}',
+        '{{ fetch_wikipedia_data.data.extract }}',
+        '{{ fetch_wikipedia_data.data.timestamp }}'::TIMESTAMP
+      );
+    next:
+      - step: select_from_postgres
+
+  - step: select_from_postgres
+    desc: "Select data from PostgreSQL table"
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    command: |
+      -- Select data from the table with timestamp columns converted to strings
+      SELECT 
+        id, 
+        title, 
+        description, 
+        last_updated::TEXT as last_updated,
+        created_at::TEXT as created_at
+      FROM {{ workload.table_name }};
+    next:
+      - step: access_results_in_python
+
+  - step: access_results_in_python
+    desc: "Access and print results from previous steps in Python"
+    type: python
+    code: |
+      def main(**kwargs):
+          """
+          Access and print results from previous steps.
+          
+          This function demonstrates how to access results from different action types:
+          - HTTP (Wikipedia API)
+          - DuckDB (data processing)
+          - PostgreSQL (database operations)
+          """
+          import json
+          
+          # Create a results dictionary to return
+          results = {}
+          
+          # Access Wikipedia API results from HTTP step
+          print("\n=== WIKIPEDIA API RESULTS ===")
+          wiki_title = context.get('fetch_wikipedia_data', {}).get('data', {}).get('title')
+          wiki_description = context.get('fetch_wikipedia_data', {}).get('data', {}).get('description')
+          print(f"Title: {wiki_title}")
+          print(f"Description: {wiki_description}")
+          results['wikipedia'] = {
+              'title': wiki_title,
+              'description': wiki_description
+          }
+          
+          # Access DuckDB results
+          print("\n=== DUCKDB RESULTS ===")
+          duckdb_results = context.get('process_in_duckdb', {}).get('data', {})
+          
+          # Access the first command result (wiki_data table)
+          wiki_data = duckdb_results.get('command_0', [])
+          print("Wiki Data from DuckDB:")
+          print(json.dumps(wiki_data, indent=2))
+          
+          # Access the third command result (word_counts table)
+          word_counts = duckdb_results.get('command_2', [])
+          print("\nTop words from extract:")
+          for row in word_counts:
+              print(f"- {row[0]}: {row[1]}")
+          
+          results['duckdb'] = {
+              'wiki_data': wiki_data,
+              'word_counts': word_counts
+          }
+          
+          # Access PostgreSQL results
+          print("\n=== POSTGRESQL RESULTS ===")
+          postgres_results = context.get('select_from_postgres', {}).get('data', {}).get('command_0', {})
+          
+          # Get the rows from the SELECT query
+          postgres_rows = postgres_results.get('rows', [])
+          print(f"Retrieved {len(postgres_rows)} rows from PostgreSQL:")
+          for row in postgres_rows:
+              print(f"ID: {row['id']}, Title: {row['title']}, Created: {row['created_at']}")
+          
+          results['postgres'] = {
+              'rows': postgres_rows
+          }
+          
+          print("\n=== SUMMARY ===")
+          print(f"Successfully processed Wikipedia article '{wiki_title}'")
+          print(f"Stored in PostgreSQL table '{context.get('workload', {}).get('table_name')}'")
+          print("Workflow completed successfully!")
+          
+          return results
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of workflow"

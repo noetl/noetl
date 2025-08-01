@@ -4,10 +4,12 @@ import uuid
 import datetime
 import tempfile
 import httpx
+import traceback
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
 from noetl.render import render_template
-from noetl.common import setup_logger, deep_merge, get_bool
+from noetl.common import deep_merge, get_bool
+from noetl.logger import setup_logger, log_error
 from noetl.worker import Worker
 logger = setup_logger(__name__, include_location=True)
 
@@ -555,7 +557,7 @@ class Broker:
                 }
                 logger.debug(f"BROKER.EXECUTE_STEP: Initial task_config: {task_config}")
                 
-                fields = ['name', 'pass', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name', 'project_id', 'region', 'version']
+                fields = ['name', 'pass', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'endpoint', 'method', 'body', 'code', 'provider', 'secret_name', 'project_id', 'region', 'version']
                 logger.debug(f"BROKER.EXECUTE_STEP: Fields to copy from call_config: {fields}")
                 
                 task_config.update({
@@ -602,7 +604,22 @@ class Broker:
                 else:
                     logger.info(f"BROKER.EXECUTE_STEP: Step '{step_name}' returned data: {result.get('data')}")
             else:
-                logger.warning(f"BROKER.EXECUTE_STEP: Step '{step_name}' failed with error: {result.get('error')}")
+                error_message = result.get('error')
+                logger.warning(f"BROKER.EXECUTE_STEP: Step '{step_name}' failed with error: {error_message}")
+                
+                try:
+                    log_error(
+                        error=Exception(error_message),
+                        error_type="step_execution",
+                        template_string=str(step_config),
+                        context_data=step_context,
+                        input_data=task_with,
+                        execution_id=self.agent.execution_id,
+                        step_id=step_id,
+                        step_name=step_name
+                    )
+                except Exception as e:
+                    logger.error(f"BROKER.EXECUTE_STEP: Failed to log error to database: {e}")
             
             logger.debug(f"BROKER.EXECUTE_STEP: Saving step result to database")
             self.agent.save_step_result(
@@ -620,6 +637,9 @@ class Broker:
             
             self.agent.update_context(step_name + '.status', result.get('status'))
             logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.status, value={result.get('status')}")
+            
+            self.agent.update_context(step_name + '.data', result.get('data'))
+            logger.debug(f"BROKER.EXECUTE_STEP: Updated context key={step_name}.data, value={result.get('data')}")
             
             self.agent.update_context('result', result.get('data'))
             logger.debug(f"BROKER.EXECUTE_STEP: Updated context key=result, value={result.get('data')}")

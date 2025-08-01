@@ -3,12 +3,13 @@ import json
 import os
 import uuid
 import datetime
+import traceback
 from typing import Dict, List, Any, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
 from noetl.render import render_template
 from noetl.secret import SecretManager
 from noetl.sqlcmd import *
-from noetl.common import setup_logger
+from noetl.logger import setup_logger, log_error
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -464,6 +465,22 @@ class Worker:
             distributed_state=status,
             error=error
         )
+        
+        if error and status == 'error':
+            try:
+                context_data = self.get_context()
+                log_error(
+                    error=Exception(error),
+                    error_type="step_execution",
+                    template_string=f"Step: {step_name}",
+                    context_data=context_data,
+                    input_data=None,
+                    execution_id=self.execution_id,
+                    step_id=step_id,
+                    step_name=step_name
+                )
+            except Exception as e:
+                logger.error(f"WORKER.SAVE_STEP_RESULT: Failed to log error to database: {e}")
 
         return step_id
 
