@@ -555,7 +555,7 @@ class Broker:
                 }
                 logger.debug(f"BROKER.EXECUTE_STEP: Initial task_config: {task_config}")
                 
-                fields = ['name', 'pass', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'method', 'body', 'code', 'provider', 'secret_name', 'project_id', 'region', 'version']
+                fields = ['name', 'pass', 'params','param', 'commands','command','run', 'return', 'headers', 'url', 'endpoint', 'method', 'body', 'code', 'provider', 'secret_name', 'project_id', 'region', 'version']
                 logger.debug(f"BROKER.EXECUTE_STEP: Fields to copy from call_config: {fields}")
                 
                 task_config.update({

@@ -4,7 +4,7 @@ K8S_DIR=k8s
 COMPOSE_FILE = docker-compose.yaml
 PROJECT_NAME = noetl
 PYPI_USER = noetl
-VENV = .venv
+VENV = .venv.docker
 PYTHON = $(VENV)/bin/python
 UV = $(HOME)/.local/bin/uv
 

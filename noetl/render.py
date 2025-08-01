@@ -35,7 +35,8 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     Returns:
         The rendered template
     """
-    # Ensure the environment has the b64encode filter
+    logger.debug(f"render_template called with template: {template}, type: {type(template)}")
+
     env = add_b64encode_filter(env)
     if isinstance(template, str) and '{{' in template and '}}' in template:
         logger.debug(f"Render template: {template}")
@@ -49,7 +50,12 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     if rules:
         render_ctx.update(rules)
 
-    if isinstance(template, str) and '{{' in template and '}}' in template:
+    if isinstance(template, str):
+        if '{{' not in template or '}}' not in template:
+            logger.debug(f"render_template: Plain string without template variables, returning as-is: {template}")
+            return template
+
+        logger.debug(f"render_template: String with template variables detected: {template}")
         try:
             expr = template.strip()
             if expr == '{{}}':
@@ -76,9 +82,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             template_obj = env.from_string(template)
             try:
                 rendered = template_obj.render(**render_ctx)
+                logger.debug(f"render_template: Successfully rendered: {rendered}")
             except Exception as e:
                 logger.error(f"Template rendering error: {e}, template: {template}")
-                return None
+                return template
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
                     (rendered.startswith('{') and rendered.endswith('}')):
@@ -93,13 +100,15 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             return rendered
         except Exception as e:
             logger.error(f"Template rendering error: {e}, template: {template}")
-            return ""
+            return template
     elif isinstance(template, dict):
         if not template:
             return template
         return {k: render_template(env, v, render_ctx, rules) for k, v in template.items()}
     elif isinstance(template, list):
         return [render_template(env, item, render_ctx, rules) for item in template]
+
+    logger.debug(f"render_template: Returning template unchanged: {template}")
     return template
 
 
@@ -153,7 +162,6 @@ def render_sql_template(env: Environment, sql_template: str, context: Dict) -> s
     Returns:
         Rendered SQL string with comments preserved
     """
-    # Ensure the environment has the b64encode filter
     env = add_b64encode_filter(env)
     if not sql_template or not isinstance(sql_template, str):
         return sql_template
@@ -241,69 +249,6 @@ def render_duckdb_commands(env: Environment, commands: Union[str, List[str]], co
         return rendered_commands
 
     return []
-
-
-# def render_template_bool(jinja_env: Environment, template_str: str, context: Dict) -> bool:
-#     """
-#     Render a template and return as boolean, with proper error handling.
-#
-#     Args:
-#         jinja_env: Jinja2 environment
-#         template_str: Template string
-#         context: Template context
-#
-#     Returns:
-#         Boolean result or False on error
-#     """
-#     try:
-#         # Check if all referenced variables exist
-#         ast = jinja_env.parse(template_str)
-#         referenced = meta.find_undeclared_variables(ast)
-#         for key in referenced:
-#             parts = key.split('.')
-#             ctx = context
-#             valid_path = True
-#             for part in parts:
-#                 if isinstance(ctx, dict) and part in ctx:
-#                     ctx = ctx[part]
-#                 else:
-#                     valid_path = False
-#                     break
-#             if not valid_path:
-#                 return False
-#
-#         return render_template_safe(jinja_env, template_str, context)
-#     except Exception as e:
-#         logger.debug(f"Error in render_template_bool: {str(e)}")
-#         return False
-#
-#
-# def safe_render_template_bool(jinja_env: Environment, template_str: str, context: Dict, default: bool = False) -> bool:
-#     """
-#     Safely render a template as boolean with a default fallback.
-#
-#     Args:
-#         jinja_env: Jinja2 environment
-#         template_str: Template string
-#         context: Template context
-#         default: Default value to return on error
-#
-#     Returns:
-#         Boolean result or default on error
-#     """
-#     try:
-#         result = render_template_safe(jinja_env, template_str, context)
-#         if isinstance(result, bool):
-#             return result
-#         elif isinstance(result, str):
-#             return result.lower() in ('true', '1', 'yes', 'on')
-#         elif isinstance(result, (int, float)):
-#             return bool(result)
-#         else:
-#             return default
-#     except Exception as e:
-#         logger.debug(f"Error in safe_render_template_bool: {str(e)}")
-#         return default
 
 
 def quote_jinja2_expressions(yaml_text: str) -> str:
