@@ -247,7 +247,7 @@ tasks:
         <Row justify="space-between" align="middle">
           <Col>
             <Title level={2}>
-              <FileTextOutlined /> Playbook Editor
+              ✏️ Playbook Editor
             </Title>
             {playbook && (
               <Text type="secondary">

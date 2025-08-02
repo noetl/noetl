@@ -199,7 +199,9 @@ const Execution: React.FC = () => {
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <Row justify="space-between" align="middle">
           <Col>
-            <Title level={2}>Execution History</Title>
+            <Title level={2}>
+              ⚡ Execution History
+            </Title>
           </Col>
           <Col>
             <Button
