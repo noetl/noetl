@@ -56,37 +56,77 @@ const App: React.FC = () => {
   }, [location.pathname]);
 
   return (
-    <ConfigProvider theme={{ token: { colorPrimary: '#1890ff' } }}>
-      <Layout style={{ minHeight: '100vh' }}>
+    <ConfigProvider 
+      theme={{ 
+        token: { 
+          colorPrimary: '#1890ff',
+          borderRadius: 8,
+          colorBgContainer: '#ffffff',
+          colorBgLayout: '#f5f5f5'
+        } 
+      }}
+    >
+      <Layout style={{ minHeight: '100vh', background: '#f5f5f5' }}>
         <Header className="app-header">
           <div className="header-inner">
-            <div className="logo">NoETL Dashboard</div>
+            <div className="logo">
+              NoETL Dashboard
+            </div>
             <Menu
               theme="light"
               mode="horizontal"
               selectedKeys={[selectedKey]}
               className="centered-menu"
               items={[
-                { key: 'dashboard', label: 'Dashboard', onClick: () => navigate('/') },
-                { key: 'catalog', label: 'Catalog', onClick: () => navigate('/catalog') },
-                { key: 'editor', label: 'Editor', onClick: () => navigate('/editor') },
-                { key: 'execution', label: 'Execution', onClick: () => navigate('/execution') }
+                { 
+                  key: 'dashboard', 
+                  label: 'Dashboard', 
+                  onClick: () => navigate('/') 
+                },
+                { 
+                  key: 'catalog', 
+                  label: 'Catalog', 
+                  onClick: () => navigate('/catalog') 
+                },
+                { 
+                  key: 'editor', 
+                  label: 'Editor', 
+                  onClick: () => navigate('/editor') 
+                },
+                { 
+                  key: 'execution', 
+                  label: 'Execution', 
+                  onClick: () => navigate('/execution') 
+                }
               ]}
             />
           </div>
         </Header>
-        <Content style={{ padding: '24px' }}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/catalog" element={<Catalog />} />
-            <Route path="/editor" element={<Editor />} />
-            <Route path="/execution" element={<Execution />} />
-            <Route path="/execution/:id" element={<ExecutionDetail />} />
-            {/* Catch-all route for 404 */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+        <Content style={{ padding: '24px', margin: '0 24px' }}>
+          <div style={{ 
+            background: '#fff', 
+            padding: '24px', 
+            borderRadius: '12px',
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
+            minHeight: 'calc(100vh - 200px)'
+          }}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/catalog" element={<Catalog />} />
+              <Route path="/editor" element={<Editor />} />
+              <Route path="/execution" element={<Execution />} />
+              <Route path="/execution/:id" element={<ExecutionDetail />} />
+              {/* Catch-all route for 404 */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </div>
         </Content>
-        <Footer style={{ textAlign: 'center' }}>
+        <Footer style={{ 
+          textAlign: 'center', 
+          background: 'transparent', 
+          color: '#8c8c8c',
+          fontSize: '14px'
+        }}>
           NoETL Dashboard ©2024 Created with React & TypeScript
         </Footer>
       </Layout>

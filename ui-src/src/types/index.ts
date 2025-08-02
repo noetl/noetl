@@ -1,7 +1,7 @@
 // Common types used across the application
 
 export interface ServerStatus {
-  status: string;
+  status: 'ok' | 'healthy' | 'error' | 'warning' | string;
   message: string;
   timestamp: string;
 }
