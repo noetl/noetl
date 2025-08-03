@@ -225,7 +225,9 @@ const Catalog: React.FC = () => {
   return (
     <Content>
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        <Title level={2}>Playbook Catalog</Title>
+        <Title level={2}>
+          📚 Playbook Catalog
+        </Title>
 
         <Search
           placeholder="Search playbooks..."
