@@ -2,10 +2,13 @@ import os
 import json
 import yaml
 import tempfile
+import psycopg
+import base64
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
+from psycopg.rows import dict_row
 from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
 from noetl.logger import setup_logger
 from noetl.worker import Worker
@@ -1617,7 +1620,6 @@ async def get_executions():
 
 @router.get("/executions/{execution_id}", response_class=JSONResponse)
 async def get_execution(execution_id: str):
-    """Get a specific execution by ID"""
     try:
         event_service = get_event_service()
         events = event_service.get_events_by_execution_id(execution_id)
@@ -1729,4 +1731,134 @@ async def get_resource(
             status_code=500,
             detail=f"Error fetching resource: {e}."
         )
+
+@router.post("/postgres/execute", response_class=JSONResponse)
+async def execute_postgres(
+    request: Request,
+    query: str = None,
+    query_base64: str = None,
+    procedure: str = None,
+    parameters: Any = None,
+    schema: str = None,
+    connection_string: str = None
+):
+    """
+    Execute a Postgres query or stored procedure.
+    
+    Args:
+        query: SQL query to execute. Mutually exclusive with procedure and query_base64.
+        query_base64: Base64-encoded SQL query to execute. Mmutually exclusive with query and procedure.
+        procedure: Stored procedure to call. Mutually exclusive with query and query_base64.
+        parameters: List of parameters for the query or procedure
+        schema: Optional schema to use. Defaults to NOETL_SCHEMA from environment.
+        connection_string: Optional custom connection string to use instead of the default
+    
+    Returns:
+        JSON response with the results of the query or procedure
+    """
+    try:
+        logger.debug("=== EXECUTE_POSTGRES: Function entry ===")
+        
+        try:
+            body = await request.json()
+            query = body.get("query", query)
+            query_base64 = body.get("query_base64", query_base64)
+            procedure = body.get("procedure", procedure)
+            parameters = body.get("parameters", parameters)
+            schema = body.get("schema", schema)
+            connection_string = body.get("connection_string", connection_string)
+            logger.debug(f"EXECUTE_POSTGRES: Parameters from request body - query={query}, query_base64={query_base64}, procedure={procedure}, parameters={parameters}, schema={schema}, connection_string={connection_string}")
+        except Exception as e:
+            logger.debug(f"EXECUTE_POSTGRES: Failed to parse request body: {e}")
+            pass
+            
+        logger.debug(f"EXECUTE_POSTGRES: query={query}, query_base64={query_base64}, procedure={procedure}, parameters={parameters}, schema={schema}")
+        
+        decoded_query = None
+        if query_base64:
+            try:
+                decoded_query = base64.b64decode(query_base64).decode('utf-8')
+                logger.debug(f"EXECUTE_POSTGRES: Decoded base64 query: {decoded_query}")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid base64 encoding for query_base64: {str(e)}"
+                )
+        
+        provided_params = sum(1 for p in [query, decoded_query, procedure] if p)
+        
+        if provided_params == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'query', 'query_base64', or 'procedure' must be provided."
+            )
+        
+        if provided_params > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Only one of 'query', 'query_base64', or 'procedure' can be provided."
+            )
+            
+        if decoded_query:
+            query = decoded_query
+        
+        conn = None
+        try:
+            if connection_string:
+                logger.debug(f"EXECUTE_POSTGRES: Using custom connection string")
+                conn = psycopg.connect(connection_string)
+            else:
+                logger.debug(f"EXECUTE_POSTGRES: Using default connection from pool")
+                return_conn = get_db_connection()
+                conn = return_conn.__enter__()
+            
+            with conn.cursor(row_factory=dict_row) as cursor:
+                if query:
+                    logger.debug(f"EXECUTE_POSTGRES: Executing query: {query}")
+                    if parameters:
+                        cursor.execute(query, parameters)
+                    else:
+                        cursor.execute(query)
+                else:
+                    logger.debug(f"EXECUTE_POSTGRES: Calling procedure: {procedure}")
+                    if parameters:
+                        placeholders = ", ".join(["%s"] * len(parameters))
+                        call_sql = f"CALL {procedure}({placeholders})"
+                        cursor.execute(call_sql, parameters)
+                    else:
+                        call_sql = f"CALL {procedure}()"
+                        cursor.execute(call_sql)
+                
+                try:
+                    results = cursor.fetchall()
+                    logger.debug(f"EXECUTE_POSTGRES: Fetched {len(results)} rows")
+                except psycopg.ProgrammingError:
+                    results = []
+                    logger.debug("EXECUTE_POSTGRES: No results to fetch")
+                
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                
+                response_data = {
+                    "success": True,
+                    "rows_affected": cursor.rowcount if cursor.rowcount >= 0 else 0,
+                    "columns": columns,
+                    "results": results
+                }
+                
+                logger.debug(f"EXECUTE_POSTGRES: Returning response with {len(results)} results")
+                logger.debug("=== EXECUTE_POSTGRES: Function exit ===")
+                return response_data
+        finally:
+            if connection_string and conn:
+                logger.debug("EXECUTE_POSTGRES: Closing custom connection")
+                conn.close()
+            elif conn and not connection_string:
+                logger.debug("EXECUTE_POSTGRES: Returning connection to pool")
+                return_conn.__exit__(None, None, None)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error executing PostgreSQL query or procedure: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 

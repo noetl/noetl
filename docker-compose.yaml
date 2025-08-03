@@ -109,7 +109,7 @@ services:
     volumes:
       - ./notebooks:/home/jovyan/notebooks
       - ./data/work:/home/jovyan/work
-      - ./examples/amadeus:/home/jovyan/amadeus
+      - ./examples:/home/jovyan/examples
       - ./data/jupyter:/home/jovyan/data
       - .secrets/noetl-service-account.json:/home/jovyan/secrets/noetl-service-account.json
     environment:
