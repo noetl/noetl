@@ -386,7 +386,7 @@ class Broker:
                 logger.debug(f"BROKER.EXECUTE_STEP: Call type: {call_type}")
                 
                 logger.debug(f"BROKER.EXECUTE_STEP: Rendering task_with template from call_config.with: {call_config.get('with', {})}")
-                task_with = render_template(self.agent.jinja_env, call_config.get('with', {}), step_context)
+                task_with = render_template(self.agent.jinja_env, call_config.get('with', {}), step_context, strict_keys=False)
                 logger.debug(f"BROKER.EXECUTE_STEP: Rendered task_with: {task_with}")
                 
                 task_context = {**step_context, **task_with}
@@ -451,7 +451,7 @@ class Broker:
                     return result
 
                 logger.debug(f"BROKER.EXECUTE_STEP: Rendering task_with template from step_config.with: {step_config.get('with', {})}")
-                task_with = render_template(self.agent.jinja_env, step_config.get('with', {}), step_context)
+                task_with = render_template(self.agent.jinja_env, step_config.get('with', {}), step_context, strict_keys=False)
                 logger.debug(f"BROKER.EXECUTE_STEP: Rendered task_with: {task_with}")
                 
                 task_context = {**step_context, **task_with}
@@ -492,7 +492,7 @@ class Broker:
                 logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with execution_task_config={execution_task_config}, task_name={task_name}")
                 merged_context = {**step_context}
                 if 'with' in execution_task_config:
-                    task_with = render_template(self.agent.jinja_env, execution_task_config.get('with', {}), step_context)
+                    task_with = render_template(self.agent.jinja_env, execution_task_config.get('with', {}), step_context, strict_keys=False)
                     merged_context.update(task_with)
                     logger.debug(f"BROKER.EXECUTE_STEP: Created merged_context by combining step_context and rendered task_with: {task_with}")
                 
