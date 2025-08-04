@@ -14,7 +14,6 @@ from noetl.server import router as server_router
 from noetl.system import router as system_router
 from noetl.common import deep_merge, DateTimeEncoder
 from noetl.logger import setup_logger
-from noetl.worker import Worker
 from noetl.schema import DatabaseSchema
 
 logger = setup_logger(__name__, include_location=True)
@@ -32,7 +31,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
-        version="0.1.21"
+        version="0.1.33"
     )
 
     app.add_middleware(
@@ -43,17 +42,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
 
-    try:
-        logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=False)
-        db_schema.create_noetl_metadata()
-        db_schema.init_database()
-        logger.info("NoETL user and database schema initialized.")
-    except Exception as e:
-        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
-        logger.warning("Database connection failed. Some features requiring database access will be limited.")
-        logger.warning("Playbook registration will work in memory-only mode.")
-        logger.warning("Continuing with server startup despite database initialization error.")
 
     package_dir = Path(__file__).parent
     ui_build_path = package_dir / "ui" / "build"
@@ -93,7 +81,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
 @cli_app.command("server")
 def run_server(
-    host: str = typer.Option("0.0.0.0", help="Server host."),
+    host: str = typer.Option("localhost", help="Server host."),
     port: int = typer.Option(8080, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload."),
     no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components."),
@@ -122,100 +110,19 @@ def run_server(
         logger.info(f"ENV: {key}={value}")
     logger.info("=== END ENVIRONMENT VARIABLES ===")
     
-    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
-
-
-@cli_app.command("agent")
-def run_agent(
-    file: str = typer.Option(..., "--file", "-f", help="Path to playbooks YAML file."),
-    mock: bool = typer.Option(False, help="Run in mock mode"),
-    output: str = typer.Option("json", "--output", "-o", help="Output format, json or plain."),
-    export: str = typer.Option(None, help="Export execution data to Parquet file."),
-    mlflow: bool = typer.Option(False, help="Use ML model for workflow control."),
-    postgres: str = typer.Option(None, help="Postgres connection string."),
-    duckdb: str = typer.Option(None, help="Path to DuckDB file for business logic in playbooks."),
-    input: str = typer.Option(None, help="Path to the input payload JSON file for the playbooks."),
-    payload: str = typer.Option(None, help="JSON input payload string for the playbooks."),
-    merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
-    debug: bool = typer.Option(False, "--debug", help="Debug logging mode.")
-):
-    logging.basicConfig(
-        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
-        datefmt='%Y-%m-%dT%H:%M:%S',
-        level=logging.DEBUG if debug else logging.INFO
-    )
-
     try:
-        input_payload = None
-        if input:
-            try:
-                with open(input, 'r') as f:
-                    input_payload = json.load(f)
-                logger.info(f"Loaded input payload from {input}")
-            except Exception as e:
-                logger.error(f"Error loading input payload: {e}")
-                raise typer.Exit(code=1)
-        elif payload:
-            try:
-                input_payload = json.loads(payload)
-                logger.info("Parsed input payload from command line")
-            except Exception as e:
-                logger.error(f"Error parsing payload JSON: {e}")
-                raise typer.Exit(code=1)
-        pgdb_conn = postgres or os.environ.get("NOETL_PGDB")
-        if not pgdb_conn:
-            pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'demo_noetl')} user={os.environ.get('POSTGRES_USER', 'demo')} password={os.environ.get('POSTGRES_PASSWORD', 'demo')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5432')} hostaddr='' gssencmode=disable"
-            logger.info(f"Using default Postgres connection string: {pgdb_conn}")
-
-        if duckdb:
-            os.environ['DUCKDB_PATH'] = duckdb
-            logger.info(f"Using DuckDB for business logic: {duckdb}")
-
-        agent = Worker(file, mock_mode=mock, pgdb=pgdb_conn)
-        workload = agent.playbook.get('workload', {})
-
-        if input_payload:
-            if merge:
-                logger.info("Merge mode: deep merging input payload with workload.")
-                merged_workload = deep_merge(workload, input_payload)
-                for key, value in merged_workload.items():
-                    agent.update_context(key, value)
-                agent.update_context('workload', merged_workload)
-                agent.store_workload(merged_workload)
-            else:
-                logger.info("Override mode: replacing the matching workload keys with input payload.")
-                new_workload = workload.copy()
-                for key, value in input_payload.items():
-                    new_workload[key] = value
-                for key, value in new_workload.items():
-                    agent.update_context(key, value)
-                agent.update_context('workload', new_workload)
-                agent.store_workload(new_workload)
-        else:
-            logger.info("Using default workload from playbooks.")
-            for key, value in workload.items():
-                agent.update_context(key, value)
-            agent.update_context('workload', workload)
-            agent.store_workload(workload)
-
-        results = agent.run(mlflow=mlflow)
-
-        if export:
-            agent.export_execution_data(export)
-
-        if output == "json":
-            logger.info(json.dumps(results, indent=2))
-        else:
-            for step, result in results.items():
-                logger.info(f"{step}: {result}")
-
-        logger.info(f"Postgres connection: {agent.pgdb}")
-        logger.info(f"Open notebook/agent_mission_report.ipynb and set 'pgdb' to {agent.pgdb}")
-
+        logger.info("Initializing NoETL system metadata.")
+        db_schema = DatabaseSchema(auto_setup=False)
+        db_schema.create_noetl_metadata()
+        db_schema.init_database()
+        logger.info("NoETL database schema initialized.")
     except Exception as e:
-        logger.error(f"Error executing playbooks: {e}", exc_info=True)
-        print(f"Error executing playbooks: {e}")
+        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
+        logger.error("Database connection failed. Cannot start NoETL server.")
+        logger.error("Please check database configuration.")
         raise typer.Exit(code=1)
+
+    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 
 @cli_app.command("catalog")
@@ -395,24 +302,24 @@ def manage_catalog(
                         step_count += 1
                         if isinstance(step_result, dict):
                             status = step_result.get('status', None)
+                            command_statuses = []
 
                             if status is None and any(key.startswith('command_') for key in step_result.keys()):
-                                command_statuses = []
                                 for key, value in step_result.items():
                                     if key.startswith('command_') and isinstance(value, dict):
                                         cmd_status = value.get('status')
                                         if cmd_status:
                                             command_statuses.append(cmd_status)
 
-                                if command_statuses:
-                                    if all(s == 'success' for s in command_statuses):
-                                        status = 'success'
-                                    elif any(s == 'error' for s in command_statuses):
-                                        status = 'error'
-                                    else:
-                                        status = 'partial'
+                            if command_statuses:
+                                if all(s == 'success' for s in command_statuses):
+                                    status = 'success'
+                                elif any(s == 'error' for s in command_statuses):
+                                    status = 'error'
                                 else:
-                                    status = 'unknown'
+                                    status = 'partial'
+                            else:
+                                status = 'unknown'
 
                             if status == 'success':
                                 success_count += 1
@@ -476,7 +383,7 @@ def manage_catalog(
             url = f"http://{host}:{port}/api/catalog/list"
             params = {}
             if resource_type == "playbook":
-                params["resource_type"] = "Playbook"  # Use singular form
+                params["resource_type"] = "Playbook"
 
             logger.info(f"Listing {resource_type}s from NoETL server at {url}")
             response = requests.get(url, params=params)
@@ -602,24 +509,24 @@ def execute_playbook(
                     step_count += 1
                     if isinstance(step_result, dict):
                         status = step_result.get('status', None)
+                        command_statuses = []
 
                         if status is None and any(key.startswith('command_') for key in step_result.keys()):
-                            command_statuses = []
                             for key, value in step_result.items():
                                 if key.startswith('command_') and isinstance(value, dict):
                                     cmd_status = value.get('status')
                                     if cmd_status:
                                         command_statuses.append(cmd_status)
 
-                            if command_statuses:
-                                if all(s == 'success' for s in command_statuses):
-                                    status = 'success'
-                                elif any(s == 'error' for s in command_statuses):
-                                    status = 'error'
-                                else:
-                                    status = 'partial'
+                        if command_statuses:
+                            if all(s == 'success' for s in command_statuses):
+                                status = 'success'
+                            elif any(s == 'error' for s in command_statuses):
+                                status = 'error'
                             else:
-                                status = 'unknown'
+                                status = 'partial'
+                        else:
+                            status = 'unknown'
 
                     if status == 'success':
                         success_count += 1
