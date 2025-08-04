@@ -854,14 +854,11 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     start_time = datetime.datetime.now()
 
     try:
-        # Pre-process any text variables in task_with to escape special characters for SQL
         processed_task_with = task_with.copy()
         for key, value in task_with.items():
             if isinstance(value, str):
-                # Escape special characters in string values that might cause SQL syntax errors
-                # Replace angle brackets, quotes, and other problematic characters
                 processed_value = value.replace('<', '\\<').replace('>', '\\>')
-                processed_value = processed_value.replace("'", "''")  # Double single quotes for SQL
+                processed_value = processed_value.replace("'", "''")
                 processed_task_with[key] = processed_value
                 if value != processed_value:
                     logger.debug(f"Escaped special characters in {key} for SQL compatibility")
@@ -953,14 +950,16 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
                 logger.info(f"Executing Postgres command: {cmd}")
                 is_select = cmd.strip().upper().startswith("SELECT")
                 is_call = cmd.strip().upper().startswith("CALL")
-                returns_data = is_select or "RETURNING" in cmd.upper() or is_call
+                returns_data = is_select or "RETURNING" in cmd.upper()
 
                 try:
                     with conn.cursor() as cursor:
                         cursor.execute(cmd)
 
-                        if returns_data:
-                            column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                        has_results = cursor.description is not None
+                        
+                        if has_results:
+                            column_names = [desc[0] for desc in cursor.description]
                             rows = cursor.fetchall()
                             result_data = []
                             for row in rows:
@@ -985,11 +984,18 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
                             }
                         else:
                             conn.commit()
-                            results[f"command_{i}"] = {
-                                "status": "success",
-                                "row_count": cursor.rowcount,
-                                "message": f"Command executed. {cursor.rowcount} rows affected."
-                            }
+                            
+                            if is_call:
+                                results[f"command_{i}"] = {
+                                    "status": "success",
+                                    "message": f"Procedure executed successfully."
+                                }
+                            else:
+                                results[f"command_{i}"] = {
+                                    "status": "success",
+                                    "row_count": cursor.rowcount,
+                                    "message": f"Command executed. {cursor.rowcount} rows affected."
+                                }
                 except Exception as cmd_error:
                     logger.error(f"Error executing Postgres command: {cmd_error}")
                     results[f"command_{i}"] = {
@@ -1002,18 +1008,50 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
 
+        has_error = False
+        error_message = ""
+        for cmd_key, cmd_result in results.items():
+            if cmd_result.get('status') == 'error':
+                has_error = True
+                error_message += f"{cmd_key}: {cmd_result.get('message')}; "
+
+        task_status = 'error' if has_error else 'success'
+
         if log_event_callback:
             log_event_callback(
-                'task_complete', task_id, task_name, 'postgres',
-                'success', duration, context, results,
+                'task_complete' if not has_error else 'task_error', 
+                task_id, task_name, 'postgres',
+                task_status, duration, context, results,
                 {'with_params': task_with}, event_id
             )
 
-        return {
-            'id': task_id,
-            'status': 'success',
-            'data': results
-        }
+        if has_error:
+            try:
+                log_error(
+                    error=Exception(error_message),
+                    error_type="postgres_execution",
+                    template_string=str(commands),
+                    context_data=context,
+                    input_data=task_with,
+                    execution_id=context.get('execution_id'),
+                    step_id=task_id,
+                    step_name=task_name
+                )
+            except Exception as e:
+                logger.error(f"Failed to log error to database: {e}")
+
+            return {
+                'id': task_id,
+                'status': 'error',
+                'error': error_message.strip(),
+                'data': results
+            }
+        else:
+            return {
+                'id': task_id,
+                'status': 'success',
+                'data': results
+            }
 
     except Exception as e:
         error_msg = str(e)
@@ -1087,7 +1125,6 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         error_msg = f"Task not found: {task_name}"
         logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")
 
-        # Log error to database error_log table
         try:
             log_error(
                 error=Exception(error_msg),
@@ -1160,7 +1197,6 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
         if not secret_manager:
             error_msg = "SecretManager is required for secrets tasks."
             
-            # Log error to database error_log table
             try:
                 log_error(
                     error=Exception(error_msg),
