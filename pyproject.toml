@@ -1,6 +1,6 @@
 [project]
 name = "noetl"
-version = "0.1.29"
+version = "0.1.30"
 description = "A framework to build and run data pipelines and workflows."
 authors = [
     { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" }

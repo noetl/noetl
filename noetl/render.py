@@ -25,15 +25,20 @@ def add_b64encode_filter(env: Environment) -> Environment:
     return env
 
 
-def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None) -> Any:
+def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None, strict_keys: bool = False) -> Any:
     """
     NoETL Jinja2 rendering.
+
+    This function renders templates using Jinja2. When strict_keys=False, it will not raise errors
+    for undefined variables, which is useful during the initial rendering phase when not all variables
+    may be defined yet. This helps prevent false positive errors in nested templates.
 
     Args:
         env: The Jinja2 environment
         template: The template to render
         context: The context to use for rendering
         rules: Additional rules for rendering
+        strict_keys: Whether to use strict key checking (raises errors for undefined variables)
 
     Returns:
         The rendered template
@@ -82,7 +87,16 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                         if valid_path:
                             return value
 
-            template_obj = env.from_string(template)
+            if strict_keys:
+                template_obj = env.from_string(template)
+            else:
+                temp_env = Environment(loader=env.loader)
+                for name, filter_func in env.filters.items():
+                    temp_env.filters[name] = filter_func
+                for name, global_var in env.globals.items():
+                    temp_env.globals[name] = global_var
+                template_obj = temp_env.from_string(template)
+                
             try:
                 custom_context = render_ctx.copy()
 
