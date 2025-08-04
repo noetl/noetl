@@ -944,64 +944,98 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
             raise
 
         results = {}
-
         if commands:
             for i, cmd in enumerate(commands):
                 logger.info(f"Executing Postgres command: {cmd}")
                 is_select = cmd.strip().upper().startswith("SELECT")
                 is_call = cmd.strip().upper().startswith("CALL")
                 returns_data = is_select or "RETURNING" in cmd.upper()
-
+                original_autocommit = conn.autocommit
                 try:
-                    with conn.cursor() as cursor:
-                        cursor.execute(cmd)
+                    if is_call:
+                        conn.autocommit = True
+                        with conn.cursor() as cursor:
+                            cursor.execute(cmd)
+                            has_results = cursor.description is not None
 
-                        has_results = cursor.description is not None
-                        
-                        if has_results:
-                            column_names = [desc[0] for desc in cursor.description]
-                            rows = cursor.fetchall()
-                            result_data = []
-                            for row in rows:
-                                row_dict = {}
-                                for i, col_name in enumerate(column_names):
-                                    if isinstance(row[i], dict) or (isinstance(row[i], str) and (row[i].startswith('{') or row[i].startswith('['))):
-                                        try:
-                                            row_dict[col_name] = row[i]
-                                        except:
-                                            row_dict[col_name] = row[i]
-                                    elif isinstance(row[i], Decimal):
-                                        row_dict[col_name] = float(row[i])
-                                    else:
-                                        row_dict[col_name] = row[i]
-                                result_data.append(row_dict)
+                            if has_results:
+                                column_names = [desc[0] for desc in cursor.description]
+                                rows = cursor.fetchall()
+                                result_data = []
+                                for row in rows:
+                                    row_dict = {}
+                                    for j, col_name in enumerate(column_names):
+                                        if isinstance(row[j], dict) or (isinstance(row[j], str) and (
+                                                row[j].startswith('{') or row[j].startswith('['))):
+                                            try:
+                                                row_dict[col_name] = row[j]
+                                            except:
+                                                row_dict[col_name] = row[j]
+                                        elif isinstance(row[j], Decimal):
+                                            row_dict[col_name] = float(row[j])
+                                        else:
+                                            row_dict[col_name] = row[j]
+                                    result_data.append(row_dict)
 
-                            results[f"command_{i}"] = {
-                                "status": "success",
-                                "rows": result_data,
-                                "row_count": len(rows),
-                                "columns": column_names
-                            }
-                        else:
-                            conn.commit()
-                            
-                            if is_call:
                                 results[f"command_{i}"] = {
                                     "status": "success",
-                                    "message": f"Procedure executed successfully."
+                                    "rows": result_data,
+                                    "row_count": len(rows),
+                                    "columns": column_names
                                 }
                             else:
                                 results[f"command_{i}"] = {
                                     "status": "success",
-                                    "row_count": cursor.rowcount,
-                                    "message": f"Command executed. {cursor.rowcount} rows affected."
+                                    "message": f"Procedure executed successfully."
                                 }
+
+                    else:
+                        with conn.transaction():
+                            with conn.cursor() as cursor:
+                                cursor.execute(cmd)
+                                has_results = cursor.description is not None
+
+                                if has_results:
+                                    column_names = [desc[0] for desc in cursor.description]
+                                    rows = cursor.fetchall()
+                                    result_data = []
+                                    for row in rows:
+                                        row_dict = {}
+                                        for j, col_name in enumerate(column_names):
+                                            if isinstance(row[j], dict) or (isinstance(row[j], str) and (
+                                                    row[j].startswith('{') or row[j].startswith('['))):
+                                                try:
+                                                    row_dict[col_name] = row[j]
+                                                except:
+                                                    row_dict[col_name] = row[j]
+                                            elif isinstance(row[j], Decimal):
+                                                row_dict[col_name] = float(row[j])
+                                            else:
+                                                row_dict[col_name] = row[j]
+                                        result_data.append(row_dict)
+
+                                    results[f"command_{i}"] = {
+                                        "status": "success",
+                                        "rows": result_data,
+                                        "row_count": len(rows),
+                                        "columns": column_names
+                                    }
+                                else:
+                                    results[f"command_{i}"] = {
+                                        "status": "success",
+                                        "row_count": cursor.rowcount,
+                                        "message": f"Command executed. {cursor.rowcount} rows affected."
+                                    }
+
                 except Exception as cmd_error:
                     logger.error(f"Error executing Postgres command: {cmd_error}")
                     results[f"command_{i}"] = {
                         "status": "error",
                         "message": str(cmd_error)
                     }
+
+                finally:
+                    conn.autocommit = original_autocommit
 
         conn.close()
 
@@ -1019,7 +1053,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
 
         if log_event_callback:
             log_event_callback(
-                'task_complete' if not has_error else 'task_error', 
+                'task_complete' if not has_error else 'task_error',
                 task_id, task_name, 'postgres',
                 task_status, duration, context, results,
                 {'with_params': task_with}, event_id
@@ -1071,6 +1105,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
             'status': 'error',
             'error': error_msg
         }
+
 
 def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, task_with: Dict, log_event_callback=None) -> Dict:
     """
