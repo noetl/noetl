@@ -395,21 +395,63 @@ def manage_catalog(
                         step_count += 1
                         if isinstance(step_result, dict):
                             status = step_result.get('status', None)
+
+                            if status is None and any(key.startswith('command_') for key in step_result.keys()):
+                                command_statuses = []
+                                for key, value in step_result.items():
+                                    if key.startswith('command_') and isinstance(value, dict):
+                                        cmd_status = value.get('status')
+                                        if cmd_status:
+                                            command_statuses.append(cmd_status)
+
+                                if command_statuses:
+                                    if all(s == 'success' for s in command_statuses):
+                                        status = 'success'
+                                    elif any(s == 'error' for s in command_statuses):
+                                        status = 'error'
+                                    else:
+                                        status = 'partial'
+                                else:
+                                    status = 'unknown'
+
                             if status == 'success':
                                 success_count += 1
-                                print(f"✓ {step_name}: SUCCESS")
+                                command_details = []
+                                for key, value in step_result.items():
+                                    if key.startswith('command_') and isinstance(value, dict):
+                                        msg = value.get('message', 'Command executed')
+                                        command_details.append(f"{key}: {msg}")
+
+                                if command_details:
+                                    print(f"{step_name}: SUCCESS ({len(command_details)} commands)")
+                                else:
+                                    print(f"{step_name}: SUCCESS")
                             elif status == 'error':
                                 error_count += 1
-                                error_msg = step_result.get('error', 'Unknown error')
-                                print(f"✗ {step_name}: ERROR - {error_msg}")
+                                error_details = []
+                                for key, value in step_result.items():
+                                    if key.startswith('command_') and isinstance(value, dict):
+                                        if value.get('status') == 'error':
+                                            error_msg = value.get('message', 'Unknown error')
+                                            error_details.append(f"{key}: {error_msg}")
+
+                                if error_details:
+                                    print(f"{step_name}: ERROR - {'; '.join(error_details)}")
+                                else:
+                                    error_msg = step_result.get('error', 'Unknown error')
+                                    print(f"{step_name}: ERROR - {error_msg}")
                             elif status == 'skipped':
                                 skipped_count += 1
-                                print(f"~ {step_name}: SKIPPED")
+                                print(f"{step_name}: SKIPPED")
+                            elif status == 'partial':
+                                success_count += 1
+                                print(f"{step_name}: PARTIAL SUCCESS")
                             else:
-                                print(f"? {step_name}: UNKNOWN STATUS")
+                                success_count += 1
+                                print(f"{step_name}: COMPLETED with unclear status")
                         else:
                             success_count += 1
-                            print(f"✓ {step_name}: SUCCESS")
+                            print(f"{step_name}: SUCCESS")
 
                     print("-"*80)
                     print(f"Total Steps: {step_count}")
@@ -458,7 +500,7 @@ def manage_catalog(
                     res_type = entry.get('resource_type', 'Unknown')
                     timestamp = entry.get('timestamp', 'Unknown')
                     if isinstance(timestamp, str) and 'T' in timestamp:
-                        timestamp = timestamp.split('T')[0]  # Show only date
+                        timestamp = timestamp.split('T')[0]
                     print(f"{path:<40} {version:<10} {res_type:<15} {timestamp:<15}")
                 print("="*80)
                 print(f"Total: {len(entries)} {resource_type}(s)")
@@ -490,11 +532,11 @@ def execute_playbook(
     merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
 ):
     """
-    Execute a playbook (convenience command for 'noetl catalog execute playbook')
+    Execute a playbook for 'noetl catalog execute playbook'
 
     Examples:
-        noetl execute weather_example --version 0.1.0
-        noetl execute tradetrend/batch_load --host localhost --port 8082
+        noetl execute example/weather/weather_example --version 0.1.0
+        noetl execute example/batch/batch_load --host localhost --port 8082
     """
 
     try:
@@ -560,21 +602,63 @@ def execute_playbook(
                     step_count += 1
                     if isinstance(step_result, dict):
                         status = step_result.get('status', None)
-                        if status == 'success':
-                            success_count += 1
-                            print(f"✓ {step_name}: SUCCESS")
-                        elif status == 'error':
-                            error_count += 1
-                            error_msg = step_result.get('error', 'Unknown error')
-                            print(f"✗ {step_name}: ERROR - {error_msg}")
-                        elif status == 'skipped':
-                            skipped_count += 1
-                            print(f"~ {step_name}: SKIPPED")
+
+                        if status is None and any(key.startswith('command_') for key in step_result.keys()):
+                            command_statuses = []
+                            for key, value in step_result.items():
+                                if key.startswith('command_') and isinstance(value, dict):
+                                    cmd_status = value.get('status')
+                                    if cmd_status:
+                                        command_statuses.append(cmd_status)
+
+                            if command_statuses:
+                                if all(s == 'success' for s in command_statuses):
+                                    status = 'success'
+                                elif any(s == 'error' for s in command_statuses):
+                                    status = 'error'
+                                else:
+                                    status = 'partial'
+                            else:
+                                status = 'unknown'
+
+                    if status == 'success':
+                        success_count += 1
+                        command_details = []
+                        for key, value in step_result.items():
+                            if key.startswith('command_') and isinstance(value, dict):
+                                msg = value.get('message', 'Command executed')
+                                command_details.append(f"{key}: {msg}")
+
+                        if command_details:
+                            print(f"{step_name}: SUCCESS ({len(command_details)} commands)")
                         else:
-                            print(f"? {step_name}: UNKNOWN STATUS")
+                            print(f"{step_name}: SUCCESS")
+                    elif status == 'error':
+                        error_count += 1
+                        error_details = []
+                        for key, value in step_result.items():
+                            if key.startswith('command_') and isinstance(value, dict):
+                                if value.get('status') == 'error':
+                                    error_msg = value.get('message', 'Unknown error')
+                                    error_details.append(f"{key}: {error_msg}")
+
+                        if error_details:
+                            print(f"{step_name}: ERROR - {'; '.join(error_details)}")
+                        else:
+                            error_msg = step_result.get('error', 'Unknown error')
+                            print(f"{step_name}: ERROR - {error_msg}")
+                    elif status == 'skipped':
+                        skipped_count += 1
+                        print(f"{step_name}: SKIPPED")
+                    elif status == 'partial':
+                        success_count += 1
+                        print(f"{step_name}: PARTIAL SUCCESS")
                     else:
                         success_count += 1
-                        print(f"✓ {step_name}: SUCCESS")
+                        print(f"{step_name}: COMPLETED (status unclear)")
+                else:
+                    success_count += 1
+                    print(f"{step_name}: SUCCESS")
 
                 print("-"*80)
                 print(f"Total Steps: {step_count}")
@@ -602,7 +686,7 @@ def register_playbook(
     port: int = typer.Option(8080, "--port", "-p", help="NoETL server port.")
 ):
     """
-    Register a playbook (convenience command for 'noetl catalog register playbook')
+    Register a playbook for 'noetl catalog register playbook'
 
     Examples:
         noetl register /path/to/playbook.yaml
@@ -620,7 +704,7 @@ def register_playbook(
         headers = {"Content-Type": "application/json"}
         data = {
             "content_base64": content_base64,
-            "resource_type": "Playbook"  # Use singular form
+            "resource_type": "Playbook"
         }
         logger.info(f"Registering playbook {playbook_file} with NoETL server at {url}")
         response = requests.post(url, headers=headers, json=data)
