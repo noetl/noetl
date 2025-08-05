@@ -14,7 +14,6 @@ from noetl.server import router as server_router
 from noetl.system import router as system_router
 from noetl.common import deep_merge, DateTimeEncoder
 from noetl.logger import setup_logger
-from noetl.worker import Worker
 from noetl.schema import DatabaseSchema
 
 logger = setup_logger(__name__, include_location=True)
@@ -32,7 +31,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
-        version="0.1.21"
+        version="0.1.32"
     )
 
     app.add_middleware(
@@ -43,17 +42,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
 
-    try:
-        logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=False)
-        db_schema.create_noetl_metadata()
-        db_schema.init_database()
-        logger.info("NoETL user and database schema initialized.")
-    except Exception as e:
-        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
-        logger.warning("Database connection failed. Some features requiring database access will be limited.")
-        logger.warning("Playbook registration will work in memory-only mode.")
-        logger.warning("Continuing with server startup despite database initialization error.")
 
     package_dir = Path(__file__).parent
     ui_build_path = package_dir / "ui" / "build"
@@ -93,7 +81,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
 @cli_app.command("server")
 def run_server(
-    host: str = typer.Option("0.0.0.0", help="Server host."),
+    host: str = typer.Option("localhost", help="Server host."),
     port: int = typer.Option(8080, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload."),
     no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components."),
@@ -122,149 +110,136 @@ def run_server(
         logger.info(f"ENV: {key}={value}")
     logger.info("=== END ENVIRONMENT VARIABLES ===")
     
+    try:
+        logger.info("Initializing NoETL system metadata.")
+        db_schema = DatabaseSchema(auto_setup=False)
+        db_schema.create_noetl_metadata()
+        db_schema.init_database()
+        logger.info("NoETL database schema initialized.")
+    except Exception as e:
+        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
+        logger.error("Database connection failed. Cannot start NoETL server.")
+        logger.error("Please check database configuration.")
+        raise typer.Exit(code=1)
+
     uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 
-@cli_app.command("agent")
-def run_agent(
-    file: str = typer.Option(..., "--file", "-f", help="Path to playbooks YAML file."),
-    mock: bool = typer.Option(False, help="Run in mock mode"),
-    output: str = typer.Option("json", "--output", "-o", help="Output format, json or plain."),
-    export: str = typer.Option(None, help="Export execution data to Parquet file."),
-    mlflow: bool = typer.Option(False, help="Use ML model for workflow control."),
-    postgres: str = typer.Option(None, help="Postgres connection string."),
-    duckdb: str = typer.Option(None, help="Path to DuckDB file for business logic in playbooks."),
-    input: str = typer.Option(None, help="Path to the input payload JSON file for the playbooks."),
-    payload: str = typer.Option(None, help="JSON input payload string for the playbooks."),
-    merge: bool = typer.Option(False, help="Merge the input payload with the workload section."),
-    debug: bool = typer.Option(False, "--debug", help="Debug logging mode.")
-):
-    logging.basicConfig(
-        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
-        datefmt='%Y-%m-%dT%H:%M:%S',
-        level=logging.DEBUG if debug else logging.INFO
-    )
-
-    try:
-        input_payload = None
-        if input:
-            try:
-                with open(input, 'r') as f:
-                    input_payload = json.load(f)
-                logger.info(f"Loaded input payload from {input}")
-            except Exception as e:
-                logger.error(f"Error loading input payload: {e}")
-                raise typer.Exit(code=1)
-        elif payload:
-            try:
-                input_payload = json.loads(payload)
-                logger.info("Parsed input payload from command line")
-            except Exception as e:
-                logger.error(f"Error parsing payload JSON: {e}")
-                raise typer.Exit(code=1)
-        pgdb_conn = postgres or os.environ.get("NOETL_PGDB")
-        if not pgdb_conn:
-            pgdb_conn = f"dbname={os.environ.get('POSTGRES_DB', 'demo_noetl')} user={os.environ.get('POSTGRES_USER', 'demo')} password={os.environ.get('POSTGRES_PASSWORD', 'demo')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5432')} hostaddr='' gssencmode=disable"
-            logger.info(f"Using default Postgres connection string: {pgdb_conn}")
-
-        if duckdb:
-            os.environ['DUCKDB_PATH'] = duckdb
-            logger.info(f"Using DuckDB for business logic: {duckdb}")
-
-        agent = Worker(file, mock_mode=mock, pgdb=pgdb_conn)
-        workload = agent.playbook.get('workload', {})
-
-        if input_payload:
-            if merge:
-                logger.info("Merge mode: deep merging input payload with workload.")
-                merged_workload = deep_merge(workload, input_payload)
-                for key, value in merged_workload.items():
-                    agent.update_context(key, value)
-                agent.update_context('workload', merged_workload)
-                agent.store_workload(merged_workload)
-            else:
-                logger.info("Override mode: replacing the matching workload keys with input payload.")
-                new_workload = workload.copy()
-                for key, value in input_payload.items():
-                    new_workload[key] = value
-                for key, value in new_workload.items():
-                    agent.update_context(key, value)
-                agent.update_context('workload', new_workload)
-                agent.store_workload(new_workload)
-        else:
-            logger.info("Using default workload from playbooks.")
-            for key, value in workload.items():
-                agent.update_context(key, value)
-            agent.update_context('workload', workload)
-            agent.store_workload(workload)
-
-        results = agent.run(mlflow=mlflow)
-
-        if export:
-            agent.export_execution_data(export)
-
-        if output == "json":
-            logger.info(json.dumps(results, indent=2))
-        else:
-            for step, result in results.items():
-                logger.info(f"{step}: {result}")
-
-        logger.info(f"Postgres connection: {agent.pgdb}")
-        logger.info(f"Open notebook/agent_mission_report.ipynb and set 'pgdb' to {agent.pgdb}")
-
-    except Exception as e:
-        logger.error(f"Error executing playbooks: {e}", exc_info=True)
-        print(f"Error executing playbooks: {e}")
-        raise typer.Exit(code=1)
-
-
-@cli_app.command("playbooks")
-def manage_playbook(
-    register: str = typer.Option(None, "--register", "-r", help="Path to playbooks file to register."),
-    execute: bool = typer.Option(False, "--execute", "-e", help="Execute a playbooks by path."),
-    path: str = typer.Option(None, "--path", help="Path of the playbooks to execute."),
-    version: str = typer.Option(None, "--version", "-v", help="Version of the playbooks to execute."),
+@cli_app.command("catalog")
+def manage_catalog(
+    action: str = typer.Argument(help="Action to perform: register, execute, list"),
+    resource_type_or_path: str = typer.Argument(help="Resource type (for list) or path (for register/execute)"),
+    path: str = typer.Argument(None, help="Path to resource file (for register) or resource path (for execute) - optional if type is inferred"),
+    version: str = typer.Option(None, "--version", "-v", help="Version of the resource to execute."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
     payload: str = typer.Option(None, "--payload", help="Payload string."),
     host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
-    port: int = typer.Option(8082, "--port", "-p", help="NoETL server port."),
+    port: int = typer.Option(8080, "--port", "-p", help="NoETL server port."),
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
-    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbooks.")
+    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of resource.")
 ):
-    if register:
-        try:
-            if not os.path.exists(register):
-                logger.error(f"File not found: {register}")
+    """
+    Manage catalog resources playbooks, datasets, notebooks, models, etc.
+
+    Examples:
+        # Auto-detect resource type from file content:
+        noetl catalog register /path/to/playbook.yaml
+
+        # Explicit resource type (with validation):
+        noetl catalog register playbook /path/to/playbook.yaml
+
+        # Execute and list:
+        noetl catalog execute weather_example --version 0.1.0
+        noetl catalog list playbook
+    """
+
+    auto_detect_mode = False
+
+    if action == "register":
+        if os.path.exists(resource_type_or_path):
+            auto_detect_mode = True
+            file_path = resource_type_or_path
+
+            try:
+                with open(file_path, 'r') as f:
+                    content = f.read()
+                    import yaml
+                    resource_data = yaml.safe_load(content)
+                    kind = resource_data.get("kind", "").lower()
+
+                    if kind == "playbook":
+                        resource_type = "playbook"
+                        detected_resource_type = "Playbook"
+                    else:
+                        logger.error(f"Unsupported resource kind: {kind}. Supported kinds: Playbook")
+                        raise typer.Exit(code=1)
+
+                logger.info(f"Auto-detected resource type: {resource_type} from kind: {resource_data.get('kind')}")
+
+            except Exception as e:
+                logger.error(f"Error reading or parsing file {file_path}: {e}")
                 raise typer.Exit(code=1)
-            with open(register, 'r') as f:
+        else:
+            resource_type = resource_type_or_path
+            file_path = path
+            detected_resource_type = "Playbook"
+
+            if not file_path:
+                logger.error("Path to resource file is required when using explicit resource type")
+                logger.info(f"Example: noetl catalog register {resource_type} /path/to/file.yaml")
+                raise typer.Exit(code=1)
+    else:
+        if action == "execute":
+            resource_path = resource_type_or_path
+        elif action == "list":
+            resource_type = resource_type_or_path
+            if resource_type not in ["playbook"]:
+                logger.error(f"Unsupported resource type: {resource_type}. Supported types: playbook")
+                raise typer.Exit(code=1)
+
+    if action == "register":
+        try:
+            if not os.path.exists(file_path):
+                logger.error(f"File not found: {file_path}")
+                raise typer.Exit(code=1)
+            with open(file_path, 'r') as f:
                 content = f.read()
             content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
             url = f"http://{host}:{port}/api/catalog/register"
             headers = {"Content-Type": "application/json"}
-            data = {"content_base64": content_base64}
-            logger.info(f"Registering playbooks {register} with NoETL server at {url}")
+            data = {
+                "content_base64": content_base64,
+                "resource_type": detected_resource_type
+            }
+
+            if auto_detect_mode:
+                logger.info(f"Registering {resource_type} {file_path} (auto-detected) with NoETL server at {url}")
+            else:
+                logger.info(f"Registering {resource_type} {file_path} with NoETL server at {url}")
+
             response = requests.post(url, headers=headers, json=data)
 
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Playbook registered successfully: {result}")
+                logger.info(f"{resource_type.capitalize()} registered successfully: {result}")
                 logger.info(f"Resource path: {result.get('resource_path')}")
                 logger.info(f"Resource version: {result.get('resource_version')}")
             else:
-                logger.error(f"Failed to register playbooks: {response.status_code}")
+                logger.error(f"Failed to register {resource_type}: {response.status_code}")
                 logger.error(f"Response: {response.text}")
                 raise typer.Exit(code=1)
 
         except Exception as e:
-            logger.error(f"Error registering playbooks: {e}")
+            logger.error(f"Error registering {resource_type}: {e}")
             raise typer.Exit(code=1)
-    elif execute:
-        try:
-            if not path:
-                logger.error("Path is required when using --execute")
-                logger.info("Example: noetl playbooks --execute --path weather_example --version 0.1.0")
-                raise typer.Exit(code=1)
 
+    elif action == "execute":
+        if not path:
+            logger.error("Resource path is required for execute action")
+            logger.info(f"Example: noetl catalog execute {resource_type} weather_example --version 0.1.0")
+            raise typer.Exit(code=1)
+
+        try:
             input_payload = {}
             if input:
                 try:
@@ -295,45 +270,24 @@ def manage_playbook(
                 data["version"] = version
 
             if version:
-                logger.info(f"Executing playbooks {path} version {version} on NoETL server at {url}")
+                logger.info(f"Executing {resource_type} {path} version {version} on NoETL server at {url}")
             else:
-                logger.info(f"Executing playbooks {path} (latest version) on NoETL server at {url}")
+                logger.info(f"Executing {resource_type} {path} (latest version) on NoETL server at {url}")
             response = requests.post(url, headers=headers, json=data)
 
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Playbook executed.")
+                logger.info(f"{resource_type.capitalize()} executed.")
 
                 if result.get("status") == "success":
                     logger.info(f"Execution ID: {result.get('execution_id')}")
                     execution_result = result.get('result', {})
                     logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
-                    if logger.isEnabledFor(logging.DEBUG):
-                        print("\n" + "="*60)
-                        print("RAW EXECUTION DATA (DEBUG)")
-                        print("="*60)
-                        for step_name, step_result in execution_result.items():
-                            if isinstance(step_result, dict):
-                                print(f"\n--- {step_name} ---")
-                                command_count = 0
-                                for key, value in step_result.items():
-                                    if key.startswith('command_'):
-                                        command_count += 1
-                                        if isinstance(value, list):
-                                            if value:
-                                                print(f"  {key}: {value}")
-                                            else:
-                                                print(f"  {key}: [] (DDL/DML command - no result data)")
-                                        elif isinstance(value, dict):
-                                            print(f"  {key}: {value}")
-                                if command_count == 0:
-                                    print(f"  No DuckDB commands in this step")
-                        print("="*60)
 
                     print("\n" + "="*80)
                     print("EXECUTION REPORT")
                     print("="*80)
-                    print(f"Playbook Path: {path}")
+                    print(f"{resource_type.capitalize()} Path: {path}")
                     print(f"Version: {version or 'latest'}")
                     print(f"Execution ID: {result.get('execution_id')}")
                     print(f"Status: SUCCESS")
@@ -346,129 +300,335 @@ def manage_playbook(
 
                     for step_name, step_result in execution_result.items():
                         step_count += 1
-
                         if isinstance(step_result, dict):
                             status = step_result.get('status', None)
+                            command_statuses = []
 
-                            if status is None:
-                                if ('message' in step_result or
-                                    'secret_value' in step_result or
-                                    'directory_created' in step_result or
-                                    any(key.startswith('command_') for key in step_result.keys())):
+                            if status is None and any(key.startswith('command_') for key in step_result.keys()):
+                                for key, value in step_result.items():
+                                    if key.startswith('command_') and isinstance(value, dict):
+                                        cmd_status = value.get('status')
+                                        if cmd_status:
+                                            command_statuses.append(cmd_status)
+
+                            if command_statuses:
+                                if all(s == 'success' for s in command_statuses):
                                     status = 'success'
-                                elif 'error' in step_result:
+                                elif any(s == 'error' for s in command_statuses):
                                     status = 'error'
                                 else:
-                                    status = 'unknown'
+                                    status = 'partial'
+                            else:
+                                status = 'unknown'
 
                             if status == 'success':
                                 success_count += 1
-                                print(f"✓ {step_name}: SUCCESS")
-
-                                if 'message' in step_result:
-                                    print(f"  └─ {step_result['message']}")
-
-                                if 'secret_value' in step_result:
-                                    masked_secret = step_result['secret_value'][:8] + "..." if len(step_result['secret_value']) > 8 else "***"
-                                    print(f"  └─ Secret retrieved: {masked_secret}")
-                                    if 'provider' in step_result:
-                                        print(f"  └─ Provider: {step_result['provider']}")
-
-                                if 'directory_created' in step_result:
-                                    print(f"  └─ Directory: {step_result['directory_created']}")
-
-                                command_executed = False
-                                records_processed = 0
-                                export_message = None
-                                setup_commands = 0
-
+                                command_details = []
                                 for key, value in step_result.items():
-                                    if key.startswith('command_') and isinstance(value, list):
-                                        if value:
-                                            command_executed = True
-                                            if isinstance(value[0], list) and len(value[0]) > 0:
-                                                content = str(value[0][0])
-                                                if "Exporting" in content:
-                                                    export_message = content
-                                                elif content.isdigit():
-                                                    records_processed = int(content)
-                                                elif content == "Export completed":
-                                                    pass
-                                        else:
-                                            setup_commands += 1
-                                    elif key.startswith('command_') and isinstance(value, dict):
-                                        if value.get('status') == 'skipped':
-                                            print(f"  └─ {key}: SKIPPED - {value.get('message', 'No details')}")
+                                    if key.startswith('command_') and isinstance(value, dict):
+                                        msg = value.get('message', 'Command executed')
+                                        command_details.append(f"{key}: {msg}")
 
-                                if setup_commands > 0:
-                                    print(f"  └─ Setup commands: {setup_commands} executed")
-
-                                if export_message:
-                                    if "/" in export_message:
-                                        filename = export_message.split("/")[-1].replace(".csv", "")
-                                        print(f"  └─ Exported: {filename}")
-                                    if records_processed > 0:
-                                        print(f"  └─ Records: {records_processed}")
-
-                                for key, value in step_result.items():
-                                    if (key not in ['status', 'message', 'secret_value', 'provider', 'directory_created'] and
-                                        not key.startswith('command_') and
-                                        isinstance(value, (str, int, float)) and
-                                        len(str(value)) < 100):
-                                        print(f"  └─ {key}: {value}")
-
+                                if command_details:
+                                    print(f"{step_name}: SUCCESS ({len(command_details)} commands)")
+                                else:
+                                    print(f"{step_name}: SUCCESS")
                             elif status == 'error':
                                 error_count += 1
-                                print(f"✗ {step_name}: ERROR")
-                                if 'error' in step_result:
-                                    print(f"  └─ {step_result['error']}")
+                                error_details = []
+                                for key, value in step_result.items():
+                                    if key.startswith('command_') and isinstance(value, dict):
+                                        if value.get('status') == 'error':
+                                            error_msg = value.get('message', 'Unknown error')
+                                            error_details.append(f"{key}: {error_msg}")
+
+                                if error_details:
+                                    print(f"{step_name}: ERROR - {'; '.join(error_details)}")
+                                else:
+                                    error_msg = step_result.get('error', 'Unknown error')
+                                    print(f"{step_name}: ERROR - {error_msg}")
                             elif status == 'skipped':
                                 skipped_count += 1
-                                print(f"⊘ {step_name}: SKIPPED")
-                                if 'message' in step_result:
-                                    print(f"  └─ {step_result['message']}")
+                                print(f"{step_name}: SKIPPED")
+                            elif status == 'partial':
+                                success_count += 1
+                                print(f"{step_name}: PARTIAL SUCCESS")
                             else:
-                                print(f"? {step_name}: {status.upper()}")
+                                success_count += 1
+                                print(f"{step_name}: COMPLETED with unclear status")
                         else:
-                            print(f"- {step_name}: {step_result}")
+                            success_count += 1
+                            print(f"{step_name}: SUCCESS")
 
                     print("-"*80)
-                    print(f"SUMMARY: {step_count} steps total")
-                    print(f"  ✓ Success: {success_count}")
-                    if error_count > 0:
-                        print(f"  ✗ Errors: {error_count}")
-                    if skipped_count > 0:
-                        print(f"  ⊘ Skipped: {skipped_count}")
+                    print(f"Total Steps: {step_count}")
+                    print(f"Successful: {success_count}")
+                    print(f"Failed: {error_count}")
+                    print(f"Skipped: {skipped_count}")
                     print("="*80)
-
                 else:
-                    print("\n" + "="*80)
-                    print("EXECUTION REPORT")
-                    print("="*80)
-                    print(f"Playbook Path: {path}")
-                    print(f"Version: {version or 'latest'}")
-                    print(f"Status: FAILED")
-                    print(f"Error: {result.get('error', 'Unknown error')}")
-                    print("="*80)
-
-                    logger.error(f"Execution failed: {result.get('error')}.")
+                    logger.error(f"Execution failed: {result.get('error')}")
                     raise typer.Exit(code=1)
             else:
-                logger.error(f"Failed to execute playbooks: {response.status_code}.")
-                logger.error(f"Response: {response.text}.")
+                logger.error(f"Failed to execute {resource_type}: {response.status_code}")
+                logger.error(f"Response: {response.text}")
                 raise typer.Exit(code=1)
 
         except Exception as e:
-            logger.error(f"Error executing playbooks: {e}.")
+            logger.error(f"Error executing {resource_type}: {e}")
+            raise typer.Exit(code=1)
+
+    elif action == "list":
+        try:
+            url = f"http://{host}:{port}/api/catalog/list"
+            params = {}
+            if resource_type == "playbook":
+                params["resource_type"] = "Playbook"
+
+            logger.info(f"Listing {resource_type}s from NoETL server at {url}")
+            response = requests.get(url, params=params)
+
+            if response.status_code == 200:
+                result = response.json()
+                entries = result.get("entries", [])
+
+                if not entries:
+                    print(f"No {resource_type}s found in catalog.")
+                    return
+
+                print(f"\n{resource_type.upper()}S IN CATALOG:")
+                print("="*80)
+                print(f"{'PATH':<40} {'VERSION':<10} {'TYPE':<15} {'TIMESTAMP':<15}")
+                print("-"*80)
+
+                for entry in entries:
+                    path = entry.get('resource_path', 'Unknown')
+                    version = entry.get('resource_version', 'Unknown')
+                    res_type = entry.get('resource_type', 'Unknown')
+                    timestamp = entry.get('timestamp', 'Unknown')
+                    if isinstance(timestamp, str) and 'T' in timestamp:
+                        timestamp = timestamp.split('T')[0]
+                    print(f"{path:<40} {version:<10} {res_type:<15} {timestamp:<15}")
+                print("="*80)
+                print(f"Total: {len(entries)} {resource_type}(s)")
+
+            else:
+                logger.error(f"Failed to list {resource_type}s: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                raise typer.Exit(code=1)
+
+        except Exception as e:
+            logger.error(f"Error listing {resource_type}s: {e}")
             raise typer.Exit(code=1)
     else:
-        logger.info("No action specified. Use --register to register a playbooks or --execute to execute a playbooks.")
+        logger.error(f"Unknown action: {action}. Supported actions: register, execute, list")
         logger.info("Examples:")
-        logger.info("  noetl playbooks --register ./playbooks/weather_loop_example.yaml")
-        logger.info("  noetl playbooks --execute --path weather_example --version 0.1.0 --payload '{\"city\": \"New York\"}'")
-        logger.info("  noetl playbooks --execute --path weather_example --input ./data/input/payload.json")
+        logger.info(f"  noetl catalog register {resource_type} <path to file.yaml>")
+        logger.info(f"  noetl catalog execute {resource_type} <resource name> --version 0.1.0")
+        logger.info(f"  noetl catalog list {resource_type}")
+        raise typer.Exit(code=1)
+@cli_app.command("execute")
+def execute_playbook(
+    playbook_path: str = typer.Argument(help="Path or name of the playbook to execute"),
+    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
+    input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
+    payload: str = typer.Option(None, "--payload", help="Payload string."),
+    host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
+    port: int = typer.Option(8080, "--port", "-p", help="NoETL server port."),
+    sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
+    merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
+):
+    """
+    Execute a playbook for 'noetl catalog execute playbook'
+
+    Examples:
+        noetl execute example/weather/weather_example --version 0.1.0
+        noetl execute example/batch/batch_load --host localhost --port 8082
+    """
+
+    try:
+        input_payload = {}
+        if input:
+            try:
+                with open(input, 'r') as f:
+                    input_payload = json.load(f)
+                logger.info(f"Loaded input payload from {input}")
+            except Exception as e:
+                logger.error(f"Error loading input payload from file: {e}")
+                raise typer.Exit(code=1)
+        elif payload:
+            try:
+                input_payload = json.loads(payload)
+                logger.info("Parsed input payload from command line")
+            except Exception as e:
+                logger.error(f"Error parsing payload JSON: {e}")
+                raise typer.Exit(code=1)
+
+        url = f"http://{host}:{port}/api/agent/execute"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "path": playbook_path,
+            "input_payload": input_payload,
+            "sync_to_postgres": sync,
+            "merge": merge
+        }
+
+        if version:
+            data["version"] = version
+
+        if version:
+            logger.info(f"Executing playbook {playbook_path} version {version} on NoETL server at {url}")
+        else:
+            logger.info(f"Executing playbook {playbook_path} (latest version) on NoETL server at {url}")
+        response = requests.post(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Playbook executed.")
+
+            if result.get("status") == "success":
+                logger.info(f"Execution ID: {result.get('execution_id')}")
+                execution_result = result.get('result', {})
+                logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
+
+                print("\n" + "="*80)
+                print("EXECUTION REPORT")
+                print("="*80)
+                print(f"Playbook Path: {playbook_path}")
+                print(f"Version: {version or 'latest'}")
+                print(f"Execution ID: {result.get('execution_id')}")
+                print(f"Status: SUCCESS")
+                print("-"*80)
+
+                step_count = 0
+                success_count = 0
+                error_count = 0
+                skipped_count = 0
+
+                for step_name, step_result in execution_result.items():
+                    step_count += 1
+                    if isinstance(step_result, dict):
+                        status = step_result.get('status', None)
+                        command_statuses = []
+
+                        if status is None and any(key.startswith('command_') for key in step_result.keys()):
+                            for key, value in step_result.items():
+                                if key.startswith('command_') and isinstance(value, dict):
+                                    cmd_status = value.get('status')
+                                    if cmd_status:
+                                        command_statuses.append(cmd_status)
+
+                        if command_statuses:
+                            if all(s == 'success' for s in command_statuses):
+                                status = 'success'
+                            elif any(s == 'error' for s in command_statuses):
+                                status = 'error'
+                            else:
+                                status = 'partial'
+                        else:
+                            status = 'unknown'
+
+                    if status == 'success':
+                        success_count += 1
+                        command_details = []
+                        for key, value in step_result.items():
+                            if key.startswith('command_') and isinstance(value, dict):
+                                msg = value.get('message', 'Command executed')
+                                command_details.append(f"{key}: {msg}")
+
+                        if command_details:
+                            print(f"{step_name}: SUCCESS ({len(command_details)} commands)")
+                        else:
+                            print(f"{step_name}: SUCCESS")
+                    elif status == 'error':
+                        error_count += 1
+                        error_details = []
+                        for key, value in step_result.items():
+                            if key.startswith('command_') and isinstance(value, dict):
+                                if value.get('status') == 'error':
+                                    error_msg = value.get('message', 'Unknown error')
+                                    error_details.append(f"{key}: {error_msg}")
+
+                        if error_details:
+                            print(f"{step_name}: ERROR - {'; '.join(error_details)}")
+                        else:
+                            error_msg = step_result.get('error', 'Unknown error')
+                            print(f"{step_name}: ERROR - {error_msg}")
+                    elif status == 'skipped':
+                        skipped_count += 1
+                        print(f"{step_name}: SKIPPED")
+                    elif status == 'partial':
+                        success_count += 1
+                        print(f"{step_name}: PARTIAL SUCCESS")
+                    else:
+                        success_count += 1
+                        print(f"{step_name}: COMPLETED (status unclear)")
+                else:
+                    success_count += 1
+                    print(f"{step_name}: SUCCESS")
+
+                print("-"*80)
+                print(f"Total Steps: {step_count}")
+                print(f"Successful: {success_count}")
+                print(f"Failed: {error_count}")
+                print(f"Skipped: {skipped_count}")
+                print("="*80)
+            else:
+                logger.error(f"Execution failed: {result.get('error')}")
+                raise typer.Exit(code=1)
+        else:
+            logger.error(f"Failed to execute playbook: {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            raise typer.Exit(code=1)
+
+    except Exception as e:
+        logger.error(f"Error executing playbook: {e}")
+        raise typer.Exit(code=1)
 
 
+@cli_app.command("register")
+def register_playbook(
+    playbook_file: str = typer.Argument(help="Path to playbook file to register"),
+    host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
+    port: int = typer.Option(8080, "--port", "-p", help="NoETL server port.")
+):
+    """
+    Register a playbook for 'noetl catalog register playbook'
+
+    Examples:
+        noetl register /path/to/playbook.yaml
+        noetl register ./my_playbook.yaml --host localhost --port 8082
+    """
+
+    try:
+        if not os.path.exists(playbook_file):
+            logger.error(f"File not found: {playbook_file}")
+            raise typer.Exit(code=1)
+        with open(playbook_file, 'r') as f:
+            content = f.read()
+        content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+        url = f"http://{host}:{port}/api/catalog/register"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "content_base64": content_base64,
+            "resource_type": "Playbook"
+        }
+        logger.info(f"Registering playbook {playbook_file} with NoETL server at {url}")
+        response = requests.post(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Playbook registered successfully: {result}")
+            logger.info(f"Resource path: {result.get('resource_path')}")
+            logger.info(f"Resource version: {result.get('resource_version')}")
+        else:
+            logger.error(f"Failed to register playbook: {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            raise typer.Exit(code=1)
+
+    except Exception as e:
+        logger.error(f"Error registering playbook: {e}")
+        raise typer.Exit(code=1)
 def main():
     cli_app()
 app = create_app()

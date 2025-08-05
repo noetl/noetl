@@ -132,7 +132,7 @@ class CatalogService:
             return f"{version}.1"
 
 
-    def register_resource(self, content: str, resource_type: str = "playbooks") -> Dict[str, Any]:
+    def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         try:
             resource_data = yaml.safe_load(content)
             resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
@@ -822,7 +822,7 @@ async def register_resource(
     request: Request,
     content_base64: str = None,
     content: str = None,
-    resource_type: str = "playbooks"
+    resource_type: str = "Playbook"
 ):
     try:
         if not content_base64 and not content:
@@ -1287,8 +1287,8 @@ async def get_catalog_playbooks():
     """Get all playbooks"""
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries('playbooks')
-        
+        entries = catalog_service.list_entries('Playbook')
+
         playbooks = []
         for entry in entries:
             meta = entry.get('meta', {})
@@ -1861,4 +1861,3 @@ async def execute_postgres(
     except Exception as e:
         logger.error(f"Error executing PostgreSQL query or procedure: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

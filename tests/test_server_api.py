@@ -564,15 +564,15 @@ steps:
         ]
         self.cursor_mock.fetchall.return_value = mock_entries
 
-        entries = self.catalog_service.list_entries(resource_type='playbooks')
+        entries = self.catalog_service.list_entries(resource_type='Playbook')
 
         self.assertIsInstance(entries, list)
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]['resource_type'], 'playbooks')
+        self.assertEqual(entries[0]['resource_type'], 'Playbook')
 
     def test_event_service_emit(self):
         """Test EventService emit functionality"""
-        self.cursor_mock.fetchone.return_value = (0,)  # Return count as tuple
+        self.cursor_mock.fetchone.return_value = (0,)
 
         event_data = {
             "event_type": "TEST_EVENT",
@@ -582,7 +582,6 @@ steps:
 
         result = self.event_service.emit(event_data)
 
-        # Verify event_id was added
         self.assertIn('event_id', result)
         self.assertEqual(result['event_type'], 'TEST_EVENT')
         self.assertEqual(result['status'], 'CREATED')
@@ -603,9 +602,8 @@ steps:
 
     def test_catalog_fetch_with_fallback(self):
         """Test fetch entry with path fallback logic"""
-        # First call returns None (path not found), second call finds filename
         self.cursor_mock.fetchone.side_effect = [
-            None,  # First query with full path fails
+            None,
             ('filename.yaml', 'playbooks', '0.1.0', 'content', '{}', '{}')  # Second query with filename succeeds
         ]
 
@@ -617,24 +615,21 @@ steps:
 
     def test_catalog_error_handling(self):
         """Test error handling in catalog operations"""
-        # Test database connection error
         self.mock_connect.side_effect = Exception("Database connection failed")
 
         version = self.catalog_service.get_latest_version('test_resource')
-        self.assertEqual(version, '0.1.0')  # Should return default on error
+        self.assertEqual(version, '0.1.0')
 
-        # Reset the mock
         self.mock_connect.side_effect = None
         self.mock_connect.return_value = self.conn_mock
 
     def test_catalog_duplicate_version_handling(self):
         """Test handling of duplicate versions during registration"""
-        # Simulate version collision scenario
         self.cursor_mock.fetchone.side_effect = [
-            (1,),     # Count query - has existing entries
-            ('0.1.0',), # Latest version query
-            (1,),     # Check if incremented version exists (collision)
-            (0,),     # Check if next incremented version exists (success)
+            (1,),
+            ('0.1.0',),
+            (1,),
+            (0,),
         ]
         self.cursor_mock.fetchall.return_value = [('0.1.0',)]
 
@@ -650,15 +645,12 @@ steps:
 
         result = self.catalog_service.register_resource(test_playbook)
 
-        # Should succeed with incremented version
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['resource_path'], 'collision_test')
-        # Version should be incremented beyond the collision
         self.assertIn('resource_version', result)
 
     def test_event_service_error_handling(self):
         """Test error handling in event service"""
-        # Simulate database error
         self.mock_connect.side_effect = Exception("Database error")
 
         event_data = {"event_type": "TEST", "message": "test"}
@@ -666,7 +658,6 @@ steps:
         with self.assertRaises(Exception):
             self.event_service.emit(event_data)
 
-        # Reset the mock
         self.mock_connect.side_effect = None
         self.mock_connect.return_value = self.conn_mock
 
@@ -689,11 +680,9 @@ class TestServerIntegrationScenarios(unittest.TestCase):
 
     def test_full_workflow_scenario(self):
         """Test a complete workflow: register -> fetch -> list"""
-        # Setup mocks for registration
         self.cursor_mock.fetchone.side_effect = [(0,), (0,)]
         self.cursor_mock.fetchall.return_value = []
 
-        # 1. Register a resource
         playbook_content = """
 apiVersion: 0.1.0
 kind: Playbook
@@ -710,7 +699,6 @@ steps:
         register_result = self.catalog_service.register_resource(playbook_content)
         self.assertEqual(register_result['status'], 'success')
 
-        # 2. Fetch the registered resource - Create new cursor mock for fetch
         fetch_cursor_mock = Mock()
         mock_fetch_result = (
             'workflow_test', 'playbooks', '0.1.1',
@@ -718,7 +706,6 @@ steps:
         )
         fetch_cursor_mock.fetchone.return_value = mock_fetch_result
 
-        # Replace the cursor mock temporarily for fetch operation
         with patch.object(self.conn_mock, 'cursor') as mock_cursor_method:
             mock_cursor_method.return_value.__enter__.return_value = fetch_cursor_mock
 
@@ -726,14 +713,12 @@ steps:
             self.assertIsNotNone(fetch_result)
             self.assertEqual(fetch_result['resource_path'], 'workflow_test')
 
-        # 3. List all entries - Create new cursor mock for list
         list_cursor_mock = Mock()
         mock_list_result = [
             ('workflow_test', 'playbooks', '0.1.1', '{}', '2023-01-01')
         ]
         list_cursor_mock.fetchall.return_value = mock_list_result
 
-        # Replace the cursor mock temporarily for list operation
         with patch.object(self.conn_mock, 'cursor') as mock_cursor_method:
             mock_cursor_method.return_value.__enter__.return_value = list_cursor_mock
 
