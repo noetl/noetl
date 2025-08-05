@@ -74,18 +74,18 @@ class DatabaseSchema:
                 
                 postgres_user = os.environ.get('POSTGRES_USER')
                 postgres_password = os.environ.get('POSTGRES_PASSWORD')
-                db_name = os.environ.get('POSTGRES_DB', 'postgres')
-                host = os.environ.get('POSTGRES_HOST', 'localhost')
-                port = os.environ.get('POSTGRES_PORT', '5432')
+                db_name = os.environ.get('POSTGRES_DB')
+                host = os.environ.get('POSTGRES_HOST')
+                port = os.environ.get('POSTGRES_PORT')
                 
                 self.admin_conn = f"dbname={db_name} user={postgres_user} password={postgres_password} host={host} port={port} hostaddr='' gssencmode=disable"
                 logger.info(f"Using admin connection: dbname={db_name} user={postgres_user} host={host} port={port}")
 
 
             if self.pgdb is None:
-                db_name = os.environ.get('POSTGRES_DB', 'postgres')
-                host = os.environ.get('POSTGRES_HOST', 'localhost')
-                port = os.environ.get('POSTGRES_PORT', '5432')
+                db_name = os.environ.get('POSTGRES_DB')
+                host = os.environ.get('POSTGRES_HOST')
+                port = os.environ.get('POSTGRES_PORT')
 
                 self.pgdb = f"dbname={db_name} user={self.noetl_user} password={self.noetl_password} host={host} port={port} hostaddr='' gssencmode=disable"
                 logger.info(f"NoETL connection: dbname={db_name} user={self.noetl_user} host={host} port={port}")
@@ -98,8 +98,8 @@ class DatabaseSchema:
                 self.is_postgres = True
                 logger.info("Connected to Postgres database as noetl user.")
             except psycopg.OperationalError as e:
-                postgres_user = os.environ.get('POSTGRES_USER', 'postgres')
-                postgres_password = os.environ.get('POSTGRES_PASSWORD', 'postgres')
+                postgres_user = os.environ.get('POSTGRES_USER')
+                postgres_password = os.environ.get('POSTGRES_PASSWORD')
 
                 logger.info(f"NoETL user connection failed, attempting to create user/schema: {e}")
                 self.create_noetl_schema()
@@ -136,8 +136,9 @@ class DatabaseSchema:
                         return True
                     else:
                         logger.info(f"SCHEMA VERIFICATION: Schema '{self.noetl_schema}' does not exist")
-                        logger.info(f"SCHEMA VERIFICATION: Will attempt to create schema '{self.noetl_schema}'")
+                        logger.info(f"SCHEMA VERIFICATION: Will attempt to create schema '{self.noetl_schema}' using admin connection")
                         self.conn.close()
+                        self.conn = None
                         self.create_noetl_schema()
                         return True
 

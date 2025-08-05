@@ -15,6 +15,9 @@ services:
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA}
       POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: ${PGDATA}
+      NOETL_USER: ${NOETL_USER}
+      NOETL_PASSWORD: ${NOETL_PASSWORD}
+      NOETL_SCHEMA: ${NOETL_SCHEMA}
     command: "postgres -c port=5432 -c config_file=/etc/postgresql/postgresql.conf"
     volumes:
       - ./database/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
@@ -23,7 +26,7 @@ services:
     ports:
       - "5434:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d demodb -p 5432"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -p 5432"]
       interval: 5s
       timeout: 5s
       retries: 3
@@ -36,36 +39,36 @@ services:
     networks:
       - noetl-network
 
-  server:
-    build:
-      context: .
-      dockerfile: docker/noetl/development/Dockerfile
-    container_name: server
-    depends_on:
-      database:
-        condition: service_healthy
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./.secrets/noetl-service-account.json:/opt/noetl/secrets/application_default_credentials.json
-      - ./data:/opt/noetl/data
-    environment:
-      TZ: ${TZ}
-      LOG_LEVEL: ${LOG_LEVEL}
-      PYTHONPATH: ${PYTHONPATH}
-      NOETL_DATA_DIR: ${NOETL_DATA_DIR}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_HOST: ${POSTGRES_HOST}
-      POSTGRES_PORT: ${POSTGRES_PORT}
-      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA}
-      NOETL_USER: ${NOETL_USER}
-      NOETL_PASSWORD: ${NOETL_PASSWORD}
-      NOETL_SCHEMA: ${NOETL_SCHEMA}
-      GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
-    networks:
-      - noetl-network
+#  server:
+#    build:
+#      context: .
+#      dockerfile: docker/noetl/development/Dockerfile
+#    container_name: server
+#    depends_on:
+#      database:
+#        condition: service_healthy
+#    ports:
+#      - "8080:8080"
+#    volumes:
+#      - ./.secrets/noetl-service-account.json:/opt/noetl/secrets/application_default_credentials.json
+#      - ./data:/opt/noetl/data
+#    environment:
+#      TZ: ${TZ}
+#      LOG_LEVEL: ${LOG_LEVEL}
+#      PYTHONPATH: ${PYTHONPATH}
+#      NOETL_DATA_DIR: ${NOETL_DATA_DIR}
+#      POSTGRES_USER: ${POSTGRES_USER}
+#      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+#      POSTGRES_DB: ${POSTGRES_DB}
+#      POSTGRES_HOST: ${POSTGRES_HOST}
+#      POSTGRES_PORT: ${POSTGRES_PORT}
+#      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA}
+#      NOETL_USER: ${NOETL_USER}
+#      NOETL_PASSWORD: ${NOETL_PASSWORD}
+#      NOETL_SCHEMA: ${NOETL_SCHEMA}
+#      GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
+#    networks:
+#      - noetl-network
 
   pip-standalone-api:
     build:
@@ -80,6 +83,7 @@ services:
     volumes:
       - ./.secrets/noetl-service-account.json:/opt/noetl/secrets/application_default_credentials.json
       - ./data:/opt/noetl/data
+      - ./docker/noetl/startup.sh:/opt/noetl/startup.sh
     environment:
       TZ: ${TZ}
       LOG_LEVEL: ${LOG_LEVEL}
@@ -97,7 +101,7 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
     networks:
       - noetl-network
-    command: ["python", "-m", "uvicorn", "--factory", "noetl.main:create_app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
+    command: ["/opt/noetl/startup.sh"]
 
   jupyter:
     build:

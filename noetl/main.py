@@ -24,14 +24,26 @@ _enable_ui = True
 
 def create_app() -> FastAPI:
     global _enable_ui
-
+    
+    logging.basicConfig(
+        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
+        datefmt='%Y-%m-%dT%H:%M:%S',
+        level=logging.INFO
+    )
+    
+    print("=== ENVIRONMENT VARIABLES AT SERVER STARTUP ===")
+    for key, value in sorted(os.environ.items()):
+        print(f"ENV: {key}={value}")
+    print("=== END ENVIRONMENT VARIABLES ===")
+    
     return _create_app(_enable_ui)
 
 def _create_app(enable_ui: bool = True) -> FastAPI:
+
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
-        version="0.1.35"
+        version="0.1.36"
     )
 
     app.add_middleware(
@@ -112,7 +124,7 @@ def run_server(
     
     try:
         logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=True)
+        db_schema = DatabaseSchema(auto_setup=False)
         db_schema.create_noetl_metadata()
         db_schema.init_database()
         logger.info("NoETL database schema initialized.")
