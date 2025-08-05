@@ -50,7 +50,7 @@ class Worker:
         from noetl.schema import DatabaseSchema
         
         logger.debug("WORKER.__INIT__: Initializing DatabaseSchema")
-        self.db_schema = DatabaseSchema(pgdb=pgdb)
+        self.db_schema = DatabaseSchema(pgdb=pgdb, auto_setup=True)
         self.conn = self.db_schema.conn
         
         logger.debug("WORKER.__INIT__: Initializing database")

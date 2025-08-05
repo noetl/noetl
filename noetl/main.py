@@ -31,7 +31,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
-        version="0.1.33"
+        version="0.1.34"
     )
 
     app.add_middleware(
@@ -112,7 +112,7 @@ def run_server(
     
     try:
         logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=False)
+        db_schema = DatabaseSchema(auto_setup=True)
         db_schema.create_noetl_metadata()
         db_schema.init_database()
         logger.info("NoETL database schema initialized.")
@@ -156,7 +156,13 @@ def manage_catalog(
     auto_detect_mode = False
 
     if action == "register":
-        if os.path.exists(resource_type_or_path):
+        if resource_type_or_path == "playbook" and path and os.path.exists(path):
+            resource_type = "playbook"
+            file_path = path
+            detected_resource_type = "Playbook"
+            auto_detect_mode = False
+            logger.info(f"Using explicit resource type: {resource_type} for file: {file_path}")
+        elif os.path.exists(resource_type_or_path):
             auto_detect_mode = True
             file_path = resource_type_or_path
 
