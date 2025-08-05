@@ -1252,7 +1252,7 @@ class Broker:
         logger.debug("BROKER.RUN: Writing execution_start event log")
         execution_start_event = self.write_event_log(
             'execution_start', self.agent.execution_id, playbook_name,
-            'Playbook',
+            'playbook',
             'in_progress',
             0, self.agent.context,
             None,
@@ -1303,7 +1303,7 @@ class Broker:
                 self.write_event_log(
                     'execution_error',
                     f"{self.agent.execution_id}_error", playbook_name,
-                    'Playbook',
+                    'playbook',
                     'error', 0, self.agent.context, None,
                     {'error': f"Step not found: {current_step}"}, execution_start_event
                 )
@@ -1332,7 +1332,7 @@ class Broker:
                 self.write_event_log(
                     'execution_error',
                     f"{self.agent.execution_id}_error", playbook_name,
-                    'Playbook',
+                    'playbook',
                     'error', 0, self.agent.context, None,
                     {'error': f"Step failed: {current_step}", 'step_error': step_result.get('error')},
                     execution_start_event
@@ -1513,7 +1513,7 @@ class Broker:
         self.write_event_log(
             'execution_complete',
             f"{self.agent.execution_id}_complete", self.agent.playbook.get('name', 'Unnamed'),
-            'Playbook',
+            'playbook',
             'success', execution_duration, self.agent.context, None,
             {'playbook_path': self.agent.playbook_path}, execution_start_event
         )

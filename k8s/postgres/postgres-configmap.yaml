@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  labels:
+    app: postgres
+data:
+  POSTGRES_DB: demo_noetl
+  POSTGRES_USER: demo
+  POSTGRES_SCHEMA: public
+  PGDATA: /var/lib/postgresql/data/pgdata
+  TZ: America/Chicago

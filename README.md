@@ -89,6 +89,18 @@ docker pull noetl/noetl:latest
 docker run -p 8080:8080 noetl/noetl:latest
 ```
 
+### 4. Kubernetes Deployment
+
+For Kubernetes deployment using Kind (Kubernetes in Docker):
+
+```bash
+# Follow the instructions in k8s/KIND-README.md
+# Or use the automated deployment script
+./k8s/deploy-kind.sh
+```
+
+See [Kubernetes Deployment Guide](k8s/KIND-README.md) for detailed instructions.
+
 ## Workflow DSL Structure
 
 NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key components of a NoETL playbook include:
@@ -107,11 +119,10 @@ NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining 
 
 For examples of NoETL playbooks and detailed explanations, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
 
-To execute a playbook, first register it and then run it:
+To run a playbook:
 
 ```bash
-noetl register path/to/playbooks.yaml
-noetl execute my_playbook
+noetl agent -f path/to/playbooks.yaml
 ```
 
 ## Documentation

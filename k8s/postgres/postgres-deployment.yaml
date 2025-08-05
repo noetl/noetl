@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        fsGroup: 999
+      initContainers:
+        - name: init-permissions
+          image: busybox
+          command: ["sh", "-c", "mkdir -p /data/pgdata && chmod 700 /data/pgdata && chown -R 999:999 /data"]
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /data
+      containers:
+        - name: postgres
+          image: postgres:17.4
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: postgres-config
+            - secretRef:
+                name: postgres-secret
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+            - name: postgres-config-volume
+              mountPath: /etc/postgresql/conf.d/postgresql.conf
+              subPath: postgresql.conf
+            - name: postgres-init-volume
+              mountPath: /docker-entrypoint-initdb.d/init_database.sh
+              subPath: init_database.sh
+            - name: postgres-schema-volume
+              mountPath: /docker-entrypoint-initdb.d/schema_ddl.sql
+              subPath: schema_ddl.sql
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "0.5"
+              memory: "512Mi"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - demo
+                - -d
+                - demo_noetl
+                - -p
+                - "5432"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - demo
+                - -d
+                - demo_noetl
+                - -p
+                - "5432"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: postgres-config-volume
+          configMap:
+            name: postgres-config-files
+            items:
+              - key: postgresql.conf
+                path: postgresql.conf
+        - name: postgres-init-volume
+          configMap:
+            name: postgres-config-files
+            items:
+              - key: init_database.sh
+                path: init_database.sh
+        - name: postgres-schema-volume
+          configMap:
+            name: postgres-config-files
+            items:
+              - key: schema_ddl.sql
+                path: schema_ddl.sql

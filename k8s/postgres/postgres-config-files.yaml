@@ -1,0 +1,203 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config-files
+  labels:
+    app: postgres
+data:
+  init_database.sh: |
+    #!/bin/bash
+    set -e
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+      CREATE SCHEMA IF NOT EXISTS $POSTGRES_SCHEMA;
+      CREATE SCHEMA IF NOT EXISTS noetl;
+      CREATE EXTENSION IF NOT EXISTS plpython3u;
+    EOSQL
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -f /schema_ddl.sql
+
+  schema_ddl.sql: |
+    -- Schema DDL for NoETL
+    CREATE SCHEMA IF NOT EXISTS noetl;
+
+    -- Create resource table
+    CREATE TABLE IF NOT EXISTS noetl.resource (
+        name TEXT PRIMARY KEY
+    );
+
+    -- Create catalog table
+    CREATE TABLE IF NOT EXISTS noetl.catalog (
+        resource_path     TEXT     NOT NULL,
+        resource_type     TEXT     NOT NULL REFERENCES noetl.resource(name),
+        resource_version  TEXT     NOT NULL,
+        source            TEXT     NOT NULL DEFAULT 'inline',
+        resource_location TEXT,
+        content           TEXT,
+        payload           JSONB    NOT NULL,
+        meta              JSONB,
+        template          TEXT,
+        timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (resource_path, resource_version)
+    );
+
+    -- Create workload table
+    CREATE TABLE IF NOT EXISTS noetl.workload (
+        execution_id VARCHAR,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        data TEXT,
+        PRIMARY KEY (execution_id)
+    );
+
+    -- Create event_log table
+    CREATE TABLE IF NOT EXISTS noetl.event_log (
+        execution_id VARCHAR,
+        event_id VARCHAR,
+        parent_event_id VARCHAR,
+        timestamp TIMESTAMP,
+        event_type VARCHAR,
+        node_id VARCHAR,
+        node_name VARCHAR,
+        node_type VARCHAR,
+        status VARCHAR,
+        duration DOUBLE PRECISION,
+        input_context TEXT,
+        output_result TEXT,
+        metadata TEXT,
+        error TEXT,
+        loop_id VARCHAR,
+        loop_name VARCHAR,
+        iterator VARCHAR,
+        items TEXT,
+        current_index INTEGER,
+        current_item TEXT,
+        results TEXT,
+        worker_id VARCHAR,
+        distributed_state VARCHAR,
+        context_key VARCHAR,
+        context_value TEXT,
+        PRIMARY KEY (execution_id, event_id)
+    );
+
+    -- Create workflow table
+    CREATE TABLE IF NOT EXISTS noetl.workflow (
+        execution_id VARCHAR,
+        step_id VARCHAR,
+        step_name VARCHAR,
+        step_type VARCHAR,
+        description TEXT,
+        raw_config TEXT,
+        PRIMARY KEY (execution_id, step_id)
+    );
+
+    -- Create workbook table
+    CREATE TABLE IF NOT EXISTS noetl.workbook (
+        execution_id VARCHAR,
+        task_id VARCHAR,
+        task_name VARCHAR,
+        task_type VARCHAR,
+        raw_config TEXT,
+        PRIMARY KEY (execution_id, task_id)
+    );
+
+    -- Create transition table
+    CREATE TABLE IF NOT EXISTS noetl.transition (
+        execution_id VARCHAR,
+        from_step VARCHAR,
+        to_step VARCHAR,
+        condition TEXT,
+        with_params TEXT,
+        PRIMARY KEY (execution_id, from_step, to_step, condition)
+    );
+
+    -- Create error_log table
+    CREATE TABLE IF NOT EXISTS noetl.error_log (
+        error_id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        error_type VARCHAR(50),
+        error_message TEXT,
+        execution_id VARCHAR,
+        step_id VARCHAR,
+        step_name VARCHAR,
+        template_string TEXT,
+        context_data JSONB,
+        stack_trace TEXT,
+        input_data JSONB,
+        output_data JSONB,
+        severity VARCHAR(20) DEFAULT 'error',
+        resolved BOOLEAN DEFAULT FALSE,
+        resolution_notes TEXT,
+        resolution_timestamp TIMESTAMP
+    );
+
+    -- Create indexes for error_log table
+    CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON noetl.error_log (timestamp);
+    CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON noetl.error_log (error_type);
+    CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON noetl.error_log (execution_id);
+    CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON noetl.error_log (resolved);
+
+  postgresql.conf: |
+    # PostgreSQL configuration file
+    # -----------------------------
+    #
+    # This file consists of lines of the form:
+    #
+    #   name = value
+    #
+    # (The "=" is optional.)  Whitespace may be used.  Comments are introduced with
+    # "#" anywhere on a line.  The complete list of parameter names and allowed
+    # values can be found in the PostgreSQL documentation.
+    #
+    # The commented-out settings shown in this file represent the default values.
+    # Re-commenting a setting is NOT sufficient to revert it to the default value;
+    # you need to reload the server.
+    #
+    # This file is read on server startup and when the server receives a SIGHUP
+    # signal.  If you edit the file on a running system, you have to SIGHUP the
+    # server for the changes to take effect, run "pg_ctl reload", or execute
+    # "SELECT pg_reload_conf()".  Some parameters, which are marked below,
+    # require a server shutdown and restart to take effect.
+    #
+    # Any parameter can also be given as a command-line option to the server, e.g.,
+    # "postgres -c log_connections=on".  Some parameters can be changed at run time
+    # with the "SET" SQL command.
+    #
+    # Memory units:  B  = bytes            Time units:  us  = microseconds
+    #                kB = kilobytes                     ms  = milliseconds
+    #                MB = megabytes                     s   = seconds
+    #                GB = gigabytes                     min = minutes
+    #                TB = terabytes                     h   = hours
+    #                                                   d   = days
+
+    # File Locations
+    data_directory = '/var/lib/postgresql/data'
+    hba_file = '/var/lib/postgresql/data/pg_hba.conf'
+    ident_file = '/var/lib/postgresql/data/pg_ident.conf'
+
+    # Connections and Authentication
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 100
+    
+    # Memory
+    shared_buffers = 128MB
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_truncate_on_rotation = off
+    log_rotation_age = 1d
+    log_rotation_size = 10MB
+    
+    # Locale and Formatting
+    datestyle = 'iso, mdy'
+    timezone = 'UTC'
+    lc_messages = 'en_US.utf8'
+    lc_monetary = 'en_US.utf8'
+    lc_numeric = 'en_US.utf8'
+    lc_time = 'en_US.utf8'
+    
+    # Miscellaneous
+    dynamic_shared_memory_type = posix

@@ -22,7 +22,7 @@ PLAYBOOKS=(
 for playbooks in "${PLAYBOOKS[@]}"; do
   echo "Loading $playbooks"
 
-  if noetl playbooks --register "$playbooks" --port "$PORT" --host "$HOST"; then
+  if noetl register "$playbooks" --port "$PORT" --host "$HOST"; then
     echo "✓ loaded $playbooks"
   else
     echo "✗ Failed $playbooks"
