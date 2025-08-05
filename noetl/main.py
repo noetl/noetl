@@ -81,8 +81,8 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
 @cli_app.command("server")
 def run_server(
-    host: str = typer.Option("localhost", help="Server host."),
-    port: int = typer.Option(8080, help="Server port."),
+    host: str = typer.Option(os.environ.get("NOETL_HOST", "0.0.0.0"), help="Server host."),
+    port: int = typer.Option(int(os.environ.get("NOETL_PORT", "8080")), help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload."),
     no_ui: bool = typer.Option(False, "--no-ui", help="Disable the UI components."),
     debug: bool = typer.Option(False, "--debug", help="Enable debug logging mode.")
@@ -133,8 +133,8 @@ def manage_catalog(
     version: str = typer.Option(None, "--version", "-v", help="Version of the resource to execute."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
     payload: str = typer.Option(None, "--payload", help="Payload string."),
-    host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
-    port: int = typer.Option(8080, "--port", "-p", help="NoETL server port."),
+    host: str = typer.Option(os.environ.get("NOETL_HOST", "localhost"), "--host", help="NoETL server host for client connections."),
+    port: int = typer.Option(int(os.environ.get("NOETL_PORT", "8080")), "--port", "-p", help="NoETL server port."),
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
     merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of resource.")
 ):
@@ -433,8 +433,8 @@ def execute_playbook(
     version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
     payload: str = typer.Option(None, "--payload", help="Payload string."),
-    host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
-    port: int = typer.Option(8080, "--port", "-p", help="NoETL server port."),
+    host: str = typer.Option(os.environ.get("NOETL_HOST", "localhost"), "--host", help="NoETL server host for client connections."),
+    port: int = typer.Option(int(os.environ.get("NOETL_PORT", "8080")), "--port", "-p", help="NoETL server port."),
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
     merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of playbook.")
 ):
@@ -589,8 +589,8 @@ def execute_playbook(
 @cli_app.command("register")
 def register_playbook(
     playbook_file: str = typer.Argument(help="Path to playbook file to register"),
-    host: str = typer.Option("localhost", "--host", help="NoETL server host for client connections."),
-    port: int = typer.Option(8080, "--port", "-p", help="NoETL server port.")
+    host: str = typer.Option(os.environ.get("NOETL_HOST", "localhost"), "--host", help="NoETL server host for client connections."),
+    port: int = typer.Option(int(os.environ.get("NOETL_PORT", "8080")), "--port", "-p", help="NoETL server port.")
 ):
     """
     Register a playbook for 'noetl catalog register playbook'

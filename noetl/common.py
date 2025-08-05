@@ -1,21 +1,16 @@
 import os
 import asyncio
-import re
-import sys
 import json
 import logging
-import base64
 import yaml
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone, date
 import random
 import string
 from decimal import Decimal
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, List, Union
 import psycopg
-from psycopg.rows import dict_row
 from contextlib import contextmanager
-import traceback
 from noetl.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -254,12 +249,12 @@ def get_pgdb_connection(
     schema: str = None
 ) -> str:
     db_name = db_name or os.environ.get('POSTGRES_DB', 'noetl')
-    user = user or os.environ.get('NOETL_USER', 'noetl')
-    password = password or os.environ.get('NOETL_PASSWORD', 'noetl')
+    user = user or os.environ.get('NOETL_USER') or os.environ.get('POSTGRES_USER', 'noetl')
+    password = password or os.environ.get('NOETL_PASSWORD') or os.environ.get('POSTGRES_PASSWORD', 'noetl')
     host = host or os.environ.get('POSTGRES_HOST', 'localhost')
     port = port or os.environ.get('POSTGRES_PORT', '5432')
     schema = schema or os.environ.get('NOETL_SCHEMA', 'noetl')
-
+    logger.debug(f"Database connection parameters: db={db_name}, user={user}, host={host}, port={port}, schema={schema}")
     return f"dbname={db_name} user={user} password={password} host={host} port={port} hostaddr='' gssencmode=disable options='-c search_path={schema}'"
 
 #===================================
@@ -271,7 +266,8 @@ def initialize_db_pool():
     global db_pool
     if db_pool is None and ConnectionPool:
         try:
-            db_pool = ConnectionPool(conninfo=get_pgdb_connection(), min_size=1, max_size=10)
+            connection_string = get_pgdb_connection()
+            db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10)
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
