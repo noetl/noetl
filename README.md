@@ -53,23 +53,31 @@ Start the NoETL server to access the web UI and REST API:
 noetl server
 ```
 
-This starts the server on http://localhost:8082 by default.
+This starts the server on http://localhost:8080 by default.
 
 ### 2. Using the Command Line
 
-NoETL has a command-line interface for executing playbooks:
+NoETL provides a streamlined command-line interface for managing and executing playbooks:
 
 - Register a playbook in the catalog
 ```bash
-noetl playbooks --register ./<path to playbooks folder>/playbooks.yaml
+noetl register ./path/to/playbook.yaml
 ```
-- Execute a playbook from the catalog
+
+- List playbooks in the catalog
 ```bash
-noetl playbooks --execute --path "workflows/example/playbook"
+noetl catalog list playbook
 ```
-- Execute a playbook directly
+
+- Execute a registered playbook
 ```bash
-noetl agent -f ./<path to playbooks folder>/playbooks.yaml
+noetl execute my_playbook --version 0.1.0
+```
+
+- Register and execute with the catalog command
+```bash
+noetl catalog register ./path/to/playbook.yaml
+noetl catalog execute my_playbook --version 0.1.0
 ```
 
 ### 3. Docker Deployment
@@ -78,7 +86,7 @@ For containerized deployment:
 
 ```bash
 docker pull noetl/noetl:latest
-docker run -p 8082:8082 noetl/noetl:latest
+docker run -p 8080:8080 noetl/noetl:latest
 ```
 
 ## Workflow DSL Structure
@@ -99,10 +107,11 @@ NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining 
 
 For examples of NoETL playbooks and detailed explanations, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
 
-To run a playbook:
+To execute a playbook, first register it and then run it:
 
 ```bash
-noetl agent -f path/to/playbooks.yaml
+noetl register path/to/playbooks.yaml
+noetl execute my_playbook
 ```
 
 ## Documentation
