@@ -37,20 +37,47 @@ class DatabaseSchema:
             self.initialize_connection()
 
     def set_noetl_credentials(self, noetl_user: str = None, noetl_password: str = None, noetl_schema: str = None):
-        self.noetl_user = noetl_user or os.environ.get('NOETL_USER', 'noetl')
-        self.noetl_password = noetl_password or os.environ.get('NOETL_PASSWORD', 'noetl')
-        self.noetl_schema = noetl_schema or os.environ.get('NOETL_SCHEMA', 'noetl')
-        logger.info(f"Using admin credentials for setup, NoETL user: {self.noetl_user}, schema: {self.noetl_schema}")
+        if noetl_schema is None and 'NOETL_SCHEMA' not in os.environ:
+            error_msg = "NOETL_SCHEMA environment variable is required but not provided"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        self.noetl_user = noetl_user or os.environ.get('NOETL_USER')
+        self.noetl_password = noetl_password or os.environ.get('NOETL_PASSWORD')
+        self.noetl_schema = noetl_schema or os.environ.get('NOETL_SCHEMA')
+        
+        if not self.noetl_user:
+            error_msg = "NOETL_USER environment variable is required but not provided"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        if not self.noetl_password:
+            error_msg = "NOETL_PASSWORD environment variable is required but not provided"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        logger.info(f"Using NoETL credentials for setup, user: {self.noetl_user}, schema: {self.noetl_schema}")
 
 
     def initialize_connection(self):
         try:
             if self.admin_conn is None:
+                if 'POSTGRES_USER' not in os.environ:
+                    error_msg = "POSTGRES_USER environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                
+                if 'POSTGRES_PASSWORD' not in os.environ:
+                    error_msg = "POSTGRES_PASSWORD environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                
                 postgres_user = os.environ.get('POSTGRES_USER')
                 postgres_password = os.environ.get('POSTGRES_PASSWORD')
                 db_name = os.environ.get('POSTGRES_DB', 'postgres')
                 host = os.environ.get('POSTGRES_HOST', 'localhost')
                 port = os.environ.get('POSTGRES_PORT', '5432')
+                
                 self.admin_conn = f"dbname={db_name} user={postgres_user} password={postgres_password} host={host} port={port} hostaddr='' gssencmode=disable"
                 logger.info(f"Using admin connection: dbname={db_name} user={postgres_user} host={host} port={port}")
 
@@ -71,16 +98,17 @@ class DatabaseSchema:
                 self.is_postgres = True
                 logger.info("Connected to Postgres database as noetl user.")
             except psycopg.OperationalError as e:
-                postgres_user = os.environ.get('POSTGRES_USER')
-                postgres_password = os.environ.get('POSTGRES_PASSWORD')
+                postgres_user = os.environ.get('POSTGRES_USER', 'postgres')
+                postgres_password = os.environ.get('POSTGRES_PASSWORD', 'postgres')
 
-                if postgres_user and postgres_password:
-                    logger.info(f"NoETL user connection failed, attempting to create user/schema: {e}")
-                    self.create_noetl_schema()
+                logger.info(f"NoETL user connection failed, attempting to create user/schema: {e}")
+                self.create_noetl_schema()
+                try:
                     self.conn = psycopg.connect(self.pgdb)
                     self.is_postgres = True
                     logger.info("Connected to Postgres database as noetl user after creating infrastructure.")
-                else:
+                except Exception as conn_error:
+                    logger.error(f"Failed to connect after schema creation: {conn_error}")
                     raise
 
         except Exception as e:
@@ -89,12 +117,14 @@ class DatabaseSchema:
 
     def create_noetl_metadata(self):
         try:
-            logger.info("Verifying NoETL.")
+            logger.info("SCHEMA VERIFICATION: Checking NoETL schema and user configuration")
             try:
+                logger.info(f"SCHEMA VERIFICATION: Attempting to connect as NoETL user '{self.noetl_user}'")
                 test_conn = psycopg.connect(self.pgdb)
                 test_conn.close()
-                logger.info("NoETL user connected.")
+                logger.info(f"SCHEMA VERIFICATION: Successfully connected as NoETL user '{self.noetl_user}'")
 
+                logger.info(f"SCHEMA VERIFICATION: Checking if schema '{self.noetl_schema}' exists")
                 self.conn = psycopg.connect(self.pgdb)
                 with self.conn.cursor() as cursor:
                     cursor.execute("""
@@ -102,36 +132,45 @@ class DatabaseSchema:
                     """, (self.noetl_schema,))
 
                     if cursor.fetchone():
-                        logger.info(f"NoETL schema '{self.noetl_schema}' exists.")
+                        logger.info(f"SCHEMA VERIFICATION: Schema '{self.noetl_schema}' exists")
                         return True
                     else:
-                        logger.info(f"NoETL schema '{self.noetl_schema}' does not exist, trying to create new one.")
+                        logger.info(f"SCHEMA VERIFICATION: Schema '{self.noetl_schema}' does not exist")
+                        logger.info(f"SCHEMA VERIFICATION: Will attempt to create schema '{self.noetl_schema}'")
                         self.conn.close()
                         self.create_noetl_schema()
                         return True
 
             except psycopg.OperationalError as e:
-                logger.info(f"NoETL user does not exist or cannot connect: {e}")
-                logger.info("Creating NoETL user and schema.")
+                logger.info(f"SCHEMA VERIFICATION: NoETL user '{self.noetl_user}' does not exist or cannot connect: {e}")
+                logger.info(f"SCHEMA VERIFICATION: Will attempt to create user '{self.noetl_user}' and schema '{self.noetl_schema}'")
                 self.create_noetl_schema()
                 return True
 
         except Exception as e:
-            logger.error(f"Error verifying/setting up NoETL infrastructure: {e}.", exc_info=True)
-            raise
+            logger.error(f"SCHEMA VERIFICATION FAILED: Error verifying/setting up NoETL infrastructure: {e}", exc_info=True)
+            raise ValueError(f"Schema verification failed: {e}")
 
     def create_noetl_schema(self):
         try:
-            logger.info("Setting up noetl user and schema.")
-            self.admin_connection = psycopg.connect(self.admin_conn)
+            logger.info(f"ATTEMPTING TO CREATE SCHEMA: Starting schema installation for '{self.noetl_schema}' with user '{self.noetl_user}'")
+            logger.info(f"SCHEMA INSTALLATION: Using admin credentials to connect to database")
+            try:
+                self.admin_connection = psycopg.connect(self.admin_conn)
+                logger.info("SCHEMA INSTALLATION: Successfully connected to database with admin credentials")
+            except Exception as admin_conn_error:
+                logger.error(f"SCHEMA INSTALLATION FAILED: Could not connect with admin credentials: {admin_conn_error}")
+                logger.error("SCHEMA INSTALLATION FAILED: Make sure POSTGRES_USER and POSTGRES_PASSWORD environment variables are set correctly")
+                raise
 
             with self.admin_connection.cursor() as cursor:
+                logger.info(f"SCHEMA INSTALLATION: Checking if user '{self.noetl_user}' exists...")
                 cursor.execute("""
                     SELECT 1 FROM pg_roles WHERE rolname = %s
                 """, (self.noetl_user,))
 
                 if not cursor.fetchone():
-                    logger.info(f"Creating user '{self.noetl_user}'...")
+                    logger.info(f"SCHEMA INSTALLATION: Creating user '{self.noetl_user}'...")
                     create_user_sql = f"""
                         CREATE USER {self.noetl_user} WITH 
                         PASSWORD '{self.noetl_password}'
@@ -139,22 +178,23 @@ class DatabaseSchema:
                         LOGIN
                     """
                     cursor.execute(create_user_sql)
-                    logger.info(f"User '{self.noetl_user}' created successfully.")
+                    logger.info(f"SCHEMA INSTALLATION: User '{self.noetl_user}' created successfully")
                 else:
-                    logger.info(f"User '{self.noetl_user}' already exists.")
+                    logger.info(f"SCHEMA INSTALLATION: User '{self.noetl_user}' already exists")
 
+                logger.info(f"SCHEMA INSTALLATION: Checking if schema '{self.noetl_schema}' exists...")
                 cursor.execute("""
                     SELECT 1 FROM information_schema.schemata WHERE schema_name = %s
                 """, (self.noetl_schema,))
 
                 if not cursor.fetchone():
-                    logger.info(f"Creating schema '{self.noetl_schema}'.")
+                    logger.info(f"SCHEMA INSTALLATION: Creating schema '{self.noetl_schema}'...")
                     cursor.execute(f"CREATE SCHEMA {self.noetl_schema}")
-                    logger.info(f"Schema '{self.noetl_schema}' created successfully.")
+                    logger.info(f"SCHEMA INSTALLATION: Schema '{self.noetl_schema}' created successfully")
                 else:
-                    logger.info(f"Schema '{self.noetl_schema}' already exists.")
+                    logger.info(f"SCHEMA INSTALLATION: Schema '{self.noetl_schema}' already exists")
 
-                logger.info(f"Granting permissions to user '{self.noetl_user}'.")
+                logger.info(f"SCHEMA INSTALLATION: Granting permissions to user '{self.noetl_user}'...")
                 cursor.execute(f"GRANT ALL PRIVILEGES ON SCHEMA {self.noetl_schema} TO {self.noetl_user}")
                 cursor.execute(f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA {self.noetl_schema} TO {self.noetl_user}")
                 cursor.execute(f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA {self.noetl_schema} TO {self.noetl_user}")
@@ -162,13 +202,15 @@ class DatabaseSchema:
                 cursor.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA {self.noetl_schema} GRANT ALL ON SEQUENCES TO {self.noetl_user}")
 
                 self.admin_connection.commit()
-                logger.info("NoETL user and schema setup completed.")
+                logger.info("SCHEMA INSTALLATION: NoETL user and schema setup completed successfully")
 
         except Exception as e:
-            logger.error(f"Error setting up noetl user and schema: {e}.", exc_info=True)
+            logger.error(f"SCHEMA INSTALLATION FAILED: Error setting up noetl user and schema: {e}", exc_info=True)
+            logger.error(f"SCHEMA INSTALLATION FAILED: Check that POSTGRES_USER has sufficient privileges to create users and schemas")
+            logger.error(f"SCHEMA INSTALLATION FAILED: Verify that NOETL_USER, NOETL_PASSWORD, and NOETL_SCHEMA are correctly set")
             if self.admin_connection:
                 self.admin_connection.rollback()
-            raise
+            raise ValueError(f"Schema installation failed: {e}")
         finally:
             if self.admin_connection:
                 self.admin_connection.close()
