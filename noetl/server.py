@@ -1535,14 +1535,14 @@ async def get_catalog_widgets():
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'playbooks'"
+                        "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
                     )
                     playbook_count = cursor.fetchone()[0]
                     
                     cursor.execute(
                         """
                         SELECT meta FROM catalog 
-                        WHERE resource_type = 'playbooks'
+                        WHERE resource_type = 'widget'
                         """
                     )
                     results = cursor.fetchall()

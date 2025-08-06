@@ -42,4 +42,8 @@ ENV NOETL_LOG_LEVEL=INFO
 ENV NOETL_DATA_PATH=/opt/noetl/data
 ENV NOETL_PLAYBOOKS_PATH=/opt/noetl/playbooks
 
-CMD ["python", "-m", "uvicorn", "--factory", "noetl.main:create_app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
+# Default command runs the server, but can be overridden with environment variables:
+# - Set NOETL_RUN_MODE=server for server mode (default)
+# - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
+# - Set NOETL_RUN_MODE=cli for CLI mode
+CMD ["noetl", "server", "start", "--host", "0.0.0.0", "--port", "8084", "--debug"]

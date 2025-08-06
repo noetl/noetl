@@ -46,4 +46,8 @@ ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
 ENV NOETL_ENABLE_UI=false
 
-CMD ["python", "-m", "noetl.main", "server", "--host", "0.0.0.0", "--port", "8080"]
+# Default command runs the server, but can be overridden with environment variables:
+# - Set NOETL_RUN_MODE=server for server mode (default)
+# - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
+# - Set NOETL_RUN_MODE=cli for CLI mode
+CMD ["python", "-m", "noetl.main", "server", "start", "--host", "0.0.0.0", "--port", "8080"]

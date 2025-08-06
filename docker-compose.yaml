@@ -83,7 +83,7 @@ services:
     volumes:
       - ./.secrets/noetl-service-account.json:/opt/noetl/secrets/application_default_credentials.json
       - ./data:/opt/noetl/data
-      - ./docker/noetl/startup.sh:/opt/noetl/startup.sh
+    env_file: .env.docker
     environment:
       TZ: ${TZ}
       LOG_LEVEL: ${LOG_LEVEL}
@@ -98,10 +98,43 @@ services:
       NOETL_USER: ${NOETL_USER}
       NOETL_PASSWORD: ${NOETL_PASSWORD}
       NOETL_SCHEMA: ${NOETL_SCHEMA}
+      NOETL_RUN_MODE: "${NOETL_RUN_MODE:-server}"
       GOOGLE_APPLICATION_CREDENTIALS: /opt/noetl/secrets/application_default_credentials.json
     networks:
       - noetl-network
-    command: ["/opt/noetl/startup.sh"]
+
+  noetl:
+    build:
+      context: .
+      dockerfile: docker/noetl/Dockerfile
+      args:
+        NOETL_VERSION: "${NOETL_VERSION:-latest}"
+    container_name: noetl
+    depends_on:
+      database:
+        condition: service_healthy
+    env_file: .env.docker
+    ports:
+      - "8080:8080"
+    environment:
+      PYTHONPATH: "/opt/noetl"
+      NOETL_RUN_MODE: "${NOETL_RUN_MODE:-server}"
+      NOETL_HOST: "0.0.0.0"
+      NOETL_PORT: "8080"
+      NOETL_DEBUG: "${NOETL_DEBUG:-false}"
+      NOETL_WORKERS: "${NOETL_WORKERS:-1}"
+      NOETL_RELOAD: "${NOETL_RELOAD:-false}"
+      NOETL_NO_UI: "${NOETL_NO_UI:-false}"
+      NOETL_PLAYBOOK_PATH: "${NOETL_PLAYBOOK_PATH:-}"
+      NOETL_PLAYBOOK_VERSION: "${NOETL_PLAYBOOK_VERSION:-}"
+      NOETL_MOCK_MODE: "${NOETL_MOCK_MODE:-false}"
+    volumes:
+      - ./secrets/trader-dev.json:/secrets/application_default_credentials.json
+      - ./data:/opt/noetl/data
+      - ./playbooks:/opt/noetl/playbooks
+      - ./data/paper_oauth1:/usr/data/paper_oauth1
+    networks:
+      - noetl-network
 
   jupyter:
     build:
