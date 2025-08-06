@@ -50,10 +50,20 @@ After installing NoETL:
 Start the NoETL server to access the web UI and REST API:
 
 ```bash
+# Start the server with default settings
 noetl server
+
+#  use the explicit start command with options
+noetl server start --host 0.0.0.0 --port 8080 --workers 4 --debug
+
+# Stop the server
+noetl server stop
+
+# Force stop without confirmation
+noetl server stop --force
 ```
 
-This starts the server on http://localhost:8080 by default.
+The server starts on http://localhost:8080 by default. You can customize the host, port, number of workers, and enable debug mode using command options.
 
 ### 2. Using the Command Line
 
@@ -85,8 +95,17 @@ noetl catalog execute my_playbook --version 0.1.0
 For containerized deployment:
 
 ```bash
+# Pull the latest image
 docker pull noetl/noetl:latest
+
+# Start the server
 docker run -p 8080:8080 noetl/noetl:latest
+
+# with environment variables
+docker run -p 8080:8080 -e NOETL_RUN_MODE=server noetl/noetl:latest
+
+# Stop the server
+docker run -e NOETL_RUN_MODE=server-stop -e NOETL_FORCE_STOP=true noetl/noetl:latest
 ```
 
 ### 4. Kubernetes Deployment
@@ -94,9 +113,30 @@ docker run -p 8080:8080 noetl/noetl:latest
 For Kubernetes deployment using Kind (Kubernetes in Docker):
 
 ```bash
-# Follow the instructions in k8s/KIND-README.md
+# Follow the instructions in k8s/README.md
 # Or use the automated deployment script
 ./k8s/deploy-kind.sh
+
+# To stop the server in Kubernetes, create a job:
+kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: noetl-server-stop
+spec:
+  template:
+    spec:
+      containers:
+      - name: noetl-stop
+        image: noetl:latest
+        env:
+        - name: NOETL_RUN_MODE
+          value: "server-stop"
+        - name: NOETL_FORCE_STOP
+          value: "true"
+      restartPolicy: Never
+  backoffLimit: 1
+EOF
 ```
 
 See [Kubernetes Deployment Guide](k8s/KIND-README.md) for detailed instructions.
@@ -145,15 +185,15 @@ For more detailed information, please refer to the following documentation:
 - [Environment Configuration](https://github.com/noetl/noetl/blob/master/docs/environment_variables.md) - Setting up environment variables
 
 
-### Advanced Examples
+### Examples
 
-NoETL includes several example playbooks that demonstrate more advanced capabilities:
+NoETL includes several example playbooks that demonstrate some capabilities:
 
 - **Weather API Integration** - Fetches and processes weather data from external APIs
 - **Database Operations** - Demonstrates Postgres and DuckDB integration
-- **Google Cloud Storage** - Shows secure cloud storage operations with Google Cloud
+- **Google Cloud Storage** - A secure cloud storage operations with Google Cloud
 - **Secrets Management** - Illustrates secure handling of credentials and sensitive data
-- **Multi-Playbook Workflows** - Demonstrates complex workflow orchestration
+- **Multi-Playbook Workflows** - Complex workflow orchestration
 
 For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
 

@@ -48,7 +48,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
-        version="0.1.36"
+        version="0.1.37"
     )
 
     app.add_middleware(
