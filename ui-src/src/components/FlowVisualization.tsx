@@ -17,6 +17,28 @@ import { CloseOutlined, FullscreenOutlined } from '@ant-design/icons';
 import '@xyflow/react/dist/style.css';
 import { apiService } from '../services/api';
 
+// Custom styles to remove default ReactFlow node styling
+const customNodeStyles = `
+  .react-flow__node-default {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+  .react-flow__node-default .react-flow__node-main {
+    background: transparent !important;
+    border: none !important;
+  }
+`;
+
+// Inject custom styles
+const styleSheet = document.createElement("style");
+styleSheet.innerText = customNodeStyles;
+if (!document.head.querySelector('style[data-noetl-flow]')) {
+  styleSheet.setAttribute('data-noetl-flow', 'true');
+  document.head.appendChild(styleSheet);
+}
+
 interface FlowVisualizationProps {
   visible: boolean;
   onClose: () => void;
@@ -39,6 +61,8 @@ const nodeTypes = {
   script: { color: '#fa8c16', icon: '⚙️' },
   secret: { color: '#eb2f96', icon: '🔑' },
   export: { color: '#13c2c2', icon: '📤' },
+  python: { color: '#3776ab', icon: '🐍' },
+  workbook: { color: '#ff6b35', icon: '📊' },
   default: { color: '#8c8c8c', icon: '📄' }
 };
 
@@ -60,32 +84,89 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
   const parsePlaybookContent = (content: string): TaskNode[] => {
     try {
-      console.log('Parsing content:', content.substring(0, 500) + '...');
+      console.log('🔍 PARSING PLAYBOOK CONTENT');
+      console.log('📏 Content length:', content.length);
+      console.log('📖 Content preview (first 500 chars):');
+      console.log(content.substring(0, 500));
       
-      // Simple YAML parsing for tasks
       const lines = content.split('\n');
+      console.log('📝 Total lines:', lines.length);
+      
       const tasks: TaskNode[] = [];
       let currentTask: Partial<TaskNode> = {};
-      let inTasks = false;
+      let inWorkflowSection = false;
       let taskIndex = 0;
+      let workflowIndent = 0;
+      let inNestedLogic = false;
+      let nestedLevel = 0;
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
+        const indent = line.length - line.trimStart().length;
         
-        // Look for tasks section
-        if (trimmed === 'tasks:' || trimmed.startsWith('tasks:')) {
-          inTasks = true;
-          console.log('Found tasks section at line', i);
+        // Debug key lines
+        if (i < 20 && (trimmed.includes('workflow') || trimmed.includes('step') || trimmed.includes('desc') || trimmed.includes('type') || trimmed.includes('tasks'))) {
+          console.log(`📋 Line ${i}: [indent:${indent}] "${trimmed}"`);
+        }
+        
+        // Look for workflow/tasks/steps section
+        if (trimmed === 'workflow:' || trimmed.startsWith('workflow:') ||
+            trimmed === 'tasks:' || trimmed.startsWith('tasks:') || 
+            trimmed === 'steps:' || trimmed.startsWith('steps:')) {
+          inWorkflowSection = true;
+          workflowIndent = indent;
+          console.log('🎯 Found workflow section at line', i, 'with indent', workflowIndent);
           continue;
         }
 
-        if (inTasks) {
-          // Start of a new task
-          if (trimmed.startsWith('- name:') || (trimmed.startsWith('-') && trimmed.includes('name:'))) {
+        if (inWorkflowSection) {
+          // Check if we've left the workflow section
+          if (trimmed && indent <= workflowIndent && !trimmed.startsWith('-') && trimmed.includes(':') && !trimmed.startsWith('#')) {
+            console.log('🚪 Left workflow section at line', i, ':', trimmed);
+            break;
+          }
+          
+          // Detect nested logic sections (next:, then:, else:, when:)
+          if (trimmed.match(/^(next|then|else|when):/)) {
+            if (!inNestedLogic) {
+              inNestedLogic = true;
+              nestedLevel = indent;
+              console.log('🔀 Entering nested logic at line', i, 'level', nestedLevel, ':', trimmed);
+            }
+            continue;
+          }
+          
+          // If we're in nested logic, check if we're back to main workflow level
+          if (inNestedLogic && indent === workflowIndent + 2 && trimmed.startsWith('- step:')) {
+            inNestedLogic = false;
+            console.log('🔙 Exiting nested logic at line', i);
+          }
+          
+          // Process main workflow steps (not nested conditional steps)
+          if (trimmed.startsWith('- step:') && !inNestedLogic && indent === workflowIndent + 2) {
             // Save previous task if exists
             if (currentTask.name) {
-              currentTask.id = currentTask.id || `task-${taskIndex + 1}`;
+              tasks.push(currentTask as TaskNode);
+              taskIndex++;
+              console.log('💾 Saved main task:', currentTask.name);
+            }
+            
+            // Extract step name
+            const stepMatch = trimmed.match(/step:\s*([^'"]+)/);
+            const taskName = stepMatch ? stepMatch[1].trim() : `Step ${taskIndex + 1}`;
+            
+            currentTask = {
+              id: taskName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase(),
+              name: taskName,
+              type: 'default'
+            };
+            console.log('✨ Started main task:', taskName, '[id:', currentTask.id, ']');
+            
+          } else if ((trimmed.startsWith('- name:') || (trimmed.startsWith('-') && trimmed.includes('name:'))) && !inNestedLogic) {
+            // Handle tasks: format
+            // Save previous task if exists
+            if (currentTask.name) {
               tasks.push(currentTask as TaskNode);
               taskIndex++;
             }
@@ -95,48 +176,61 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             const taskName = nameMatch ? (nameMatch[1] || nameMatch[2] || '').trim() : `Task ${taskIndex + 1}`;
             
             currentTask = {
-              id: `task-${taskIndex + 1}`,
+              id: taskName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase(),
               name: taskName,
               type: 'default'
             };
-            console.log('Found new task:', taskName);
+            console.log('✨ Started task (tasks format):', taskName);
             
-          } else if (trimmed.startsWith('type:')) {
-            // Extract task type
-            const typeMatch = trimmed.match(/type:\s*['"](.*?)['"]|type:\s*(.+)/);
-            if (typeMatch && currentTask) {
-              currentTask.type = (typeMatch[1] || typeMatch[2] || '').trim();
-              console.log('Set task type:', currentTask.type);
+          } else if (trimmed.startsWith('desc:') && currentTask.name && !inNestedLogic) {
+            // Update task name with description
+            const descMatch = trimmed.match(/desc:\s*['"](.*?)['"]|desc:\s*(.+)/);
+            if (descMatch) {
+              const description = (descMatch[1] || descMatch[2] || '').trim().replace(/^["']|["']$/g, '');
+              // Use description as display name, keep original name as ID
+              const originalName = currentTask.name;
+              currentTask.name = description;
+              if (!currentTask.id || currentTask.id === originalName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()) {
+                currentTask.id = originalName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+              }
+              console.log('📝 Updated task name to description:', description);
             }
             
-          } else if (trimmed.startsWith('depends_on:') || trimmed.startsWith('dependsOn:')) {
-            // Handle dependencies - could be array or single value
-            const depsMatch = trimmed.match(/depends_on:\s*\[(.*?)\]|depends_on:\s*(.+)/);
-            if (depsMatch && currentTask) {
-              const depsStr = depsMatch[1] || depsMatch[2] || '';
-              const deps = depsStr.split(',').map(d => d.replace(/['"]/g, '').trim()).filter(d => d);
-              currentTask.dependencies = deps;
-              console.log('Set dependencies:', deps);
+          } else if (trimmed.startsWith('type:') && currentTask.name && !inNestedLogic) {
+            // Extract task type
+            const typeMatch = trimmed.match(/type:\s*['"](.*?)['"]|type:\s*([^'"]+)/);
+            if (typeMatch) {
+              currentTask.type = (typeMatch[1] || typeMatch[2] || '').trim();
+              console.log('🏷️ Set task type:', currentTask.type);
             }
           }
           
-          // If we hit a non-indented line that's not part of tasks, we're done
-          if (trimmed && !trimmed.startsWith('-') && !trimmed.includes(':') && !line.startsWith(' ') && !line.startsWith('\t')) {
-            break;
+          // Reset nested logic flag if we're back to a lower indentation
+          if (inNestedLogic && indent <= nestedLevel) {
+            inNestedLogic = false;
+            console.log('🔄 Exited nested logic due to indentation change at line', i);
           }
         }
       }
 
       // Add the last task
       if (currentTask.name) {
-        currentTask.id = currentTask.id || `task-${taskIndex + 1}`;
         tasks.push(currentTask as TaskNode);
+        console.log('💾 Saved final task:', currentTask.name);
       }
 
-      console.log('Parsed tasks:', tasks);
+      console.log('🎉 PARSING COMPLETE');
+      console.log('📊 Total main workflow tasks found:', tasks.length);
+      if (tasks.length > 0) {
+        console.log('📋 Task list:');
+        tasks.forEach((task, i) => console.log(`  ${i + 1}. ${task.name} (${task.type}) [id: ${task.id}]`));
+      } else {
+        console.log('❌ NO TASKS FOUND!');
+      }
+      
       return tasks;
     } catch (error) {
-      console.error('Error parsing playbook content:', error);
+      console.error('💥 Error parsing playbook content:', error);
       return [];
     }
   };
@@ -195,7 +289,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         },
         style: {
           background: 'transparent',
-          border: 'none'
+          border: 'none',
+          padding: 0,
+          width: 'auto',
+          height: 'auto'
         }
       });
     });
@@ -238,51 +335,81 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     
     console.log('Loading playbook flow for ID:', playbookId);
     setLoading(true);
+    
     try {
+      // Get actual playbook content from API
       const content = await apiService.getPlaybookContent(playbookId);
-      console.log('Received content:', content);
+      console.log('=== RECEIVED CONTENT FROM API ===');
+      console.log('Content type:', typeof content);
+      console.log('Content length:', content?.length || 0);
+      console.log('Content preview:', content?.substring(0, 200) || 'No content');
       
-      if (content) {
+      if (content && content.trim()) {
         const tasks = parsePlaybookContent(content);
-        console.log('Parsed tasks:', tasks);
+        console.log('Parsed tasks from actual content:', tasks);
         
         if (tasks.length === 0) {
-          // Create a simple demo flow if no tasks found
-          const demoTasks: TaskNode[] = [
-            {
-              id: 'task-1',
-              name: 'Start',
-              type: 'log'
-            },
-            {
-              id: 'task-2', 
-              name: 'Process Data',
-              type: 'script'
-            },
-            {
-              id: 'task-3',
-              name: 'Export Results',
-              type: 'export'
-            }
-          ];
+          console.log('❌ No tasks parsed from actual content - falling back to demo');
+          message.warning('No workflow steps found in this playbook. Showing demo flow.');
+          
+          // Create contextual demo based on playbook ID/name
+          let demoTasks: TaskNode[] = [];
+          if (playbookId.toLowerCase().includes('weather') || playbookName.toLowerCase().includes('weather')) {
+            demoTasks = [
+              { id: 'demo-1', name: 'Fetch Weather Data', type: 'http' },
+              { id: 'demo-2', name: 'Process Weather Info', type: 'script' },
+              { id: 'demo-3', name: 'Generate Weather Report', type: 'export' }
+            ];
+          } else if (playbookId.toLowerCase().includes('database') || playbookId.toLowerCase().includes('sql')) {
+            demoTasks = [
+              { id: 'demo-1', name: 'Connect to Database', type: 'sql' },
+              { id: 'demo-2', name: 'Query Data', type: 'sql' },
+              { id: 'demo-3', name: 'Export Results', type: 'export' }
+            ];
+          } else {
+            demoTasks = [
+              { id: 'demo-1', name: 'Initialize Process', type: 'log' },
+              { id: 'demo-2', name: 'Process Data', type: 'script' },
+              { id: 'demo-3', name: 'Export Results', type: 'export' }
+            ];
+          }
+          
           const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(demoTasks);
           setNodes(flowNodes);
           setEdges(flowEdges);
-          message.info('No tasks found in playbook, showing demo flow');
         } else {
+          console.log('✅ Successfully parsed tasks from actual content:', tasks);
           const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(tasks);
-          console.log('Created nodes:', flowNodes);
-          console.log('Created edges:', flowEdges);
+          console.log('Created flow - nodes:', flowNodes.length, 'edges:', flowEdges.length);
           
           setNodes(flowNodes);
           setEdges(flowEdges);
+          message.success(`Successfully parsed ${tasks.length} workflow steps from ${playbookName}!`);
         }
       } else {
-        message.warning('No playbook content found');
+        console.log('❌ No content received from API');
+        message.warning(`No content found for playbook: ${playbookName}`);
+        
+        // Show empty state or basic demo
+        const demoTasks: TaskNode[] = [
+          { id: 'empty-1', name: 'No Content Available', type: 'log' }
+        ];
+        const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(demoTasks);
+        setNodes(flowNodes);
+        setEdges(flowEdges);
       }
     } catch (error) {
-      console.error('Error loading playbook flow:', error);
-      message.error('Failed to load playbook flow: ' + (error as Error).message);
+      console.error('❌ Error in loadPlaybookFlow:', error);
+      message.error(`Failed to load playbook flow for ${playbookName}: ` + (error as Error).message);
+      
+      // Show error demo
+      const errorTasks: TaskNode[] = [
+        { id: 'error-1', name: 'Failed to Load Playbook', type: 'log' },
+        { id: 'error-2', name: 'Check API Connection', type: 'script' }
+      ];
+      const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(errorTasks);
+      setNodes(flowNodes);
+      setEdges(flowEdges);
     } finally {
       setLoading(false);
     }
@@ -309,6 +436,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       open={visible}
       onCancel={onClose}
       footer={null}
+      closable={false}
       width={fullscreen ? '95vw' : '80vw'}
       style={{ top: fullscreen ? 20 : 50 }}
       bodyStyle={{ 
