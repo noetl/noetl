@@ -11,7 +11,7 @@
     ```
 
     ```bash
-    ❯ gcloud config get-value compute/zone --project noetl-demo-19700101
+    gcloud config get-value compute/zone --project noetl-demo-19700101
     (unset)
     ```
 
@@ -210,10 +210,10 @@ Write this basic configuration to create a VM in the default VPC.
 
     First run destroy plan to review what will be destroyed:
     ```bash
-        terraform plan -destroy -no-color > plan-destroy.txt
+    terraform plan -destroy -no-color > plan-destroy.txt
     ```
 
     To actually destroy the resource:
     ```bash
-        terraform plan -destroy
+    terraform plan -destroy
     ```
