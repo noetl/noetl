@@ -215,5 +215,5 @@ Write this basic configuration to create a VM in the default VPC.
 
     To actually destroy the resource:
     ```bash
-    terraform plan -destroy
+    terraform destroy
     ```
