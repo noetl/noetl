@@ -44,6 +44,7 @@ interface FlowVisualizationProps {
   onClose: () => void;
   playbookId: string;
   playbookName: string;
+  content?: string; // Optional content to use instead of fetching from API
 }
 
 interface TaskNode {
@@ -70,7 +71,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   visible,
   onClose,
   playbookId,
-  playbookName
+  playbookName,
+  content
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -328,24 +330,26 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   const loadPlaybookFlow = async () => {
-    if (!playbookId) {
-      console.log('No playbookId provided');
-      return;
-    }
-    
-    console.log('Loading playbook flow for ID:', playbookId);
+    console.log('Loading playbook flow for ID:', playbookId || 'editor');
     setLoading(true);
     
     try {
-      // Get actual playbook content from API
-      const content = await apiService.getPlaybookContent(playbookId);
-      console.log('=== RECEIVED CONTENT FROM API ===');
-      console.log('Content type:', typeof content);
-      console.log('Content length:', content?.length || 0);
-      console.log('Content preview:', content?.substring(0, 200) || 'No content');
+      let contentToUse = content; // Use provided content first
       
-      if (content && content.trim()) {
-        const tasks = parsePlaybookContent(content);
+      // If no content provided and we have a playbook ID, fetch from API
+      if (!contentToUse && playbookId) {
+        console.log('Fetching content from API for ID:', playbookId);
+        contentToUse = await apiService.getPlaybookContent(playbookId);
+      }
+      
+      console.log('=== USING CONTENT ===');
+      console.log('Content source:', content ? 'Provided directly' : 'Fetched from API');
+      console.log('Content type:', typeof contentToUse);
+      console.log('Content length:', contentToUse?.length || 0);
+      console.log('Content preview:', contentToUse?.substring(0, 200) || 'No content');
+      
+      if (contentToUse && contentToUse.trim()) {
+        const tasks = parsePlaybookContent(contentToUse);
         console.log('Parsed tasks from actual content:', tasks);
         
         if (tasks.length === 0) {
@@ -416,10 +420,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   useEffect(() => {
-    if (visible && playbookId) {
+    if (visible && (playbookId || content)) {
       loadPlaybookFlow();
     }
-  }, [visible, playbookId]);
+  }, [visible, playbookId, content]);
 
   const handleFullscreen = () => {
     setFullscreen(!fullscreen);
