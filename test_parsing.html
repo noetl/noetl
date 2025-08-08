@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Parsing Test</title>
+</head>
+<body>
+    <h1>YAML Parsing Test</h1>
+    <div id="output"></div>
+    
+    <script>
+        function parsePlaybookContent(content) {
+            try {
+                console.log('=== PARSING PLAYBOOK CONTENT ===');
+                console.log('Content length:', content.length);
+                console.log('First 1000 characters of content:');
+                console.log(content.substring(0, 1000));
+                
+                const lines = content.split('\n');
+                console.log('Total lines:', lines.length);
+                
+                const tasks = [];
+                let currentTask = {};
+                let inWorkflowSection = false;
+                let taskIndex = 0;
+                let workflowIndent = 0;
+                let inNestedLogic = false;
+                let nestedLevel = 0;
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const trimmed = line.trim();
+                    const indent = line.length - line.trimStart().length;
+                    
+                    // Debug output for key lines
+                    if (i < 30) {
+                        console.log(`Line ${i}: indent=${indent}, trimmed="${trimmed}"`);
+                    }
+                    
+                    // Look for workflow/tasks/steps section
+                    if (trimmed === 'workflow:' || trimmed.startsWith('workflow:') ||
+                        trimmed === 'tasks:' || trimmed.startsWith('tasks:') || 
+                        trimmed === 'steps:' || trimmed.startsWith('steps:')) {
+                        inWorkflowSection = true;
+                        workflowIndent = indent;
+                        console.log('✓ Found workflow section at line', i, 'with indent', workflowIndent);
+                        continue;
+                    }
+
+                    if (inWorkflowSection) {
+                        // Check if we've left the workflow section
+                        if (trimmed && indent <= workflowIndent && !trimmed.startsWith('-') && trimmed.includes(':') && !trimmed.startsWith('#')) {
+                            console.log('Left workflow section at line', i, ':', trimmed);
+                            break;
+                        }
+                        
+                        // Detect nested logic sections (next:, then:, else:, when:)
+                        if (trimmed.match(/^(next|then|else|when):/)) {
+                            if (!inNestedLogic) {
+                                inNestedLogic = true;
+                                nestedLevel = indent;
+                                console.log('Entering nested logic at line', i, 'level', nestedLevel);
+                            }
+                            continue;
+                        }
+                        
+                        // If we're in nested logic, check if we're back to main workflow level
+                        if (inNestedLogic && indent <= workflowIndent + 2 && trimmed.startsWith('- step:')) {
+                            inNestedLogic = false;
+                            console.log('Exiting nested logic at line', i);
+                        }
+                        
+                        // Only process main workflow steps (not nested conditional steps)
+                        if (trimmed.startsWith('- step:') && !inNestedLogic && indent <= workflowIndent + 2) {
+                            // Save previous task if exists
+                            if (currentTask.name) {
+                                tasks.push({...currentTask});
+                                taskIndex++;
+                                console.log('✓ Saved main task:', currentTask.name);
+                            }
+                            
+                            // Extract step name
+                            const stepMatch = trimmed.match(/step:\s*([^'"]+)/);
+                            const taskName = stepMatch ? stepMatch[1].trim() : `Step ${taskIndex + 1}`;
+                            
+                            currentTask = {
+                                id: taskName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase(),
+                                name: taskName,
+                                type: 'default'
+                            };
+                            console.log('✓ Started main task:', taskName);
+                            
+                        } else if (trimmed.startsWith('desc:') && currentTask.name && !inNestedLogic) {
+                            // Update task name with description
+                            const descMatch = trimmed.match(/desc:\s*['"](.*?)['"]|desc:\s*(.+)/);
+                            if (descMatch) {
+                                const description = (descMatch[1] || descMatch[2] || '').trim().replace(/^["']|["']$/g, '');
+                                // Use description as display name, keep original name as ID
+                                const originalName = currentTask.name;
+                                currentTask.name = description;
+                                if (!currentTask.id || currentTask.id === originalName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()) {
+                                    currentTask.id = originalName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+                                }
+                                console.log('✓ Updated task name to description:', description);
+                            }
+                            
+                        } else if (trimmed.startsWith('type:') && currentTask.name && !inNestedLogic) {
+                            // Extract task type
+                            const typeMatch = trimmed.match(/type:\s*['"](.*?)['"]|type:\s*([^'"]+)/);
+                            if (typeMatch) {
+                                currentTask.type = (typeMatch[1] || typeMatch[2] || '').trim();
+                                console.log('✓ Set task type:', currentTask.type);
+                            }
+                        }
+                        
+                        // Reset nested logic flag if we're back to a lower indentation
+                        if (inNestedLogic && indent <= nestedLevel) {
+                            inNestedLogic = false;
+                            console.log('Exited nested logic due to indentation change at line', i);
+                        }
+                    }
+                }
+
+                // Add the last task
+                if (currentTask.name) {
+                    tasks.push({...currentTask});
+                    console.log('✓ Saved final task:', currentTask.name);
+                }
+
+                console.log('=== PARSING COMPLETE ===');
+                console.log('Total main workflow tasks found:', tasks.length);
+                tasks.forEach((task, i) => console.log(`  ${i + 1}. ${task.name} (${task.type}) [id: ${task.id}]`));
+                
+                return tasks;
+            } catch (error) {
+                console.error('Error parsing playbook content:', error);
+                return [];
+            }
+        }
+        
+        // Test content
+        const sampleContent = `apiVersion: noetl.io/v1
+kind: Playbook
+name: weather
+path: examples/weather_example
+description: "Simple weather data workflow"
+
+workflow:
+  - step: start
+    desc: "Start weather workflow"
+    
+  - step: fetch_weather
+    desc: "Fetch weather data for the city"
+    type: workbook
+    
+  - step: report_warm
+    desc: "Report warm weather"
+    type: python
+    
+  - step: report_cold
+    desc: "Report cold weather"
+    type: python
+    
+  - step: end
+    desc: "End of workflow"`;
+
+        console.log('Testing with sample content...');
+        const result = parsePlaybookContent(sampleContent);
+        
+        document.getElementById('output').innerHTML = `
+            <h2>Parsing Results</h2>
+            <p>Tasks found: ${result.length}</p>
+            <ul>
+                ${result.map(task => `<li>${task.name} (${task.type}) [id: ${task.id}]</li>`).join('')}
+            </ul>
+            <h3>Check browser console for detailed logs</h3>
+        `;
+    </script>
+</body>
+</html>

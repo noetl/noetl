@@ -1441,8 +1441,8 @@ async def execute_playbook(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/catalog/playbooks/content", response_class=JSONResponse)
-async def get_catalog_playbook_content(playbook_id: str = Query(..., alias="playbook_id")):
-    """Get playbooks content"""
+async def get_catalog_playbook_content(playbook_id: str = Query(...)):
+    """Get playbook content"""
     try:
         logger.info(f"Received playbook_id: '{playbook_id}'")
         if playbook_id.startswith("playbooks/"):
@@ -1465,16 +1465,17 @@ async def get_catalog_playbook_content(playbook_id: str = Query(..., alias="play
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting playbooks content: {e}")
+        logger.error(f"Error getting playbook content: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/catalog/playbooks", response_class=JSONResponse)
+@router.get("/catalog/playbook", response_class=JSONResponse)
 async def get_catalog_playbook(
-    playbook_id: str = Query(..., alias="playbook_id"),
+    playbook_id: str = Query(...),
     # entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
 ):
+    """Get a single playbook by ID"""
     try:
-        entry: Dict[str, Any] = get_playbook_entry_from_catalog(playbook_id=playbook_id)
+        entry: Dict[str, Any] = await get_playbook_entry_from_catalog(playbook_id=playbook_id)
         meta = entry.get('meta', {})
         playbook_data = {
             "id": entry.get('resource_path', ''),
@@ -1488,8 +1489,8 @@ async def get_catalog_playbook(
         }
         return playbook_data
     except Exception as e:
-        logger.error(f"Error processing playbooks entry: {e}")
-        raise HTTPException(status_code=500, detail="Error processing playbooks data.")
+        logger.error(f"Error processing playbook entry: {e}")
+        raise HTTPException(status_code=500, detail="Error processing playbook data.")
 
 @router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
 async def save_catalog_playbook_content(playbook_id: str, request: Request):

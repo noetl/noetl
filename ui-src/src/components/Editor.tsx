@@ -20,10 +20,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Layout, Button, Input, Typography, Space, Spin, Alert, Card, Row, Col, message, Divider } from 'antd';
-import { SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, FileTextOutlined, ExpandOutlined, CompressOutlined } from '@ant-design/icons';
+import { SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, FileTextOutlined, ExpandOutlined, CompressOutlined, NodeIndexOutlined } from '@ant-design/icons';
 import { apiService } from '../services/api';
 import { PlaybookData } from '../types';
 import MonacoEditor from '@monaco-editor/react';
+import FlowVisualization from './FlowVisualization';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -100,6 +101,7 @@ const PlaybookEditor: React.FC = () => {
   const [validationResult, setValidationResult] = useState<{ valid: boolean; errors?: string[] } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [editorHeight, setEditorHeight] = useState(500);
+  const [showFlowVisualization, setShowFlowVisualization] = useState(false);
   const editorRef = useRef<any>(null);
 
   // Get playbooks ID from URL parameters
@@ -224,6 +226,10 @@ tasks:
     }
   };
 
+  const handleShowWorkflow = () => {
+    setShowFlowVisualization(true);
+  };
+
   if (loading) {
     return (
       <Content style={{ padding: '50px', textAlign: 'center' }}>
@@ -249,9 +255,17 @@ tasks:
             <Title level={2}>
               ✏️ Playbook Editor
             </Title>
-            {playbook && (
+            {playbook ? (
               <Text type="secondary">
-                Editing: {playbook.name} (ID: {playbook.id})
+                Editing: {playbook.name} (ID: {playbookId || playbook.id || 'New'})
+              </Text>
+            ) : playbookId ? (
+              <Text type="secondary">
+                Loading playbook (ID: {playbookId})...
+              </Text>
+            ) : (
+              <Text type="secondary">
+                Creating new playbook
               </Text>
             )}
           </Col>
@@ -273,6 +287,15 @@ tasks:
                 onClick={handleValidate}
               >
                 Validate
+              </Button>
+              <Button
+                type="default"
+                icon={<NodeIndexOutlined />}
+                onClick={handleShowWorkflow}
+                disabled={!content.trim()}
+                title="Show workflow visualization"
+              >
+                Show Workflow
               </Button>
               <Button
                 type="primary"
@@ -350,6 +373,15 @@ tasks:
           </Text>
         </Card>
       </Space>
+      
+      {/* Flow Visualization Modal */}
+      <FlowVisualization
+        visible={showFlowVisualization}
+        onClose={() => setShowFlowVisualization(false)}
+        playbookId={playbookId || playbook?.id || 'new'}
+        playbookName={playbook?.name || 'New Playbook'}
+        content={content}
+      />
     </Content>
   );
 };
