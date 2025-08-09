@@ -4,7 +4,6 @@ import { SearchOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined, FileText
 import { apiService } from '../services/api';
 import { PlaybookData, VisualizationWidget } from '../types';
 import WidgetRenderer from './WidgetRenderer';
-import FlowVisualization from './FlowVisualization';
 import {useNavigate} from "react-router-dom";
 
 const { Content } = Layout;
@@ -29,10 +28,6 @@ const Catalog: React.FC = () => {
   const [selectedPlaybookVersion, setSelectedPlaybookVersion] = useState<string | null>(null);
   const [payloadJson, setPayloadJson] = useState('');
   const [payloadFile, setPayloadFile] = useState<File | null>(null);
-  
-  // Flow visualization state
-  const [flowModalVisible, setFlowModalVisible] = useState(false);
-  const [selectedPlaybookName, setSelectedPlaybookName] = useState<string>('');
   const [mergePayload, setMergePayload] = useState(false);
   const [activePayloadTab, setActivePayloadTab] = useState('json');
 
@@ -202,15 +197,8 @@ const Catalog: React.FC = () => {
   };
 
   const handleViewFlow = (playbookId: string, playbookName: string) => {
-    setSelectedPlaybookId(playbookId);
-    setSelectedPlaybookName(playbookName);
-    setFlowModalVisible(true);
-  };
-
-  const handleCloseFlowModal = () => {
-    setFlowModalVisible(false);
-    setSelectedPlaybookId(null);
-    setSelectedPlaybookName('');
+    // Navigate to execution page with playbook visualization
+    navigate(`/execution?playbook=${playbookId}&view=workflow`);
   };
 
   const getStatusColor = (status: string) => {
@@ -405,14 +393,6 @@ const Catalog: React.FC = () => {
           </Checkbox>
         </Space>
       </Modal>
-
-      {/* Flow Visualization Modal */}
-      <FlowVisualization
-        visible={flowModalVisible}
-        onClose={handleCloseFlowModal}
-        playbookId={selectedPlaybookId || ''}
-        playbookName={selectedPlaybookName}
-      />
     </Content>
   );
 };
