@@ -1,3 +1,10 @@
+FROM node:20-alpine AS ui-builder
+WORKDIR /ui
+COPY ui-src/package.json ui-src/package-lock.json ./ui-src/
+RUN cd ui-src && npm ci
+COPY ui-src ./ui-src
+RUN cd ui-src && npm run build
+
 FROM python:3.12-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -16,6 +23,7 @@ RUN uv venv && \
     uv sync --frozen --no-dev --no-install-project
 
 COPY noetl ./noetl
+COPY --from=ui-builder /ui/ui-src/dist ./noetl/ui/build
 
 COPY LICENSE README.md ./
 

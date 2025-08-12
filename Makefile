@@ -65,11 +65,11 @@ rebuild:
 
 .PHONY: up
 up:
-	set -a; [ -f .env.docker ] && . .env.docker; set +a; docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) up -d
+	set -a; [ -f .env.docker ] && . .env.docker; set +a; docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) up -d --remove-orphans
 
 .PHONY: down
 down:
-	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) down
+	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) down --remove-orphans
 
 .PHONY: db-up db-down
 db-up:

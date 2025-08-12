@@ -103,7 +103,7 @@ services:
     networks:
       - noetl-network
 
-  local-dev:
+  local-dev-api:
     build:
       context: .
       dockerfile: docker/noetl/dev/Dockerfile
@@ -126,10 +126,9 @@ services:
       NOETL_PLAYBOOK_VERSION: "${NOETL_PLAYBOOK_VERSION:-}"
       NOETL_MOCK_MODE: "${NOETL_MOCK_MODE:-false}"
     volumes:
-      - ./secrets/trader-dev.json:/secrets/application_default_credentials.json
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-./secrets/noetl-service-account.json}:/secrets/application_default_credentials.json
       - ./data:/opt/noetl/data
       - ./playbooks:/opt/noetl/playbooks
-      - ./data/paper_oauth1:/usr/data/paper_oauth1
     networks:
       - noetl-network
 

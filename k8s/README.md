@@ -117,6 +117,10 @@ The script supports various deployment options:
 ./k8s/deploy-platform.sh --repo-path /path/to/your/noetl/repo --deploy-noetl-dev
 ```
 
+Note on images:
+- The deploy-platform.sh script automatically builds required Docker images (Postgres, noetl-pip, and noetl-local-dev) using docker/build-images.sh and, when running against a Kind cluster, loads them into the cluster with k8s/load-images.sh. You do not need to run docker/build-images.sh manually before running the script (including when using --deploy-noetl-dev).
+- If you want to skip the all-in-one helper and do things manually, see Option 2 below.
+
 For more options, run:
 ```bash
 ./k8s/deploy-platform.sh --help

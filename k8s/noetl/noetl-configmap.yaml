@@ -19,4 +19,6 @@ data:
   NOETL_ENABLE_UI: "true"
   NOETL_HOST: "0.0.0.0"
   NOETL_PORT: "8084"
-  NOETL_SERVER_RUNTIME: "uvicorn"  # Can be changed to "gunicorn" if needed
+  NOETL_SERVER_RUNTIME: "uvicorn"
+  NOETL_DB_STARTUP_TIMEOUT: "180"
+  NOETL_DB_RETRY_INTERVAL: "5"

@@ -140,17 +140,35 @@ def start_server(
         logger.info(f"ENV: {key}={value}")
     logger.info("=== END ENVIRONMENT VARIABLES ===")
 
-    try:
-        logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=False)
-        db_schema.create_noetl_metadata()
-        db_schema.init_database()
-        logger.info("NoETL database schema initialized.")
-    except Exception as e:
-        logger.error(f"Error initializing NoETL system metadata: {e}", exc_info=True)
-        logger.error("Database connection failed. Cannot start NoETL server.")
-        logger.error("Please check database configuration.")
-        raise typer.Exit(code=1)
+    # Initialize database with retries to avoid crash on slow Postgres startup
+    max_startup_wait_secs = int(os.environ.get("NOETL_DB_STARTUP_TIMEOUT", "180"))
+    retry_interval_secs = int(os.environ.get("NOETL_DB_RETRY_INTERVAL", "5"))
+    start_time = time.time()
+    initialized = False
+    last_error = None
+    logger.info(
+        f"Initializing NoETL system metadata (will retry up to {max_startup_wait_secs}s, interval {retry_interval_secs}s)"
+    )
+    while time.time() - start_time < max_startup_wait_secs and not initialized:
+        try:
+            db_schema = DatabaseSchema(auto_setup=False)
+            db_schema.create_noetl_metadata()
+            db_schema.init_database()
+            logger.info("NoETL database schema initialized.")
+            initialized = True
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"Database not ready or initialization failed: {e}. Retrying in {retry_interval_secs}s...",
+                exc_info=False,
+            )
+            time.sleep(retry_interval_secs)
+    if not initialized:
+        logger.error(
+            f"Error initializing NoETL system metadata after {max_startup_wait_secs}s: {last_error}",
+            exc_info=True,
+        )
+        logger.error("Continuing to start API without completed DB initialization. Some endpoints may fail until DB is ready.")
 
     if server == "auto":
         try:
