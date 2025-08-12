@@ -41,13 +41,13 @@ COPY --from=builder /opt/noetl/README.md ./
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH="/opt/noetl:$PYTHONPATH"
+ENV PYTHONPATH="/opt/noetl"
 ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
 ENV NOETL_ENABLE_UI=false
 
 # Default command runs the server, but can be overridden with environment variables:
-# - Set NOETL_RUN_MODE=server for server mode (default)
+# - Set NOETL_RUN_MODE=server for the default server mode
 # - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
 # - Set NOETL_RUN_MODE=cli for CLI mode
 CMD ["python", "-m", "noetl.main", "server", "start", "--host", "0.0.0.0", "--port", "8080"]

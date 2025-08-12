@@ -14,10 +14,19 @@ workload:
   pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
   pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
   pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  # Add data directory configuration with absolute path
+  data_dir: "{{ env.NOETL_DATA_DIR | default(\"/tmp/noetl/data\") }}"
 
 workflow:
   - step: start
     desc: "Start DuckDB Test Workflow"
+    next:
+      - step: setup_data_dir
+      
+  - step: setup_data_dir
+    desc: "Setup data directory with proper permissions"
+    type: workbook
+    task: setup_data_dir_task
     next:
       - step: test_duckdb
 
@@ -32,6 +41,31 @@ workflow:
     desc: "End of workflow"
 
 workbook:
+  - name: setup_data_dir_task
+    type: python
+    code: |
+      def main():
+          import os
+          
+          # Get data directory from context
+          data_dir = context.get('data_dir', '/tmp/noetl/data')
+          
+          # Create data directory and subdirectories with proper permissions
+          os.makedirs(os.path.join(data_dir, 'noetldb'), exist_ok=True)
+          
+          # Set environment variable for DuckDB to use
+          os.environ['NOETL_DATA_DIR'] = data_dir
+          
+          # Print debug information
+          print(f"Data directory set to: {data_dir}")
+          print(f"Environment variable NOETL_DATA_DIR set to: {os.environ.get('NOETL_DATA_DIR')}")
+          
+          return {
+              'status': 'success',
+              'message': f'Data directory created at {data_dir}',
+              'data_dir': data_dir
+          }
+          
   - name: duckdb_test_task
     type: duckdb
     command: |
@@ -70,6 +104,6 @@ workbook:
       DROP TABLE IF EXISTS test_table;
     with:
       table: test_table
-      file: "{{ workload.baseFilePath }}/test.csv"
+      file: "{{ workload.data_dir }}/test.csv"
       header: false
       bucket: "{{ workload.bucket }}"

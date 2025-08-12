@@ -70,11 +70,11 @@ services:
 #    networks:
 #      - noetl-network
 
-  pip-standalone-api:
+  pip-api:
     build:
       context: .
-      dockerfile: docker/noetl/standalone/Dockerfile
-    container_name: standalone-api
+      dockerfile: docker/noetl/pip/Dockerfile
+    container_name: noetl-pip
     depends_on:
       database:
         condition: service_healthy
@@ -103,13 +103,11 @@ services:
     networks:
       - noetl-network
 
-  noetl:
+  local-dev:
     build:
       context: .
-      dockerfile: docker/noetl/Dockerfile
-      args:
-        NOETL_VERSION: "${NOETL_VERSION:-latest}"
-    container_name: noetl
+      dockerfile: docker/noetl/dev/Dockerfile
+    container_name: noetl-local-dev
     depends_on:
       database:
         condition: service_healthy
@@ -123,7 +121,6 @@ services:
       NOETL_PORT: "8080"
       NOETL_DEBUG: "${NOETL_DEBUG:-false}"
       NOETL_WORKERS: "${NOETL_WORKERS:-1}"
-      NOETL_RELOAD: "${NOETL_RELOAD:-false}"
       NOETL_NO_UI: "${NOETL_NO_UI:-false}"
       NOETL_PLAYBOOK_PATH: "${NOETL_PLAYBOOK_PATH:-}"
       NOETL_PLAYBOOK_VERSION: "${NOETL_PLAYBOOK_VERSION:-}"
@@ -156,3 +153,4 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/home/jovyan/secrets/noetl-service-account.json
     networks:
       - noetl-network
+

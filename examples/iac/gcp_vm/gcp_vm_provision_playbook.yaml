@@ -1,0 +1,389 @@
+# NoETL DSL Playbook for Google Cloud VM Provisioning
+# This playbook demonstrates how to:
+# 1. Provision a VM in Google Cloud using REST API (no SDK)
+# 2. Track VM status and details in a PostgreSQL database
+# 3. Use DuckDB for data transformation
+#
+# Usage:
+# noetl playbooks --register playbooks/gcp_vm_provision_playbook.yaml --port 8080
+# noetl playbooks --execute --path "gcp/vm_provision" --payload '{
+#  "project_id": "your-gcp-project-id",
+#  "zone": "us-central1-a",
+#  "machine_type": "f1-micro",
+#  "vm_name": "test-vm"
+# }'
+
+apiVersion: noetl.io/v1
+kind: Playbook
+name: gcp_vm_provision
+path: gcp/vm_provision
+
+workload:
+  jobId: "{{ job.uuid }}"
+  execution_id: "{{ job.uuid }}"
+  project_id: "{{ env.GCP_PROJECT_ID | default('your-gcp-project-id') }}"
+  zone: "{{ env.GCP_ZONE | default('us-central1-a') }}"
+  machine_type: "{{ env.GCP_MACHINE_TYPE | default('f1-micro') }}"
+  vm_name: "{{ env.GCP_VM_NAME | default('noetl-test-vm') }}"
+  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('postgres') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('postgres') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
+
+workflow:
+  - step: start
+    desc: "Start GCP VM Provisioning Workflow"
+    next:
+      - step: create_vm_tracking_table
+
+  - step: create_vm_tracking_table
+    desc: "Create VM tracking table in PostgreSQL if not exists"
+    type: workbook
+    task: create_vm_tracking_table_task
+    next:
+      - step: get_gcp_access_token
+
+  - step: get_gcp_access_token
+    desc: "Get GCP access token for API authentication"
+    type: workbook
+    task: get_gcp_access_token_task
+    next:
+      - step: provision_vm
+
+  - step: provision_vm
+    desc: "Provision VM in Google Cloud using REST API"
+    type: workbook
+    task: provision_vm_task
+    with:
+      access_token: "{{ get_gcp_access_token.access_token }}"
+    next:
+      - step: track_vm_creation
+
+  - step: track_vm_creation
+    desc: "Track VM creation in PostgreSQL"
+    type: workbook
+    task: track_vm_creation_task
+    with:
+      vm_operation: "{{ provision_vm.data }}"
+    next:
+      - step: check_vm_status
+
+  - step: check_vm_status
+    desc: "Check VM creation status"
+    type: workbook
+    task: check_vm_status_task
+    with:
+      access_token: "{{ get_gcp_access_token.access_token }}"
+      operation_name: "{{ provision_vm.data.name }}"
+    next:
+      - step: get_vm_details
+        condition: "{{ check_vm_status.data.status == 'DONE' and check_vm_status.data.error is not defined }}"
+      - step: handle_vm_error
+        condition: "{{ check_vm_status.data.status == 'DONE' and check_vm_status.data.error is defined }}"
+      - step: wait_and_check_again
+        condition: "{{ check_vm_status.data.status != 'DONE' }}"
+
+  - step: wait_and_check_again
+    desc: "Wait and check VM status again"
+    type: workbook
+    task: wait_task
+    next:
+      - step: check_vm_status
+
+  - step: handle_vm_error
+    desc: "Handle VM creation error"
+    type: workbook
+    task: handle_vm_error_task
+    with:
+      error_details: "{{ check_vm_status.data.error }}"
+    next:
+      - step: end
+
+  - step: get_vm_details
+    desc: "Get VM details after successful creation"
+    type: workbook
+    task: get_vm_details_task
+    with:
+      access_token: "{{ get_gcp_access_token.access_token }}"
+    next:
+      - step: store_vm_details
+
+  - step: store_vm_details
+    desc: "Store VM details in PostgreSQL"
+    type: workbook
+    task: store_vm_details_task
+    with:
+      vm_details: "{{ get_vm_details.data }}"
+    next:
+      - step: transform_vm_data
+
+  - step: transform_vm_data
+    desc: "Transform VM data using DuckDB"
+    type: workbook
+    task: transform_vm_data_task
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of workflow"
+    with:
+      result: "VM provisioning workflow completed"
+
+workbook:
+  - name: create_vm_tracking_table_task
+    type: postgres
+    command: |
+      CREATE TABLE IF NOT EXISTS gcp_vm_instances (
+        id SERIAL PRIMARY KEY,
+        execution_id VARCHAR(64),
+        vm_name VARCHAR(100),
+        project_id VARCHAR(100),
+        zone VARCHAR(50),
+        machine_type VARCHAR(50),
+        status VARCHAR(20),
+        creation_timestamp TIMESTAMP,
+        last_updated TIMESTAMP DEFAULT NOW(),
+        ip_address VARCHAR(20),
+        network VARCHAR(100),
+        cpu_platform VARCHAR(50),
+        disk_size_gb INTEGER,
+        disk_type VARCHAR(50),
+        metadata JSONB,
+        labels JSONB,
+        raw_details JSONB
+      );
+
+      CREATE TABLE IF NOT EXISTS gcp_vm_operations (
+        id SERIAL PRIMARY KEY,
+        execution_id VARCHAR(64),
+        operation_id VARCHAR(100),
+        operation_type VARCHAR(50),
+        target_vm VARCHAR(100),
+        status VARCHAR(20),
+        start_time TIMESTAMP DEFAULT NOW(),
+        end_time TIMESTAMP,
+        error_message TEXT,
+        raw_response JSONB
+      );
+
+  - name: get_gcp_access_token_task
+    type: python
+    code: |
+      def main():
+          import subprocess
+          import json
+          
+          try:
+              # Use gcloud CLI to get access token (in a real environment)
+              # This is a simulation for the example
+              # In production, you would use a service account key or OAuth2
+              
+              # Simulated token for demonstration purposes
+              # In a real environment, you would use:
+              # result = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True)
+              # access_token = result.stdout.strip()
+              
+              # For this example, we'll use a placeholder token
+              access_token = "ya29.EXAMPLE-ACCESS-TOKEN-FOR-DEMO-PURPOSES-ONLY"
+              
+              return {
+                  "status": "success",
+                  "access_token": access_token,
+                  "message": "Successfully retrieved GCP access token (simulated for demo)"
+              }
+              
+          except Exception as e:
+              return {
+                  "status": "error",
+                  "message": f"Failed to get GCP access token: {str(e)}"
+              }
+
+  - name: provision_vm_task
+    type: http
+    method: POST
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ workload.project_id }}/zones/{{ workload.zone }}/instances"
+    headers:
+      Content-Type: "application/json"
+      Authorization: "Bearer {{ access_token }}"
+    payload:
+      name: "{{ workload.vm_name }}"
+      machineType: "projects/{{ workload.project_id }}/zones/{{ workload.zone }}/machineTypes/{{ workload.machine_type }}"
+      disks:
+        - boot: true
+          autoDelete: true
+          initializeParams:
+            sourceImage: "projects/debian-cloud/global/images/family/debian-11"
+            diskSizeGb: "10"
+            diskType: "projects/{{ workload.project_id }}/zones/{{ workload.zone }}/diskTypes/pd-standard"
+      networkInterfaces:
+        - network: "projects/{{ workload.project_id }}/global/networks/default"
+          accessConfigs:
+            - name: "External NAT"
+              type: "ONE_TO_ONE_NAT"
+      metadata:
+        items:
+          - key: "startup-script"
+            value: "#!/bin/bash\necho 'VM provisioned by NoETL' > /tmp/noetl_provision.log"
+      labels:
+        environment: "test"
+        provisioner: "noetl"
+
+  - name: track_vm_creation_task
+    type: postgres
+    with:
+      vm_operation: "{{ vm_operation }}"
+    command: |
+      INSERT INTO gcp_vm_operations (
+        execution_id, 
+        operation_id, 
+        operation_type, 
+        target_vm, 
+        status, 
+        raw_response
+      )
+      VALUES (
+        '{{ job.uuid }}',
+        '{{ vm_operation.name | default("unknown") }}',
+        'insert',
+        '{{ workload.vm_name }}',
+        '{{ vm_operation.status | default("PENDING") }}',
+        '{{ vm_operation | tojson }}'
+      );
+
+  - name: check_vm_status_task
+    type: http
+    method: GET
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ workload.project_id }}/zones/{{ workload.zone }}/operations/{{ operation_name }}"
+    headers:
+      Authorization: "Bearer {{ access_token }}"
+
+  - name: wait_task
+    type: python
+    code: |
+      def main():
+          import time
+          
+          # Wait for 10 seconds before checking again
+          time.sleep(10)
+          
+          return {
+              "status": "success",
+              "message": "Waited 10 seconds before checking VM status again"
+          }
+
+  - name: handle_vm_error_task
+    type: postgres
+    with:
+      error_details: "{{ error_details }}"
+    command: |
+      UPDATE gcp_vm_operations
+      SET 
+        status = 'ERROR',
+        end_time = NOW(),
+        error_message = '{{ error_details.errors[0].message | default("Unknown error") }}'
+      WHERE 
+        execution_id = '{{ job.uuid }}'
+      AND
+        target_vm = '{{ workload.vm_name }}';
+
+  - name: get_vm_details_task
+    type: http
+    method: GET
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ workload.project_id }}/zones/{{ workload.zone }}/instances/{{ workload.vm_name }}"
+    headers:
+      Authorization: "Bearer {{ access_token }}"
+
+  - name: store_vm_details_task
+    type: postgres
+    with:
+      vm_details: "{{ vm_details }}"
+    command: |
+      INSERT INTO gcp_vm_instances (
+        execution_id,
+        vm_name,
+        project_id,
+        zone,
+        machine_type,
+        status,
+        creation_timestamp,
+        ip_address,
+        network,
+        cpu_platform,
+        disk_size_gb,
+        disk_type,
+        metadata,
+        labels,
+        raw_details
+      )
+      VALUES (
+        '{{ job.uuid }}',
+        '{{ vm_details.name }}',
+        '{{ workload.project_id }}',
+        '{{ workload.zone }}',
+        '{{ workload.machine_type }}',
+        '{{ vm_details.status }}',
+        '{{ vm_details.creationTimestamp }}',
+        '{{ vm_details.networkInterfaces[0].accessConfigs[0].natIP | default("") }}',
+        '{{ vm_details.networkInterfaces[0].network | default("default") }}',
+        '{{ vm_details.cpuPlatform | default("unknown") }}',
+        {{ vm_details.disks[0].diskSizeGb | default(10) }},
+        '{{ vm_details.disks[0].type | default("pd-standard") }}',
+        '{{ vm_details.metadata | tojson }}',
+        '{{ vm_details.labels | tojson }}',
+        '{{ vm_details | tojson }}'
+      );
+      
+      UPDATE gcp_vm_operations
+      SET 
+        status = 'DONE',
+        end_time = NOW()
+      WHERE 
+        execution_id = '{{ job.uuid }}'
+      AND
+        target_vm = '{{ workload.vm_name }}';
+
+  - name: transform_vm_data_task
+    type: duckdb
+    command: |
+      -- Install and load PostgreSQL extension
+      INSTALL postgres;
+      LOAD postgres;
+      
+      -- Create PostgreSQL secret for authentication
+      CREATE OR REPLACE SECRET postgres_secret (
+          TYPE POSTGRES,
+          HOST '{{ workload.pg_host }}',
+          PORT {{ workload.pg_port }},
+          DATABASE '{{ workload.pg_db }}',
+          USER '{{ workload.pg_user }}',
+          PASSWORD '{{ workload.pg_password }}'
+      );
+      
+      -- Attach PostgreSQL database
+      ATTACH DATABASE 'postgres_secret' AS postgres_db (TYPE postgres);
+      
+      -- Create a summary view of VM instances
+      CREATE OR REPLACE TABLE vm_summary AS
+      SELECT 
+        vm_name,
+        project_id,
+        zone,
+        machine_type,
+        status,
+        creation_timestamp,
+        ip_address,
+        cpu_platform,
+        disk_size_gb
+      FROM postgres_db.gcp_vm_instances
+      WHERE execution_id = '{{ job.uuid }}';
+      
+      -- Show the summary
+      SELECT * FROM vm_summary;
+      
+      -- Export the summary to CSV
+      COPY vm_summary TO '/tmp/vm_summary_{{ job.uuid }}.csv' (HEADER, DELIMITER ',');
+      
+      -- Clean up
+      DROP TABLE vm_summary;
+      DROP SECRET postgres_secret;

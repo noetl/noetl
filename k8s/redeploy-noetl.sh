@@ -12,13 +12,13 @@ echo -e "If you encounter issues, please check the logs for troubleshooting."
 
 if ! command -v kubectl &> /dev/null; then
     echo -e "${RED}Error: kubectl is not installed.${NC}"
-    echo "Please install kubectl first."
+    echo "Install kubectl first."
     exit 1
 fi
 
 if ! kubectl cluster-info &> /dev/null; then
     echo -e "${RED}Error: Cannot connect to Kubernetes cluster.${NC}"
-    echo "Please make sure your cluster is running and kubectl is properly configured."
+    echo "Make sure your cluster is running and kubectl is properly configured."
     exit 1
 fi
 
@@ -28,10 +28,11 @@ echo "Waiting for NoETL pods to terminate..."
 kubectl wait --for=delete pod -l app=noetl --timeout=60s || true
 
 echo -e "${GREEN}Redeploying NoETL...${NC}"
-kubectl apply -f noetl/noetl-configmap.yaml
-kubectl apply -f noetl/noetl-secret.yaml
-kubectl apply -f noetl/noetl-deployment.yaml
-kubectl apply -f noetl/noetl-service.yaml
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+kubectl apply -f ${SCRIPT_DIR}/noetl/noetl-configmap.yaml
+kubectl apply -f ${SCRIPT_DIR}/noetl/noetl-secret.yaml
+kubectl apply -f ${SCRIPT_DIR}/noetl/noetl-deployment.yaml
+kubectl apply -f ${SCRIPT_DIR}/noetl/noetl-service.yaml
 
 echo -e "${GREEN}Waiting for NoETL to be ready...${NC}"
 sleep 10

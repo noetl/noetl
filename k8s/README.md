@@ -2,6 +2,16 @@
 
 Set up a local Kubernetes cluster using Kind (Kubernetes in Docker) and deploy NoETL and Postgres to it.
 
+Note on deployment options:
+- Pip deployment (PyPI-based): use these manifests
+  - k8s/noetl/noetl-deployment.yaml (uses image noetl-pip:latest, container port 8084)
+  - k8s/noetl/noetl-service.yaml (NodePort 30084; health at http://localhost:30084/api/health)
+- Local development (from local path): use these manifests
+  - k8s/noetl/noetl-dev-deployment.yaml (uses image noetl-local-dev:latest, container port 8080)
+  - k8s/noetl/noetl-dev-service.yaml (NodePort 30082; health at http://localhost:30082/api/health)
+
+For the up-to-date, concise guide, see k8s/docs/README.md.
+
 ## Prerequisites
 
 - Docker installed and running
@@ -79,6 +89,43 @@ kubectl cluster-info --context kind-noetl-cluster
 
 ## Deploying NoETL and Postgres
 
+### Option 1: Using the All-in-One Deployment Script
+
+The easiest way to deploy the complete NoETL platform is to use the provided `deploy-platform.sh` script:
+
+```bash
+# Make the script executable
+chmod +x k8s/deploy-platform.sh
+
+# Run the script with default options (sets up cluster, deploys Postgres and NoETL from pip)
+./k8s/deploy-platform.sh
+```
+
+The script supports various deployment options:
+
+```bash
+# Deploy everything supported (cluster, Postgres, NoETL from pip by default, plus local-dev)
+./k8s/deploy-platform.sh --deploy-noetl-dev
+
+# Skip cluster setup (if you already have a cluster)
+./k8s/deploy-platform.sh --no-cluster
+
+# Deploy only NoETL from local-dev (GitHub/local path)
+./k8s/deploy-platform.sh --no-cluster --no-postgres --no-noetl-pip --deploy-noetl-dev
+
+# Specify a custom repository path for local-dev
+./k8s/deploy-platform.sh --repo-path /path/to/your/noetl/repo --deploy-noetl-dev
+```
+
+For more options, run:
+```bash
+./k8s/deploy-platform.sh --help
+```
+
+### Option 2: Manual Deployment
+
+If you prefer to deploy components manually:
+
 1. Create the necessary directories for persistent volumes:
 
 ```bash
@@ -112,12 +159,93 @@ kubectl get services
 
 ## Accessing the Application
 
-Once the deployments are ready, you can access the NoETL application:
+Once the deployments are ready, you can access NoETL via the following services:
 
-- NoETL Web UI: http://localhost:30080
-- NoETL API: http://localhost:30080/api
+- NoETL (pip):
+  - UI: http://localhost:30084
+  - API: http://localhost:30084/api
+  - Health: http://localhost:30084/api/health
+- NoETL (local-dev):
+  - UI: http://localhost:30082
+  - API: http://localhost:30082/api
+  - Health: http://localhost:30082/api/health
+
+### Kubernetes Dashboard
+
+The Kubernetes Dashboard is a web-based UI for managing your Kubernetes cluster.
+
+Important: It is not installed by default by our scripts or manifests. If you see a 404 like services "kubernetes-dashboard" not found, you need to install the Dashboard first.
+
+Quick install (see docs for details and latest version):
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+```
+
+After installing, start the proxy and open the UI:
+1. Start the Kubernetes proxy:
+   ```bash
+   kubectl proxy
+   ```
+2. Access the Dashboard at:
+   ```
+   http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+   ```
+
+For installation steps, authentication, and token retrieval, see [Kubernetes Dashboard Documentation](docs/kubernetes_dashboard.md).
+
+### Local Development
+
+The supported development option is the local-dev deployment, which runs the noetl-local-dev:latest image and targets port 8080.
+
+- Deployment: k8s/noetl/noetl-dev-deployment.yaml
+- Service: k8s/noetl/noetl-dev-service.yaml (NodePort 30082; health at http://localhost:30082/api/health)
+
+To deploy via the script:
+
+```bash
+./k8s/deploy-platform.sh --deploy-noetl-dev
+```
+
+To deploy manually:
+
+```bash
+kubectl apply -f k8s/noetl/noetl-configmap.yaml
+kubectl apply -f k8s/noetl/noetl-secret.yaml
+kubectl apply -f k8s/noetl/noetl-dev-deployment.yaml
+kubectl apply -f k8s/noetl/noetl-dev-service.yaml
+```
+
+Note: The previous reload-based development flow is deprecated and no longer supported.
+
+### Accessing Postgres
+
+To access the Postgres database from your local machine, you have two options:
+
+1. **Using the port-forward script (Recommended)**:
+   ```bash
+   ./postgres-port-forward.sh
+   ```
+   This script automatically finds the Postgres pod and sets up port forwarding.
+
+2. **Manual port forwarding**:
+   ```bash
+   kubectl port-forward pod/$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}") 5432:5432
+   ```
+
+After setting up port forwarding, you can connect to Postgres using:
+```bash
+psql -h localhost -p 5432 -U demo -d demo_noetl
+```
+
+For more detailed instructions and alternative methods, see [Accessing Postgres in Kubernetes](docs/postgres_access.md).
 
 ## Troubleshooting
+
+### Resource Requirements
+
+NoETL components, especially the development versions, require sufficient resources to function properly. If pods are failing with OOM errors (exit code 137), you may need to increase the memory limits.
+
+For detailed information about resource requirements and troubleshooting, see [Resource Requirements Documentation](docs/resource_requirements.md).
 
 ### Checking Logs
 
@@ -159,9 +287,26 @@ kind delete cluster --name noetl-cluster
 # Postgres Redeployment Guide
 
 
-## Option 1: Using the Redeployment Script
+## Recommended: Redeploy via deploy-platform.sh or kubectl
 
-The easiest way to redeploy Postgres is to use the provided script:
+You can redeploy Postgres without special scripts:
+
+- Rerun the platform script to (re)apply Postgres manifests:
+  ```bash
+  # Recreate cluster and redeploy everything
+  ./k8s/deploy-platform.sh
+
+  # Or reuse existing cluster and redeploy only Postgres
+  ./k8s/deploy-platform.sh --no-cluster --no-noetl-pip
+  ```
+- Or do a simple rollout restart:
+  ```bash
+  kubectl rollout restart deployment/postgres
+  ```
+
+## Optional: Using the Redeployment Script
+
+If you prefer a focused redeploy, you can still use the convenience script:
 
 ```bash
 cd /path/to/noetl/k8s
@@ -171,7 +316,7 @@ chmod +x redeploy-postgres.sh
 ./redeploy-postgres.sh
 ```
 
-## Option 2: Manual Redeployment
+## Manual Redeployment
 
 to redeploy Postgres manually, follow these steps:
 
@@ -340,10 +485,10 @@ kubectl exec $POSTGRES_POD -- psql -U $POSTGRES_USER $POSTGRES_DB -f /tmp/postgr
 
 ### Best Practices for Data Persistence
 
-1. **Regular backups**: Schedule regular backups of your Postgres database
+1. **Regular backups**: Schedule regular backups of Postgres database
 2. **Version compatibility**: Ensure Postgres version compatibility when upgrading
-3. **Storage class**: Use an appropriate storage class for your environment
-4. **Resource limits**: Set appropriate storage resource limits for your PVC
+3. **Storage class**: Use an appropriate storage class for the environment
+4. **Resource limits**: Set appropriate storage resource limits for the PVC
 5. **Monitoring**: Monitor disk usage to prevent running out of space
 
 # Postgres Deployment Troubleshooting Guide
@@ -441,9 +586,26 @@ If you need to create the noetl user that appears in the logs, you can:
 
 # NoETL Redeployment Guide
 
-## Option 1: Using the Redeployment Script
+## Recommended: Redeploy via deploy-platform.sh or kubectl
 
-The easiest way to redeploy NoETL is to use the provided script:
+You can redeploy NoETL without special scripts:
+
+- Rerun the platform script to (re)apply NoETL manifests (pip version by default):
+  ```bash
+  # Recreate cluster and redeploy everything
+  ./k8s/deploy-platform.sh
+
+  # Or reuse existing cluster and redeploy only NoETL (pip)
+  ./k8s/deploy-platform.sh --no-cluster --no-postgres
+  ```
+- Or do a simple rollout restart:
+  ```bash
+  kubectl rollout restart deployment/noetl
+  ```
+
+## Optional: Using the Redeployment Script
+
+If you prefer a focused redeploy, you can still use the convenience script:
 
 1. Navigate to the k8s directory:
 
@@ -470,7 +632,7 @@ The script will:
 - Wait for the NoETL pods to be ready
 - Display the status of the NoETL deployment
 
-## Option 2: Manual Redeployment
+## Manual Redeployment
 
 If you prefer to redeploy NoETL manually, follow these steps:
 
@@ -520,3 +682,239 @@ For more detailed logs:
 ```bash
 kubectl describe pod -l app=noetl
 ```
+
+# NoETL Development Deployment Options
+
+This document explains how to deploy NoETL in a Kubernetes environment using different installation methods, particularly for development purposes.
+
+## Overview
+
+Three deployment options are provided:
+
+1. **Development Mode**: Mounts a local NoETL repository and installs it in editable mode, allowing live code changes
+2. **Package Installation**: Installs NoETL from a locally built package file (tar.gz or wheel)
+3. **Version-Specific**: Installs a specific version of NoETL from PyPI
+
+## Prerequisites
+
+- Kubernetes cluster (local or remote)
+- kubectl installed and configured
+- Access to the NoETL repository or package files
+
+## Deployment Files
+
+The following deployment files are available:
+
+- `noetl-dev-deployment.yaml`: For development mode with a mounted repository
+- `noetl-package-deployment.yaml`: For installing from a local package file
+- `noetl-version-deployment.yaml`: For installing a specific version from PyPI
+
+## Deployment Script
+
+A deployment script `deploy-noetl-dev.sh` is provided to simplify the deployment process. The script supports all three deployment methods and handles the necessary Kubernetes resources.
+
+### Usage
+
+```bash
+./deploy-noetl-dev.sh [options]
+```
+
+### Options
+
+- `--type TYPE`: Deployment type: dev, package, version (default: dev)
+- `--repo-path PATH`: Path to local NoETL repository (for dev type)
+- `--package-path PATH`: Path to directory with NoETL package files (for package type)
+- `--version VERSION`: NoETL version to install from PyPI (for version type)
+- `--help`: Show help message
+
+### Examples
+
+#### Development Mode
+
+```bash
+# Deploy using the local repository
+./deploy-noetl-dev.sh --type dev --repo-path /path/to/noetl
+
+# Deploy using the default repository path (parent directory of script)
+./deploy-noetl-dev.sh
+```
+
+#### Package Installation
+
+```bash
+# Deploy using a local package file
+./deploy-noetl-dev.sh --type package --package-path /path/to/packages
+```
+
+#### Version-Specific
+
+```bash
+# Deploy a specific version from PyPI
+./deploy-noetl-dev.sh --type version --version 0.1.24
+
+# Deploy the latest version from PyPI
+./deploy-noetl-dev.sh --type version
+```
+
+## Manual Deployment
+
+If you prefer to deploy manually, you can use the following steps:
+
+### Development Mode
+
+1. Edit `noetl-dev-deployment.yaml` to set the correct path to the local NoETL repository
+2. Apply the deployment:
+
+```bash
+kubectl apply -f noetl/noetl-configmap.yaml
+kubectl apply -f noetl/noetl-secret.yaml
+kubectl apply -f noetl/noetl-dev-deployment.yaml
+kubectl apply -f noetl/noetl-service.yaml
+```
+
+### Package Installation
+
+1. Build the NoETL package:
+
+```bash
+cd /path/to/noetl
+python -m build
+```
+
+2. Edit `noetl-package-deployment.yaml` to set the correct path to the package directory
+3. Apply the deployment:
+
+```bash
+kubectl apply -f noetl/noetl-configmap.yaml
+kubectl apply -f noetl/noetl-secret.yaml
+kubectl apply -f noetl/noetl-package-deployment.yaml
+kubectl apply -f noetl/noetl-service.yaml
+```
+
+### Version-Specific
+
+1. Edit `noetl-version-deployment.yaml` to set the desired version
+2. Apply the deployment:
+
+```bash
+kubectl apply -f noetl/noetl-configmap.yaml
+kubectl apply -f noetl/noetl-secret.yaml
+kubectl apply -f noetl/noetl-version-deployment.yaml
+kubectl apply -f noetl/noetl-service.yaml
+```
+
+## How It Works
+
+### Development Mode
+
+The development mode deployment mounts the local NoETL repository into the container and installs it in editable mode using `pip install -e`. This allows you to make changes to the code and see them reflected in the running application without rebuilding the container.
+
+Key components:
+- Volume mount for the repository: `mountPath: /opt/noetl/repo`
+- Installation command: `pip install --user -e /opt/noetl/repo`
+
+### Package Installation
+
+The package installation deployment mounts a directory containing NoETL package files (tar.gz or wheel) and installs the package using pip. This is useful for testing built packages before publishing them.
+
+Key components:
+- Volume mount for the package directory: `mountPath: /opt/noetl/package`
+- Installation command: `pip install --user /opt/noetl/package/noetl-*.tar.gz`
+
+### Version-Specific
+
+The version-specific deployment installs a specific version of NoETL from PyPI. This is useful for testing specific versions without building packages locally.
+
+Key components:
+- Environment variable for version: `NOETL_VERSION`
+- Installation command: `pip install --user noetl==${NOETL_VERSION}`
+
+## Troubleshooting
+
+### Pod Fails to Start
+
+If the pod fails to start, check the logs:
+
+```bash
+kubectl logs -l app=noetl-dev
+```
+
+Common issues:
+- Repository path not accessible
+- Package file not found
+- Version not available on PyPI
+
+### Permission Issues
+
+If you encounter permission issues, ensure that:
+- The repository directory is readable by the container
+- The package directory is readable by the container
+- The user in the container has permission to install packages
+
+### Service Not Accessible
+
+If the service is not accessible, check the service status:
+
+```bash
+kubectl get service noetl
+```
+
+Ensure that:
+- The service is running
+- The service is of the correct type (NodePort, LoadBalancer, etc.)
+- The service is targeting the correct pods
+- If using Kind locally, the Kind config maps the NodePort to the host. For NoETL pip on port 30084, include in extraPortMappings:
+  - containerPort: 30084 / hostPort: 30084 / protocol: TCP, then recreate the cluster.
+
+
+# Quick Health Check
+
+To quickly check the status of the NoETL platform after deployment, use the helper script:
+
+```bash
+# Make the script executable (first time only)
+chmod +x k8s/check-status.sh
+
+# Run with defaults (namespace: default, waits for pods to be ready)
+./k8s/check-status.sh
+
+# Common options
+./k8s/check-status.sh --namespace default           # specify namespace
+./k8s/check-status.sh --no-wait                     # don't wait for readiness
+./k8s/check-status.sh --url http://localhost:30084/api/health  # override URL
+```
+
+What it does:
+- Shows pods and services for Postgres and NoETL
+- Optionally waits for pods to become Ready
+- Checks Postgres readiness using pg_isready inside the pod
+- Curls the NoETL /api/health endpoint via the Service NodePort
+
+Expected success URL (default):
+- NoETL (pip): http://localhost:30084/api/health
+
+If a check fails, the script exits with non-zero status and prints details to help with troubleshooting.
+
+
+
+## Deprecated and Safe-to-Remove Files (Reload flow)
+
+Only two Kubernetes deployment options are supported now: pip (noetl-pip) and local-dev (noetl-local-dev). The previous reload-based development flow is deprecated and no longer used by any script or doc path. You can safely remove the following files from k8s/:
+
+- k8s/deploy-noetl-reload.sh
+- k8s/noetl/noetl-reload-deployment.yaml
+- k8s/noetl/noetl-reload-service.yaml
+- k8s/noetl/Dockerfile.reload
+- k8s/tests/test-reload-setup.sh
+- k8s/docs/noetl_reload_feature.md
+- k8s/docs/noetl_reload_flag_fix_summary.md
+- k8s/docs/noetl_reload_path_fix.md
+- k8s/docs/kind_hostpath_mounting.md
+- k8s/docs/kind_hostpath_fix_summary.md
+- k8s/kind-config-with-mounts.yaml
+- k8s/noetl/kind-config-mounts.yaml
+
+Notes:
+- These Kind config files with extraMounts were only useful for the deprecated reload flow (mounting the repo into the Kind node). They are not used by the supported pip/local-dev workflows. If you ever need a custom Kind config, generate it on the fly as needed (deploy-platform.sh does this), or use setup-kind-cluster.sh which writes a temporary config.
+- The basic Kind config files still include port mappings like 30080–30084; this is harmless. Keep them if you want flexibility, or simplify later.
+- If you rely on any custom workflow that used the reload path, prefer the local-dev deployment instead (k8s/noetl/noetl-dev-*.yaml).

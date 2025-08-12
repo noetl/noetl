@@ -1,56 +1,61 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: noetl
+  name: noetl-dev
   labels:
-    app: noetl
+    app: noetl-dev
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: noetl
+      app: noetl-dev
   template:
     metadata:
       labels:
-        app: noetl
+        app: noetl-dev
     spec:
       containers:
-        - name: noetl
-          image: noetl-pip:latest
+        - name: noetl-dev
+          image: noetl-local-dev:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8084
+            - containerPort: 8080
           envFrom:
             - configMapRef:
                 name: noetl-config
             - secretRef:
                 name: noetl-secret
+          env:
+            - name: NOETL_PORT
+              value: "8080"
           volumeMounts:
             - name: noetl-data
               mountPath: /opt/noetl/data
           resources:
             limits:
-              cpu: "1"
-              memory: "1Gi"
+              cpu: "2"
+              memory: "3Gi"
             requests:
               cpu: "0.5"
               memory: "512Mi"
           livenessProbe:
             httpGet:
               path: /health
-              port: 8084
-            initialDelaySeconds: 90
+              port: 8080
+            initialDelaySeconds: 120
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 5
           readinessProbe:
             httpGet:
               path: /health
-              port: 8084
-            initialDelaySeconds: 60
+              port: 8080
+            initialDelaySeconds: 90
             periodSeconds: 5
             timeoutSeconds: 3
-            failureThreshold: 3
+            failureThreshold: 5
       volumes:
         - name: noetl-data
+          emptyDir: {}
+        - name: noetl-local-repo
           emptyDir: {}

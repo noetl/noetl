@@ -109,10 +109,11 @@ def start_server(
     workers: int = typer.Option(1, help="Number of worker processes"),
     reload: bool = typer.Option(False, help="Enable auto-reload (development mode)"),
     no_ui: bool = typer.Option(not settings.enable_ui, "--no-ui", help="Disable the UI components"),
-    debug: bool = typer.Option(settings.debug, help="Enable debug logging mode")
+    debug: bool = typer.Option(settings.debug, help="Enable debug logging mode"),
+    server: str = typer.Option("uvicorn", help="Server type: uvicorn, gunicorn, or auto")
 ):
     """
-    Start the NoETL server using Uvicorn.
+    Start the NoETL server using Uvicorn, Gunicorn, or auto-detection.
     """
     global _enable_ui
 
@@ -151,8 +152,18 @@ def start_server(
         logger.error("Please check database configuration.")
         raise typer.Exit(code=1)
 
-    logger.info("Using Uvicorn as the server runtime.")
-    
+    if server == "auto":
+        try:
+            import gunicorn
+            server_type = "gunicorn"
+            logger.info("Auto-detected Gunicorn as the server runtime.")
+        except ImportError:
+            server_type = "uvicorn"
+            logger.info("Auto-detected Uvicorn as the server runtime (Gunicorn not available).")
+    else:
+        server_type = server
+        logger.info(f"Using {server_type} as the server runtime.")
+
     os.makedirs(PID_FILE_DIR, exist_ok=True)
     
     with open(PID_FILE_PATH, 'w') as f:
@@ -160,12 +171,46 @@ def start_server(
     logger.info(f"Server PID {os.getpid()} saved to {PID_FILE_PATH}")
     
     try:
-        uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+        if server_type == "gunicorn":
+            _run_with_gunicorn(host, port, workers, reload, log_level)
+        else:
+            _run_with_uvicorn(host, port, workers, reload, log_level)
     finally:
         if os.path.exists(PID_FILE_PATH):
             os.remove(PID_FILE_PATH)
             logger.info(f"Removed PID file {PID_FILE_PATH}")
 
+def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
+    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+
+def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
+    try:
+        import subprocess
+        import sys
+
+        cmd = [
+            sys.executable, "-m", "gunicorn",
+            "noetl.main:create_app()",
+            "--bind", f"{host}:{port}",
+            "--workers", str(workers),
+            "--worker-class", "uvicorn.workers.UvicornWorker",
+            "--log-level", log_level
+        ]
+
+        if reload:
+            cmd.extend(["--reload"])
+
+        logger.info(f"Starting Gunicorn with command: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
+    except ImportError:
+        logger.error("Gunicorn is not installed. Please install it with: pip install gunicorn")
+        logger.info("Falling back to Uvicorn...")
+        _run_with_uvicorn(host, port, workers, reload, log_level)
+    except Exception as e:
+        logger.error(f"Error running Gunicorn: {e}")
+        logger.info("Falling back to Uvicorn...")
+        _run_with_uvicorn(host, port, workers, reload, log_level)
 @server_app.command("stop")
 def stop_server(
     force: bool = typer.Option(False, "--force", "-f", help="Force stop the server without confirmation")
@@ -224,13 +269,14 @@ def run_server(
     port: int = typer.Option(settings.port, help="Server port."),
     reload: bool = typer.Option(False, help="Server auto-reload."),
     no_ui: bool = typer.Option(not settings.enable_ui, "--no-ui", help="Disable the UI components."),
-    debug: bool = typer.Option(settings.debug, "--debug", help="Enable debug logging mode.")
+    debug: bool = typer.Option(settings.debug, "--debug", help="Enable debug logging mode."),
+    server: str = typer.Option("uvicorn", help="Server type: uvicorn, gunicorn, or auto")
 ):
     """
-    [DEPRECATED] Use 'noetl server start' instead.
+    Start the NoETL server for backward compatibility.
+    Maps to 'noetl server start' command.
     """
-    typer.echo("Warning: 'noetl server' is deprecated. Use 'noetl server start' instead.")
-    start_server(host=host, port=port, workers=1, reload=reload, no_ui=no_ui, debug=debug)
+    start_server(host=host, port=port, workers=1, reload=reload, no_ui=no_ui, debug=debug, server=server)
 
 
 @cli_app.command("catalog")
@@ -393,18 +439,28 @@ def manage_catalog(
                 result = response.json()
                 logger.info(f"{resource_type.capitalize()} executed.")
 
-                if result.get("status") == "success":
+                if result.get("execution_id"):
                     logger.info(f"Execution ID: {result.get('execution_id')}")
                     execution_result = result.get('result', {})
                     logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
 
+                    any_errors = any(
+                        isinstance(step_result, dict) and step_result.get('status') == 'error'
+                        for step_name, step_result in execution_result.items()
+                    )
+                    
                     print("\n" + "="*80)
                     print("EXECUTION REPORT")
                     print("="*80)
                     print(f"{resource_type.capitalize()} Path: {path}")
                     print(f"Version: {version or 'latest'}")
                     print(f"Execution ID: {result.get('execution_id')}")
-                    print(f"Status: SUCCESS")
+                    
+                    if any_errors:
+                        print(f"Status: FAILED")
+                    else:
+                        print(f"Status: SUCCESS")
+                    
                     print("-"*80)
 
                     step_count = 0
@@ -480,7 +536,7 @@ def manage_catalog(
                     print(f"Failed: {error_count}")
                     print(f"Skipped: {skipped_count}")
                     print("="*80)
-                else:
+                elif not result.get("execution_id"):
                     logger.error(f"Execution failed: {result.get('error')}")
                     raise typer.Exit(code=1)
             else:
