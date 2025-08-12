@@ -6,6 +6,12 @@ __NoETL__ is an automation framework for data processing and MLOps orchestration
 [![Python Version](https://img.shields.io/pypi/pyversions/noetl.svg)](https://pypi.org/project/noetl/)
 [![License](https://img.shields.io/pypi/l/noetl.svg)](https://github.com/noetl/noetl/blob/main/LICENSE)
 
+## System Architecture
+
+The following diagram illustrates the main components and intent of the NoETL system:
+
+![NoETL System Diagram](docs/images/NoETL.png)
+
 ## Quick Start
 
 ### Installation

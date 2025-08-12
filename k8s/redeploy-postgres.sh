@@ -22,16 +22,18 @@ if ! kubectl cluster-info &> /dev/null; then
     exit 1
 fi
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 echo -e "${GREEN}Removing existing Postgres deployment...${NC}"
 kubectl delete deployment postgres --ignore-not-found=true
 echo "Waiting for Postgres pods to terminate..."
 kubectl wait --for=delete pod -l app=postgres --timeout=60s || true
 
 echo -e "${GREEN}Redeploying Postgres...${NC}"
-kubectl apply -f postgres/postgres-configmap.yaml
-kubectl apply -f postgres/postgres-config-files.yaml
-kubectl apply -f postgres/postgres-secret.yaml
-kubectl apply -f postgres/postgres-deployment.yaml
+kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-configmap.yaml"
+kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-config-files.yaml"
+kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-secret.yaml"
+kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-deployment.yaml"
 
 echo -e "${GREEN}Waiting for Postgres to be ready...${NC}"
 sleep 10

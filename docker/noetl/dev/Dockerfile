@@ -1,3 +1,10 @@
+FROM node:20-alpine AS ui-builder
+WORKDIR /ui
+COPY ui-src/package.json ui-src/package-lock.json ./ui-src/
+RUN cd ui-src && npm ci
+COPY ui-src ./ui-src
+RUN cd ui-src && npm run build
+
 FROM python:3.12-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -16,6 +23,7 @@ RUN uv venv && \
     uv sync --frozen --no-dev --no-install-project
 
 COPY noetl ./noetl
+COPY --from=ui-builder /ui/ui-src/dist ./noetl/ui/build
 
 COPY LICENSE README.md ./
 
@@ -41,13 +49,13 @@ COPY --from=builder /opt/noetl/README.md ./
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH="/opt/noetl:$PYTHONPATH"
+ENV PYTHONPATH="/opt/noetl"
 ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
 ENV NOETL_ENABLE_UI=false
 
 # Default command runs the server, but can be overridden with environment variables:
-# - Set NOETL_RUN_MODE=server for server mode (default)
+# - Set NOETL_RUN_MODE=server for the default server mode
 # - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
 # - Set NOETL_RUN_MODE=cli for CLI mode
 CMD ["python", "-m", "noetl.main", "server", "start", "--host", "0.0.0.0", "--port", "8080"]

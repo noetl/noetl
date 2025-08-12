@@ -36,14 +36,10 @@ USER noetl
 EXPOSE 8080 8081 8082 8084
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8084/health || exit 1
 
 ENV NOETL_LOG_LEVEL=INFO
 ENV NOETL_DATA_PATH=/opt/noetl/data
 ENV NOETL_PLAYBOOKS_PATH=/opt/noetl/playbooks
 
-# Default command runs the server, but can be overridden with environment variables:
-# - Set NOETL_RUN_MODE=server for server mode (default)
-# - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
-# - Set NOETL_RUN_MODE=cli for CLI mode
 CMD ["noetl", "server", "start", "--host", "0.0.0.0", "--port", "8084", "--debug"]
