@@ -31,3 +31,6 @@ test_env/
 *.venv/
 venv/
 env/
+
+# Terraform
+.terraform*

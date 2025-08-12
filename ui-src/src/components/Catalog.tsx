@@ -196,6 +196,11 @@ const Catalog: React.FC = () => {
     return false; // Prevent auto upload
   };
 
+  const handleViewFlow = (playbookId: string, playbookName: string) => {
+    // Navigate to execution page with playbook visualization
+    navigate(`/execution?playbook=${playbookId}&view=workflow`);
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'green';
@@ -290,7 +295,7 @@ const Catalog: React.FC = () => {
                     <Button
                       type="text"
                       icon={<EyeOutlined />}
-                      onClick={() => console.log('View playbooks', playbook.id)}
+                      onClick={() => handleViewFlow(playbook.id, playbook.name)}
                     >
                       View
                     </Button>
