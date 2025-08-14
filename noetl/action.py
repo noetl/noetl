@@ -5,7 +5,6 @@ import datetime
 import httpx
 import psycopg
 import json
-import traceback
 from typing import Dict, Any
 from decimal import Decimal
 from jinja2 import Environment
@@ -81,6 +80,129 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
         endpoint = render_template(jinja_env, task_config.get('endpoint', ''), context)
         logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
 
+        try:
+            if isinstance(endpoint, str) and ('{{' in endpoint or '}}' in endpoint):
+                logger.info("ACTION.EXECUTE_HTTP_TASK: Endpoint appears unresolved after rendering; applying fallback resolution")
+                suffix = ''
+                try:
+                    if '}}' in endpoint:
+                        suffix = endpoint.split('}}', 1)[1].strip()
+                except Exception:
+                    suffix = ''
+                env_map = context.get('env', {}) if isinstance(context, dict) else {}
+                workload_map = context.get('workload', {}) if isinstance(context, dict) else {}
+                base_url = (
+                    (env_map.get('NOETL_BASE_URL') if isinstance(env_map, dict) else None)
+                    or os.environ.get('NOETL_BASE_URL')
+                    or (workload_map.get('noetl_base_url') if isinstance(workload_map, dict) else None)
+                    or os.environ.get('NOETL_INTERNAL_URL')
+                )
+                if not base_url:
+                    port = os.environ.get('NOETL_PORT', '8084')
+                    base_url = f"http://localhost:{port}"
+                base_url = str(base_url).rstrip('/')
+                if suffix and not suffix.startswith('/'):
+                    suffix = '/' + suffix
+                endpoint = base_url + suffix
+                logger.info(f"ACTION.EXECUTE_HTTP_TASK: Fallback-resolved endpoint to {endpoint}")
+        except Exception as _fallback_err:
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Fallback endpoint resolution skipped due to: {_fallback_err}")
+
+        try:
+            def _resolve_base_url() -> str:
+                env_map = context.get('env', {}) if isinstance(context, dict) else {}
+                workload_map = context.get('workload', {}) if isinstance(context, dict) else {}
+                base = (
+                    (env_map.get('NOETL_BASE_URL') if isinstance(env_map, dict) else None)
+                    or os.environ.get('NOETL_BASE_URL')
+                    or (workload_map.get('noetl_base_url') if isinstance(workload_map, dict) else None)
+                    or os.environ.get('NOETL_INTERNAL_URL')
+                )
+                if not base:
+                    svc_host = os.environ.get('NOETL_SERVICE_HOST', '').strip()
+                    svc_port = os.environ.get('NOETL_SERVICE_PORT', '').strip() or os.environ.get('NOETL_PORT', '').strip()
+                    if svc_host and svc_port:
+                        base = f"http://{svc_host}:{svc_port}"
+                if not base:
+                    port = os.environ.get('NOETL_PORT', '8084')
+                    base = f"http://localhost:{port}"
+                return str(base).rstrip('/')
+
+            from urllib.parse import urlparse
+            base_url_norm = _resolve_base_url()
+            if not isinstance(endpoint, str) or not endpoint.strip():
+                logger.info("ACTION.EXECUTE_HTTP_TASK: Endpoint empty after rendering; applying base URL fallback")
+                endpoint = base_url_norm
+            else:
+                parsed_ep = urlparse(endpoint)
+                if not parsed_ep.scheme:
+                    if endpoint.startswith('/'):
+                        endpoint = base_url_norm + endpoint
+                    else:
+                        endpoint = base_url_norm + '/' + endpoint
+                    logger.info(f"ACTION.EXECUTE_HTTP_TASK: Prefixed relative/schemaless endpoint to {endpoint}")
+        except Exception as _norm_err:
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Endpoint normalization skipped due to: {_norm_err}")
+
+        try:
+            from urllib.parse import urlparse as _urlparse
+            _p = _urlparse(endpoint if isinstance(endpoint, str) else '')
+            if not _p.scheme:
+                raise ValueError(f"Request URL is missing an 'http://' or 'https://' protocol. Computed endpoint: '{endpoint}'")
+        except Exception as _final_guard_err:
+            error_msg = f"Request error: {str(_final_guard_err)}"
+            logger.error(f"ACTION.EXECUTE_HTTP_TASK: {_final_guard_err}")
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            if log_event_callback:
+                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Writing task_error event log")
+                log_event_callback(
+                    'task_error', task_id, task_name, 'http',
+                    'error', duration, context, None,
+                    {'error': error_msg, 'with_params': task_with, 'endpoint': endpoint}, None
+                )
+            return {
+                'id': task_id,
+                'status': 'error',
+                'error': error_msg
+            }
+
+        extra_endpoints_to_try = []
+
+        try:
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(endpoint) if isinstance(endpoint, str) else None
+            if parsed and parsed.hostname in {"localhost", "127.0.0.1"}:
+                original_endpoint = endpoint
+                internal_base = os.environ.get("NOETL_INTERNAL_URL", "").strip()
+                if not internal_base:
+                    svc_host = os.environ.get("NOETL_SERVICE_HOST", "").strip()
+                    svc_port = os.environ.get("NOETL_SERVICE_PORT", "").strip() or os.environ.get("NOETL_PORT", "").strip()
+                    if svc_host and svc_port:
+                        internal_base = f"http://{svc_host}:{svc_port}"
+                if internal_base:
+                    ib = urlparse(internal_base)
+                    new_netloc = ib.netloc or ib.path
+                    rebuilt = urlunparse((ib.scheme or parsed.scheme or "http",
+                                          new_netloc,
+                                          parsed.path,
+                                          parsed.params,
+                                          parsed.query,
+                                          parsed.fragment))
+                    logger.info(f"ACTION.EXECUTE_HTTP_TASK: Rewriting loopback endpoint '{endpoint}' to internal '{rebuilt}'")
+                    endpoint = rebuilt
+                    if original_endpoint != endpoint:
+                        extra_endpoints_to_try.append(original_endpoint)
+                try:
+                    noetl_port = os.environ.get("NOETL_PORT", "").strip()
+                    if noetl_port:
+                        extra_endpoints_to_try.append(f"http://noetl:{noetl_port}{parsed.path or ''}")
+                        extra_endpoints_to_try.append(f"http://noetl-dev:{noetl_port}{parsed.path or ''}")
+                except Exception:
+                    pass
+        except Exception as _rewrite_err:
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Internal URL rewrite skipped due to: {_rewrite_err}")
+
         params = render_template(jinja_env, task_config.get('params', {}), context)
         logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendered params={params}")
 
@@ -90,8 +212,59 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
         logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Rendered headers={headers}")
 
-        timeout = task_config.get('timeout', 30)
-        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Timeout={timeout}")
+        try:
+            from urllib.parse import urlparse
+            parsed_sc = urlparse(endpoint) if isinstance(endpoint, str) else None
+            if parsed_sc and parsed_sc.hostname in {"localhost", "127.0.0.1"} and (parsed_sc.path.endswith("/api/gcp/token") or parsed_sc.path.endswith("/gcp/token")):
+                logger.info("ACTION.EXECUTE_HTTP_TASK: Short-circuiting internal call to GCP token endpoint to avoid localhost loopback")
+                from noetl.secret import obtain_gcp_token
+                scopes = None
+                credentials_path = None
+                use_metadata = False
+                service_account_secret = None
+                credentials_info = None
+                if isinstance(payload, dict):
+                    scopes = payload.get('scopes')
+                    credentials_path = payload.get('credentials_path')
+                    use_metadata = bool(payload.get('use_metadata', False))
+                    service_account_secret = payload.get('service_account_secret')
+                    credentials_info = payload.get('credentials_info')
+                token_info = obtain_gcp_token(
+                    scopes=scopes,
+                    credentials_path=credentials_path,
+                    use_metadata=use_metadata,
+                    service_account_secret=service_account_secret,
+                    credentials_info=credentials_info
+                )
+                response_data = {
+                    'status_code': 200,
+                    'headers': {'X-Internal-ShortCircuit': 'true'},
+                    'url': endpoint,
+                    'elapsed': 0.0,
+                    'data': token_info
+                }
+                result = {
+                    'id': task_id,
+                    'status': 'success',
+                    'data': response_data
+                }
+                if log_event_callback:
+                    end_time = datetime.datetime.now()
+                    duration = (end_time - start_time).total_seconds()
+                    log_event_callback(
+                        'task_complete', task_id, task_name, 'http',
+                        result['status'], duration, context, result.get('data'),
+                        {'method': method, 'endpoint': endpoint, 'with_params': task_with}, None
+                    )
+                logger.debug("=== ACTION.EXECUTE_HTTP_TASK: Function exit (internal short-circuit) ===")
+                return result
+        except Exception as _sc_err:
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Internal short-circuit check skipped due to: {_sc_err}")
+
+        timeout_cfg = task_config.get('timeout', 30)
+        retries = int(task_config.get('retries', 0) or 0)
+        retry_backoff = float(task_config.get('retry_backoff', 0.5) or 0.5)
+        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Timeout={timeout_cfg}, retries={retries}, retry_backoff={retry_backoff}")
 
         logger.info(f"ACTION.EXECUTE_HTTP_TASK: Executing HTTP {method} request to {endpoint}")
 
@@ -105,107 +278,256 @@ def execute_http_task(task_config: Dict, context: Dict, jinja_env: Environment, 
             )
 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
-        timeout = task_config.get('timeout', 30)
+
+        try:
+            auth_mode = (task_config.get('authentication') or '').strip()
+            if auth_mode == 'genericCredentialType':
+                auth_type = (task_config.get('genericAuthType') or '').lower()
+                if auth_type in ('httpbearerauth', 'httpbearer', 'bearer'):
+                    cred_spec = task_config.get('credentials') or {}
+                    cred_entry = None
+                    if isinstance(cred_spec, dict):
+                        cred_entry = cred_spec.get('httpBearerAuth') or cred_spec.get('httpbearerauth') or cred_spec
+                        if not isinstance(cred_entry, dict):
+                            cred_entry = None
+                    name_or_id = None
+                    if isinstance(cred_entry, dict):
+                        name_or_id = cred_entry.get('name') or cred_entry.get('id') or cred_entry.get('identifier')
+                    if name_or_id:
+                        from noetl.common import get_db_connection
+                        from noetl.secret import decrypt_json, normalize_http_bearer
+                        with get_db_connection(optional=True) as _conn:
+                            if _conn:
+                                with _conn.cursor() as _cur:
+                                    if str(name_or_id).isdigit():
+                                        _cur.execute("SELECT data_encrypted, type FROM credential WHERE id = %s", (int(name_or_id),))
+                                    else:
+                                        _cur.execute("SELECT data_encrypted, type FROM credential WHERE name = %s", (str(name_or_id),))
+                                    _row = _cur.fetchone()
+                                if _row:
+                                    enc_blob, ctype = _row[0], _row[1]
+                                    if (ctype or '').lower() in ('httpbearerauth', 'httpbearer', 'bearer'):
+                                        dec = decrypt_json(enc_blob)
+                                        token = normalize_http_bearer(dec)
+                                        if token:
+                                            if headers is None:
+                                                headers = {}
+                                            headers = dict(headers)
+                                            headers.setdefault('Authorization', f'Bearer {token}')
+                            else:
+                                logger.warning("Database not available to load credentials for HTTP auth")
+        except Exception as _cred_err:
+            logger.warning(f"Failed to apply credential-based auth: {_cred_err}")
+
+        # Inject generic auth: OIDC/OAuth2 using stored Google Service Account JSON
+        try:
+            auth_cfg = render_template(jinja_env, task_config.get('auth', {}), context)
+            if isinstance(auth_cfg, dict) and auth_cfg:
+                atype = str(auth_cfg.get('type', '')).strip().lower()
+                if atype in ('oidc', 'oauth2', 'gcp', 'google'):
+                    provider = str(auth_cfg.get('provider', 'gcp')).strip().lower()
+                    if provider in ('gcp', 'google'):
+                        cred_ref = auth_cfg.get('credential') or auth_cfg.get('credential_name') or auth_cfg.get('credential_id') or auth_cfg.get('secret')
+                        name_or_id = None
+                        if isinstance(cred_ref, dict):
+                            name_or_id = cred_ref.get('name') or cred_ref.get('id')
+                        elif isinstance(cred_ref, (str, int)):
+                            name_or_id = str(cred_ref)
+                        if not name_or_id:
+                            try:
+                                name_or_id = str(context.get('workload', {}).get('gcp_credentials_secret'))
+                            except Exception:
+                                name_or_id = None
+                        scopes_val = auth_cfg.get('scopes') or 'https://www.googleapis.com/auth/cloud-platform'
+                        try:
+                            if isinstance(scopes_val, str):
+                                scopes_list = [scopes_val]
+                            elif isinstance(scopes_val, list):
+                                scopes_list = [str(s) for s in scopes_val if s]
+                            else:
+                                scopes_list = ['https://www.googleapis.com/auth/cloud-platform']
+                        except Exception:
+                            scopes_list = ['https://www.googleapis.com/auth/cloud-platform']
+
+                        if name_or_id:
+                            from noetl.common import get_db_connection
+                            from noetl.secret import decrypt_json, obtain_gcp_token
+                            with get_db_connection(optional=True) as _conn:
+                                if _conn:
+                                    with _conn.cursor() as _cur:
+                                        if name_or_id.isdigit():
+                                            _cur.execute("SELECT data_encrypted FROM credential WHERE id = %s", (int(name_or_id),))
+                                        else:
+                                            _cur.execute("SELECT data_encrypted FROM credential WHERE name = %s", (name_or_id,))
+                                        _row = _cur.fetchone()
+                                    if _row:
+                                        enc_blob = _row[0]
+                                        try:
+                                            sa_info = decrypt_json(enc_blob)
+                                            token_info = obtain_gcp_token(scopes=scopes_list, credentials_info=sa_info)
+                                            access_token = token_info.get('access_token')
+                                            if access_token:
+                                                headers = dict(headers or {})
+                                                headers.setdefault('Authorization', f'Bearer {access_token}')
+                                        except Exception as _oidc_err:
+                                            logger.warning(f"Failed to obtain OIDC token from credential '{name_or_id}': {_oidc_err}")
+                                else:
+                                    logger.warning("Database not available to load OIDC credential")
+                        else:
+                            logger.warning("OIDC auth configured but no credential reference was provided")
+        except Exception as _auth_err:
+            logger.warning(f"Failed to apply OIDC auth: {_auth_err}")
+
+        def _build_timeout(cfg):
+            try:
+                if isinstance(cfg, dict):
+                    return httpx.Timeout(
+                        connect=cfg.get('connect', None),
+                        read=cfg.get('read', None),
+                        write=cfg.get('write', None),
+                        pool=cfg.get('pool', None),
+                    )
+                return httpx.Timeout(float(cfg))
+            except Exception:
+                return httpx.Timeout(30.0)
+
+        timeout = _build_timeout(timeout_cfg)
 
         try:
             logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Creating HTTP client with timeout={timeout}")
-            with httpx.Client(timeout=timeout) as client:
-                request_args = {
-                    'url': endpoint,
-                    'headers': headers,
-                    'params': params
-                }
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Initial request_args={request_args}")
-
-                if method in ['POST', 'PUT', 'PATCH'] and payload:
-                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Processing payload for {method} request")
-                    content_type = headers.get('Content-Type', '').lower()
-                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Content-Type={content_type}")
-
-                    if 'application/json' in content_type:
-                        request_args['json'] = payload
-                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using JSON payload")
-                    elif 'application/x-www-form-urlencoded' in content_type:
-                        request_args['data'] = payload
-                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using form data payload")
-                    elif 'multipart/form-data' in content_type:
-                        request_args['files'] = payload
-                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using multipart form data payload")
-                    else:
-                        if isinstance(payload, (dict, list)):
-                            request_args['json'] = payload
-                            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using default JSON payload for dict/list")
-                        else:
-                            request_args['data'] = payload
-                            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using data payload for non-dict/list")
-
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Final request_args={request_args}")
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Making HTTP request")
-                response = client.request(method, **request_args)
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: HTTP response received - status_code={response.status_code}")
-
-                response_data = {
-                    'status_code': response.status_code,
-                    'headers': dict(response.headers),
-                    'url': str(response.url),
-                    'elapsed': response.elapsed.total_seconds() if hasattr(response, 'elapsed') else None
-                }
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Response metadata={response_data}")
-
+            verify_ssl = bool(task_config.get('verify_ssl', True))
+            follow_redirects = bool(task_config.get('follow_redirects', True))
+            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: HTTP client options verify_ssl={verify_ssl}, follow_redirects={follow_redirects}")
+            with httpx.Client(timeout=timeout, verify=verify_ssl, follow_redirects=follow_redirects) as client:
+                endpoints_to_try = [endpoint]
+                for alt in extra_endpoints_to_try:
+                    if alt and alt not in endpoints_to_try:
+                        endpoints_to_try.append(alt)
                 try:
-                    response_content_type = response.headers.get('Content-Type', '').lower()
-                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Response Content-Type={response_content_type}")
+                    if isinstance(endpoint, str) and 'localhost' in endpoint:
+                        endpoints_to_try.append(endpoint.replace('localhost', '127.0.0.1'))
+                except Exception:
+                    pass
 
-                    if 'application/json' in response_content_type:
-                        response_data['data'] = response.json()
-                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Parsed JSON response data")
+                last_exc: Exception | None = None
+                attempt = 0
+                max_attempts = max(1, retries + 1)
+
+                while attempt < max_attempts:
+                    current_endpoint = endpoints_to_try[min(attempt, len(endpoints_to_try)-1)]
+                    request_args = {
+                        'url': current_endpoint,
+                        'headers': headers,
+                        'params': params
+                    }
+                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Attempt {attempt+1}/{max_attempts}, request_args={request_args}")
+
+                    if method in ['POST', 'PUT', 'PATCH'] and payload is not None:
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Processing payload for {method} request")
+                        content_type = (headers or {}).get('Content-Type', '').lower()
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Content-Type={content_type}")
+
+                        if 'application/json' in content_type:
+                            request_args['json'] = payload
+                            logger.debug("ACTION.EXECUTE_HTTP_TASK: Using JSON payload")
+                        elif 'application/x-www-form-urlencoded' in content_type:
+                            request_args['data'] = payload
+                            logger.debug("ACTION.EXECUTE_HTTP_TASK: Using form data payload")
+                        elif 'multipart/form-data' in content_type:
+                            request_args['files'] = payload
+                            logger.debug("ACTION.EXECUTE_HTTP_TASK: Using multipart form data payload")
+                        else:
+                            if isinstance(payload, (dict, list)):
+                                request_args['json'] = payload
+                                logger.debug("ACTION.EXECUTE_HTTP_TASK: Using default JSON payload for dict/list")
+                            else:
+                                request_args['data'] = payload
+                                logger.debug("ACTION.EXECUTE_HTTP_TASK: Using data payload for non-dict/list")
+
+                    try:
+                        logger.debug("ACTION.EXECUTE_HTTP_TASK: Making HTTP request")
+                        response = client.request(method, **request_args)
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: HTTP response received - status_code={response.status_code}")
+
+                        response_data = {
+                            'status_code': response.status_code,
+                            'headers': dict(response.headers),
+                            'url': str(response.url),
+                            'elapsed': response.elapsed.total_seconds() if hasattr(response, 'elapsed') else None
+                        }
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Response metadata={response_data}")
+
+                        try:
+                            response_content_type = response.headers.get('Content-Type', '').lower()
+                            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Response Content-Type={response_content_type}")
+
+                            if 'application/json' in response_content_type:
+                                response_data['data'] = response.json()
+                                logger.debug("ACTION.EXECUTE_HTTP_TASK: Parsed JSON response data")
+                            else:
+                                response_data['data'] = response.text
+                                logger.debug("ACTION.EXECUTE_HTTP_TASK: Using text response data")
+                        except Exception as e:
+                            logger.warning(f"ACTION.EXECUTE_HTTP_TASK: Failed to parse response content: {str(e)}")
+                            response_data['data'] = response.text
+
+                        is_success = response.is_success
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Request success status={is_success}")
+
+                        result = {
+                            'id': task_id,
+                            'status': 'success' if is_success else 'error',
+                            'data': response_data
+                        }
+
+                        if not is_success:
+                            result['error'] = f"HTTP {response.status_code}: {response.reason_phrase}"
+                            logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Request failed with error={result['error']}")
+
+                        end_time = datetime.datetime.now()
+                        duration = (end_time - start_time).total_seconds()
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Task duration={duration} seconds")
+
+                        if log_event_callback:
+                            logger.debug("ACTION.EXECUTE_HTTP_TASK: Writing task_complete event log")
+                            log_event_callback(
+                                'task_complete', task_id, task_name, 'http',
+                                result['status'], duration, context, result.get('data'),
+                                {'method': method, 'endpoint': current_endpoint, 'with_params': task_with}, event_id
+                            )
+
+                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Returning result={result}")
+                        logger.debug("=== ACTION.EXECUTE_HTTP_TASK: Function exit (success) ===")
+                        return result
+
+                    except (httpx.RequestError, httpx.TimeoutException) as e:
+                        last_exc = e
+                        logger.warning(f"ACTION.EXECUTE_HTTP_TASK: Attempt {attempt+1} failed for {current_endpoint} with error: {repr(e)}")
+                        attempt += 1
+                        if attempt < max_attempts:
+                            try:
+                                import time as _time
+                                sleep_time = retry_backoff * (2 ** (attempt - 1))
+                                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Backing off for {sleep_time} seconds before retry")
+                                _time.sleep(sleep_time)
+                            except Exception:
+                                pass
+                        continue
+                    except httpx.HTTPStatusError as e:
+                        error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
+                        logger.error(f"ACTION.EXECUTE_HTTP_TASK: HTTPStatusError - {error_msg}")
+                        raise Exception(error_msg)
+
+                if last_exc:
+                    if isinstance(last_exc, httpx.TimeoutException):
+                        raise Exception(f"Request timeout: {str(last_exc)} (endpoint tried: {endpoints_to_try})")
                     else:
-                        response_data['data'] = response.text
-                        logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Using text response data")
-                except Exception as e:
-                    logger.warning(f"ACTION.EXECUTE_HTTP_TASK: Failed to parse response content: {str(e)}")
-                    response_data['data'] = response.text
-
-                is_success = response.is_success
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Request success status={is_success}")
-
-                result = {
-                    'id': task_id,
-                    'status': 'success' if is_success else 'error',
-                    'data': response_data
-                }
-
-                if not is_success:
-                    result['error'] = f"HTTP {response.status_code}: {response.reason_phrase}"
-                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Request failed with error={result['error']}")
-
-                end_time = datetime.datetime.now()
-                duration = (end_time - start_time).total_seconds()
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Task duration={duration} seconds")
-
-                if log_event_callback:
-                    logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Writing task_complete event log")
-                    log_event_callback(
-                        'task_complete', task_id, task_name, 'http',
-                        result['status'], duration, context, result.get('data'),
-                        {'method': method, 'endpoint': endpoint, 'with_params': task_with}, event_id
-                    )
-
-                logger.debug(f"ACTION.EXECUTE_HTTP_TASK: Returning result={result}")
-                logger.debug("=== ACTION.EXECUTE_HTTP_TASK: Function exit (success) ===")
-                return result
+                        raise Exception(f"Request error: {str(last_exc)} (endpoint tried: {endpoints_to_try})")
+                raise Exception("Unknown request failure without exception")
 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
             logger.error(f"ACTION.EXECUTE_HTTP_TASK: HTTPStatusError - {error_msg}")
-            raise Exception(error_msg)
-        except httpx.RequestError as e:
-            error_msg = f"Request error: {str(e)}"
-            logger.error(f"ACTION.EXECUTE_HTTP_TASK: RequestError - {error_msg}")
-            raise Exception(error_msg)
-        except httpx.TimeoutException as e:
-            error_msg = f"Request timeout: {str(e)}"
-            logger.error(f"ACTION.EXECUTE_HTTP_TASK: TimeoutException - {error_msg}")
             raise Exception(error_msg)
 
     except Exception as e:

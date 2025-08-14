@@ -203,6 +203,37 @@ NoETL includes several example playbooks that demonstrate some capabilities:
 
 For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
 
+## Credentials and Secrets
+
+NoETL supports encrypted credentials/secrets storage and convenient usage in playbooks.
+
+- Encryption: AES-256-GCM with key derived from NOETL_ENCRYPTION_KEY (n8n-compatible format)
+- Storage: Postgres table `credential` (singular)
+- API: POST/GET /api/credentials, GET /api/credentials/{name|id}
+- CLI: `noetl secret register` (inline JSON or from file)
+- Manifest: `noetl catalog register secret examples/credentials/secret_bearer.yaml`
+- HTTP tasks: n8n-like auth injection via `authentication: genericCredentialType` and `genericAuthType: httpBearerAuth`
+- GCP tokens: `POST /api/gcp/token` or `secrets` task provider `gcp_token`; helper `bin/test-gcp-token.sh`
+
+See the full guide with step-by-step examples:
+- docs/credentials_and_secrets.md
+
+Quick examples:
+
+```bash
+# Register a bearer token (CLI)
+noetl secret register -n my-bearer-token -t httpBearerAuth --data '{"token":"XYZ"}'
+
+# Register via manifest
+noetl catalog register secret examples/credentials/secret_bearer.yaml --host localhost --port 8084
+
+# Use in HTTP task (playbook): examples/credentials/http_bearer_example.yaml
+noetl execute examples/credentials/http_bearer_example.yaml --host localhost --port 8084
+
+# Test GCP token endpoint
+./bin/test-gcp-token.sh --port 8084 --credentials-path .secrets/noetl-service-account.json
+```
+
 ## Development
 
 For information about contributing to NoETL or building from source:

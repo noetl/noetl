@@ -28,9 +28,18 @@ spec:
           env:
             - name: NOETL_PORT
               value: "8080"
+            - name: NOETL_INTERNAL_URL
+              value: "http://127.0.0.1:8080"
+            - name: NOETL_BASE_URL
+              value: "http://127.0.0.1:8080"
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/opt/noetl/.secrets/noetl-service-account.json"
           volumeMounts:
             - name: noetl-data
               mountPath: /opt/noetl/data
+            - name: gcp-sa
+              mountPath: /opt/noetl/.secrets
+              readOnly: true
           resources:
             limits:
               cpu: "2"
@@ -59,3 +68,9 @@ spec:
           emptyDir: {}
         - name: noetl-local-repo
           emptyDir: {}
+        - name: gcp-sa
+          secret:
+            secretName: noetl-gcp-service-account
+            items:
+              - key: noetl-service-account.json
+                path: noetl-service-account.json

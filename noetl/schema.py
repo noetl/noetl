@@ -390,6 +390,31 @@ class DatabaseSchema:
                 CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON {self.noetl_schema}.error_log (resolved);
             """)
 
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.credential (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    type TEXT NOT NULL,
+                    data_encrypted TEXT NOT NULL,
+                    meta JSONB,
+                    tags TEXT[],
+                    description TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_credential_type ON {self.noetl_schema}.credential (type);
+            """)
+            
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE {self.noetl_schema}.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
+                """)
+            except Exception:
+                pass
+
             self.conn.commit()
             logger.info("Postgres database tables initialized in noetl schema.")
 

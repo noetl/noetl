@@ -1,0 +1,322 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: gcp_vm_control_loop
+path: examples/iac/gcp_vm_control_loop
+description: Provision GCP VM, store state in Postgres, detect and fix drift
+
+workload:
+  # GCP settings (allow override via environment, but tasks reference workload.* only)
+  project: "{{ env.GCP_PROJECT | default('your-gcp-project-id') }}"
+  zone: "{{ env.GCP_ZONE | default('us-central1-a') }}"
+  vm_name: "{{ env.VM_NAME | default('noetl-demo-vm') }}"
+  vm_type: "{{ env.VM_TYPE | default('e2-micro') }}"
+  vm_image: "{{ env.VM_IMAGE | default('projects/debian-cloud/global/images/family/debian-11') }}"
+  google_application_credentials: "{{ env.GOOGLE_APPLICATION_CREDENTIALS | default('') }}"
+  gcp_scopes: "{{ env.GCP_SCOPES | default('https://www.googleapis.com/auth/cloud-platform') }}"
+  use_metadata_token: "{{ (env.USE_GCP_METADATA | default('false') | lower) in ['1','true','yes','y'] }}"
+  use_noetl_token: "{{ (env.USE_NOETL_TOKEN | default('false') | lower) in ['1','true','yes','y'] }}"
+  use_oidc_auth: "{{ (env.USE_OIDC_AUTH | default('false') | lower) in ['1','true','yes','y'] }}"
+  gcp_credentials_secret: "{{ env.GCP_CREDENTIALS_SECRET | default('gcp-sa-noetl') }}"
+
+  # Postgres settings
+  pg_host: "{{ env.POSTGRES_HOST | default('postgres') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  pg_conn: "postgresql://{{ env.POSTGRES_USER | default('demo') }}:{{ env.POSTGRES_PASSWORD | default('demo') }}@{{ env.POSTGRES_HOST | default('postgres') }}:{{ env.POSTGRES_PORT | default('5432') }}/{{ env.POSTGRES_DB | default('demo_noetl') }}"
+
+  # NoETL settings
+  noetl_base_url: "{{ env.NOETL_BASE_URL | default(env.NOETL_INTERNAL_URL | default('http://localhost:' ~ (env.NOETL_PORT | default('8084')))) }}"
+
+workflow:
+  - step: start
+    desc: "Start GCP VM control loop"
+    next:
+      - when: "{{ workload.use_oidc_auth }}"
+        then:
+          - step: list_zones_http
+      - when: "{{ workload.use_noetl_token }}"
+        then:
+          - step: get_gcp_token_http
+      - then:
+          - step: get_gcp_token_adc
+
+  - step: get_gcp_token_http
+    desc: "Acquire GCP access token via local NoETL server"
+    type: workbook
+    task: get_gcp_token_http_task
+    next:
+      - when: "{{ get_gcp_token_http.status == 'success' }}"
+        then:
+          - step: create_vm
+      - step: get_gcp_token_adc
+
+  - step: get_gcp_token_adc
+    desc: "Acquire GCP access token via ADC or service account file"
+    type: workbook
+    task: get_gcp_token_adc_task
+    with:
+      credentials_path: "{{ workload.google_application_credentials }}"
+      scopes: "{{ workload.gcp_scopes }}"
+    next:
+      - step: create_vm
+
+  - step: list_zones_http
+    desc: "List available GCP zones using OIDC auth from stored credential"
+    type: workbook
+    task: list_zones_http_task
+    next:
+      - step: create_vm
+
+  - step: create_vm
+    desc: "Create a VM in Google Cloud"
+    type: workbook
+    task: create_vm_task
+    with:
+      project: "{{ workload.project }}"
+      zone: "{{ workload.zone }}"
+      vm_name: "{{ workload.vm_name }}"
+      vm_type: "{{ workload.vm_type }}"
+      vm_image: "{{ workload.vm_image }}"
+    next:
+      - step: store_state
+
+  - step: store_state
+    desc: "Store VM state in Postgres"
+    type: workbook
+    task: store_state_task
+    with:
+      vm: "{{ create_vm_task.result }}"
+    next:
+      - step: check_drift
+
+  - step: check_drift
+    desc: "Check for drift between GCP and Postgres"
+    type: workbook
+    task: check_drift_task
+    with:
+      pg_conn: "{{ workload.pg_conn }}"
+      project: "{{ workload.project }}"
+      zone: "{{ workload.zone }}"
+      vm_name: "{{ workload.vm_name }}"
+    next:
+      - when: "{{ check_drift_task.result.drift | length > 0 }}"
+        then:
+          - step: fix_drift
+      - step: end
+
+  - step: fix_drift
+    desc: "Reconcile VM state if drift detected"
+    type: workbook
+    task: fix_drift_task
+    with:
+      project: "{{ workload.project }}"
+      zone: "{{ workload.zone }}"
+      vm_name: "{{ workload.vm_name }}"
+      expected_machine_type: "{{ check_drift_task.result.drift.machine_type.expected if check_drift_task.result.drift and check_drift_task.result.drift.machine_type else workload.vm_type }}"
+      drift: "{{ check_drift_task.result.drift }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of workflow"
+
+workbook:
+  - name: get_gcp_token_http_task
+    type: http
+    endpoint: "{{ workload.noetl_base_url }}/gcp/token"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    payload:
+      scopes:
+        - "{{ workload.gcp_scopes }}"
+      use_metadata: false
+    timeout: 5
+    on_error: continue
+
+  - name: get_gcp_token_adc_task
+    type: python
+    with:
+      credentials_path: "{{ credentials_path }}"
+      scopes: "{{ scopes }}"
+    code: |
+      def main(credentials_path=None, scopes=None):
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+          import google.auth
+          import os
+          import os.path
+
+          scope_list = [scopes] if isinstance(scopes, str) and scopes else ["https://www.googleapis.com/auth/cloud-platform"]
+          sa_path = credentials_path or os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+
+          creds = None
+          if sa_path and os.path.exists(sa_path):
+              creds = service_account.Credentials.from_service_account_file(sa_path, scopes=scope_list)
+              creds.refresh(Request())
+          else:
+              creds, _ = google.auth.default(scopes=scope_list)
+              creds.refresh(Request())
+
+          return {
+              "access_token": creds.token,
+              "token_expiry": getattr(creds, 'expiry', None).isoformat() if getattr(creds, 'expiry', None) else None,
+              "used_sa_file": bool(sa_path and os.path.exists(sa_path))
+          }
+
+  - name: list_zones_http_task
+    type: http
+    method: GET
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ workload.project }}/zones"
+    headers:
+      Accept: "application/json"
+    auth:
+      type: OIDC
+      provider: gcp
+      credential:
+        name: "{{ workload.gcp_credentials_secret }}"
+      scopes:
+        - "{{ workload.gcp_scopes }}"
+    timeout: 10
+    on_error: continue
+
+  - name: create_vm_task
+    type: python
+    with:
+      project: "{{ project }}"
+      zone: "{{ zone }}"
+      vm_name: "{{ vm_name }}"
+      vm_type: "{{ vm_type }}"
+      vm_image: "{{ vm_image }}"
+    code: |
+      def main(project, zone, vm_name, vm_type, vm_image):
+          import google.auth
+          from googleapiclient.discovery import build
+
+          creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+          service = build('compute', 'v1', credentials=creds, cache_discovery=False)
+
+          instance_body = {
+              "name": vm_name,
+              "machineType": f"zones/{zone}/machineTypes/{vm_type}",
+              "disks": [{
+                  "boot": True,
+                  "autoDelete": True,
+                  "initializeParams": {
+                      "sourceImage": vm_image
+                  }
+              }],
+              "networkInterfaces": [{
+                  "network": "global/networks/default"
+              }]
+          }
+
+          request = service.instances().insert(project=project, zone=zone, body=instance_body)
+          _ = request.execute()
+
+          return {
+              "vm_name": vm_name,
+              "zone": zone,
+              "project": project,
+              "machine_type": vm_type,
+              "image": vm_image
+          }
+
+  - name: store_state_task
+    type: postgres
+    command: |
+      CREATE TABLE IF NOT EXISTS gcp_vm_state (
+        vm_name TEXT PRIMARY KEY,
+        zone TEXT,
+        project TEXT,
+        machine_type TEXT,
+        image TEXT
+      );
+      INSERT INTO gcp_vm_state (vm_name, zone, project, machine_type, image)
+      VALUES ('{{ vm.vm_name }}', '{{ vm.zone }}', '{{ vm.project }}', '{{ vm.machine_type }}', '{{ vm.image }}')
+      ON CONFLICT (vm_name) DO UPDATE SET
+        zone=EXCLUDED.zone,
+        project=EXCLUDED.project,
+        machine_type=EXCLUDED.machine_type,
+        image=EXCLUDED.image;
+
+  - name: check_drift_task
+    type: python
+    with:
+      pg_conn: "{{ pg_conn }}"
+      project: "{{ project }}"
+      zone: "{{ zone }}"
+      vm_name: "{{ vm_name }}"
+    code: |
+      def main(pg_conn, project, zone, vm_name):
+          import psycopg2
+          import google.auth
+          from googleapiclient.discovery import build
+
+          # Fetch stored state
+          conn = psycopg2.connect(pg_conn)
+          cur = conn.cursor()
+          cur.execute("SELECT vm_name, zone, project, machine_type, image FROM gcp_vm_state WHERE vm_name=%s", (vm_name,))
+          row = cur.fetchone()
+          cur.close()
+          conn.close()
+
+          if not row:
+              return {"drift": {}, "note": "No stored state found"}
+
+          stored = dict(zip(["vm_name", "zone", "project", "machine_type", "image"], row))
+
+          # Fetch actual state
+          creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+          service = build('compute', 'v1', credentials=creds, cache_discovery=False)
+          instance = service.instances().get(project=stored["project"], zone=stored["zone"], instance=stored["vm_name"]).execute()
+
+          actual = {
+              "machine_type": instance["machineType"].split("/")[-1],
+              "image": (instance.get("disks", [{}])[0].get("licenses", [""])[0].split("/")[-1]) if instance.get("disks") else ""
+          }
+
+          drift = {}
+          for k in ["machine_type", "image"]:
+              if stored.get(k) != actual.get(k):
+                  drift[k] = {"expected": stored.get(k), "actual": actual.get(k)}
+
+          return {"drift": drift}
+
+  - name: fix_drift_task
+    type: python
+    with:
+      project: "{{ project }}"
+      zone: "{{ zone }}"
+      vm_name: "{{ vm_name }}"
+      expected_machine_type: "{{ expected_machine_type }}"
+      drift: "{{ drift }}"
+    code: |
+      def main(project, zone, vm_name, expected_machine_type=None, drift=None):
+          import time
+          import google.auth
+          from googleapiclient.discovery import build
+
+          creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+          service = build('compute', 'v1', credentials=creds, cache_discovery=False)
+
+          # Only handle machine_type drift for simplicity
+          if drift and "machine_type" in drift:
+              # Stop the instance
+              service.instances().stop(project=project, zone=zone, instance=vm_name).execute()
+              # Simple wait (in production, poll operation status)
+              time.sleep(5)
+
+              service.instances().setMachineType(
+                  project=project,
+                  zone=zone,
+                  instance=vm_name,
+                  body={"machineType": f"zones/{zone}/machineTypes/{expected_machine_type}"}
+              ).execute()
+
+              # Start the instance
+              service.instances().start(project=project, zone=zone, instance=vm_name).execute()
+
+          return {"status": "ok", "handled": list(drift.keys()) if drift else []}

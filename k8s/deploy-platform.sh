@@ -83,7 +83,7 @@ fi
 if $SETUP_CLUSTER; then
     if ! command -v kind &> /dev/null; then
         echo -e "${RED}Error: kind is not installed.${NC}"
-        echo "See k8s/KIND-README.md for instructions."
+        echo "See k8s/README.md for instructions."
         exit 1
     fi
 
@@ -116,6 +116,9 @@ nodes:
     protocol: TCP
   - containerPort: 30084
     hostPort: 30084
+    protocol: TCP
+  - containerPort: 30543
+    hostPort: 30543
     protocol: TCP
 EOF
 
@@ -185,6 +188,8 @@ if $BUILD_IMAGES; then
     fi
 fi
 
+"${SCRIPT_DIR}/create-gcp-sa-secret.sh" || true
+
 if $DEPLOY_NOETL_PIP; then
     echo -e "${GREEN}Deploying NoETL from pip...${NC}"
     kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-configmap.yaml"
@@ -221,6 +226,12 @@ echo -e "${GREEN}Deployment completed.${NC}"
 echo -e "${YELLOW}Cluster Status:${NC}"
 kubectl get pods
 kubectl get services
+
+echo -e "${GREEN}Postgres access:${NC}"
+echo -e "  - NodePort on kind mapped to host: ${YELLOW}localhost:30543${NC}"
+echo -e "  - If not using kind or if connection is refused, use port-forward:" 
+echo -e "    ${YELLOW}kubectl port-forward pod/$(kubectl get pod -l app=postgres -o jsonpath='{.items[0].metadata.name}') 5432:5432${NC}"
+echo -e "    Then connect to: ${YELLOW}localhost:5432${NC}"
 
 echo -e "${GREEN}Available NoETL instances:${NC}"
 if $DEPLOY_NOETL_PIP; then

@@ -24,6 +24,88 @@ from noetl.config import settings
 logger = setup_logger(__name__, include_location=True)
 
 cli_app = typer.Typer()
+secret_app = typer.Typer()
+cli_app.add_typer(secret_app, name="secret")
+
+@secret_app.command("register")
+def register_secret(
+    name: str = typer.Option(..., "--name", "-n", help="Credential name (unique)"),
+    type_: str = typer.Option(..., "--type", "-t", help="Credential type, e.g., httpBearerAuth"),
+    data: str = typer.Option(None, "--data", help="JSON string with credential data"),
+    data_file: str = typer.Option(None, "--data-file", help="Path to JSON file with credential data"),
+    meta: str = typer.Option(None, "--meta", help="Optional JSON string for metadata"),
+    meta_file: str = typer.Option(None, "--meta-file", help="Path to JSON file for metadata"),
+    tags: str = typer.Option(None, "--tags", help="Comma-separated list of tags"),
+    description: str = typer.Option(None, "--description", "-d", help="Description"),
+    host: str = typer.Option(os.environ.get("NOETL_HOST", "localhost"), "--host", help="NoETL server host"),
+    port: int = typer.Option(int(os.environ.get("NOETL_PORT", "8080")), "--port", "-p", help="NoETL server port"),
+):
+    """
+    Register or update a secret/credential in NoETL (consistent with playbook registration).
+
+    Examples:
+      noetl secret register --name my-bearer --type httpBearerAuth --data '{"token":"XYZ"}'
+      noetl secret register -n my-bearer -t httpBearerAuth --data-file token.json --tags env=dev,team=integration
+    """
+    try:
+        payload_data = None
+        if data_file:
+            try:
+                with open(data_file, "r") as f:
+                    payload_data = json.load(f)
+            except Exception as e:
+                typer.echo(f"Error reading data file: {e}")
+                raise typer.Exit(code=1)
+        elif data:
+            try:
+                payload_data = json.loads(data)
+            except Exception as e:
+                typer.echo(f"Invalid JSON for --data: {e}")
+                raise typer.Exit(code=1)
+        else:
+            typer.echo("Either --data or --data-file must be provided")
+            raise typer.Exit(code=1)
+
+        meta_obj = None
+        if meta_file:
+            try:
+                with open(meta_file, "r") as f:
+                    meta_obj = json.load(f)
+            except Exception as e:
+                typer.echo(f"Error reading meta file: {e}")
+                raise typer.Exit(code=1)
+        elif meta:
+            try:
+                meta_obj = json.loads(meta)
+            except Exception as e:
+                typer.echo(f"Invalid JSON for --meta: {e}")
+                raise typer.Exit(code=1)
+
+        tags_list = None
+        if tags:
+            tags_list = [t.strip() for t in tags.split(',') if t.strip()]
+
+        url = f"http://{host}:{port}/api/credentials"
+        body = {
+            "name": name,
+            "type": type_,
+            "data": payload_data,
+            "meta": meta_obj,
+            "tags": tags_list,
+            "description": description,
+        }
+        headers = {"Content-Type": "application/json"}
+        resp = requests.post(url, json=body, headers=headers)
+        if resp.status_code == 200:
+            typer.echo("Secret registered successfully:")
+            typer.echo(json.dumps(resp.json(), indent=2, cls=DateTimeEncoder))
+        else:
+            typer.echo(f"Registration failed: {resp.status_code}")
+            typer.echo(resp.text)
+            raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error registering secret: {e}")
+        raise typer.Exit(code=1)
 
 _enable_ui = True
 
@@ -113,7 +195,7 @@ def start_server(
     server: str = typer.Option("uvicorn", help="Server type: uvicorn, gunicorn, or auto")
 ):
     """
-    Start the NoETL server using Uvicorn, Gunicorn, or auto-detection.
+    Start the NoETL server.
     """
     global _enable_ui
 
@@ -140,7 +222,6 @@ def start_server(
         logger.info(f"ENV: {key}={value}")
     logger.info("=== END ENVIRONMENT VARIABLES ===")
 
-    # Initialize database with retries to avoid crash on slow Postgres startup
     max_startup_wait_secs = int(os.environ.get("NOETL_DB_STARTUP_TIMEOUT", "180"))
     retry_interval_secs = int(os.environ.get("NOETL_DB_RETRY_INTERVAL", "5"))
     start_time = time.time()
@@ -334,6 +415,12 @@ def manage_catalog(
             detected_resource_type = "Playbook"
             auto_detect_mode = False
             logger.info(f"Using explicit resource type: {resource_type} for file: {file_path}")
+        elif resource_type_or_path == "secret" and path and os.path.exists(path):
+            resource_type = "secret"
+            file_path = path
+            detected_resource_type = "Secret"
+            auto_detect_mode = False
+            logger.info(f"Using explicit resource type: {resource_type} for file: {file_path}")
         elif os.path.exists(resource_type_or_path):
             auto_detect_mode = True
             file_path = resource_type_or_path
@@ -348,8 +435,11 @@ def manage_catalog(
                     if kind == "playbook":
                         resource_type = "playbook"
                         detected_resource_type = "Playbook"
+                    elif kind in ("secret", "credential"):
+                        resource_type = "secret"
+                        detected_resource_type = "Secret"
                     else:
-                        logger.error(f"Unsupported resource kind: {kind}. Supported kinds: Playbook")
+                        logger.error(f"Unsupported resource kind: {kind}. Supported kinds: Playbook, Secret/Credential")
                         raise typer.Exit(code=1)
 
                 logger.info(f"Auto-detected resource type: {resource_type} from kind: {resource_data.get('kind')}")
@@ -382,30 +472,76 @@ def manage_catalog(
                 raise typer.Exit(code=1)
             with open(file_path, 'r') as f:
                 content = f.read()
-            content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-            url = f"http://{host}:{port}/api/catalog/register"
-            headers = {"Content-Type": "application/json"}
-            data = {
-                "content_base64": content_base64,
-                "resource_type": detected_resource_type
-            }
 
-            if auto_detect_mode:
-                logger.info(f"Registering {resource_type} {file_path} (auto-detected) with NoETL server at {url}")
+            if detected_resource_type == "Secret":
+                try:
+                    import yaml
+                    resource_data = yaml.safe_load(content)
+                except Exception as e:
+                    logger.error(f"Failed to parse secret file {file_path}: {e}")
+                    raise typer.Exit(code=1)
+
+                name = resource_data.get("name") or (resource_data.get("metadata", {}) or {}).get("name")
+                ctype = resource_data.get("type") or (resource_data.get("spec", {}) or {}).get("type")
+                data_obj = resource_data.get("data") or (resource_data.get("spec", {}) or {}).get("data")
+                meta_obj = resource_data.get("meta") or (resource_data.get("spec", {}) or {}).get("meta")
+                tags_obj = resource_data.get("tags") or (resource_data.get("spec", {}) or {}).get("tags")
+                description = resource_data.get("description") or (resource_data.get("spec", {}) or {}).get("description")
+
+                if not name or not ctype or data_obj is None:
+                    logger.error("Secret manifest must contain at least 'name', 'type', and 'data'.")
+                    raise typer.Exit(code=1)
+
+                url = f"http://{host}:{port}/api/credentials"
+                headers = {"Content-Type": "application/json"}
+                data = {
+                    "name": name,
+                    "type": ctype,
+                    "data": data_obj,
+                    "meta": meta_obj,
+                    "tags": tags_obj,
+                    "description": description,
+                }
+
+                if auto_detect_mode:
+                    logger.info(f"Registering secret {file_path} (auto-detected) with NoETL server at {url}")
+                else:
+                    logger.info(f"Registering secret {file_path} with NoETL server at {url}")
+
+                response = requests.post(url, headers=headers, json=data)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(f"Secret registered successfully: {result}")
+                else:
+                    logger.error(f"Failed to register secret: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    raise typer.Exit(code=1)
             else:
-                logger.info(f"Registering {resource_type} {file_path} with NoETL server at {url}")
+                content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+                url = f"http://{host}:{port}/api/catalog/register"
+                headers = {"Content-Type": "application/json"}
+                data = {
+                    "content_base64": content_base64,
+                    "resource_type": detected_resource_type
+                }
 
-            response = requests.post(url, headers=headers, json=data)
+                if auto_detect_mode:
+                    logger.info(f"Registering {resource_type} {file_path} (auto-detected) with NoETL server at {url}")
+                else:
+                    logger.info(f"Registering {resource_type} {file_path} with NoETL server at {url}")
 
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"{resource_type.capitalize()} registered successfully: {result}")
-                logger.info(f"Resource path: {result.get('resource_path')}")
-                logger.info(f"Resource version: {result.get('resource_version')}")
-            else:
-                logger.error(f"Failed to register {resource_type}: {response.status_code}")
-                logger.error(f"Response: {response.text}")
-                raise typer.Exit(code=1)
+                response = requests.post(url, headers=headers, json=data)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(f"{resource_type.capitalize()} registered successfully: {result}")
+                    logger.info(f"Resource path: {result.get('resource_path')}")
+                    logger.info(f"Resource version: {result.get('resource_version')}")
+                else:
+                    logger.error(f"Failed to register {resource_type}: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    raise typer.Exit(code=1)
 
         except Exception as e:
             logger.error(f"Error registering {resource_type}: {e}")
