@@ -41,6 +41,10 @@ help:
 	@echo "  make test-keyval     Run key-value tests"
 	@echo "  make test-payload    Run payload tests"
 	@echo "  make test-playbook   Run playbook tests"
+	@echo ""
+	@echo "Kubernetes Commands:"
+	@echo "  make deploy-platform   Deploy the NoETL platform manifests to Kubernetes"
+	@echo "  make deploy-dashboard  Deploy the Kubernetes dashboard manifests"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -171,3 +175,11 @@ gcp-credentials:
 	@rmdir ./secrets/application_default_credentials.json
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"
+
+.PHONY: deploy-platform deploy-dashboard
+
+deploy-platform:
+	bash $(K8S_DIR)/deploy-platform.sh
+
+deploy-dashboard:
+	bash $(K8S_DIR)/deploy-dashboard.sh
