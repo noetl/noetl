@@ -136,6 +136,25 @@ data:
     CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON noetl.error_log (execution_id);
     CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON noetl.error_log (resolved);
 
+    -- Create credential table (align with noetl/schema.py)
+    CREATE TABLE IF NOT EXISTS noetl.credential (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL,
+        data_encrypted TEXT NOT NULL,
+        meta JSONB,
+        tags TEXT[],
+        description TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    -- Create index for credential type
+    CREATE INDEX IF NOT EXISTS idx_credential_type ON noetl.credential (type);
+
+    -- Add credential_id column to catalog if missing
+    ALTER TABLE noetl.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
+
   postgresql.conf: |
     # PostgreSQL configuration file
     # -----------------------------
