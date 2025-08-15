@@ -72,6 +72,19 @@ class DatabaseSchema:
                     logger.error(error_msg)
                     raise ValueError(error_msg)
                 
+                if 'POSTGRES_DB' not in os.environ:
+                    error_msg = "POSTGRES_DB environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_HOST' not in os.environ:
+                    error_msg = "POSTGRES_HOST environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_PORT' not in os.environ:
+                    error_msg = "POSTGRES_PORT environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
                 postgres_user = os.environ.get('POSTGRES_USER')
                 postgres_password = os.environ.get('POSTGRES_PASSWORD')
                 db_name = os.environ.get('POSTGRES_DB')
@@ -83,6 +96,19 @@ class DatabaseSchema:
 
 
             if self.pgdb is None:
+                if 'POSTGRES_DB' not in os.environ:
+                    error_msg = "POSTGRES_DB environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_HOST' not in os.environ:
+                    error_msg = "POSTGRES_HOST environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_PORT' not in os.environ:
+                    error_msg = "POSTGRES_PORT environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
                 db_name = os.environ.get('POSTGRES_DB')
                 host = os.environ.get('POSTGRES_HOST')
                 port = os.environ.get('POSTGRES_PORT')

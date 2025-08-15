@@ -15,13 +15,30 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from noetl.server import router as server_router
 from noetl.system import router as system_router
-from noetl.common import deep_merge, DateTimeEncoder
+from noetl.common import DateTimeEncoder
 from noetl.logger import setup_logger
 from noetl.schema import DatabaseSchema
 from noetl.worker import Worker
 from noetl.config import settings
 
 logger = setup_logger(__name__, include_location=True)
+
+def _validate_required_env():
+    required_vars = [
+        "NOETL_USER",
+        "NOETL_PASSWORD",
+        "NOETL_SCHEMA",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "NOETL_ENCRYPTION_KEY",
+    ]
+    missing = [v for v in required_vars if not os.environ.get(v)]
+    if missing:
+        logger.error(f"Missing required environment variables: {', '.join(missing)}")
+        raise typer.Exit(code=1)
 
 cli_app = typer.Typer()
 secret_app = typer.Typer()
@@ -111,7 +128,9 @@ _enable_ui = True
 
 def create_app() -> FastAPI:
     global _enable_ui
-    
+
+    _validate_required_env()
+
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
         datefmt='%Y-%m-%dT%H:%M:%S',
@@ -198,6 +217,8 @@ def start_server(
     Start the NoETL server.
     """
     global _enable_ui
+
+    _validate_required_env()
 
     settings.host = host
     settings.port = port
@@ -907,6 +928,9 @@ def run_worker(
         noetl worker playbook_name --version 0.1.0
         noetl worker playbook_name --mock
     """
+    # Fail fast if required env vars are not set
+    _validate_required_env()
+
     settings.playbook_path = playbook_path
     settings.playbook_version = version
     settings.mock_mode = mock_mode
