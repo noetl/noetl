@@ -17,34 +17,43 @@ UV = $(HOME)/.local/bin/uv
 .PHONY: help
 help:
 	@echo "Commands:"
-	@echo "  make build           Build containers"
-	@echo "  make rebuild         Rebuild containers"
-	@echo "  make up              Start containers"
-	@echo "  make down            Stop containers"
-	@echo "  make restart         Restart services"
-	@echo "  make logs            View logs"
-	@echo "  make clean           Clean up"
+	@echo "  make build                        Build containers"
+	@echo "  make rebuild                      Rebuild containers"
+	@echo "  make up                           Start containers"
+	@echo "  make down                         Stop containers"
+	@echo "  make restart                      Restart services"
+	@echo "  make logs                         View logs"
+	@echo "  make clean                        Clean up"
 	@echo ""
 	@echo "Development Commands:"
-	@echo "  make install-uv      Install uv package manager"
-	@echo "  make create-venv     Create virtual environment"
-	@echo "  make install-dev     Install development dependencies"
-	@echo "  make install         Install package"
-	@echo "  make run             Run the server"
+	@echo "  make install-uv                   Install uv package manager"
+	@echo "  make create-venv                  Create virtual environment"
+	@echo "  make install-dev                  Install development dependencies"
+	@echo "  make install                      Install package"
+	@echo "  make run                          Run the server"
 	@echo ""
 	@echo "Test Commands:"
-	@echo "  make test-setup      Set up test environment (create required directories)"
-	@echo "  make test            Run all tests with coverage"
-	@echo "  make test-server-api Run server API tests"
-	@echo "  make test-server-api-unit Run server API unit tests"
-	@echo "  make test-parquet-export Run Parquet export tests"
-	@echo "  make test-keyval     Run key-value tests"
-	@echo "  make test-payload    Run payload tests"
-	@echo "  make test-playbook   Run playbook tests"
+	@echo "  make test-setup                   Set up test environment (create required directories)"
+	@echo "  make test                         Run all tests with coverage"
+	@echo "  make test-server-api              Run server API tests"
+	@echo "  make test-server-api-unit         Run server API unit tests"
+	@echo "  make test-parquet-export          Run Parquet export tests"
+	@echo "  make test-keyval                  Run key-value tests"
+	@echo "  make test-payload                 Run payload tests"
+	@echo "  make test-playbook                Run playbook tests"
 	@echo ""
 	@echo "Kubernetes Commands:"
-	@echo "  make deploy-platform   Deploy the NoETL platform manifests to Kubernetes"
-	@echo "  make deploy-dashboard  Deploy the Kubernetes dashboard manifests"
+	@echo "  make deploy-platform              Deploy the NoETL platform (pass flags via ARGS)"
+	@echo "      e.g., make deploy-platform ARGS=\"--deploy-noetl-dev\""
+	@echo "            make deploy-platform ARGS=\"--no-cluster\""
+	@echo "            make deploy-platform ARGS=\"--no-cluster --no-postgres --no-noetl-pip --deploy-noetl-dev\""
+	@echo "            make deploy-platform ARGS=\"--repo-path /path/to/your/noetl/repo --deploy-noetl-dev\""
+	@echo "  make deploy-platform-dev          Shortcut: --deploy-noetl-dev"
+	@echo "  make deploy-platform-no-cluster   Shortcut: --no-cluster"
+	@echo "  make deploy-platform-dev-only     Shortcut: --no-cluster --no-postgres --no-noetl-pip --deploy-noetl-dev"
+	@echo "  make deploy-platform-dev-repo     Shortcut with REPO_PATH=/path/to/repo"
+	@echo "  make deploy-dashboard             Deploy the Kubernetes dashboard manifests"
+	@echo "  make deploy-all                   Deploy platform and dashboard"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -176,10 +185,29 @@ gcp-credentials:
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"
 
-.PHONY: deploy-platform deploy-dashboard
+.PHONY: deploy-platform deploy-dashboard deploy-all deploy-platform-dev deploy-platform-no-cluster deploy-platform-dev-only deploy-platform-dev-repo
 
+# Allow passing flags via ARGS, e.g., make deploy-platform ARGS="--deploy-noetl-dev"
 deploy-platform:
-	bash $(K8S_DIR)/deploy-platform.sh
+	bash $(K8S_DIR)/deploy-platform.sh $(ARGS)
 
 deploy-dashboard:
 	bash $(K8S_DIR)/deploy-dashboard.sh
+
+# Deploy both platform and dashboard
+deploy-all: deploy-platform deploy-dashboard
+	@echo "Platform and dashboard deployed."
+
+# Shortcuts matching common recipes
+deploy-platform-dev:
+	$(MAKE) deploy-platform ARGS="--deploy-noetl-dev"
+
+deploy-platform-no-cluster:
+	$(MAKE) deploy-platform ARGS="--no-cluster"
+
+deploy-platform-dev-only:
+	$(MAKE) deploy-platform ARGS="--no-cluster --no-postgres --no-noetl-pip --deploy-noetl-dev"
+
+deploy-platform-dev-repo:
+	@if [ -z "$(REPO_PATH)" ]; then echo "Usage: make deploy-platform-dev-repo REPO_PATH=/path/to/your/noetl/repo"; exit 1; fi
+	$(MAKE) deploy-platform ARGS="--repo-path $(REPO_PATH) --deploy-noetl-dev"

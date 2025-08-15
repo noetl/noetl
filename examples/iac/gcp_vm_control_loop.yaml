@@ -33,46 +33,19 @@ workflow:
   - step: start
     desc: "Start GCP VM control loop"
     next:
-      - when: "{{ workload.use_oidc_auth }}"
-        then:
-          - step: list_zones_http
-      - when: "{{ workload.use_noetl_token }}"
-        then:
-          - step: get_gcp_token_http
-      - then:
-          - step: get_gcp_token_adc
-
-  - step: get_gcp_token_http
-    desc: "Acquire GCP access token via local NoETL server"
-    type: workbook
-    task: get_gcp_token_http_task
-    next:
-      - when: "{{ get_gcp_token_http.status == 'success' }}"
-        then:
-          - step: create_vm
-      - step: get_gcp_token_adc
-
-  - step: get_gcp_token_adc
-    desc: "Acquire GCP access token via ADC or service account file"
-    type: workbook
-    task: get_gcp_token_adc_task
-    with:
-      credentials_path: "{{ workload.google_application_credentials }}"
-      scopes: "{{ workload.gcp_scopes }}"
-    next:
-      - step: create_vm
+      - step: list_zones_http
 
   - step: list_zones_http
     desc: "List available GCP zones using OIDC auth from stored credential"
     type: workbook
     task: list_zones_http_task
     next:
-      - step: create_vm
+      - step: create_vm_http
 
-  - step: create_vm
-    desc: "Create a VM in Google Cloud"
+  - step: create_vm_http
+    desc: "Create a VM in Google Cloud via HTTP"
     type: workbook
-    task: create_vm_task
+    task: create_vm_http_task
     with:
       project: "{{ workload.project }}"
       zone: "{{ workload.zone }}"
@@ -87,35 +60,79 @@ workflow:
     type: workbook
     task: store_state_task
     with:
-      vm: "{{ create_vm_task.result }}"
+      vm:
+        vm_name: "{{ workload.vm_name }}"
+        zone: "{{ workload.zone }}"
+        project: "{{ workload.project }}"
+        machine_type: "{{ workload.vm_type }}"
+        image: "{{ workload.vm_image }}"
     next:
-      - step: check_drift
+      - step: get_instance_http
 
-  - step: check_drift
-    desc: "Check for drift between GCP and Postgres"
+  - step: get_instance_http
+    desc: "Fetch VM instance from Google Cloud via HTTP"
     type: workbook
-    task: check_drift_task
+    task: get_instance_http_task
     with:
-      pg_conn: "{{ workload.pg_conn }}"
       project: "{{ workload.project }}"
       zone: "{{ workload.zone }}"
       vm_name: "{{ workload.vm_name }}"
     next:
-      - when: "{{ check_drift_task.result.drift | length > 0 }}"
+      - step: get_stored_state
+
+  - step: get_stored_state
+    desc: "Fetch stored VM state from Postgres"
+    type: workbook
+    task: get_stored_state_task
+    with:
+      vm_name: "{{ workload.vm_name }}"
+    next:
+      - step: compare_drift
+
+  - step: compare_drift
+    desc: "Compare stored state with actual GCP state"
+    type: workbook
+    task: compare_drift_task
+    with:
+      instance: "{{ get_instance_http_task.result.data }}"
+      stored_rows: "{{ get_stored_state_task.command_1.rows | default([]) }}"
+    next:
+      - when: "{{ compare_drift_task.result.drift | length > 0 }}"
         then:
-          - step: fix_drift
+          - step: stop_instance_http
       - step: end
 
-  - step: fix_drift
-    desc: "Reconcile VM state if drift detected"
+  - step: stop_instance_http
+    desc: "Stop VM instance prior to machine type change"
     type: workbook
-    task: fix_drift_task
+    task: stop_instance_http_task
     with:
       project: "{{ workload.project }}"
       zone: "{{ workload.zone }}"
       vm_name: "{{ workload.vm_name }}"
-      expected_machine_type: "{{ check_drift_task.result.drift.machine_type.expected if check_drift_task.result.drift and check_drift_task.result.drift.machine_type else workload.vm_type }}"
-      drift: "{{ check_drift_task.result.drift }}"
+    next:
+      - step: set_machine_type_http
+
+  - step: set_machine_type_http
+    desc: "Set VM machine type via HTTP"
+    type: workbook
+    task: set_machine_type_http_task
+    with:
+      project: "{{ workload.project }}"
+      zone: "{{ workload.zone }}"
+      vm_name: "{{ workload.vm_name }}"
+      expected_machine_type: "{{ compare_drift_task.result.drift.machine_type.expected if compare_drift_task.result.drift and compare_drift_task.result.drift.machine_type else workload.vm_type }}"
+    next:
+      - step: start_instance_http
+
+  - step: start_instance_http
+    desc: "Start VM instance after machine type change"
+    type: workbook
+    task: start_instance_http_task
+    with:
+      project: "{{ workload.project }}"
+      zone: "{{ workload.zone }}"
+      vm_name: "{{ workload.vm_name }}"
     next:
       - step: end
 
@@ -136,36 +153,6 @@ workbook:
     timeout: 5
     on_error: continue
 
-  - name: get_gcp_token_adc_task
-    type: python
-    with:
-      credentials_path: "{{ credentials_path }}"
-      scopes: "{{ scopes }}"
-    code: |
-      def main(credentials_path=None, scopes=None):
-          from google.oauth2 import service_account
-          from google.auth.transport.requests import Request
-          import google.auth
-          import os
-          import os.path
-
-          scope_list = [scopes] if isinstance(scopes, str) and scopes else ["https://www.googleapis.com/auth/cloud-platform"]
-          sa_path = credentials_path or os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-
-          creds = None
-          if sa_path and os.path.exists(sa_path):
-              creds = service_account.Credentials.from_service_account_file(sa_path, scopes=scope_list)
-              creds.refresh(Request())
-          else:
-              creds, _ = google.auth.default(scopes=scope_list)
-              creds.refresh(Request())
-
-          return {
-              "access_token": creds.token,
-              "token_expiry": getattr(creds, 'expiry', None).isoformat() if getattr(creds, 'expiry', None) else None,
-              "used_sa_file": bool(sa_path and os.path.exists(sa_path))
-          }
-
   - name: list_zones_http_task
     type: http
     method: GET
@@ -182,47 +169,95 @@ workbook:
     timeout: 10
     on_error: continue
 
-  - name: create_vm_task
-    type: python
-    with:
-      project: "{{ project }}"
-      zone: "{{ zone }}"
-      vm_name: "{{ vm_name }}"
-      vm_type: "{{ vm_type }}"
-      vm_image: "{{ vm_image }}"
-    code: |
-      def main(project, zone, vm_name, vm_type, vm_image):
-          import google.auth
-          from googleapiclient.discovery import build
+  - name: create_vm_http_task
+    type: http
+    method: POST
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ project }}/zones/{{ zone }}/instances"
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    auth:
+      type: OIDC
+      provider: gcp
+      credential:
+        name: "{{ workload.gcp_credentials_secret }}"
+      scopes:
+        - "{{ workload.gcp_scopes }}"
+    payload:
+      name: "{{ vm_name }}"
+      machineType: "zones/{{ zone }}/machineTypes/{{ vm_type }}"
+      disks:
+        - boot: true
+          autoDelete: true
+          initializeParams:
+            sourceImage: "{{ vm_image }}"
+      networkInterfaces:
+        - network: "global/networks/default"
+    timeout: 20
 
-          creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-          service = build('compute', 'v1', credentials=creds, cache_discovery=False)
+  - name: get_instance_http_task
+    type: http
+    method: GET
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ project }}/zones/{{ zone }}/instances/{{ vm_name }}"
+    headers:
+      Accept: "application/json"
+    auth:
+      type: OIDC
+      provider: gcp
+      credential:
+        name: "{{ workload.gcp_credentials_secret }}"
+      scopes:
+        - "{{ workload.gcp_scopes }}"
+    timeout: 10
+    on_error: continue
 
-          instance_body = {
-              "name": vm_name,
-              "machineType": f"zones/{zone}/machineTypes/{vm_type}",
-              "disks": [{
-                  "boot": True,
-                  "autoDelete": True,
-                  "initializeParams": {
-                      "sourceImage": vm_image
-                  }
-              }],
-              "networkInterfaces": [{
-                  "network": "global/networks/default"
-              }]
-          }
+  - name: stop_instance_http_task
+    type: http
+    method: POST
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ project }}/zones/{{ zone }}/instances/{{ vm_name }}/stop"
+    headers:
+      Accept: "application/json"
+    auth:
+      type: OIDC
+      provider: gcp
+      credential:
+        name: "{{ workload.gcp_credentials_secret }}"
+      scopes:
+        - "{{ workload.gcp_scopes }}"
+    timeout: 20
 
-          request = service.instances().insert(project=project, zone=zone, body=instance_body)
-          _ = request.execute()
+  - name: set_machine_type_http_task
+    type: http
+    method: POST
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ project }}/zones/{{ zone }}/instances/{{ vm_name }}/setMachineType"
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    auth:
+      type: OIDC
+      provider: gcp
+      credential:
+        name: "{{ workload.gcp_credentials_secret }}"
+      scopes:
+        - "{{ workload.gcp_scopes }}"
+    payload:
+      machineType: "zones/{{ zone }}/machineTypes/{{ expected_machine_type }}"
+    timeout: 20
 
-          return {
-              "vm_name": vm_name,
-              "zone": zone,
-              "project": project,
-              "machine_type": vm_type,
-              "image": vm_image
-          }
+  - name: start_instance_http_task
+    type: http
+    method: POST
+    endpoint: "https://compute.googleapis.com/compute/v1/projects/{{ project }}/zones/{{ zone }}/instances/{{ vm_name }}/start"
+    headers:
+      Accept: "application/json"
+    auth:
+      type: OIDC
+      provider: gcp
+      credential:
+        name: "{{ workload.gcp_credentials_secret }}"
+      scopes:
+        - "{{ workload.gcp_scopes }}"
+    timeout: 20
 
   - name: store_state_task
     type: postgres
@@ -242,41 +277,59 @@ workbook:
         machine_type=EXCLUDED.machine_type,
         image=EXCLUDED.image;
 
-  - name: check_drift_task
+  - name: get_stored_state_task
+    type: postgres
+    with:
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+      vm_name: "{{ vm_name }}"
+    command: |
+      SELECT vm_name, zone, project, machine_type, image
+      FROM gcp_vm_state
+      WHERE vm_name = '{{ vm_name }}';
+
+  - name: compare_drift_task
     type: python
     with:
-      pg_conn: "{{ pg_conn }}"
-      project: "{{ project }}"
-      zone: "{{ zone }}"
-      vm_name: "{{ vm_name }}"
+      instance: "{{ instance }}"
+      stored_rows: "{{ stored_rows }}"
     code: |
-      def main(pg_conn, project, zone, vm_name):
-          import psycopg2
-          import google.auth
-          from googleapiclient.discovery import build
-
-          # Fetch stored state
-          conn = psycopg2.connect(pg_conn)
-          cur = conn.cursor()
-          cur.execute("SELECT vm_name, zone, project, machine_type, image FROM gcp_vm_state WHERE vm_name=%s", (vm_name,))
-          row = cur.fetchone()
-          cur.close()
-          conn.close()
-
-          if not row:
+      def main(instance=None, stored_rows=None):
+          # stored_rows is expected to be a list of rows from the postgres task
+          rows = stored_rows or []
+          if not rows:
               return {"drift": {}, "note": "No stored state found"}
 
-          stored = dict(zip(["vm_name", "zone", "project", "machine_type", "image"], row))
+          row = rows[0]
 
-          # Fetch actual state
-          creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-          service = build('compute', 'v1', credentials=creds, cache_discovery=False)
-          instance = service.instances().get(project=stored["project"], zone=stored["zone"], instance=stored["vm_name"]).execute()
+          # Support both dict and positional row formats
+          if isinstance(row, dict):
+              stored = {
+                  "vm_name": row.get("vm_name"),
+                  "zone": row.get("zone"),
+                  "project": row.get("project"),
+                  "machine_type": row.get("machine_type"),
+                  "image": row.get("image"),
+              }
+          else:
+              # Fallback to positional mapping
+              cols = ["vm_name", "zone", "project", "machine_type", "image"]
+              stored = dict(zip(cols, list(row)))
 
-          actual = {
-              "machine_type": instance["machineType"].split("/")[-1],
-              "image": (instance.get("disks", [{}])[0].get("licenses", [""])[0].split("/")[-1]) if instance.get("disks") else ""
-          }
+          # Actual state from HTTP response (instance JSON)
+          actual = {}
+          if isinstance(instance, dict):
+              # machineType is a URL; take the last segment
+              mt = instance.get("machineType") or ""
+              actual["machine_type"] = mt.split("/")[-1] if mt else ""
+              # Derive image/license info if available
+              disks = instance.get("disks") or []
+              if disks:
+                  lic = (disks[0].get("licenses") or [""])[0]
+                  actual["image"] = lic.split("/")[-1] if lic else ""
 
           drift = {}
           for k in ["machine_type", "image"]:
@@ -284,39 +337,3 @@ workbook:
                   drift[k] = {"expected": stored.get(k), "actual": actual.get(k)}
 
           return {"drift": drift}
-
-  - name: fix_drift_task
-    type: python
-    with:
-      project: "{{ project }}"
-      zone: "{{ zone }}"
-      vm_name: "{{ vm_name }}"
-      expected_machine_type: "{{ expected_machine_type }}"
-      drift: "{{ drift }}"
-    code: |
-      def main(project, zone, vm_name, expected_machine_type=None, drift=None):
-          import time
-          import google.auth
-          from googleapiclient.discovery import build
-
-          creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-          service = build('compute', 'v1', credentials=creds, cache_discovery=False)
-
-          # Only handle machine_type drift for simplicity
-          if drift and "machine_type" in drift:
-              # Stop the instance
-              service.instances().stop(project=project, zone=zone, instance=vm_name).execute()
-              # Simple wait (in production, poll operation status)
-              time.sleep(5)
-
-              service.instances().setMachineType(
-                  project=project,
-                  zone=zone,
-                  instance=vm_name,
-                  body={"machineType": f"zones/{zone}/machineTypes/{expected_machine_type}"}
-              ).execute()
-
-              # Start the instance
-              service.instances().start(project=project, zone=zone, instance=vm_name).execute()
-
-          return {"status": "ok", "handled": list(drift.keys()) if drift else []}
