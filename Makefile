@@ -4,7 +4,7 @@ K8S_DIR=k8s
 COMPOSE_FILE = docker-compose.yaml
 PROJECT_NAME = noetl
 PYPI_USER = noetl
-VENV = .env.docker
+VENV = .venv
 PYTHON = $(VENV)/bin/python
 UV = $(HOME)/.local/bin/uv
 
@@ -27,10 +27,13 @@ help:
 	@echo ""
 	@echo "Development Commands:"
 	@echo "  make install-uv                   Install uv package manager"
-	@echo "  make create-venv                  Create virtual environment"
+	@echo "  make create-venv                  Create virtual environment (.venv)"
 	@echo "  make install-dev                  Install development dependencies"
 	@echo "  make install                      Install package"
 	@echo "  make run                          Run the server"
+	@echo ""
+	@echo "Release Commands:"
+	@echo "  make release VER=X.Y.Z            Run release pipeline (or use VERSION=X.Y.Z)"
 	@echo ""
 	@echo "Test Commands:"
 	@echo "  make test-setup                   Set up test environment (create required directories)"
@@ -127,7 +130,7 @@ uv-lock:
 	    $(UV) lock
 
 run:
-	$(VENV)/bin/noetl server --host 0.0.0.0 --port 8082
+	$(VENV)/bin/noetl server start --host 0.0.0.0 --port 8082
 
 test: test-setup
 	$(VENV)/bin/pytest -v --cov=noetl tests/
@@ -211,3 +214,13 @@ deploy-platform-dev-only:
 deploy-platform-dev-repo:
 	@if [ -z "$(REPO_PATH)" ]; then echo "Usage: make deploy-platform-dev-repo REPO_PATH=/path/to/your/noetl/repo"; exit 1; fi
 	$(MAKE) deploy-platform ARGS="--repo-path $(REPO_PATH) --deploy-noetl-dev"
+
+.PHONY: release
+release:
+	@ver="$(VER)"; \
+	[ -n "$$ver" ] || ver="$(VERSION)"; \
+	if [ -z "$$ver" ]; then \
+	  echo "Usage: make release VER=X.Y.Z (or VERSION=X.Y.Z)"; \
+	  exit 1; \
+	fi; \
+	./scripts/release.sh $$ver

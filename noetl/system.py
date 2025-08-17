@@ -2,14 +2,18 @@ import psutil
 import threading
 import traceback
 import sys
-import memray
+try:
+    import memray
+    MEMRAY_AVAILABLE = True
+except Exception:
+    memray = None
+    MEMRAY_AVAILABLE = False
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from datetime import datetime
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from noetl.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -17,9 +21,9 @@ logger = setup_logger(__name__)
 router = APIRouter()
 process = psutil.Process()
 
-MEMRAY_TRACKER: memray.Tracker | None = None
-MEMRAY_FILE_PATH: Path | None = None
-PROFILING_START_TIME: datetime | None = None
+MEMRAY_TRACKER: Optional[object] = None
+MEMRAY_FILE_PATH: Optional[Path] = None
+PROFILING_START_TIME: Optional[datetime] = None
 
 
 class SystemStatus(BaseModel):
@@ -104,6 +108,9 @@ def get_thread_info():
 @router.post("/profiler/memory/start", response_model=ReportResponse, summary="Start Memory Profiler")
 def start_memory_profiling():
     global MEMRAY_TRACKER, MEMRAY_FILE_PATH, PROFILING_START_TIME
+    if not MEMRAY_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Memray is not installed on this server.")
+
     if MEMRAY_TRACKER:
         raise HTTPException(status_code=409, detail="A profiling session is already in progress.")
 
@@ -134,6 +141,9 @@ def cleanup_file(path: Path):
 @router.post("/profiler/memory/stop", summary="Stop profiler and download .bin report")
 def stop_and_download_memray_profile(background_tasks: BackgroundTasks):
     global MEMRAY_TRACKER, MEMRAY_FILE_PATH, PROFILING_START_TIME
+
+    if not MEMRAY_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Memray is not installed on this server.")
 
     if not MEMRAY_TRACKER or not MEMRAY_FILE_PATH:
         raise HTTPException(status_code=404, detail="No active profiling session to stop.")
