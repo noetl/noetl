@@ -1,0 +1,372 @@
+# NoETL Playbook: Grover's Algorithm with Qiskit (CPU vs QPU)
+#
+# Overview
+#   This playbook demonstrates Grover’s Algorithm using Qiskit and compares
+#   results between CPU simulation and IBM Quantum backends (QPU) if available.
+#   Inspired by 3Blue1Brown's video: https://www.youtube.com/watch?v=RQWpF2Gb-gU
+#
+# Purpose
+#   - Provide a clear, reproducible example of Grover’s Algorithm in Qiskit.
+#   - Help learners bridge theory with hands-on quantum programming.
+#   - Serve as a reference for more complex quantum search applications.
+#
+# Requirements
+#   - Python deps (preinstall): qiskit, (optional) qiskit-ibm-runtime
+#     pip install "qiskit>=1.0" "qiskit-ibm-runtime>=0.23"
+#   - For IBM QPU/Runtime:
+#       export QISKIT_IBM_TOKEN=<your_token>
+#       export QISKIT_IBM_INSTANCE=<"ibm-q/open/main"> (or your instance)
+#       Optionally set QISKIT_IBM_BACKEND (e.g., "ibm_brisbane")
+#
+# Usage
+#   Register:
+#     noetl register examples/quantum/grover_qiskit_playbook.yaml --port 8080
+#   Execute (default params):
+#     noetl execute --path "quantum/grover_qiskit" --payload '{}'
+#   Execute (custom):
+#     noetl execute --path "quantum/grover_qiskit" --payload '{
+#       "n_qubits": 3,
+#       "target_bitstring": "101",
+#       "iterations": null,
+#       "shots": 2048
+#     }'
+#
+apiVersion: noetl.io/v1
+kind: Playbook
+name: grover_qiskit
+path: quantum/grover_qiskit
+
+workload:
+  jobId: "{{ job.uuid }}"
+  n_qubits: 3
+  target_bitstring: "101"   # must match number of qubits
+  iterations: null           # null => auto-compute floor(pi/4 * sqrt(2^n))
+  shots: 1024
+  ibm_channel: "ibm_cloud"  # or "ibm_quantum" (depending on your account)
+  timeout_s: 300
+  # environment is available via {{ env.VAR }}
+
+workflow:
+  - step: start
+    desc: "Start Grover demo"
+    next:
+      - step: cpu_run
+
+  - step: cpu_run
+    desc: "Run Grover on CPU simulator (statevector-based sampling)"
+    type: workbook
+    task: cpu_grover_task
+    with:
+      n_qubits: "{{ workload.n_qubits }}"
+      target_bitstring: "{{ workload.target_bitstring }}"
+      iterations: "{{ workload.iterations }}"
+      shots: "{{ workload.shots }}"
+    next:
+      - step: qpu_run
+
+  - step: qpu_run
+    desc: "Run Grover via IBM Runtime (QPU/managed simulator) if available"
+    type: workbook
+    task: qpu_grover_task
+    with:
+      n_qubits: "{{ workload.n_qubits }}"
+      target_bitstring: "{{ workload.target_bitstring }}"
+      iterations: "{{ workload.iterations }}"
+      shots: "{{ workload.shots }}"
+      ibm_channel: "{{ workload.ibm_channel }}"
+      timeout_s: "{{ workload.timeout_s }}"
+      # IBM credentials and backend are sourced from environment:
+      #   QISKIT_IBM_TOKEN, QISKIT_IBM_INSTANCE, QISKIT_IBM_BACKEND
+    next:
+      - step: compare_and_report
+        with:
+          cpu: "{{ cpu_run.data }}"
+          qpu: "{{ qpu_run.data }}"
+
+  - step: compare_and_report
+    desc: "Compare CPU vs QPU results and summarize"
+    type: workbook
+    task: compare_task
+    with:
+      cpu: "{{ cpu }}"
+      qpu: "{{ qpu }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of Grover demo"
+
+workbook:
+  - name: cpu_grover_task
+    type: python
+    with:
+      n_qubits: "{{ n_qubits }}"
+      target_bitstring: "{{ target_bitstring }}"
+      iterations: "{{ iterations }}"
+      shots: "{{ shots }}"
+    code: |
+      def main(n_qubits, target_bitstring, iterations=None, shots=1024):
+          import time, math, json
+          start = time.time()
+
+          try:
+              from qiskit import QuantumCircuit
+              from qiskit.quantum_info import Statevector
+          except Exception as e:
+              return {
+                  "status": "error",
+                  "message": f"Qiskit not available: {e}",
+              }
+
+          # Validate input
+          if not isinstance(n_qubits, int) or n_qubits < 1:
+              return {"status": "error", "message": "n_qubits must be positive int"}
+          if not isinstance(target_bitstring, str) or len(target_bitstring) != n_qubits:
+              return {"status": "error", "message": "target_bitstring length must equal n_qubits"}
+
+          N = 2 ** n_qubits
+          if iterations is None or iterations == "" or iterations == "null":
+              iters = max(1, int(math.floor(math.pi / 4 * math.sqrt(N))))
+          else:
+              iters = int(iterations)
+
+          # Build Grover circuit without measurement for statevector
+          def build_grover_core(n, target_bs, r):
+              qc = QuantumCircuit(n, n)
+              # Prepare uniform superposition
+              qc.h(range(n))
+
+              # Oracle (phase flip on target)
+              def oracle():
+                  # Flip qubits where target bit is 0 so that |target> maps to |11..1>
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+                  # Multi-controlled Z via H + MCX + H on last qubit
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  # Undo the X flips
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+
+              # Diffusion operator (inversion about the mean)
+              def diffusion():
+                  qc.h(range(n))
+                  qc.x(range(n))
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  qc.x(range(n))
+                  qc.h(range(n))
+
+              for _ in range(r):
+                  oracle()
+                  diffusion()
+
+              return qc
+
+          qc = build_grover_core(n_qubits, target_bitstring, iters)
+
+          # Simulate via statevector (no Aer dependency)
+          try:
+              sv = Statevector.from_instruction(qc)
+              probs = sv.probabilities_dict()  # dict bitstring->probability
+          except Exception as e:
+              return {
+                  "status": "error",
+                  "message": f"Statevector simulation failed: {e}",
+              }
+
+          # Convert probabilities to counts by sampling
+          import random
+          keys = list(probs.keys())
+          weights = [probs[k] for k in keys]
+          # Normalize (numerical stability)
+          s = sum(weights) or 1.0
+          weights = [w/s for w in weights]
+          samples = random.choices(keys, weights=weights, k=int(shots))
+          counts = {}
+          for sbit in samples:
+              counts[sbit] = counts.get(sbit, 0) + 1
+
+          duration = time.time() - start
+          target_prob = probs.get(target_bitstring, 0.0)
+
+          return {
+              "status": "success",
+              "backend": "cpu_statevector",
+              "n_qubits": n_qubits,
+              "iterations": iters,
+              "shots": int(shots),
+              "target": target_bitstring,
+              "target_probability": target_prob,
+              "counts": counts,
+              "duration_s": duration,
+          }
+
+  - name: qpu_grover_task
+    type: python
+    with:
+      n_qubits: "{{ n_qubits }}"
+      target_bitstring: "{{ target_bitstring }}"
+      iterations: "{{ iterations }}"
+      shots: "{{ shots }}"
+      ibm_channel: "{{ ibm_channel }}"
+      timeout_s: "{{ timeout_s }}"
+    code: |
+      def main(n_qubits, target_bitstring, iterations=None, shots=1024, ibm_channel="ibm_cloud", timeout_s=300):
+          import time, math, os
+          start = time.time()
+
+          # Check for optional IBM Runtime
+          try:
+              from qiskit import QuantumCircuit
+              from qiskit_ibm_runtime import QiskitRuntimeService, Sampler
+          except Exception as e:
+              return {
+                  "status": "skipped",
+                  "reason": f"qiskit-ibm-runtime not available or import failed: {e}",
+              }
+
+          # Validate input
+          if not isinstance(n_qubits, int) or n_qubits < 1:
+              return {"status": "error", "message": "n_qubits must be positive int"}
+          if not isinstance(target_bitstring, str) or len(target_bitstring) != n_qubits:
+              return {"status": "error", "message": "target_bitstring length must equal n_qubits"}
+
+          N = 2 ** n_qubits
+          if iterations is None or iterations == "" or iterations == "null":
+              iters = max(1, int(math.floor(math.pi / 4 * math.sqrt(N))))
+          else:
+              iters = int(iterations)
+
+          # Build circuit with measurement (sampler can also work without measures; we'll include for clarity)
+          def build_grover(n, target_bs, r):
+              qc = QuantumCircuit(n)
+              qc.h(range(n))
+              def oracle():
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+              def diffusion():
+                  qc.h(range(n))
+                  qc.x(range(n))
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  qc.x(range(n))
+                  qc.h(range(n))
+              for _ in range(r):
+                  oracle()
+                  diffusion()
+              return qc
+
+          qc = build_grover(n_qubits, target_bitstring, iters)
+
+          token = os.getenv("QISKIT_IBM_TOKEN")
+          instance = os.getenv("QISKIT_IBM_INSTANCE")
+          backend_name = os.getenv("QISKIT_IBM_BACKEND")
+          if not token or not instance:
+              return {
+                  "status": "skipped",
+                  "reason": "IBM credentials not configured (QISKIT_IBM_TOKEN and QISKIT_IBM_INSTANCE)",
+              }
+
+          try:
+              service = QiskitRuntimeService(channel=ibm_channel, token=token, instance=instance)
+          except Exception as e:
+              return {"status": "skipped", "reason": f"Failed to create runtime service: {e}"}
+
+          try:
+              if backend_name:
+                  backend = service.backend(backend_name)
+              else:
+                  # pick the first available backend with enough qubits
+                  cands = [b for b in service.backends(simulator=False) if getattr(b, 'num_qubits', 0) >= n_qubits]
+                  backend = cands[0] if cands else None
+              if backend is None:
+                  return {"status": "skipped", "reason": "No suitable IBM backend found"}
+          except Exception as e:
+              return {"status": "skipped", "reason": f"Backend selection failed: {e}"}
+
+          try:
+              sampler = Sampler(backend=backend)
+              job = sampler.run([qc], shots=int(shots))
+              result = job.result(timeout=timeout_s)
+              # result.quasi_dists is a list of distributions; convert to counts-like dict
+              quasi = result.quasi_dists[0]
+              # Build bitstrings with correct width
+              def fmt_key(k):
+                  if isinstance(k, str):
+                      return k.zfill(n_qubits)
+                  return format(int(k), f"0{n_qubits}b")
+              counts = {fmt_key(k): int(round(v * int(shots))) for k, v in quasi.items()}
+              duration = time.time() - start
+              return {
+                  "status": "success",
+                  "backend": getattr(backend, 'name', lambda: str(backend))() if hasattr(backend, 'name') else str(backend),
+                  "n_qubits": n_qubits,
+                  "iterations": iters,
+                  "shots": int(shots),
+                  "target": target_bitstring,
+                  "counts": counts,
+                  "duration_s": duration,
+              }
+          except Exception as e:
+              return {"status": "skipped", "reason": f"Runtime execution failed: {e}"}
+
+  - name: compare_task
+    type: python
+    with:
+      cpu: "{{ cpu }}"
+      qpu: "{{ qpu }}"
+    code: |
+      def main(cpu, qpu=None):
+          import json
+          def summarize(res):
+              if not isinstance(res, dict):
+                  return {"status": "unknown", "message": "invalid result"}
+              keys = list((res.get("counts") or {}).keys())
+              top = None
+              if keys:
+                  top = max(res["counts"].items(), key=lambda kv: kv[1])[0]
+              return {
+                  "status": res.get("status"),
+                  "backend": res.get("backend"),
+                  "n_qubits": res.get("n_qubits"),
+                  "iterations": res.get("iterations"),
+                  "shots": res.get("shots"),
+                  "target": res.get("target"),
+                  "top_bitstring": top,
+                  "target_probability": res.get("target_probability"),
+                  "duration_s": res.get("duration_s"),
+              }
+          summary = {
+              "cpu": summarize(cpu),
+              "qpu": summarize(qpu) if qpu else {"status": "skipped", "message": "no qpu run"}
+          }
+          # Add comparison flag
+          cpu_top = summary["cpu"].get("top_bitstring")
+          qpu_top = summary["qpu"].get("top_bitstring") if isinstance(summary["qpu"], dict) else None
+          summary["agree_on_top"] = (cpu_top == qpu_top) if (cpu_top and qpu_top) else None
+          return summary
