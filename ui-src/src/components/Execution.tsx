@@ -52,8 +52,8 @@ const Execution: React.FC = () => {
   const [showWorkflowVisualization, setShowWorkflowVisualization] = useState(false);
   const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
   const [selectedPlaybookName, setSelectedPlaybookName] = useState<string>('');
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const navigate = useNavigate();
 
