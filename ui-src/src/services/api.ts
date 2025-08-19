@@ -11,6 +11,9 @@ const getApiBaseUrl = () => {
     return import.meta.env.VITE_API_BASE_URL;
   }
   if (import.meta.env.MODE === "development") {
+    if ((window as any).__API_BASE_URL__) {
+      return (window as any).__API_BASE_URL__;
+    }
     return "http://localhost:8081/api";
   }
   return "/api";

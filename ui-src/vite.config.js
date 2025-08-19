@@ -16,6 +16,8 @@ export default defineConfig({
     },
   },
   define: {
+    // in __API_BASE_URL__ need put noetl api base url backend
+    __API_BASE_URL__: JSON.stringify("http://localhost:8080/api"), // for local development
     __FASTAPI_URL__: JSON.stringify("http://localhost:8000"),
   },
 });
