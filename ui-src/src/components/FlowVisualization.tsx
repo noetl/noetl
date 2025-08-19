@@ -125,7 +125,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
         position: "relative",
         transition: "all 0.3s ease",
       }}
-      className="custom-node nodrag"
+      className="custom-node"
     >
       {/* Delete button - always visible */}
       <div
@@ -175,6 +175,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
           dropdownStyle={{ fontSize: "12px" }}
           placeholder="Select type"
           showSearch={false}
+          className="nodrag"
         >
           <Select.Option value="log">📝 Log</Select.Option>
           <Select.Option value="http">🌐 HTTP</Select.Option>
