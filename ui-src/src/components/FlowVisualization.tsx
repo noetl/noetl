@@ -122,7 +122,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
         position: 'relative',
         transition: 'all 0.3s ease'
       }}
-      className="custom-node"
+      className="custom-node nodrag"
     >
       {/* Delete button - always visible */}
       <div style={{
