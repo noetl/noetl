@@ -604,7 +604,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               if (
                 !currentTask.id ||
                 currentTask.id ===
-                  originalName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase()
+                originalName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase()
               ) {
                 currentTask.id = originalName
                   .replace(/[^a-zA-Z0-9]/g, "_")
@@ -821,7 +821,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       console.error("Error in loadPlaybookFlow:", error);
       message.error(
         `Failed to load playbook flow for ${playbookName}: ` +
-          (error as Error).message,
+        (error as Error).message,
       );
 
       // Show error demo
