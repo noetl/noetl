@@ -219,3 +219,7 @@ For information about contributing to NoETL or building from source:
 ## License
 
 NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## UI reformat code
+
+when we use pycharm. before commit in ui use `npx prettier  . --write`
