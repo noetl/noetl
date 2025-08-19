@@ -3,7 +3,8 @@ import json
 import os
 import uuid
 import datetime
-import traceback
+import time
+import requests
 from typing import Dict, List, Any, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
 from noetl.render import render_template
@@ -12,6 +13,129 @@ from noetl.sqlcmd import *
 from noetl.logger import setup_logger, log_error
 
 logger = setup_logger(__name__, include_location=True)
+
+# --- Worker Pool Registration Helper ---
+
+def register_worker_pool_from_env() -> None:
+    """If worker pool env vars are set, register this worker pool with the server registry.
+    Env:
+      - NOETL_WORKER_POOL_RUNTIME: cpu|gpu|qpu (required to trigger)
+      - NOETL_WORKER_BASE_URL: base URL where this worker exposes /api/worker (required)
+      - NOETL_WORKER_POOL_NAME: identifier (optional; defaults to f"worker-{runtime}")
+      - NOETL_SERVER_URL: server base URL (default http://localhost:8082)
+      - NOETL_WORKER_CAPACITY: optional int
+      - NOETL_WORKER_LABELS: optional CSV string
+    """
+    try:
+        runtime = os.environ.get("NOETL_WORKER_POOL_RUNTIME", "").strip().lower()
+        base_url = os.environ.get("NOETL_WORKER_BASE_URL", "").strip()
+        if not runtime or not base_url:
+            return
+        name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
+        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+        capacity = os.environ.get("NOETL_WORKER_CAPACITY")
+        labels = os.environ.get("NOETL_WORKER_LABELS")
+        if labels:
+            labels = [s.strip() for s in labels.split(',') if s.strip()]
+        payload = {
+            "name": name,
+            "runtime": runtime,
+            "base_url": base_url,
+            "status": "ready",
+            "capacity": int(capacity) if capacity and capacity.isdigit() else None,
+            "labels": labels,
+        }
+        url = f"{server_url}/api/worker/pool/register"
+        try:
+            resp = requests.post(url, json=payload, timeout=5.0)
+            if resp.status_code == 200:
+                logger.info(f"Worker pool registered: {name} ({runtime}) -> {base_url}")
+            else:
+                logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Worker pool register exception: {e}")
+    except Exception:
+        logger.exception("Unexpected error during worker pool registration")
+
+class EventReporter:
+    """
+    Lightweight client to report worker/step/task events to the NoETL server API.
+
+    The server stores events in its event_log table via POST /api/events.
+    """
+
+    def __init__(self, base_url: Optional[str] = None, host: Optional[str] = None, port: Optional[int | str] = None, timeout: float = 7.5):
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        else:
+            h = host or os.environ.get("NOETL_HOST", "localhost")
+            p = port or os.environ.get("NOETL_PORT", "8080")
+            self.base_url = f"http://{h}:{p}/api"
+        self.timeout = timeout
+
+    def emit(
+        self,
+        *,
+        event_type: str,
+        status: str,
+        execution_id: str,
+        node_id: str,
+        node_name: str,
+        node_type: str,
+        duration: float = 0.0,
+        context: Optional[Dict[str, Any]] = None,
+        result: Optional[Any] = None,
+        meta: Optional[Dict[str, Any]] = None,
+        parent_id: Optional[str] = None,
+        error: Optional[str] = None,
+        event_id: Optional[str] = None,
+        retries: int = 3,
+        backoff: float = 0.5,
+    ) -> Dict[str, Any]:
+        """
+        Send an event to the server. Returns the server response JSON (which echoes event fields).
+        """
+        eid = event_id or f"evt_{uuid.uuid4().hex}"
+        payload: Dict[str, Any] = {
+            "event_id": eid,
+            "event_type": event_type,
+            "status": status,
+            "execution_id": execution_id,
+            "parent_id": parent_id,
+            "node_id": node_id,
+            "node_name": node_name,
+            "node_type": node_type,
+            "duration": float(duration or 0),
+            "context": context or {},
+            "result": result,
+            "meta": meta or {},
+            "error": error,
+        }
+        url = f"{self.base_url}/events"
+
+        attempt = 0
+        last_err: Optional[Exception] = None
+        while attempt <= retries:
+            try:
+                resp = requests.post(url, json=payload, timeout=self.timeout)
+                if resp.status_code == 200:
+                    return resp.json()
+                else:
+                    # Treat non-200 as retryable up to retries
+                    last_err = RuntimeError(f"Unexpected status {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:  # network error / timeout
+                last_err = e
+
+            if attempt == retries:
+                break
+            sleep_for = backoff * (2 ** attempt)
+            time.sleep(sleep_for)
+            attempt += 1
+
+        logger.error(f"EventReporter.emit failed after {retries+1} attempts: {last_err}")
+        # Return the payload with a marker; do not raise to avoid crashing worker execution
+        return {**payload, "_error": str(last_err) if last_err else "failed"}
+
 
 class Worker:
 
@@ -38,6 +162,8 @@ class Worker:
         
         logger.debug("WORKER.__INIT__: Initializing SecretManager")
         self.secret_manager = SecretManager(self.jinja_env, self.mock_mode)
+        # Initialize event reporter for server-side event logging
+        self.event_reporter = EventReporter()
 
         if pgdb is None:
             pgdb = f"dbname={os.environ.get('POSTGRES_DB', 'noetl')} user={os.environ.get('POSTGRES_USER', 'noetl')} password={os.environ.get('POSTGRES_PASSWORD', 'noetl')} host={os.environ.get('POSTGRES_HOST', 'localhost')} port={os.environ.get('POSTGRES_PORT', '5434')}"
@@ -388,58 +514,50 @@ class Worker:
                   results: List[Any] = None, worker_id: str = None, distributed_state: str = None,
                   error: str = None, context_key: str = None, context_value: Any = None):
         """
-        Log an event to the database.
-
-        Args:
-            event_type: The type of event
-            node_id: The ID of the node
-            node_name: The name of the node
-            node_type: The type of node
-            status: The status of the event
-            duration: The duration of the event
-            input_context: The input context
-            output_result: The output result
-            metadata: Additional metadata
-            parent_event_id: The ID of the parent event
-            loop_id: The ID of the loop
-            loop_name: The name of the loop
-            iterator: The iterator variable name
-            items: The items being iterated over
-            current_index: The current index in the loop
-            current_item: The current item in the loop
-            results: The results of the loop
-            worker_id: The ID of the worker
-            distributed_state: The distributed state
-            error: The error message
-            context_key: The context key being updated
-            context_value: The context value being set
-
-        Returns:
-            The ID of the event
+        Report an event to the server API (no local storage).
         """
-        event_id = str(uuid.uuid4())
+        # Initialize reporter lazily in case __init__ hasn't done it
+        if not hasattr(self, 'event_reporter') or self.event_reporter is None:
+            self.event_reporter = EventReporter()
 
-        input_context_serial = json.dumps({k: v for k, v in input_context.items() if not k.startswith('_')})
-        output_result_serial = json.dumps(output_result) if output_result is not None else None
-        metadata_serial = json.dumps(metadata) if metadata is not None else None
-        items_serial = json.dumps(items) if items is not None else None
-        current_item_serial = json.dumps(current_item) if current_item is not None else None
-        results_serial = json.dumps(results) if results is not None else None
-        context_value_serial = json.dumps(context_value) if context_value is not None and not isinstance(context_value, (str, int, float, bool)) else str(context_value) if context_value is not None else None
+        # Construct meta/context payloads following server expectations
+        meta = metadata or {}
+        if loop_id or loop_name or iterator is not None:
+            meta = {
+                **meta,
+                "loop": {
+                    "loop_id": loop_id,
+                    "loop_name": loop_name,
+                    "iterator": iterator,
+                    "items": items,
+                    "current_index": current_index,
+                    "current_item": current_item,
+                    "results": results,
+                }
+            }
+        if context_key is not None:
+            meta = {**meta, "context_update": {"key": context_key, "value": context_value}}
+        if worker_id is not None:
+            meta = {**meta, "worker": {"id": worker_id, "state": distributed_state}}
 
-        params = (
-            self.execution_id, event_id, parent_event_id, datetime.datetime.now(), event_type,
-            node_id, node_name, node_type, status, duration,
-            input_context_serial, output_result_serial, metadata_serial, error,
-            loop_id, loop_name, iterator, items_serial, current_index, current_item_serial, results_serial,
-            worker_id, distributed_state, context_key, context_value_serial
+        ctx = {k: v for k, v in (input_context or {}).items() if not str(k).startswith('_')}
+
+        resp = self.event_reporter.emit(
+            event_type=event_type,
+            status=status,
+            execution_id=self.execution_id,
+            node_id=node_id,
+            node_name=node_name,
+            node_type=node_type,
+            duration=duration or 0.0,
+            context=ctx,
+            result=output_result,
+            meta=meta,
+            parent_id=parent_event_id,
+            error=error,
         )
-
-        with self.conn.cursor() as cursor:
-            cursor.execute(EVENT_LOG_INSERT_POSTGRES, params)
-            self.conn.commit()
-
-        return event_id
+        # Return the event_id echoed by server or locally generated one
+        return resp.get("event_id") or resp.get("id") or ""
 
     def save_step_result(self, step_id: str, step_name: str, parent_id: str,
                          status: str, data: Any = None, error: str = None):
@@ -817,3 +935,242 @@ class Worker:
         server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
         daemon = Broker(self, server_url=server_url)
         return daemon.run(mlflow)
+
+
+# === Worker API (in-module) ===
+# Note: Keeping the Worker API inside worker.py to comply with requirement to avoid new modules.
+import subprocess
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field, ConfigDict
+from noetl.action import execute_task
+
+
+try:
+    import httpx
+except Exception:  # pragma: no cover
+    httpx = None  # type: ignore
+
+# Expose router for main.py inclusion
+router = APIRouter(prefix="", tags=["Worker"])  # same as before
+
+
+class TaskConfigModel(BaseModel):
+    type: str = Field(..., description="Task type: python|http|duckdb|postgres|secrets")
+    task: Optional[str] = Field(default="inline_task")
+    code: Optional[str] = None
+    with_: Optional[Dict[str, Any]] = Field(default=None, alias="with")
+    return_: Optional[Any] = Field(default=None, alias="return")
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+
+class ExecuteTaskRequest(BaseModel):
+    task: TaskConfigModel
+    context: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    requirements: Optional[List[str]] = Field(default=None)
+    allow_installs: Optional[bool] = Field(default=None)
+    callback_url: Optional[str] = Field(default=None)
+    execution_id: Optional[str] = Field(default=None)
+
+
+class ExecuteTaskResponse(BaseModel):
+    status: str
+    execution_id: str
+    task_id: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    callback_invoked: bool = False
+
+
+
+
+# Initialize a global EventReporter for the worker task API
+try:
+    _reporter = EventReporter()
+except Exception:  # pragma: no cover
+    _reporter = None  # type: ignore
+
+
+def _maybe_install(reqs: Optional[List[str]], allow_flag: Optional[bool]) -> Dict[str, Any]:
+    if not reqs:
+        return {"attempted": False, "installed": []}
+    allow_env = os.getenv("NOETL_WORKER_ALLOW_INSTALLS", "true").lower() in ("1", "true", "yes", "y")
+    allow = allow_flag if allow_flag is not None else allow_env
+    if not allow:
+        logger.info("WorkerAPI: Skipping requirements install (not allowed)")
+        return {"attempted": False, "installed": []}
+
+    installed: List[str] = []
+    for pkg in reqs:
+        try:
+            logger.info(f"WorkerAPI: Installing requirement '{pkg}'")
+            subprocess.run(
+                [os.sys.executable, "-m", "pip", "install", pkg],
+                check=True,
+                capture_output=True,
+                timeout=int(os.getenv("NOETL_WORKER_PIP_TIMEOUT", "300")),
+            )
+            installed.append(pkg)
+        except Exception as e:
+            logger.warning(f"WorkerAPI: Failed to install {pkg}: {e}")
+    return {"attempted": True, "installed": installed}
+
+
+@router.post("/task/execute", response_model=ExecuteTaskResponse)
+async def execute_single_task(payload: ExecuteTaskRequest) -> ExecuteTaskResponse:
+    execution_id = payload.execution_id or str(uuid.uuid4())
+    task_name = payload.task.task or "inline_task"
+
+    install_info = _maybe_install(payload.requirements, payload.allow_installs)
+
+    # Fresh Jinja env for task execution, strict mode
+    jinja_env = Environment(undefined=StrictUndefined, loader=BaseLoader())
+
+    context: Dict[str, Any] = payload.context or {}
+    context.setdefault("job", {"uuid": execution_id})
+
+    task_config: Dict[str, Any] = payload.task.dict(by_alias=True)
+
+    callback_invoked = False
+
+    def log_event_callback(
+        event_type: str,
+        task_id: str,
+        tname: str,
+        node_type: str,
+        status: str,
+        duration: float,
+        ctx: Dict[str, Any],
+        output_result: Optional[Any],
+        metadata: Optional[Dict[str, Any]],
+        parent_event_id: Optional[str],
+    ) -> Optional[str]:
+        # Report to server API (no local storage)
+        eid: Optional[str] = None
+        if _reporter is not None:
+            try:
+                resp = _reporter.emit(
+                    event_type=event_type,
+                    status=status,
+                    execution_id=execution_id,
+                    node_id=task_id or tname,
+                    node_name=tname,
+                    node_type=node_type,
+                    duration=duration or 0.0,
+                    context=ctx or {},
+                    result=output_result,
+                    meta=metadata or {},
+                    parent_id=parent_event_id,
+                )
+                eid = resp.get("event_id")
+            except Exception as e:  # pragma: no cover
+                logger.warning(f"WorkerAPI: EventReporter.emit failed: {e}")
+        if not eid:
+            eid = str(uuid.uuid4())
+        if payload.callback_url and httpx is not None:
+            try:
+                data = {
+                    "event_id": eid,
+                    "event_type": event_type,
+                    "execution_id": execution_id,
+                    "task_id": task_id,
+                    "task_name": tname,
+                    "node_type": node_type,
+                    "status": status,
+                    "duration": duration,
+                    "context": ctx,
+                    "output_result": output_result,
+                    "metadata": metadata,
+                    "parent_event_id": parent_event_id,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                }
+                httpx.post(payload.callback_url, json=data, timeout=10.0)
+                nonlocal callback_invoked
+                callback_invoked = True
+            except Exception as e:  # pragma: no cover
+                logger.warning(f"WorkerAPI: Failed to POST event callback: {e}")
+        return eid
+
+    try:
+        result = execute_task(
+            task_config=task_config,
+            task_name=task_name,
+            context=context,
+            jinja_env=jinja_env,
+            secret_manager=None,
+            log_event_callback=log_event_callback,
+        )
+    except Exception as e:
+        logger.error(f"WorkerAPI: execute_task raised error: {e}", exc_info=True)
+        if _reporter is not None:
+            try:
+                _reporter.emit(
+                    event_type="task_final",
+                    status="error",
+                    execution_id=execution_id,
+                    node_id="unknown",
+                    node_name=task_name,
+                    node_type="task",
+                    duration=0.0,
+                    context=context,
+                    result=None,
+                    meta={"install": install_info, "task": task_config},
+                    parent_id=None,
+                    error=str(e),
+                )
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+    task_id = result.get("id") if isinstance(result, dict) else None
+    status = result.get("status") if isinstance(result, dict) else "error"
+    data = result.get("data") if isinstance(result, dict) else None
+    error = result.get("error") if isinstance(result, dict) else None
+
+    if _reporter is not None:
+        try:
+            _reporter.emit(
+                event_type="task_final",
+                status=status,
+                execution_id=execution_id,
+                node_id=(task_id or "unknown"),
+                node_name=task_name,
+                node_type="task",
+                duration=0.0,
+                context=context,
+                result=data,
+                meta={"install": install_info, "task": task_config},
+                parent_id=None,
+                error=error,
+            )
+        except Exception:
+            pass
+
+    if payload.callback_url and httpx is not None:
+        try:
+            httpx.post(
+                payload.callback_url,
+                json={
+                    "event_type": "task_final",
+                    "execution_id": execution_id,
+                    "task_id": task_id,
+                    "status": status,
+                    "result": data,
+                    "error": error,
+                    "install": install_info,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                },
+                timeout=10.0,
+            )
+            callback_invoked = True
+        except Exception as e:  # pragma: no cover
+            logger.warning(f"WorkerAPI: Failed to POST final callback: {e}")
+
+    return ExecuteTaskResponse(
+        status=status,
+        execution_id=execution_id,
+        task_id=task_id,
+        result=result if isinstance(result, dict) else None,
+        error=error,
+        callback_invoked=callback_invoked,
+    )

@@ -31,6 +31,7 @@ help:
 	@echo "  make install-dev                  Install development dependencies"
 	@echo "  make install                      Install package"
 	@echo "  make run                          Run the server"
+	@echo "  make diagram PLAYBOOK=... [FORMAT=plantuml|svg|png] [OUTPUT=...]  Generate DAG diagram via 'noetl diagram'"
 	@echo ""
 	@echo "Release Commands:"
 	@echo "  make release VER=X.Y.Z            Run release pipeline (or use VERSION=X.Y.Z)"
@@ -57,6 +58,12 @@ help:
 	@echo "  make deploy-platform-dev-repo     Shortcut with REPO_PATH=/path/to/repo"
 	@echo "  make deploy-dashboard             Deploy the Kubernetes dashboard manifests"
 	@echo "  make deploy-all                   Deploy platform and dashboard"
+	@echo "  make k8s-noetl-config            Apply NoETL ConfigMap and optional IBM quantum secret (NAMESPACE=ns)"
+	@echo "  make k8s-noetl-services          Apply NoETL Services (server, worker cpu/qpu) (NAMESPACE=ns)"
+	@echo "  make k8s-noetl-deployments       Apply NoETL Deployments (server, worker cpu/qpu) (NAMESPACE=ns)"
+	@echo "  make k8s-noetl-apply             Apply config, services, and deployments in order (NAMESPACE=ns)"
+	@echo "  make k8s-noetl-delete            Delete NoETL resources (reverse order) (NAMESPACE=ns)"
+	@echo "  make k8s-noetl-restart           Rollout restart server and worker deployments (NAMESPACE=ns)"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -224,3 +231,87 @@ release:
 	  exit 1; \
 	fi; \
 	./scripts/release.sh $$ver
+
+
+# === NoETL Kubernetes (direct kubectl) ===
+KUBECTL ?= kubectl
+NAMESPACE ?= default
+K8S_NOETL_DIR ?= $(K8S_DIR)/noetl
+
+.PHONY: k8s-noetl-config k8s-noetl-services k8s-noetl-deployments k8s-noetl-apply k8s-noetl-delete k8s-noetl-restart
+
+k8s-noetl-config:
+	@echo "Applying NoETL ConfigMap..."
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/noetl-configmap.yaml
+	@# Optional IBM Quantum secret
+	@if [ -f "$(K8S_NOETL_DIR)/ibm-quantum-secret.yaml" ]; then \
+		echo "Applying IBM Quantum secret..."; \
+		$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/ibm-quantum-secret.yaml; \
+	else \
+		echo "IBM Quantum secret manifest not found, skipping."; \
+	fi
+
+k8s-noetl-services:
+	@echo "Applying NoETL Services (server + worker pools)..."
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/noetl-service.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/worker-cpu-service.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/worker-qpu-service.yaml
+
+k8s-noetl-deployments:
+	@echo "Applying NoETL Deployments (server + worker pools)..."
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/noetl-deployment.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/worker-cpu-deployment.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_NOETL_DIR)/worker-qpu-deployment.yaml
+
+k8s-noetl-apply: k8s-noetl-config k8s-noetl-services k8s-noetl-deployments
+	@echo "NoETL Kubernetes resources applied to namespace $(NAMESPACE)."
+
+k8s-noetl-delete:
+	@echo "Deleting NoETL resources from namespace $(NAMESPACE)..."
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/worker-qpu-deployment.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/worker-cpu-deployment.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/noetl-deployment.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/worker-qpu-service.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/worker-cpu-service.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/noetl-service.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/ibm-quantum-secret.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_NOETL_DIR)/noetl-configmap.yaml --ignore-not-found
+
+k8s-noetl-restart:
+	@echo "Rolling out restarts for NoETL deployments in $(NAMESPACE)..."
+	-$(KUBECTL) -n $(NAMESPACE) rollout restart deployment/noetl || true
+	-$(KUBECTL) -n $(NAMESPACE) rollout restart deployment/noetl-worker-cpu || true
+	-$(KUBECTL) -n $(NAMESPACE) rollout restart deployment/noetl-worker-qpu || true
+
+
+
+# Generate a DAG diagram using the NoETL CLI
+.PHONY: diagram
+# Usage examples:
+#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml
+#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml FORMAT=svg
+#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml OUTPUT=playbook.puml
+#   make diagram PLAYBOOK=playbook.puml FORMAT=svg OUTPUT=playbook.svg
+# Variables:
+#   PLAYBOOK - path to .yaml/.yml or .puml file (required)
+#   FORMAT   - plantuml (default), svg, or png
+#   OUTPUT   - output file path; if omitted, defaults to <PLAYBOOK base>.<ext>
+
+diagram:
+	@if [ -z "$(PLAYBOOK)" ]; then \
+	  echo "Usage: make diagram PLAYBOOK=path/to/playbook.(yaml|yml|puml) [FORMAT=plantuml|svg|png] [OUTPUT=/path/to/out.ext]"; \
+	  exit 1; \
+	fi
+	@fmt="$(FORMAT)"; \
+	if [ -z "$$fmt" ]; then fmt="plantuml"; fi; \
+	out="$(OUTPUT)"; \
+	if [ -z "$$out" ]; then \
+	  base="$$(/bin/echo $(PLAYBOOK) | sed -E 's/\.(yaml|yml|json|puml|plantuml)$$//')"; \
+	  if [ "$$fmt" = "plantuml" ]; then ext="puml"; else ext="$$fmt"; fi; \
+	  out="$$base.$$ext"; \
+	  echo "No OUTPUT provided; defaulting to $$out"; \
+	fi; \
+	cli="$(VENV)/bin/noetl"; \
+	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	echo "Generating diagram from $(PLAYBOOK) -> $$out (format=$$fmt) using '$$cli'"; \
+	"$$cli" diagram "$(PLAYBOOK)" -f "$$fmt" -o "$$out"

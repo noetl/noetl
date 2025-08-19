@@ -20,6 +20,7 @@ PLAYBOOKS=(
   "examples/iac/gcp_vm_control_loop.yaml"
   "examples/credentials/http_bearer_example.yaml"
   "examples/quantum/grover_qiskit_playbook.yaml"
+  "examples/quantum/healthcare_grover_playbook.yaml"
 )
 
 for playbooks in "${PLAYBOOKS[@]}"; do

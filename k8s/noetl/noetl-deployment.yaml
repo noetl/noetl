@@ -27,9 +27,9 @@ spec:
                 name: noetl-secret
           env:
             - name: NOETL_INTERNAL_URL
-              value: "http://127.0.0.1:8084"
+              value: "http://noetl:8084"
             - name: NOETL_BASE_URL
-              value: "http://127.0.0.1:8084"
+              value: "http://noetl:8084"
           volumeMounts:
             - name: noetl-data
               mountPath: /opt/noetl/data

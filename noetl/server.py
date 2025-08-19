@@ -2117,3 +2117,154 @@ async def execute_postgres(
     except Exception as e:
         logger.error(f"Error executing PostgreSQL query or procedure: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Worker Pool Registry Endpoints ===
+from typing import Optional as _OptStr
+
+@router.post("/worker/pool/register", response_class=JSONResponse)
+async def register_worker_pool(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("pool")
+        runtime = (body.get("runtime") or "cpu").lower()
+        base_url = body.get("base_url")
+        status = (body.get("status") or "ready").lower()
+        capacity = body.get("capacity")
+        labels = body.get("labels")
+        meta = body.get("meta") or {}
+        if not name or not base_url:
+            raise HTTPException(status_code=400, detail="Missing required fields: name, base_url")
+
+        payload = {
+            "name": name,
+            "runtime": runtime,
+            "base_url": base_url,
+            "status": status,
+            "capacity": capacity,
+            "labels": labels,
+        }
+        # Ensure resource type exists and upsert into catalog
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                    INSERT INTO resource(name) VALUES ('worker_pool')
+                    ON CONFLICT (name) DO NOTHING
+                """)
+                await cursor.execute("""
+                    INSERT INTO catalog (
+                        resource_path, resource_type, resource_version, source,
+                        resource_location, content, payload, meta, template, timestamp
+                    )
+                    VALUES (%s, 'worker_pool', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = EXCLUDED.meta, timestamp = CURRENT_TIMESTAMP
+                """, (name, json.dumps(payload), json.dumps(meta)))
+                await conn.commit()
+        return {"status": "ok", "pool": {**payload, "meta": meta}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error registering worker pool: {e}")
+        raise HTTPException(status_code=500, detail=f"Error registering worker pool: {e}")
+
+
+@router.post("/worker/pool/heartbeat", response_class=JSONResponse)
+async def heartbeat_worker_pool(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("pool")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        # Optional updates
+        runtime = (body.get("runtime") or "").lower() or None
+        base_url = body.get("base_url")
+        status = (body.get("status") or "").lower() or None
+        capacity = body.get("capacity")
+        labels = body.get("labels")
+        meta = body.get("meta")
+
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # Fetch existing payload
+                await cursor.execute(
+                    """
+                    SELECT payload FROM catalog WHERE resource_type='worker_pool' AND resource_path=%s AND resource_version='current'
+                    """,
+                    (name,)
+                )
+                row = await cursor.fetchone()
+                current = row[0] if row and row[0] else None
+                try:
+                    cur_payload = json.loads(current) if isinstance(current, str) else (current or {})
+                except Exception:
+                    cur_payload = {}
+                # Merge updates
+                if runtime:
+                    cur_payload["runtime"] = runtime
+                if base_url:
+                    cur_payload["base_url"] = base_url
+                if status:
+                    cur_payload["status"] = status
+                if capacity is not None:
+                    cur_payload["capacity"] = capacity
+                if labels is not None:
+                    cur_payload["labels"] = labels
+                if not cur_payload.get("name"):
+                    cur_payload["name"] = name
+
+                await cursor.execute("""
+                    INSERT INTO resource(name) VALUES ('worker_pool')
+                    ON CONFLICT (name) DO NOTHING
+                """)
+                await cursor.execute(
+                    """
+                    INSERT INTO catalog (resource_path, resource_type, resource_version, source, resource_location, content, payload, meta, template, timestamp)
+                    VALUES (%s, 'worker_pool', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = COALESCE(EXCLUDED.meta, catalog.meta), timestamp = CURRENT_TIMESTAMP
+                    """,
+                    (name, json.dumps(cur_payload), json.dumps(meta) if meta is not None else json.dumps(None))
+                )
+                await conn.commit()
+        return {"status": "ok", "pool": cur_payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in worker pool heartbeat: {e}")
+        raise HTTPException(status_code=500, detail=f"Error in worker pool heartbeat: {e}")
+
+
+@router.get("/worker/pools", response_class=JSONResponse)
+async def list_worker_pools(request: Request, runtime: _OptStr = None, status: _OptStr = None):
+    try:
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT resource_path, payload, timestamp
+                    FROM catalog
+                    WHERE resource_type='worker_pool' AND resource_version='current'
+                    ORDER BY timestamp DESC
+                    """
+                )
+                rows = await cursor.fetchall()
+        pools: List[Dict[str, Any]] = []
+        for r in rows or []:
+            name = r[0]
+            payload = r[1]
+            try:
+                data = json.loads(payload) if isinstance(payload, str) else (payload or {})
+            except Exception:
+                data = {}
+            data.setdefault("name", name)
+            pools.append(data)
+        # Filter in Python (simpler and robust to JSONB content)
+        if runtime:
+            pools = [p for p in pools if str(p.get("runtime","")) == runtime.lower()]
+        if status:
+            pools = [p for p in pools if str(p.get("status","")) == status.lower()]
+        return {"items": pools}
+    except Exception as e:
+        logger.exception(f"Error listing worker pools: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing worker pools: {e}")

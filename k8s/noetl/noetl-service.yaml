@@ -5,12 +5,10 @@ metadata:
   labels:
     app: noetl
 spec:
-  type: NodePort
-  ports:
-    - port: 8084
-      targetPort: 8084
-      nodePort: 30084
-      protocol: TCP
-      name: http
+  type: ClusterIP
   selector:
     app: noetl
+  ports:
+    - name: http
+      port: 8084
+      targetPort: 8084

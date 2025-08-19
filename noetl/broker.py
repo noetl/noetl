@@ -4,13 +4,13 @@ import uuid
 import datetime
 import tempfile
 import httpx
-import traceback
 from typing import Dict, List, Any, Tuple, Optional
 from noetl.action import execute_task, report_event
 from noetl.render import render_template
 from noetl.common import deep_merge, get_bool
 from noetl.logger import setup_logger, log_error
 from noetl.worker import Worker
+from jinja2 import Environment, StrictUndefined, BaseLoader
 logger = setup_logger(__name__, include_location=True)
 
 class Broker:
@@ -90,6 +90,196 @@ class Broker:
             logger.warning(f"Server at {self.server_url} is not reachable: {e}")
             logger.warning("Disabling event reporting to prevent hanging")
             self.event_reporting_enabled = False
+
+    # --- Broker-owned workflow state and helpers ---
+    @property
+    def execution_id(self) -> str:
+        return getattr(self, "_execution_id", getattr(self.agent, "execution_id", None) or str(uuid.uuid4()))
+
+    @execution_id.setter
+    def execution_id(self, value: str) -> None:
+        self._execution_id = value
+
+    @property
+    def context(self) -> Dict[str, Any]:
+        return getattr(self, "_context", getattr(self.agent, "context", {"job": {"uuid": self.execution_id}}))
+
+    @context.setter
+    def context(self, value: Dict[str, Any]) -> None:
+        self._context = value or {"job": {"uuid": self.execution_id}}
+
+    @property
+    def playbook(self) -> Dict[str, Any]:
+        return getattr(self, "_playbook", getattr(self.agent, "playbook", {}))
+
+    @playbook.setter
+    def playbook(self, value: Dict[str, Any]) -> None:
+        self._playbook = value or {}
+
+    @property
+    def playbook_path(self) -> Optional[str]:
+        return getattr(self, "_playbook_path", getattr(self.agent, "playbook_path", None))
+
+    @playbook_path.setter
+    def playbook_path(self, value: Optional[str]) -> None:
+        self._playbook_path = value
+
+    @property
+    def jinja_env(self):
+        env = getattr(self, "_jinja_env", None)
+        if env is None:
+            env = getattr(self.agent, "jinja_env", None)
+        if env is None:
+            env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+        self._jinja_env = env
+        return env
+
+    @jinja_env.setter
+    def jinja_env(self, value) -> None:
+        self._jinja_env = value
+
+    @property
+    def next_step_with(self) -> Optional[Dict[str, Any]]:
+        return getattr(self, "_next_step_with", None)
+
+    @next_step_with.setter
+    def next_step_with(self, value: Optional[Dict[str, Any]]) -> None:
+        self._next_step_with = value
+
+    def update_context(self, key: str, value: Any) -> None:
+        ctx = self.context
+        ctx[key] = value
+        self.context = ctx
+
+    def get_context(self) -> Dict[str, Any]:
+        return self.context
+
+    def find_step(self, step_name: str) -> Optional[Dict[str, Any]]:
+        for step in self.playbook.get('workflow', []) or []:
+            if step.get('step') == step_name:
+                return step
+        return None
+
+    def find_task(self, task_name: str) -> Optional[Dict[str, Any]]:
+        for task in self.playbook.get('workbook', []) or []:
+            if task.get('name') == task_name or task.get('task') == task_name:
+                if 'call' in task:
+                    call_config = task['call'].copy()
+                    for k, v in task.items():
+                        if k != 'call' and k not in call_config:
+                            call_config[k] = v
+                    return call_config
+                return task
+        return None
+
+    def _get_worker_base_url(self, runtime: str) -> str:
+        """Resolve worker base URL for a given runtime (cpu|gpu|qpu).
+        Preference order:
+        1) Server registry /api/worker/pools?runtime=...&status=ready (if server_url configured)
+        2) Environment variables NOETL_WORKER_CPU_URL | NOETL_WORKER_GPU_URL | NOETL_WORKER_QPU_URL
+        3) NOETL_WORKER_DEFAULT_URL or broker.server_url
+        """
+        rt = (runtime or '').lower()
+        # 1) Try registry
+        try:
+            if self.server_url:
+                url = self.server_url.rstrip('/') + f"/api/worker/pools?runtime={rt}&status=ready"
+                with httpx.Client(timeout=3.0) as client:
+                    resp = client.get(url)
+                    if resp.status_code == 200:
+                        items = (resp.json() or {}).get('items', [])
+                        if items:
+                            pool = items[0]  # naive: pick first
+                            base = pool.get('base_url') or pool.get('url')
+                            if base:
+                                return base
+        except Exception as e:
+            logger.debug(f"Broker: registry lookup failed for runtime={rt}: {e}")
+
+        # 2) Env vars
+        cpu = os.environ.get('NOETL_WORKER_CPU_URL')
+        gpu = os.environ.get('NOETL_WORKER_GPU_URL')
+        qpu = os.environ.get('NOETL_WORKER_QPU_URL')
+        if rt == 'qpu' and qpu:
+            return qpu
+        if rt == 'gpu' and gpu:
+            return gpu
+        if rt == 'cpu' and cpu:
+            return cpu
+
+        # 3) Fallback
+        return os.environ.get('NOETL_WORKER_DEFAULT_URL') or self.server_url
+
+    def _select_runtime(self, step_name: str, step_config: Dict, task_name: str, task_config: Dict) -> str:
+        """Decide runtime ('cpu' | 'gpu' | 'qpu') for a given step/task.
+        Priority:
+          1) Explicit step_config['runtime'] or step_config['with']['runtime']
+          2) Heuristic: 'qpu'/'quantum' => qpu; 'gpu'/'cuda' => gpu
+          3) Default: 'cpu'
+        Special cases handled by caller (e.g., 'secrets' kept local).
+        """
+        explicit = step_config.get('runtime')
+        if not explicit:
+            with_params = step_config.get('with') or {}
+            explicit = with_params.get('runtime')
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip().lower()
+
+        composite = f"{step_name or ''}::{task_name or ''}".lower()
+        if 'qpu' in composite or 'quantum' in composite:
+            return 'qpu'
+        if 'gpu' in composite or 'cuda' in composite:
+            return 'gpu'
+
+        return 'cpu'
+
+    def _dispatch_to_worker(self, task_config: Dict, task_name: str, context: Dict, runtime: str) -> Dict:
+        """Send a single task to the appropriate worker runtime and return a normalized result.
+        Returns a dict like execute_task: {'id','status','data','error'}
+        """
+        try:
+            base = self._get_worker_base_url(runtime)
+            endpoint = base.rstrip('/') + '/api/worker/task/execute'
+            payload = {
+                'task': task_config,
+                'context': context,
+                'execution_id': self.agent.execution_id,
+                'callback_url': (self.server_url.rstrip('/') + '/api/events') if self.event_reporting_enabled else None,
+            }
+            if 'requirements' in task_config and isinstance(task_config['requirements'], list):
+                payload['requirements'] = task_config['requirements']
+
+            with httpx.Client(timeout=float(os.environ.get('NOETL_WORKER_HTTP_TIMEOUT', '60'))) as client:
+                resp = client.post(endpoint, json=payload)
+                if resp.status_code != 200:
+                    return {
+                        'id': str(uuid.uuid4()),
+                        'status': 'error',
+                        'error': f"Worker dispatch failed ({resp.status_code}): {resp.text}"
+                    }
+                body = resp.json()
+        except Exception as e:
+            return {
+                'id': str(uuid.uuid4()),
+                'status': 'error',
+                'error': f"Worker dispatch exception: {e}"
+            }
+
+        result_obj = body.get('result') if isinstance(body, dict) else None
+        if isinstance(result_obj, dict) and 'status' in result_obj:
+            return {
+                'id': result_obj.get('id', body.get('task_id')),
+                'status': result_obj.get('status', body.get('status')),
+                'data': result_obj.get('data'),
+                'error': result_obj.get('error')
+            }
+        else:
+            return {
+                'id': body.get('task_id'),
+                'status': body.get('status', 'error'),
+                'data': None,
+                'error': body.get('error') or 'No result object returned from worker'
+            }
 
     def execute_playbook_call(self, path: str, version: str = None, input_payload: Dict = None, merge: bool = True) -> Dict:
         """
@@ -194,7 +384,7 @@ class Broker:
         logger.debug(f"BROKER.EXECUTE_STEP: Start time={start_time.isoformat()}")
 
         logger.debug(f"BROKER.EXECUTE_STEP: Finding step configuration for step_name={step_name}")
-        step_config = self.agent.find_step(step_name)
+        step_config = self.find_step(step_name)
         logger.debug(f"BROKER.EXECUTE_STEP: Step configuration: {step_config}")
         
         if not step_config:
@@ -210,7 +400,7 @@ class Broker:
             logger.debug(f"BROKER.EXECUTE_STEP: Writing step_error event log")
             self.write_event_log(
                 'step_error', step_id, step_name, 'step',
-                'error', 0, self.agent.get_context(), None,
+                'error', 0, self.get_context(), None,
                 {'error': error_msg}, None
             )
 
@@ -229,7 +419,7 @@ class Broker:
         
         if isinstance(pass_value, str):
             logger.debug(f"BROKER.EXECUTE_STEP: Pass value is a string, rendering template")
-            pass_value = render_template(self.agent.jinja_env, pass_value, self.agent.get_context(), strict_keys=True)
+            pass_value = render_template(self.jinja_env, pass_value, self.get_context(), strict_keys=True)
             logger.debug(f"BROKER.EXECUTE_STEP: Rendered pass value: {pass_value}")
             
         pass_flag = get_bool(pass_value)
@@ -300,14 +490,14 @@ class Broker:
 
         logger.info(f"BROKER.EXECUTE_STEP: Executing step: {step_name}")
         logger.debug(f"BROKER.EXECUTE_STEP: Step details - step_name={step_name}, step_with={step_with}")
-        logger.debug(f"BROKER.EXECUTE_STEP: Context before update: {self.agent.context}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Context before update: {self.context}")
         
-        step_context = self.agent.get_context()
+        step_context = self.get_context()
         logger.debug(f"BROKER.EXECUTE_STEP: Got step context")
         
         if step_with:
             logger.debug(f"BROKER.EXECUTE_STEP: Rendering step_with template: {step_with}")
-            rendered_with = render_template(self.agent.jinja_env, step_with, step_context)
+            rendered_with = render_template(self.jinja_env, step_with, step_context)
             logger.debug(f"BROKER.EXECUTE_STEP: Rendered step_with: {rendered_with}")
             
             if rendered_with:
@@ -489,22 +679,29 @@ class Broker:
                     execution_task_config = {}
                     logger.debug(f"BROKER.EXECUTE_STEP: Using empty execution_task_config")
 
-                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with execution_task_config={execution_task_config}, task_name={task_name}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Preparing to execute workbook task via worker dispatch when applicable")
                 merged_context = {**step_context}
                 if 'with' in execution_task_config:
                     task_with = render_template(self.agent.jinja_env, execution_task_config.get('with', {}), step_context, strict_keys=False)
                     merged_context.update(task_with)
                     logger.debug(f"BROKER.EXECUTE_STEP: Created merged_context by combining step_context and rendered task_with: {task_with}")
-                
-                result = execute_task(
-                    execution_task_config,
-                    task_name,
-                    merged_context,
-                    self.agent.jinja_env,
-                    self.agent.secret_manager,
-                    self.write_event_log if self.has_log_event() else None
-                )
-                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+
+                if (execution_task_config or {}).get('type') == 'secrets':
+                    logger.debug("BROKER.EXECUTE_STEP: Executing secrets task locally (requires SecretManager)")
+                    result = execute_task(
+                        execution_task_config,
+                        task_name,
+                        merged_context,
+                        self.agent.jinja_env,
+                        self.agent.secret_manager,
+                        self.write_event_log if self.has_log_event() else None
+                    )
+                else:
+                    runtime = self._select_runtime(step_name, step_config, task_name, execution_task_config)
+                    logger.debug(f"BROKER.EXECUTE_STEP: Dispatching workbook task to runtime={runtime}")
+                    result = self._dispatch_to_worker(execution_task_config, task_name, merged_context, runtime)
+
+                logger.debug(f"BROKER.EXECUTE_STEP: Task execution returned result={result}")
                 logger.info(f"BROKER.EXECUTE_STEP: EXECUTED workbook task: {task_name} with status: {result.get('status', 'unknown')}")
                 
             elif call_type == 'Playbook':
@@ -570,16 +767,23 @@ class Broker:
                 task_name_to_use = task_name or f"step_{call_type}_task"
                 logger.debug(f"BROKER.EXECUTE_STEP: Using task_name: {task_name_to_use}")
                 
-                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with task_config={task_config}, task_name={task_name_to_use}")
-                result = execute_task(
-                    task_config,
-                    task_name_to_use,
-                    task_context,
-                    self.agent.jinja_env,
-                    self.agent.secret_manager,
-                    self.write_event_log if self.has_log_event() else None
-                )
-                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Preparing to execute {call_type} task via worker dispatch when applicable")
+                if (task_config or {}).get('type') == 'secrets':
+                    logger.debug("BROKER.EXECUTE_STEP: Executing secrets task locally (requires SecretManager)")
+                    result = execute_task(
+                        task_config,
+                        task_name_to_use,
+                        task_context,
+                        self.agent.jinja_env,
+                        self.agent.secret_manager,
+                        self.write_event_log if self.has_log_event() else None
+                    )
+                else:
+                    runtime = self._select_runtime(step_name, step_config, task_name_to_use, task_config)
+                    logger.debug(f"BROKER.EXECUTE_STEP: Dispatching {call_type} task to runtime={runtime}")
+                    result = self._dispatch_to_worker(task_config, task_name_to_use, task_context, runtime)
+
+                logger.debug(f"BROKER.EXECUTE_STEP: Task execution returned result={result}")
                 logger.info(f"BROKER.EXECUTE_STEP: EXECUTED {call_type} task: {task_name_to_use} with status: {result.get('status', 'unknown')}")
                 
             else:

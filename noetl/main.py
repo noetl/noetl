@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from noetl.server import router as server_router
 from noetl.system import router as system_router
+from noetl.worker import router as worker_router, register_worker_pool_from_env
 from noetl.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -69,6 +70,17 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
     app.include_router(server_router, prefix="/api")
     app.include_router(system_router, prefix="/api/sys", tags=["System"])
+
+    enable_worker_api = os.environ.get("NOETL_ENABLE_WORKER_API", "true").lower() in ("1", "true", "yes", "y")
+    if enable_worker_api:
+        app.include_router(worker_router, prefix="/api/worker", tags=["Worker"])
+
+        @app.on_event("startup")
+        async def _register_worker_pool_startup():
+            try:
+                register_worker_pool_from_env()
+            except Exception as e:
+                logger.warning(f"Worker pool self-registration failed: {e}")
 
     @app.get("/health", include_in_schema=False)
     async def health():

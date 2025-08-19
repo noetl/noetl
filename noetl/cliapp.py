@@ -9,11 +9,13 @@ import time
 from pathlib import Path
 import typer
 import uvicorn
+from typing import Optional
 from noetl.logger import setup_logger
 from noetl.common import DateTimeEncoder
 from noetl.schema import DatabaseSchema
 from noetl.worker import Worker
 from noetl.config import settings
+from noetl.diagram import render_plantuml_file, render_image_kroki
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -853,3 +855,48 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+@cli_app.command("diagram")
+def diagram_playbook(
+    playbook_file: str = typer.Argument(..., help="Path to playbook YAML or .puml file."),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path. For plantuml, writes text; for svg/png, writes bytes."),
+    format: str = typer.Option("plantuml", "--format", "-f", help="Diagram format: plantuml | svg | png")
+):
+    """Generate a DAG diagram for a NoETL playbook (PlantUML text or image via Kroki)."""
+    try:
+        fmt = (format or "plantuml").lower()
+
+        if playbook_file.lower().endswith((".puml", ".plantuml")):
+            with open(playbook_file, "r") as f:
+                puml = f.read()
+        else:
+            puml = render_plantuml_file(playbook_file)
+
+        if fmt == "plantuml":
+            if output:
+                with open(output, "w") as f:
+                    f.write(puml)
+                typer.echo(f"PlantUML written to {output}")
+            else:
+                typer.echo(puml)
+            return
+
+        if fmt in ("svg", "png"):
+            out_path = output
+            if not out_path:
+                base, _ = os.path.splitext(playbook_file)
+                out_path = f"{base}.{fmt}"
+                typer.echo(f"No --output provided; writing to {out_path}")
+            img_bytes = render_image_kroki(puml, fmt=fmt)
+            with open(out_path, "wb") as f:
+                f.write(img_bytes)
+            typer.echo(f"{fmt.upper()} written to {out_path}")
+            return
+
+        typer.echo(f"Unsupported format: {format}. Use one of: plantuml, svg, png")
+        raise typer.Exit(code=1)
+
+    except Exception as e:
+        typer.echo(f"Error generating diagram: {e}")
+        raise typer.Exit(code=1)

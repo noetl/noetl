@@ -84,7 +84,7 @@ class DatabaseSchema:
                     error_msg = "POSTGRES_PORT environment variable is required but not provided"
                     logger.error(error_msg)
                     raise ValueError(error_msg)
-
+                
                 postgres_user = os.environ.get('POSTGRES_USER')
                 postgres_password = os.environ.get('POSTGRES_PASSWORD')
                 db_name = os.environ.get('POSTGRES_DB')

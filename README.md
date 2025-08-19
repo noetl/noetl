@@ -147,6 +147,52 @@ EOF
 
 See [Kubernetes Deployment Guide](k8s/KIND-README.md) for detailed instructions.
 
+## Deploy: Server + Worker Pools (CPU and QPU)
+
+Below are practical ways to deploy the NoETL server and run workers.
+
+Option A — Local (Docker Compose) quick start
+- Start Postgres and the NoETL server (exposes API and built-in Worker API):
+  - docker compose up -d database pip-api
+  - Server will listen on http://localhost:8084 and include /api/worker endpoints.
+- Register example playbooks:
+  - ./bin/register_playbook_examples.sh 8084 localhost
+- Execute a playbook via the server API/CLI:
+  - noetl execute --path "weather/weather_example" --host localhost --port 8084 --payload '{}'
+- Notes:
+  - In simple/local setups, the server’s built-in Worker API handles task execution; no separate worker containers are required.
+  - Health check: curl http://localhost:8084/health
+
+Optional (Local) — Run separate worker processes
+- You can spin up separate worker API processes on different ports and point the Broker to them via env vars:
+  - CPU worker:
+    - NOETL_ENABLE_WORKER_API=true noetl server start --host 0.0.0.0 --port 18084
+  - QPU worker (requires quantum SDKs installed; e.g., pip install "qiskit>=1.0" "qiskit-ibm-runtime>=0.23"):
+    - export QISKIT_IBM_TOKEN=...; export QISKIT_IBM_INSTANCE=...
+    - NOETL_ENABLE_WORKER_API=true noetl server start --host 0.0.0.0 --port 18085
+  - In your server environment (port 8084), set:
+    - NOETL_WORKER_CPU_URL=http://localhost:18084
+    - NOETL_WORKER_QPU_URL=http://localhost:18085
+  - Now the Broker will route tasks to the appropriate worker endpoints.
+
+Option B — Kubernetes (recommended for separate CPU/QPU pools)
+- Prerequisites:
+  - Build/push images as needed (especially the QPU worker image docker/noetl/worker-qpu/Dockerfile if using QPU).
+  - Create your noetl-secret and (optional) ibm-quantum-secret.
+- Apply resources with Makefile targets (set NAMESPACE=your-namespace):
+  - make k8s-noetl-apply NAMESPACE=your-ns
+    - This applies ConfigMap, Services (server, CPU worker, QPU worker), and Deployments.
+  - Validate:
+    - kubectl get pods -n your-ns -l app=noetl
+    - kubectl get pods -n your-ns -l app=noetl-worker
+    - kubectl port-forward -n your-ns deploy/noetl 8084:8084
+    - curl http://localhost:8084/health
+  - Register and execute:
+    - noetl register examples/weather/weather_example.yaml --host localhost --port 8084
+    - noetl execute --path "weather/weather_example" --host localhost --port 8084 --payload '{}'
+- Details and advanced guidance (node labels, taints, QPU credentials, in-cluster URLs):
+  - See k8s/docs/worker_pools.md
+
 ## Workflow DSL Structure
 
 NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key components of a NoETL playbook include:
@@ -250,3 +296,34 @@ For information about contributing to NoETL or building from source:
 ## License
 
 NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+
+## Diagram generation (PlantUML, SVG/PNG)
+Generate a DAG diagram from a NoETL playbook.
+
+Usage:
+
+- Print PlantUML to stdout:
+  `noetl diagram /path/to/playbook.yaml`
+
+- Save PlantUML to a .puml:
+  `noetl diagram /path/to/playbook.yaml -o playbook.puml`
+
+- Render directly to SVG:
+  `noetl diagram /path/to/playbook.yaml -f svg -o playbook.svg`
+
+- Render directly to PNG:
+  `noetl diagram /path/to/playbook.yaml -f png -o playbook.png`
+
+- Render an existing .puml file to SVG:
+  `noetl diagram /path/to/playbook.puml -f svg -o playbook.svg`
+
+Tips:
+- If you omit --output for image formats, the output filename is derived from the input (e.g., path/to/playbook.svg).
+- Set NOETL_KROKI_URL to use a self-hosted Kroki server (default is https://kroki.io).
+
+Example with the provided weather playbook:
+  `noetl diagram examples/weather/weather_loop_example.yaml -f svg -o weather_loop_example.svg`
+
+Using makefile:
+  ` make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml FORMAT=svg`
