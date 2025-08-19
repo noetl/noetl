@@ -5,7 +5,7 @@ import datetime
 import tempfile
 import httpx
 from typing import Dict, List, Any, Tuple, Optional
-from noetl.action import execute_task, report_event
+from noetl.worker.action import execute_task, report_event
 from noetl.render import render_template
 from noetl.common import deep_merge, get_bool
 from noetl.logger import setup_logger, log_error

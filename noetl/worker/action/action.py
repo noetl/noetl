@@ -20,6 +20,13 @@ except ImportError:
 
 logger = setup_logger(__name__, include_location=True)
 
+# Use per-action modules implementations
+from . import http as _http
+from . import python as _python
+from . import duckdb as _duckdb
+from . import postgres as _postgres
+from . import secrets as _secrets
+
 import threading
 from contextlib import contextmanager
 
@@ -1541,15 +1548,15 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
 
     if task_type == 'http':
         logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_http_task")
-        result = execute_http_task(task_config, context, jinja_env, task_with, log_event_callback)
+        result = _http.execute_http_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'python':
         logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_python_task")
-        result = execute_python_task(task_config, context, jinja_env, task_with, log_event_callback)
+        result = _python.execute_python_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'duckdb':
         logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_duckdb_task")
-        result = execute_duckdb_task(task_config, context, jinja_env, task_with, log_event_callback)
+        result = _duckdb.execute_duckdb_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'postgres':
-        result = execute_postgres_task(task_config, context, jinja_env, task_with, log_event_callback)
+        result = _postgres.execute_postgres_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'secrets':
         if not secret_manager:
             error_msg = "SecretManager is required for secrets tasks."
@@ -1579,7 +1586,7 @@ def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: En
                 'error': error_msg
             }
 
-        result = execute_secrets_task(task_config, context, secret_manager, task_with, log_event_callback)
+        result = _secrets.execute_secrets_task(task_config, context, secret_manager, task_with, log_event_callback)
     else:
         error_msg = f"Unsupported task type: {task_type}"
         logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")

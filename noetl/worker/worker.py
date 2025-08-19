@@ -942,7 +942,7 @@ class Worker:
 import subprocess
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
-from noetl.action import execute_task
+from noetl.worker.action import execute_task
 
 
 try:
