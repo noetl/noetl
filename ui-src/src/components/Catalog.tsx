@@ -1,10 +1,34 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Layout, Row, Col, Input, Card, Button, Typography, Space, Spin, Alert, Tag, message, Modal, Tabs, Upload, Checkbox } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined, FileTextOutlined, UploadOutlined } from '@ant-design/icons';
-import { apiService } from '../services/api';
-import { PlaybookData, VisualizationWidget } from '../types';
-import WidgetRenderer from './WidgetRenderer';
-import {useNavigate} from "react-router-dom";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  Layout,
+  Row,
+  Col,
+  Input,
+  Card,
+  Button,
+  Typography,
+  Space,
+  Spin,
+  Alert,
+  Tag,
+  message,
+  Modal,
+  Tabs,
+  Upload,
+  Checkbox,
+} from "antd";
+import {
+  SearchOutlined,
+  PlayCircleOutlined,
+  EditOutlined,
+  EyeOutlined,
+  FileTextOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
+import { apiService } from "../services/api";
+import { PlaybookData, VisualizationWidget } from "../types";
+import WidgetRenderer from "./WidgetRenderer";
+import { useNavigate } from "react-router-dom";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -20,16 +44,20 @@ const Catalog: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  
+  const [searchQuery, setSearchQuery] = useState("");
+
   // Payload modal state
   const [payloadModalVisible, setPayloadModalVisible] = useState(false);
-  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string | null>(null);
-  const [selectedPlaybookVersion, setSelectedPlaybookVersion] = useState<string | null>(null);
-  const [payloadJson, setPayloadJson] = useState('');
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string | null>(
+    null,
+  );
+  const [selectedPlaybookVersion, setSelectedPlaybookVersion] = useState<
+    string | null
+  >(null);
+  const [payloadJson, setPayloadJson] = useState("");
   const [payloadFile, setPayloadFile] = useState<File | null>(null);
   const [mergePayload, setMergePayload] = useState(false);
-  const [activePayloadTab, setActivePayloadTab] = useState('json');
+  const [activePayloadTab, setActivePayloadTab] = useState("json");
 
   // Debounced search function
   const debounceSearch = useCallback(
@@ -42,39 +70,49 @@ const Catalog: React.FC = () => {
         }, 300);
       };
     })(),
-    [allPlaybooks]
+    [allPlaybooks],
   );
 
-  const handleSearchInternal = useCallback(async (query: string) => {
-    if (!query.trim()) {
-      // If empty search, show all playbooks
-      setPlaybooks(allPlaybooks);
-      return;
-    }
-
-    try {
-      setSearchLoading(true);
-      
-      // Try server-side search first
-      try {
-        const results = await apiService.searchPlaybooks(query);
-        setPlaybooks(results);
-      } catch (serverError) {
-        // Fallback to client-side search if server search fails
-        console.warn('Server search failed, falling back to client-side search:', serverError);
-        const filteredPlaybooks = allPlaybooks.filter(playbook =>
-          playbook.name.toLowerCase().includes(query.toLowerCase()) ||
-          (playbook.description && playbook.description.toLowerCase().includes(query.toLowerCase()))
-        );
-        setPlaybooks(filteredPlaybooks);
+  const handleSearchInternal = useCallback(
+    async (query: string) => {
+      if (!query.trim()) {
+        // If empty search, show all playbooks
+        setPlaybooks(allPlaybooks);
+        return;
       }
-    } catch (err) {
-      console.error('Search failed:', err);
-      message.error('Search failed. Please try again.');
-    } finally {
-      setSearchLoading(false);
-    }
-  }, [allPlaybooks]);
+
+      try {
+        setSearchLoading(true);
+
+        // Try server-side search first
+        try {
+          const results = await apiService.searchPlaybooks(query);
+          setPlaybooks(results);
+        } catch (serverError) {
+          // Fallback to client-side search if server search fails
+          console.warn(
+            "Server search failed, falling back to client-side search:",
+            serverError,
+          );
+          const filteredPlaybooks = allPlaybooks.filter(
+            (playbook) =>
+              playbook.name.toLowerCase().includes(query.toLowerCase()) ||
+              (playbook.description &&
+                playbook.description
+                  .toLowerCase()
+                  .includes(query.toLowerCase())),
+          );
+          setPlaybooks(filteredPlaybooks);
+        }
+      } catch (err) {
+        console.error("Search failed:", err);
+        message.error("Search failed. Please try again.");
+      } finally {
+        setSearchLoading(false);
+      }
+    },
+    [allPlaybooks],
+  );
 
   const handleSearch = (query: string) => {
     handleSearchInternal(query);
@@ -92,15 +130,17 @@ const Catalog: React.FC = () => {
       // Fetch playbooks and catalog widgets from FastAPI
       const [playbooksResponse, widgetsResponse] = await Promise.all([
         apiService.getPlaybooks(),
-        apiService.getCatalogWidgets()
+        apiService.getCatalogWidgets(),
       ]);
 
       setPlaybooks(playbooksResponse);
       setAllPlaybooks(playbooksResponse); // Store all playbooks for local filtering
       setWidgets(widgetsResponse);
     } catch (err) {
-      console.error('Failed to fetch catalog data:', err);
-      setError('Failed to load catalog data. Please check if the server is running.');
+      console.error("Failed to fetch catalog data:", err);
+      setError(
+        "Failed to load catalog data. Please check if the server is running.",
+      );
     } finally {
       setLoading(false);
     }
@@ -115,12 +155,12 @@ const Catalog: React.FC = () => {
   const handleExecutePlaybook = async (playbookId: string) => {
     try {
       await apiService.executePlaybook(playbookId);
-      message.success('Playbook execution started successfully!');
+      message.success("Playbook execution started successfully!");
       // Redirect to execution page
-      navigate('/execution');
+      navigate("/execution");
     } catch (err) {
-      console.error('Failed to execute playbooks:', err);
-      message.error('Failed to execute playbooks. Please try again.');
+      console.error("Failed to execute playbooks:", err);
+      message.error("Failed to execute playbooks. Please try again.");
     }
   };
 
@@ -129,29 +169,29 @@ const Catalog: React.FC = () => {
     setSelectedPlaybookVersion(version);
     setPayloadModalVisible(true);
     // Reset form
-    setPayloadJson('');
+    setPayloadJson("");
     setPayloadFile(null);
     setMergePayload(false);
-    setActivePayloadTab('json');
+    setActivePayloadTab("json");
   };
 
   const handleExecuteWithPayload = async () => {
     if (!selectedPlaybookId || !selectedPlaybookVersion) {
-      message.error('No playbook selected');
+      message.error("No playbook selected");
       return;
     }
 
     let payloadObject = null;
 
     try {
-      if (activePayloadTab === 'json' && payloadJson.trim()) {
+      if (activePayloadTab === "json" && payloadJson.trim()) {
         payloadObject = JSON.parse(payloadJson);
-      } else if (activePayloadTab === 'file' && payloadFile) {
+      } else if (activePayloadTab === "file" && payloadFile) {
         const fileText = await payloadFile.text();
         payloadObject = JSON.parse(fileText);
       }
     } catch (error) {
-      message.error('Invalid JSON format. Please check your input.');
+      message.error("Invalid JSON format. Please check your input.");
       return;
     }
 
@@ -169,15 +209,15 @@ const Catalog: React.FC = () => {
     try {
       setPayloadModalVisible(false);
       message.info(`Executing playbook "${selectedPlaybookId}"...`);
-      
+
       const response = await apiService.executePlaybookWithPayload(requestBody);
       message.success(`Execution started. ID: ${response.execution_id}`);
-      
+
       // Navigate to execution page
       navigate(`/execution/${response.execution_id}`);
     } catch (error) {
-      console.error('Failed to execute playbook with payload:', error);
-      message.error('Failed to execute playbook. Please try again.');
+      console.error("Failed to execute playbook with payload:", error);
+      message.error("Failed to execute playbook. Please try again.");
     }
   };
 
@@ -185,10 +225,10 @@ const Catalog: React.FC = () => {
     setPayloadModalVisible(false);
     setSelectedPlaybookId(null);
     setSelectedPlaybookVersion(null);
-    setPayloadJson('');
+    setPayloadJson("");
     setPayloadFile(null);
     setMergePayload(false);
-    setActivePayloadTab('json');
+    setActivePayloadTab("json");
   };
 
   const handleFileUpload = (file: File) => {
@@ -203,16 +243,20 @@ const Catalog: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'green';
-      case 'inactive': return 'red';
-      case 'draft': return 'orange';
-      default: return 'default';
+      case "active":
+        return "green";
+      case "inactive":
+        return "red";
+      case "draft":
+        return "orange";
+      default:
+        return "default";
     }
   };
 
   if (loading) {
     return (
-      <Content style={{ padding: '50px', textAlign: 'center' }}>
+      <Content style={{ padding: "50px", textAlign: "center" }}>
         <Spin size="large" />
         <div style={{ marginTop: 16 }}>Loading catalog...</div>
       </Content>
@@ -221,7 +265,7 @@ const Catalog: React.FC = () => {
 
   if (error) {
     return (
-      <Content style={{ padding: '50px' }}>
+      <Content style={{ padding: "50px" }}>
         <Alert message="Error" description={error} type="error" showIcon />
       </Content>
     );
@@ -229,10 +273,8 @@ const Catalog: React.FC = () => {
 
   return (
     <Content>
-      <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        <Title level={2}>
-          📚 Playbook Catalog
-        </Title>
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Title level={2}>📚 Playbook Catalog</Title>
 
         <Search
           placeholder="Search playbooks..."
@@ -257,29 +299,37 @@ const Catalog: React.FC = () => {
         )}
 
         {/* Playbooks list */}
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           {playbooks.map((playbook) => (
-            <Card
-              key={playbook.id}
-              size="small"
-              style={{ width: '100%' }}
-            >
+            <Card key={playbook.id} size="small" style={{ width: "100%" }}>
               <Row align="middle" gutter={16}>
                 <Col flex="auto">
-                  <Space direction="horizontal" size="large" style={{ width: '100%' }}>
+                  <Space
+                    direction="horizontal"
+                    size="large"
+                    style={{ width: "100%" }}
+                  >
                     <div>
                       <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
                         {playbook.name}
-                        <Tag color={getStatusColor(playbook.status)} style={{ marginLeft: 8 }}>
+                        <Tag
+                          color={getStatusColor(playbook.status)}
+                          style={{ marginLeft: 8 }}
+                        >
                           {playbook.status}
                         </Tag>
                       </Title>
                       <Space direction="horizontal" size="large">
                         <Text type="secondary">Path: {playbook.id}</Text>
-                        <Text type="secondary">Version: {playbook.resource_version}</Text>
-                        <Text type="secondary">Tasks: {playbook.tasks_count}</Text>
                         <Text type="secondary">
-                          Updated: {new Date(playbook.updated_at).toLocaleDateString()}
+                          Version: {playbook.resource_version}
+                        </Text>
+                        <Text type="secondary">
+                          Tasks: {playbook.tasks_count}
+                        </Text>
+                        <Text type="secondary">
+                          Updated:{" "}
+                          {new Date(playbook.updated_at).toLocaleDateString()}
                         </Text>
                       </Space>
                       {playbook.description && (
@@ -309,7 +359,12 @@ const Catalog: React.FC = () => {
                     <Button
                       type="text"
                       icon={<FileTextOutlined />}
-                      onClick={() => handleViewPayload(playbook.id, playbook.resource_version)}
+                      onClick={() =>
+                        handleViewPayload(
+                          playbook.id,
+                          playbook.resource_version,
+                        )
+                      }
                     >
                       Payload
                     </Button>
@@ -317,7 +372,7 @@ const Catalog: React.FC = () => {
                       type="primary"
                       icon={<PlayCircleOutlined />}
                       onClick={() => handleExecutePlaybook(playbook.id)}
-                      disabled={playbook.status !== 'active'}
+                      disabled={playbook.status !== "active"}
                     >
                       Execute
                     </Button>
@@ -330,8 +385,14 @@ const Catalog: React.FC = () => {
 
         {playbooks.length === 0 && !loading && (
           <Alert
-            message={searchQuery ? "No playbooks found" : "No playbooks available"}
-            description={searchQuery ? `No playbooks match your search for "${searchQuery}".` : "There are no playbooks in the catalog yet."}
+            message={
+              searchQuery ? "No playbooks found" : "No playbooks available"
+            }
+            description={
+              searchQuery
+                ? `No playbooks match your search for "${searchQuery}".`
+                : "There are no playbooks in the catalog yet."
+            }
             type="info"
             showIcon
           />
@@ -340,7 +401,7 @@ const Catalog: React.FC = () => {
 
       {/* Payload Modal */}
       <Modal
-        title={`Execute Playbook with Payload: ${selectedPlaybookId || ''}`}
+        title={`Execute Playbook with Payload: ${selectedPlaybookId || ""}`}
         open={payloadModalVisible}
         onCancel={handleClosePayloadModal}
         width={700}
@@ -348,15 +409,23 @@ const Catalog: React.FC = () => {
           <Button key="cancel" onClick={handleClosePayloadModal}>
             Cancel
           </Button>,
-          <Button key="execute" type="primary" onClick={handleExecuteWithPayload}>
+          <Button
+            key="execute"
+            type="primary"
+            onClick={handleExecuteWithPayload}
+          >
             Execute with Payload
           </Button>,
         ]}
       >
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Tabs activeKey={activePayloadTab} onChange={setActivePayloadTab}>
             <TabPane tab="JSON Input" key="json">
-              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
                 <Text>Enter JSON payload:</Text>
                 <TextArea
                   rows={8}
@@ -367,13 +436,21 @@ const Catalog: React.FC = () => {
               </Space>
             </TabPane>
             <TabPane tab="File Upload" key="file">
-              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
                 <Text>Upload JSON file:</Text>
                 <Upload
                   beforeUpload={handleFileUpload}
                   maxCount={1}
                   accept=".json"
-                  fileList={payloadFile ? [{ uid: '1', name: payloadFile.name, status: 'done' }] : []}
+                  fileList={
+                    payloadFile
+                      ? [{ uid: "1", name: payloadFile.name, status: "done" }]
+                      : []
+                  }
                   onRemove={() => setPayloadFile(null)}
                 >
                   <Button icon={<UploadOutlined />}>Select JSON File</Button>
@@ -384,7 +461,7 @@ const Catalog: React.FC = () => {
               </Space>
             </TabPane>
           </Tabs>
-          
+
           <Checkbox
             checked={mergePayload}
             onChange={(e) => setMergePayload(e.target.checked)}
