@@ -200,6 +200,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
             fontWeight: "bold",
             textAlign: "center",
           }}
+          className="nodrag"
         />
       </div>
 
@@ -215,6 +216,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
             fontSize: "11px",
             resize: "none",
           }}
+          className="nodrag"
         />
       </div>
 
