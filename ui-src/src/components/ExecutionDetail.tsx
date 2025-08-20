@@ -14,7 +14,8 @@ import {
   Input,
   Row,
   Col,
-  DatePicker
+  DatePicker,
+  Progress
 } from "antd";
 import {
   ArrowLeftOutlined,
@@ -205,42 +206,93 @@ const ExecutionDetail: React.FC = () => {
       >
         Back
       </Button>
+
       <Title level={3}>Execution Details</Title>
-      <Space direction="vertical" size="small">
-        <Text strong>ID:</Text> <Text code>{execution.id}</Text>
-        <Text strong>Playbook:</Text> <Text>{execution.playbook_name}</Text>
-        <Text strong>Status:</Text>{" "}
-        <Tag
-          color={
-            execution.status === "completed"
-              ? "green"
-              : execution.status === "failed"
-                ? "red"
-                : "blue"
-          }
-        >
-          {execution.status}
-        </Tag>
-        <Text strong>Start Time:</Text>{" "}
-        <Text>
-          {moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss")}
-        </Text>
-        <Text strong>End Time:</Text>{" "}
-        <Text>
-          {execution.end_time
-            ? moment(execution.end_time).format("YYYY-MM-DD HH:mm:ss")
-            : "-"}
-        </Text>
-        <Text strong>Progress:</Text> <Text>{execution.progress}%</Text>
-        <Text strong>Result:</Text>{" "}
-        <Text code>{JSON.stringify(execution.result)}</Text>
-        {execution.error && (
-          <>
-            <Text strong>Error:</Text>{" "}
-            <Text type="danger">{execution.error}</Text>
-          </>
-        )}
-      </Space>
+
+      {/* Execution Info Grid */}
+      <Card size="small" className="execution-detail-info-card">
+        <Row gutter={[24, 16]}>
+          <Col xs={24} sm={12} md={8}>
+            <div className="execution-detail-field">
+              <Text className="execution-detail-label">ID</Text>
+              <Text code className="execution-detail-value">{execution.id}</Text>
+            </div>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div className="execution-detail-field">
+              <Text className="execution-detail-label">Playbook</Text>
+              <Text className="execution-detail-value">{execution.playbook_name}</Text>
+            </div>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div className="execution-detail-field">
+              <Text className="execution-detail-label">Status</Text>
+              <Tag
+                color={
+                  execution.status === "completed"
+                    ? "green"
+                    : execution.status === "failed"
+                      ? "red"
+                      : "blue"
+                }
+                className="execution-detail-value"
+              >
+                {execution.status}
+              </Tag>
+            </div>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div className="execution-detail-field">
+              <Text className="execution-detail-label">Start Time</Text>
+              <Text className="execution-detail-value">
+                {moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss")}
+              </Text>
+            </div>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div className="execution-detail-field">
+              <Text className="execution-detail-label">End Time</Text>
+              <Text className="execution-detail-value">
+                {execution.end_time
+                  ? moment(execution.end_time).format("YYYY-MM-DD HH:mm:ss")
+                  : "-"}
+              </Text>
+            </div>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div className="execution-detail-field">
+              <Text className="execution-detail-label">Progress</Text>
+              <Progress
+                percent={execution.progress}
+                size="small"
+                className="execution-detail-progress"
+                status={execution.status === "failed" ? "exception" : "active"}
+              />
+            </div>
+          </Col>
+          {execution.result && execution.result !== null && (
+            <Col xs={24}>
+              <div className="execution-detail-field">
+                <Text className="execution-detail-label">Result</Text>
+                <Text code className="execution-detail-value execution-detail-result">
+                  {JSON.stringify(execution.result)}
+                </Text>
+              </div>
+            </Col>
+          )}
+          {execution.error && (
+            <Col xs={24}>
+              <div className="execution-detail-field">
+                <Text className="execution-detail-label">Error</Text>
+                <Text type="danger" className="execution-detail-value">
+                  {execution.error}
+                </Text>
+              </div>
+            </Col>
+          )}
+        </Row>
+      </Card>
+
       <Title level={4} className="execution-detail-events-title">
         Events
       </Title>

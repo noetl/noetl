@@ -81,3 +81,56 @@
 .execution-detail-no-events {
     margin-top: 16px;
 }
+
+/* ==========================================================================
+   Execution Information Grid
+   ========================================================================== */
+
+.execution-detail-info-card {
+    margin-bottom: 24px;
+}
+
+.execution-detail-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.execution-detail-label {
+    font-weight: 600;
+    color: #8c8c8c;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.execution-detail-value {
+    font-size: 14px;
+    color: #262626;
+    word-break: break-all;
+}
+
+.execution-detail-progress {
+    margin-top: 4px;
+}
+
+.execution-detail-result {
+    max-width: 100%;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    background: #f6f6f6;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .execution-detail-field {
+        margin-bottom: 16px;
+    }
+
+    .execution-detail-value {
+        font-size: 13px;
+    }
+}
