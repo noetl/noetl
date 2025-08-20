@@ -86,6 +86,10 @@ const Execution: React.FC = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [workflowLoading, setWorkflowLoading] = useState(false);
 
+  // Pagination state for executions table
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+
   // Filtering state
   const [activeTab, setActiveTab] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
@@ -205,12 +209,18 @@ const Execution: React.FC = () => {
     applyFilters();
   }, [applyFilters]);
 
+  // Reset to first page when filters or page size change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filteredExecutions.length, pageSize]);
+
   const clearFilters = () => {
     setActiveTab("all");
     setStatusFilter([]);
     setPlaybookFilter("");
     setSearchText("");
     setDateRange(null);
+    setCurrentPage(1);
   };
 
   const handleStopExecution = async (executionId: string) => {
@@ -842,11 +852,18 @@ const Execution: React.FC = () => {
             columns={columns}
             rowKey="id"
             pagination={{
-              pageSize: 10,
+              current: currentPage,
+              pageSize: pageSize,
+              pageSizeOptions: ["10", "20", "50", "100"],
               showSizeChanger: true,
               showQuickJumper: true,
               showTotal: (total, range) =>
                 `${range[0]}-${range[1]} of ${total} executions (${filteredExecutions.length} filtered from ${executions.length} total)`,
+              onChange: (page) => setCurrentPage(page),
+              onShowSizeChange: (_current, size) => {
+                setPageSize(size);
+                setCurrentPage(1);
+              },
             }}
             loading={refreshing}
           />

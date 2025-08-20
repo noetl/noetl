@@ -41,6 +41,10 @@ const ExecutionDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Pagination state for events table
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+
   // Event filtering state
   const [activeTab, setActiveTab] = useState<string>("all");
   const [eventTypeFilter, setEventTypeFilter] = useState<string[]>([]);
@@ -131,6 +135,11 @@ const ExecutionDetail: React.FC = () => {
   useEffect(() => {
     applyEventFilters();
   }, [applyEventFilters]);
+
+  // Reset to first page whenever the filtered events change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filteredEvents.length, pageSize]);
 
   const clearEventFilters = () => {
     setActiveTab("all");
@@ -397,11 +406,18 @@ const ExecutionDetail: React.FC = () => {
         columns={columns}
         rowKey="event_id"
         pagination={{
-          pageSize: 10,
+          current: currentPage,
+          pageSize: pageSize,
+          pageSizeOptions: ["10", "20", "50", "100"],
           showSizeChanger: true,
           showQuickJumper: true,
           showTotal: (total, range) =>
             `${range[0]}-${range[1]} of ${total} events (${filteredEvents.length} filtered from ${events.length} total)`,
+          onChange: (page) => setCurrentPage(page),
+          onShowSizeChange: (_current, size) => {
+            setPageSize(size);
+            setCurrentPage(1);
+          },
         }}
         size="small"
       />
