@@ -34,29 +34,10 @@ import {
   SaveOutlined,
 } from "@ant-design/icons";
 import "@xyflow/react/dist/style.css";
+import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
 
-// Custom styles to remove default ReactFlow node styling
-const customNodeStyles = `
-  .react-flow__node-default {
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-    box-shadow: none !important;
-  }
-  .react-flow__node-default .react-flow__node-main {
-    background: transparent !important;
-    border: none !important;
-  }
-`;
 
-// Inject custom styles
-const styleSheet = document.createElement("style");
-styleSheet.innerText = customNodeStyles;
-if (!document.head.querySelector("style[data-noetl-flow]")) {
-  styleSheet.setAttribute("data-noetl-flow", "true");
-  document.head.appendChild(styleSheet);
-}
 
 interface FlowVisualizationProps {
   visible: boolean;
@@ -111,30 +92,12 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
     onEdit?.(updatedTask);
   };
 
+  const nodeClass = `flow-node ${task?.type || 'default'} ${selected ? 'selected' : 'unselected'}`;
+
   return (
-    <div
-      style={{
-        padding: "16px",
-        borderRadius: "12px",
-        background: "white",
-        border: `2px solid ${selected ? "#1890ff" : nodeType.color}`,
-        boxShadow: selected
-          ? "0 4px 12px rgba(24, 144, 255, 0.3)"
-          : "0 2px 8px rgba(0, 0, 0, 0.1)",
-        minWidth: "250px",
-        position: "relative",
-        transition: "all 0.3s ease",
-      }}
-      className="custom-node"
-    >
+    <div className={nodeClass}>
       {/* Delete button - always visible */}
-      <div
-        style={{
-          position: "absolute",
-          top: "8px",
-          right: "8px",
-        }}
-      >
+      <div className="flow-node-delete">
         <Popconfirm
           title="Delete this component?"
           onConfirm={(e) => {
@@ -149,19 +112,14 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
             danger
             icon={<DeleteOutlined />}
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 20, height: 20, padding: 0, fontSize: "10px" }}
+            className="flow-node-delete-button"
           />
         </Popconfirm>
       </div>
 
       {/* Task icon and type selector */}
-      <div style={{ textAlign: "center", marginBottom: "12px" }}>
-        <div
-          style={{
-            fontSize: "24px",
-            marginBottom: "8px",
-          }}
-        >
+      <div className="flow-node-header">
+        <div className="flow-node-icon">
           {nodeType.icon}
         </div>
         <Select
@@ -171,11 +129,10 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
             handleTypeChange(value);
           }}
           size="small"
-          style={{ width: "100%" }}
-          dropdownStyle={{ fontSize: "12px" }}
+          className="flow-node-type-select"
+          dropdownClassName="flow-node-type-dropdown"
           placeholder="Select type"
           showSearch={false}
-          className="nodrag"
         >
           <Select.Option value="log">📝 Log</Select.Option>
           <Select.Option value="http">🌐 HTTP</Select.Option>
@@ -190,47 +147,30 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
       </div>
 
       {/* Task name - always editable */}
-      <div style={{ marginBottom: "8px" }}>
+      <div className="flow-node-name">
         <Input
           value={task?.name || "Unnamed Task"}
           onChange={(e) => handleNameChange(e.target.value)}
           placeholder="Task name"
           size="small"
-          style={{
-            fontWeight: "bold",
-            textAlign: "center",
-          }}
-          className="nodrag"
+          className="flow-node-name-input nodrag"
         />
       </div>
 
       {/* Description - always editable */}
-      <div style={{ marginBottom: "4px" }}>
+      <div className="flow-node-description">
         <Input.TextArea
           value={task?.description || ""}
           onChange={(e) => handleDescriptionChange(e.target.value)}
           placeholder="Description (optional)"
           size="small"
           rows={2}
-          style={{
-            fontSize: "11px",
-            resize: "none",
-          }}
-          className="nodrag"
+          className="flow-node-description-input nodrag"
         />
       </div>
 
       {/* Status indicator */}
-      <div
-        style={{
-          textAlign: "center",
-          fontSize: "10px",
-          color: nodeType.color,
-          textTransform: "uppercase",
-          fontWeight: "500",
-          marginTop: "4px",
-        }}
-      >
+      <div className={`flow-node-status ${task?.type || 'default'}`}>
         {task?.type?.toUpperCase() || "DEFAULT"} COMPONENT
       </div>
     </div>
@@ -334,13 +274,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             onDelete: handleDeleteTask,
             label: null, // We handle the label inside the custom component
           },
-          style: {
-            background: "transparent",
-            border: "none",
-            padding: 0,
-            width: "auto",
-            height: "auto",
-          },
+          className: "react-flow__node",
         });
       });
 
@@ -354,8 +288,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 id: `edge-${sourceTask.id}-${task.id}`,
                 source: sourceTask.id,
                 target: task.id,
-                animated: true,
-                style: { stroke: "#1890ff", strokeWidth: 2 },
+                animated: false,
+                className: "flow-edge-solid",
               });
             }
           });
@@ -365,8 +299,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             id: `edge-${tasks[index - 1].id}-${task.id}`,
             source: tasks[index - 1].id,
             target: task.id,
-            animated: true,
-            style: { stroke: "#1890ff", strokeWidth: 2 },
+            animated: false,
+            className: "flow-edge-solid",
           });
         }
       });
@@ -866,8 +800,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     <>
       <Modal
         title={
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ fontSize: "20px" }}>🔄</span>
+          <div className="flow-modal-title">
+            <span className="flow-modal-title-icon">🔄</span>
             <span>Flow Editor - {playbookName}</span>
             {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
           </div>
@@ -877,26 +811,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         footer={null}
         closable={false}
         width={fullscreen ? "95vw" : "80vw"}
-        style={{ top: fullscreen ? 20 : 50 }}
-        bodyStyle={{
-          height: fullscreen ? "85vh" : "70vh",
-          padding: 0,
-          overflow: "hidden",
-        }}
+        className={fullscreen ? "flow-modal-fullscreen" : "flow-modal-windowed"}
+        bodyStyle={fullscreen ?
+          { height: "85vh", padding: 0, overflow: "hidden" } :
+          { height: "70vh", padding: 0, overflow: "hidden" }
+        }
       >
         {/* Toolbar */}
-        <div
-          style={{
-            position: "absolute",
-            top: 16,
-            left: 16,
-            right: 16,
-            zIndex: 1000,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
+        <div className="flow-toolbar-container">
           <Space>
             <Button
               type="primary"
@@ -925,7 +847,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               icon={<FullscreenOutlined />}
               onClick={handleFullscreen}
               title="Toggle Fullscreen"
-              style={{ background: "white", border: "1px solid #d9d9d9" }}
+              className="flow-toolbar-button"
               size="small"
             />
             <Button
@@ -933,33 +855,17 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               icon={<CloseOutlined />}
               onClick={onClose}
               title="Close"
-              style={{ background: "white", border: "1px solid #d9d9d9" }}
+              className="flow-toolbar-button"
               size="small"
             />
           </Space>
         </div>
 
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            position: "relative",
-            paddingTop: "60px",
-          }}
-        >
+        <div className="flow-content-container">
           {loading ? (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                height: "100%",
-                flexDirection: "column",
-                gap: "16px",
-              }}
-            >
+            <div className="flow-loading-container">
               <Spin size="large" />
-              <div style={{ color: "#8c8c8c" }}>Loading playbook flow...</div>
+              <div className="flow-loading-text">Loading playbook flow...</div>
             </div>
           ) : (
             <ReactFlow

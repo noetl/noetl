@@ -24,6 +24,7 @@ import {
 import { apiService } from "../services/api";
 import { ExecutionData } from "../types";
 import moment from "moment";
+import "../styles/ExecutionDetail.css";
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
@@ -145,7 +146,7 @@ const ExecutionDetail: React.FC = () => {
   const uniqueNodes = Array.from(new Set(events.map((event) => event.node_name)));
 
   if (loading) {
-    return <Spin style={{ display: "block", margin: "40px auto" }} />;
+    return <Spin className="execution-detail-loading" />;
   }
   if (error) {
     return (
@@ -154,7 +155,7 @@ const ExecutionDetail: React.FC = () => {
         description={error}
         type="error"
         showIcon
-        style={{ margin: 40 }}
+        className="execution-detail-error"
       />
     );
   }
@@ -165,7 +166,7 @@ const ExecutionDetail: React.FC = () => {
         description="Execution not found."
         type="warning"
         showIcon
-        style={{ margin: 40 }}
+        className="execution-detail-not-found"
       />
     );
   }
@@ -196,11 +197,11 @@ const ExecutionDetail: React.FC = () => {
   ];
 
   return (
-    <Card style={{ margin: 40 }}>
+    <Card className="execution-detail-container">
       <Button
         icon={<ArrowLeftOutlined />}
         onClick={() => navigate(-1)}
-        style={{ marginBottom: 16 }}
+        className="execution-detail-back-button"
       >
         Back
       </Button>
@@ -240,13 +241,13 @@ const ExecutionDetail: React.FC = () => {
           </>
         )}
       </Space>
-      <Title level={4} style={{ marginTop: 32 }}>
+      <Title level={4} className="execution-detail-events-title">
         Events
       </Title>
 
       {/* Event Type Filtering Section */}
-      <Card title={<><FilterOutlined /> Event Type Filters</>} size="small" style={{ marginBottom: 16 }}>
-        <Space direction="vertical" style={{ width: "100%" }}>
+      <Card title={<><FilterOutlined /> Event Type Filters</>} size="small" className="execution-detail-filter-card">
+        <Space direction="vertical" className="execution-detail-filter-space">
           {/* Tabs for main event types */}
           <Tabs
             activeKey={activeTab}
@@ -277,7 +278,7 @@ const ExecutionDetail: React.FC = () => {
               <Select
                 mode="multiple"
                 placeholder="Filter by event type"
-                style={{ width: "100%" }}
+                className="execution-detail-event-type-select"
                 value={eventTypeFilter}
                 onChange={setEventTypeFilter}
                 allowClear
@@ -293,7 +294,7 @@ const ExecutionDetail: React.FC = () => {
               <Select
                 mode="multiple"
                 placeholder="Filter by status"
-                style={{ width: "100%" }}
+                className="execution-detail-status-select"
                 value={statusFilter}
                 onChange={setStatusFilter}
                 allowClear
@@ -308,7 +309,7 @@ const ExecutionDetail: React.FC = () => {
             <Col span={4}>
               <Select
                 placeholder="Filter by node"
-                style={{ width: "100%" }}
+                className="execution-detail-node-select"
                 value={nodeFilter}
                 onChange={setNodeFilter}
                 allowClear
@@ -324,7 +325,7 @@ const ExecutionDetail: React.FC = () => {
             <Col span={3}>
               <RangePicker
                 placeholder={["Start", "End"]}
-                style={{ width: "100%" }}
+                className="execution-detail-date-picker"
                 value={dateRange}
                 onChange={setDateRange}
                 size="small"
@@ -364,7 +365,7 @@ const ExecutionDetail: React.FC = () => {
               Clear Filters
             </Button>
           }
-          style={{ marginTop: 16 }}
+          className="execution-detail-no-filtered-events"
         />
       )}
 
@@ -374,7 +375,7 @@ const ExecutionDetail: React.FC = () => {
           description="No events have been recorded for this execution yet."
           type="info"
           showIcon
-          style={{ marginTop: 16 }}
+          className="execution-detail-no-events"
         />
       )}
     </Card>

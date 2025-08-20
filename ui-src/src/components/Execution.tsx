@@ -43,6 +43,7 @@ import {
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import "../styles/Execution.css";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -613,26 +614,26 @@ const Execution: React.FC = () => {
 
   if (loading) {
     return (
-      <Content style={{ padding: "50px", textAlign: "center" }}>
+      <Content className="execution-loading-content">
         <Spin size="large" />
-        <div style={{ marginTop: 16 }}>Loading executions...</div>
+        <div className="execution-loading-text">Loading executions...</div>
       </Content>
     );
   }
 
   if (error) {
     return (
-      <Content style={{ padding: "50px" }}>
+      <Content className="execution-error-content">
         <Alert message="Error" description={error} type="error" showIcon />
       </Content>
     );
   }
 
   return (
-    <Content>
+    <Content className="execution-main-content">
       {showWorkflowVisualization ? (
         // Show workflow visualization when accessed via View button
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Space direction="vertical" size="large" className="execution-space-vertical">
           <Row justify="space-between" align="middle">
             <Col>
               <Title level={2}>
@@ -653,27 +654,11 @@ const Execution: React.FC = () => {
           </Row>
 
           {/* Inline Flow Visualization */}
-          <div
-            style={{
-              height: "80vh",
-              border: "1px solid #d9d9d9",
-              borderRadius: "8px",
-              padding: "20px",
-            }}
-          >
+          <div className="execution-flow-container">
             {workflowLoading ? (
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  height: "100%",
-                  flexDirection: "column",
-                  gap: "16px",
-                }}
-              >
+              <div className="execution-flow-toolbar">
                 <Spin size="large" />
-                <div style={{ color: "#8c8c8c" }}>
+                <div className="execution-flow-toolbar-loading">
                   Loading workflow visualization...
                 </div>
               </div>
@@ -715,7 +700,7 @@ const Execution: React.FC = () => {
         </Space>
       ) : (
         // Show normal execution history
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Space direction="vertical" size="large" className="execution-space-vertical">
           <Row justify="space-between" align="middle">
             <Col>
               <Title level={2}>⚡ Execution History</Title>
@@ -734,7 +719,7 @@ const Execution: React.FC = () => {
 
           {/* Event Type Filtering Section */}
           <Card title={<><FilterOutlined /> Event Type Filters</>} size="small">
-            <Space direction="vertical" style={{ width: "100%" }}>
+            <Space direction="vertical" className="execution-filter-space">
               {/* Tabs for main event types */}
               <Tabs
                 activeKey={activeTab}
@@ -763,7 +748,7 @@ const Execution: React.FC = () => {
                   <Select
                     mode="multiple"
                     placeholder="Filter by status"
-                    style={{ width: "100%" }}
+                    className="execution-filter-select"
                     value={statusFilter}
                     onChange={setStatusFilter}
                     allowClear
@@ -777,7 +762,7 @@ const Execution: React.FC = () => {
                 <Col span={6}>
                   <Select
                     placeholder="Filter by playbook"
-                    style={{ width: "100%" }}
+                    className="execution-filter-select"
                     value={playbookFilter}
                     onChange={setPlaybookFilter}
                     allowClear
@@ -793,7 +778,7 @@ const Execution: React.FC = () => {
                 <Col span={4}>
                   <RangePicker
                     placeholder={["Start date", "End date"]}
-                    style={{ width: "100%" }}
+                    className="execution-date-picker"
                     value={dateRange}
                     onChange={setDateRange}
                   />
@@ -813,7 +798,7 @@ const Execution: React.FC = () => {
               <Card>
                 <Space direction="vertical" size="small">
                   <Text type="secondary">Running</Text>
-                  <Title level={3} style={{ margin: 0, color: "#1890ff" }}>
+                  <Title level={3} className="execution-stats-title running">
                     {runningExecutions.length}
                   </Title>
                 </Space>
@@ -823,7 +808,7 @@ const Execution: React.FC = () => {
               <Card>
                 <Space direction="vertical" size="small">
                   <Text type="secondary">Pending</Text>
-                  <Title level={3} style={{ margin: 0, color: "#faad14" }}>
+                  <Title level={3} className="execution-stats-title pending">
                     {pendingExecutions.length}
                   </Title>
                 </Space>
@@ -833,7 +818,7 @@ const Execution: React.FC = () => {
               <Card>
                 <Space direction="vertical" size="small">
                   <Text type="secondary">Completed</Text>
-                  <Title level={3} style={{ margin: 0, color: "#52c41a" }}>
+                  <Title level={3} className="execution-stats-title completed">
                     {completedExecutions.length}
                   </Title>
                 </Space>
@@ -843,7 +828,7 @@ const Execution: React.FC = () => {
               <Card>
                 <Space direction="vertical" size="small">
                   <Text type="secondary">Failed</Text>
-                  <Title level={3} style={{ margin: 0, color: "#ff4d4f" }}>
+                  <Title level={3} className="execution-stats-title failed">
                     {failedExecutions.length}
                   </Title>
                 </Space>

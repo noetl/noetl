@@ -28,6 +28,7 @@ import {
 import { apiService } from "../services/api";
 import { PlaybookData, VisualizationWidget } from "../types";
 import WidgetRenderer from "./WidgetRenderer";
+import "../styles/Catalog.css";
 import { useNavigate } from "react-router-dom";
 
 const { Content } = Layout;
@@ -256,24 +257,24 @@ const Catalog: React.FC = () => {
 
   if (loading) {
     return (
-      <Content style={{ padding: "50px", textAlign: "center" }}>
+      <Content className="catalog-loading-content">
         <Spin size="large" />
-        <div style={{ marginTop: 16 }}>Loading catalog...</div>
+        <div className="catalog-loading-text">Loading catalog...</div>
       </Content>
     );
   }
 
   if (error) {
     return (
-      <Content style={{ padding: "50px" }}>
+      <Content className="catalog-error-content">
         <Alert message="Error" description={error} type="error" showIcon />
       </Content>
     );
   }
 
   return (
-    <Content>
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Content className="catalog-main-content">
+      <Space direction="vertical" size="large" className="catalog-space-vertical">
         <Title level={2}>📚 Playbook Catalog</Title>
 
         <Search
@@ -299,15 +300,15 @@ const Catalog: React.FC = () => {
         )}
 
         {/* Playbooks list */}
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space direction="vertical" size="middle" className="catalog-playbooks-space">
           {playbooks.map((playbook) => (
-            <Card key={playbook.id} size="small" style={{ width: "100%" }}>
+            <Card key={playbook.id} size="small" className="catalog-playbook-card">
               <Row align="middle" gutter={16}>
                 <Col flex="auto">
                   <Space
                     direction="horizontal"
                     size="large"
-                    style={{ width: "100%" }}
+                    className="catalog-playbook-row"
                   >
                     <div>
                       <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
