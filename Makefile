@@ -372,3 +372,39 @@ run-worker-api-dev: env-check
 	else \
 		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
 	fi
+
+# Run Worker2 API
+run-worker2-api: env-check
+	set -a; [ -f .env ] && . .env; set +a; \
+	export NOETL_ENABLE_WORKER_API=true; \
+	# Map Worker2 envs to primary ones for app startup
+	export NOETL_WORKER_POOL_RUNTIME=$${NOETL_WORKER2_RUNTIME:-gpu}; \
+	export NOETL_WORKER_POOL_NAME=$${NOETL_WORKER2_NAME:-worker-gpu}; \
+	export NOETL_HOST=$${NOETL_WORKER2_HOST:-0.0.0.0}; \
+	export NOETL_PORT=$${NOETL_WORKER2_PORT:-9081}; \
+	export NOETL_WORKER_BASE_URL=$${NOETL_WORKER2_BASE_URL:-http://localhost:9081/api/worker}; \
+	export NOETL_WORKER_CAPACITY=$${NOETL_WORKER2_CAPACITY:-1}; \
+	export NOETL_WORKER_LABELS=$${NOETL_WORKER2_LABELS:-local,dev,gpu}; \
+	if [ -x "$(VENV)/bin/uvicorn" ]; then \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	else \
+		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	fi
+
+# Run Worker2 API (dev, autoreload)
+run-worker2-api-dev: env-check
+	set -a; [ -f .env ] && . .env; set +a; \
+	export NOETL_ENABLE_WORKER_API=true; \
+	# Map Worker2 envs to primary ones for app startup
+	export NOETL_WORKER_POOL_RUNTIME=$${NOETL_WORKER2_RUNTIME:-gpu}; \
+	export NOETL_WORKER_POOL_NAME=$${NOETL_WORKER2_NAME:-worker-gpu}; \
+	export NOETL_HOST=$${NOETL_WORKER2_HOST:-0.0.0.0}; \
+	export NOETL_PORT=$${NOETL_WORKER2_PORT:-9081}; \
+	export NOETL_WORKER_BASE_URL=$${NOETL_WORKER2_BASE_URL:-http://localhost:9081/api/worker}; \
+	export NOETL_WORKER_CAPACITY=$${NOETL_WORKER2_CAPACITY:-1}; \
+	export NOETL_WORKER_LABELS=$${NOETL_WORKER2_LABELS:-local,dev,gpu}; \
+	if [ -x "$(VENV)/bin/uvicorn" ]; then \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	else \
+		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	fi

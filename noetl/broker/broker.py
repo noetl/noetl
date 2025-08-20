@@ -91,7 +91,6 @@ class Broker:
             logger.warning("Disabling event reporting to prevent hanging")
             self.event_reporting_enabled = False
 
-    # --- Broker-owned workflow state and helpers ---
     @property
     def execution_id(self) -> str:
         return getattr(self, "_execution_id", getattr(self.agent, "execution_id", None) or str(uuid.uuid4()))
@@ -1756,6 +1755,11 @@ def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _O
     server_url = (server_url or '').rstrip('/')
     processed = 0
 
+    try:
+        logger.info(f"BrokerLoop: starting; server_url={server_url}, poll_interval={poll_interval}, stop_after={stop_after}")
+    except Exception:
+        pass
+
     while True:
         try:
             # Step 1: poll for pending agent execution requests
@@ -1787,7 +1791,7 @@ def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _O
                             metadata = json.loads(metadata)
                         except Exception:
                             metadata = {}
-                    input_payload = evt.get('output_result')  # 'result' mapped to output_result on emit
+                    input_payload = evt.get('output_result')
                     if input_payload is None:
                         input_payload = {}
 
@@ -1818,7 +1822,6 @@ def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _O
                             content_text = content_json.get('content')
                             version = content_json.get('version') or version
                     except Exception as fe:
-                        # report error and continue
                         try:
                             err_body = {
                                 "event_id": event_id,
@@ -1880,7 +1883,6 @@ def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _O
                             logger.debug(f"BrokerLoop: failed to report completion for {event_id}: {re}")
 
                     except Exception as ex:
-                        # On unexpected execution error, report failure
                         try:
                             err_body = {
                                 "event_id": event_id,

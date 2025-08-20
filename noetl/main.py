@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import os
+import sys
 import logging
 from pathlib import Path
 from fastapi import FastAPI
@@ -9,6 +12,7 @@ from noetl.server import router as server_router
 from noetl.system import router as system_router
 from noetl.worker import router as worker_router, register_worker_pool_from_env
 from noetl.logger import setup_logger
+import uvicorn
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -71,7 +75,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     app.include_router(server_router, prefix="/api")
     app.include_router(system_router, prefix="/api/sys", tags=["System"])
 
-    enable_worker_api = os.environ.get("NOETL_ENABLE_WORKER_API", "true").lower() in ("1", "true", "yes", "y")
+    enable_worker_api = os.environ.get("NOETL_ENABLE_WORKER_API", "false").lower() in ("1", "true", "yes", "y")
     if enable_worker_api:
         app.include_router(worker_router, prefix="/api/worker", tags=["Worker"])
 
@@ -109,3 +113,17 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             return {"message": "NoETL API is running, but UI is not available"}
 
     return app
+
+
+app = create_app()
+
+
+def main():
+    host = os.getenv("SERVER_HOST", "0.0.0.0")
+    port = int(os.getenv("SERVER_PORT", "8080"))
+    reload_flag = os.getenv("SERVER_RELOAD", "1").lower() not in ("0", "false", "no")
+    uvicorn.run(app, host=host, port=port, reload=reload_flag)
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

@@ -12,7 +12,6 @@ import uvicorn
 from typing import Optional
 from noetl.logger import setup_logger
 from noetl.common import DateTimeEncoder
-from noetl.schema import DatabaseSchema
 from noetl.worker import Worker
 from noetl.config import settings
 from noetl.diagram import render_plantuml_file, render_image_kroki
@@ -135,7 +134,6 @@ def start_server(
     """
     Start the NoETL server.
     """
-    _validate_required_env()
 
     settings.host = host
     settings.port = port
@@ -158,34 +156,6 @@ def start_server(
         logger.info(f"ENV: {key}={value}")
     logger.info("=== END ENVIRONMENT VARIABLES ===")
 
-    max_startup_wait_secs = int(os.environ.get("NOETL_DB_STARTUP_TIMEOUT", "180"))
-    retry_interval_secs = int(os.environ.get("NOETL_DB_RETRY_INTERVAL", "5"))
-    start_time = time.time()
-    initialized = False
-    last_error = None
-    logger.info(
-        f"Initializing NoETL system metadata (will retry up to {max_startup_wait_secs}s, interval {retry_interval_secs}s)"
-    )
-    while time.time() - start_time < max_startup_wait_secs and not initialized:
-        try:
-            db_schema = DatabaseSchema(auto_setup=False)
-            db_schema.create_noetl_metadata()
-            db_schema.init_database()
-            logger.info("NoETL database schema initialized.")
-            initialized = True
-        except Exception as e:
-            last_error = e
-            logger.warning(
-                f"Database not ready or initialization failed: {e}. Retrying in {retry_interval_secs}s...",
-                exc_info=False,
-            )
-            time.sleep(retry_interval_secs)
-    if not initialized:
-        logger.error(
-            f"Error initializing NoETL system metadata after {max_startup_wait_secs}s: {last_error}",
-            exc_info=True,
-        )
-        logger.error("Continuing to start API without completed DB initialization. Some endpoints may fail until DB is ready.")
 
     server_type = server
     if server == "auto":
@@ -822,25 +792,24 @@ def run_worker(
     logger.info(f"Starting NoETL worker for playbook: {settings.playbook_path}")
 
     try:
-        logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=True)
-        logger.info("NoETL database schema initialized.")
-
-        if version and not os.path.exists(playbook_path) and not playbook_path.endswith(('.yaml', '.yml', '.json')):
-            logger.info(f"Fetching playbook '{playbook_path}' version '{version}' from catalog")
-            from noetl.server import get_catalog_service
-            catalog_service = get_catalog_service()
-            entry = catalog_service.fetch_entry(playbook_path, version)
-            if not entry:
-                logger.error(f"Playbook '{playbook_path}' version '{version}' not found in catalog")
+        if version and not os.path.exists(playbook_path) and not playbook_path.endswith((".yaml", ".yml", ".json")):
+            server_url = os.environ.get("NOETL_SERVER_URL", f"http://{os.environ.get('NOETL_HOST','localhost')}:{os.environ.get('NOETL_PORT','8082')}")
+            url = f"{server_url.rstrip('/')}/api/catalog/playbooks/content"
+            logger.info(f"Fetching playbook '{playbook_path}' version '{version}' from {url}")
+            try:
+                resp = requests.get(url, params={"playbook_id": playbook_path, "version": version}, timeout=10.0)
+                if resp.status_code != 200:
+                    logger.error(f"Failed to fetch playbook: {resp.status_code} {resp.text}")
+                    raise typer.Exit(code=1)
+                content = (resp.json() or {}).get("content")
+                with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
+                    temp_file.write((content or "").encode("utf-8"))
+                    temp_path = temp_file.name
+                playbook_path = temp_path
+                logger.info(f"Using temporary playbook file: {playbook_path}")
+            except requests.RequestException as re:
+                logger.error(f"Error fetching playbook from server: {re}")
                 raise typer.Exit(code=1)
-
-            with tempfile.NamedTemporaryFile(suffix='.yaml', delete=False) as temp_file:
-                temp_file.write(entry['content'].encode('utf-8'))
-                temp_path = temp_file.name
-
-            playbook_path = temp_path
-            logger.info(f"Using temporary playbook file: {playbook_path}")
 
         worker = Worker(playbook_path=playbook_path, mock_mode=mock_mode, pgdb=pgdb)
         worker.run()
