@@ -1760,7 +1760,30 @@ def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _O
     except Exception:
         pass
 
+    # Register this broker instance
+    try:
+        import socket, os as _os
+        broker_name = _os.environ.get('NOETL_BROKER_NAME') or f"broker-{socket.gethostname()}-{_os.getpid()}"
+        payload = {
+            "name": broker_name,
+            "base_url": None,
+            "status": "running",
+            "labels": ["local"],
+            "capabilities": {"control_loop": True},
+            "pid": _os.getpid(),
+        }
+        with httpx.Client(timeout=5.0) as client:
+            client.post(f"{server_url}/api/broker/register", json=payload)
+    except Exception as _reg_err:
+        logger.debug(f"BrokerLoop: register error: {_reg_err}")
+
     while True:
+        # Heartbeat this broker
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                client.post(f"{server_url}/api/broker/heartbeat", json={"name": payload.get("name"), "status": "running", "pid": payload.get("pid")})
+        except Exception as _hb_err:
+            logger.debug(f"BrokerLoop: heartbeat error: {_hb_err}")
         try:
             # Step 1: poll for pending agent execution requests
             params = {"event_type": "AgentExecutionRequested", "status": "REQUESTED", "limit": 10}

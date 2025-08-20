@@ -442,6 +442,41 @@ class DatabaseSchema:
                 pass
 
             self.conn.commit()
+            logger.info("Creating worker_pool registry table.")
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.worker_pool (
+                    name TEXT PRIMARY KEY,
+                    runtime TEXT NOT NULL CHECK (runtime IN ('cpu','gpu','qpu')),
+                    base_url TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    capacity INTEGER,
+                    labels JSONB,
+                    pid INTEGER,
+                    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_worker_pool_runtime ON {self.noetl_schema}.worker_pool (runtime);
+            """)
+
+            logger.info("Creating broker_registry table.")
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.broker_registry (
+                    name TEXT PRIMARY KEY,
+                    base_url TEXT,
+                    status TEXT NOT NULL,
+                    labels JSONB,
+                    capabilities JSONB,
+                    pid INTEGER,
+                    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+
+            self.conn.commit()
             logger.info("Postgres database tables initialized in noetl schema.")
 
     def test_workload_table(self):

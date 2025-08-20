@@ -2225,6 +2225,7 @@ async def register_worker_pool(request: Request):
         capacity = body.get("capacity")
         labels = body.get("labels")
         meta = body.get("meta") or {}
+        pid = body.get("pid")
         if not name or not base_url:
             raise HTTPException(status_code=400, detail="Missing required fields: name, base_url")
 
@@ -2235,15 +2236,44 @@ async def register_worker_pool(request: Request):
             "status": status,
             "capacity": capacity,
             "labels": labels,
+            "pid": pid,
         }
-        # Ensure resource type exists and upsert into catalog
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS worker_pool (
+                        name TEXT PRIMARY KEY,
+                        runtime TEXT NOT NULL,
+                        base_url TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        capacity INTEGER,
+                        labels JSONB,
+                        pid INTEGER,
+                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+                await cursor.execute(
+                    """
+                    INSERT INTO worker_pool (name, runtime, base_url, status, capacity, labels, pid, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, now(), now(), now())
+                    ON CONFLICT (name)
+                    DO UPDATE SET runtime=EXCLUDED.runtime, base_url=EXCLUDED.base_url, status=EXCLUDED.status,
+                                  capacity=EXCLUDED.capacity, labels=EXCLUDED.labels, pid=EXCLUDED.pid,
+                                  last_heartbeat=now(), updated_at=now()
+                    """,
+                    (name, runtime, base_url, status, capacity, json.dumps(labels) if labels is not None else json.dumps(None), pid)
+                )
+                # Backward-compat: also mirror to catalog for any existing consumers
                 await cursor.execute("""
                     INSERT INTO resource(name) VALUES ('worker_pool')
                     ON CONFLICT (name) DO NOTHING
                 """)
-                await cursor.execute("""
+                await cursor.execute(
+                    """
                     INSERT INTO catalog (
                         resource_path, resource_type, resource_version, source,
                         resource_location, content, payload, meta, template, timestamp
@@ -2251,7 +2281,9 @@ async def register_worker_pool(request: Request):
                     VALUES (%s, 'worker_pool', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
                     ON CONFLICT (resource_path, resource_version)
                     DO UPDATE SET payload = EXCLUDED.payload, meta = EXCLUDED.meta, timestamp = CURRENT_TIMESTAMP
-                """, (name, json.dumps(payload), json.dumps(meta)))
+                    """,
+                    (name, json.dumps(payload), json.dumps(meta))
+                )
                 await conn.commit()
         return {"status": "ok", "pool": {**payload, "meta": meta}}
     except HTTPException:
@@ -2274,37 +2306,57 @@ async def heartbeat_worker_pool(request: Request):
         status = (body.get("status") or "").lower() or None
         capacity = body.get("capacity")
         labels = body.get("labels")
+        pid = body.get("pid")
         meta = body.get("meta")
 
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
-                # Fetch existing payload
+                # Ensure table exists
                 await cursor.execute(
                     """
-                    SELECT payload FROM catalog WHERE resource_type='worker_pool' AND resource_path=%s AND resource_version='current'
+                    CREATE TABLE IF NOT EXISTS worker_pool (
+                        name TEXT PRIMARY KEY,
+                        runtime TEXT NOT NULL,
+                        base_url TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        capacity INTEGER,
+                        labels JSONB,
+                        pid INTEGER,
+                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+                # Upsert minimal record to ensure existence then update fields
+                await cursor.execute(
+                    """
+                    INSERT INTO worker_pool (name, runtime, base_url, status, capacity, labels, pid)
+                    VALUES (%s, COALESCE(%s,'cpu'), COALESCE(%s,''), COALESCE(%s,'ready'), %s, %s::jsonb, %s)
+                    ON CONFLICT (name) DO NOTHING
                     """,
-                    (name,)
+                    (name, runtime, base_url, status, capacity, json.dumps(labels) if labels is not None else json.dumps(None), pid)
+                )
+                # Apply updates and heartbeat
+                await cursor.execute(
+                    """
+                    UPDATE worker_pool
+                    SET
+                        runtime = COALESCE(%s, runtime),
+                        base_url = COALESCE(%s, base_url),
+                        status = COALESCE(%s, status),
+                        capacity = COALESCE(%s, capacity),
+                        labels = COALESCE(%s::jsonb, labels),
+                        pid = COALESCE(%s, pid),
+                        last_heartbeat = now(),
+                        updated_at = now()
+                    WHERE name = %s
+                    RETURNING name, runtime, base_url, status, capacity, labels, pid, last_heartbeat
+                    """,
+                    (runtime, base_url, status, capacity, json.dumps(labels) if labels is not None else None, pid, name)
                 )
                 row = await cursor.fetchone()
-                current = row[0] if row and row[0] else None
-                try:
-                    cur_payload = json.loads(current) if isinstance(current, str) else (current or {})
-                except Exception:
-                    cur_payload = {}
-                # Merge updates
-                if runtime:
-                    cur_payload["runtime"] = runtime
-                if base_url:
-                    cur_payload["base_url"] = base_url
-                if status:
-                    cur_payload["status"] = status
-                if capacity is not None:
-                    cur_payload["capacity"] = capacity
-                if labels is not None:
-                    cur_payload["labels"] = labels
-                if not cur_payload.get("name"):
-                    cur_payload["name"] = name
-
+                # Mirror to catalog (legacy) to avoid breaking older consumers
                 await cursor.execute("""
                     INSERT INTO resource(name) VALUES ('worker_pool')
                     ON CONFLICT (name) DO NOTHING
@@ -2316,10 +2368,26 @@ async def heartbeat_worker_pool(request: Request):
                     ON CONFLICT (resource_path, resource_version)
                     DO UPDATE SET payload = EXCLUDED.payload, meta = COALESCE(EXCLUDED.meta, catalog.meta), timestamp = CURRENT_TIMESTAMP
                     """,
-                    (name, json.dumps(cur_payload), json.dumps(meta) if meta is not None else json.dumps(None))
+                    (name, json.dumps({
+                        "name": row[0] if row else name,
+                        "runtime": row[1] if row else runtime,
+                        "base_url": row[2] if row else base_url,
+                        "status": row[3] if row else status,
+                        "capacity": row[4] if row else capacity,
+                        "labels": labels,
+                        "pid": pid,
+                    }), json.dumps(meta) if meta is not None else json.dumps(None))
                 )
                 await conn.commit()
-        return {"status": "ok", "pool": cur_payload}
+        return {"status": "ok", "pool": {
+            "name": row[0] if row else name,
+            "runtime": row[1] if row else runtime,
+            "base_url": row[2] if row else base_url,
+            "status": row[3] if row else status,
+            "capacity": row[4] if row else capacity,
+            "labels": labels,
+            "pid": pid,
+        }}
     except HTTPException:
         raise
     except Exception as e:
@@ -2330,32 +2398,48 @@ async def heartbeat_worker_pool(request: Request):
 @router.get("/worker/pools", response_class=JSONResponse)
 async def list_worker_pools(request: Request, runtime: Optional[str] = None, status: Optional[str] = None):
     try:
+        ttl_seconds = int(os.environ.get('NOETL_HEARTBEAT_TTL', '60'))
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                # Mark stale worker pools as offline if heartbeat is older than TTL
                 await cursor.execute(
+                    f"""
+                    UPDATE worker_pool
+                    SET status = 'offline', updated_at = now()
+                    WHERE (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
                     """
-                    SELECT resource_path, payload, timestamp
-                    FROM catalog
-                    WHERE resource_type='worker_pool' AND resource_version='current'
-                    ORDER BY timestamp DESC
-                    """
+                )
+                conditions = []
+                params: List[Any] = []
+                if runtime:
+                    conditions.append("runtime = %s")
+                    params.append(runtime.lower())
+                if status:
+                    conditions.append("status = %s")
+                    params.append(status.lower())
+                where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+                await cursor.execute(
+                    f"""
+                    SELECT name, runtime, base_url, status, capacity, labels, pid, last_heartbeat, updated_at
+                    FROM worker_pool
+                    {where_clause}
+                    ORDER BY updated_at DESC
+                    """,
+                    params
                 )
                 rows = await cursor.fetchall()
         pools: List[Dict[str, Any]] = []
         for r in rows or []:
-            name = r[0]
-            payload = r[1]
-            try:
-                data = json.loads(payload) if isinstance(payload, str) else (payload or {})
-            except Exception:
-                data = {}
-            data.setdefault("name", name)
-            pools.append(data)
-        # Filter in Python (simpler and robust to JSONB content)
-        if runtime:
-            pools = [p for p in pools if str(p.get("runtime","")) == runtime.lower()]
-        if status:
-            pools = [p for p in pools if str(p.get("status","")) == status.lower()]
+            pools.append({
+                "name": r[0],
+                "runtime": r[1],
+                "base_url": r[2],
+                "status": r[3],
+                "capacity": r[4],
+                "labels": r[5],
+                "pid": r[6],
+                "last_heartbeat": r[7].isoformat() if r[7] else None,
+            })
         return {"items": pools}
     except Exception as e:
         logger.exception(f"Error listing worker pools: {e}")
@@ -2365,8 +2449,8 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
 # === Broker Registry Endpoints ===
 @router.post("/broker/register", response_class=JSONResponse)
 async def register_broker(request: Request):
-    """Register or update a broker instance with its base_url and metadata.
-    Stored in catalog as resource_type='broker', resource_version='current'.
+    """Register or update a broker instance with base_url and metadata.
+    Persisted to broker_registry and mirrored to catalog for backward compatibility.
     """
     try:
         body = await request.json()
@@ -2375,9 +2459,10 @@ async def register_broker(request: Request):
         status = (body.get("status") or "ready").lower()
         labels = body.get("labels")
         capabilities = body.get("capabilities")
+        pid = body.get("pid")
         meta = body.get("meta") or {}
-        if not name or not base_url:
-            raise HTTPException(status_code=400, detail="Missing required fields: name, base_url")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required fields: name")
 
         payload = {
             "name": name,
@@ -2385,10 +2470,37 @@ async def register_broker(request: Request):
             "status": status,
             "labels": labels,
             "capabilities": capabilities,
+            "pid": pid,
         }
 
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS broker_registry (
+                        name TEXT PRIMARY KEY,
+                        base_url TEXT,
+                        status TEXT NOT NULL,
+                        labels JSONB,
+                        capabilities JSONB,
+                        pid INTEGER,
+                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+                await cursor.execute(
+                    """
+                    INSERT INTO broker_registry (name, base_url, status, labels, capabilities, pid, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, now(), now(), now())
+                    ON CONFLICT (name)
+                    DO UPDATE SET base_url=EXCLUDED.base_url, status=EXCLUDED.status, labels=EXCLUDED.labels,
+                                  capabilities=EXCLUDED.capabilities, pid=EXCLUDED.pid, last_heartbeat=now(), updated_at=now()
+                    """,
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), pid)
+                )
+                # Mirror to catalog for legacy consumers
                 await cursor.execute(
                     """
                     INSERT INTO resource(name) VALUES ('broker')
@@ -2418,7 +2530,7 @@ async def register_broker(request: Request):
 
 @router.post("/broker/heartbeat", response_class=JSONResponse)
 async def heartbeat_broker(request: Request):
-    """Heartbeat/update an existing broker record in the catalog."""
+    """Heartbeat/update an existing broker record in the broker_registry."""
     try:
         body = await request.json()
         name = body.get("name") or body.get("id") or body.get("broker")
@@ -2428,34 +2540,51 @@ async def heartbeat_broker(request: Request):
         status = (body.get("status") or "").lower() or None
         labels = body.get("labels")
         capabilities = body.get("capabilities")
+        pid = body.get("pid")
         meta = body.get("meta")
 
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute(
                     """
-                    SELECT payload FROM catalog WHERE resource_type='broker' AND resource_path=%s AND resource_version='current'
+                    CREATE TABLE IF NOT EXISTS broker_registry (
+                        name TEXT PRIMARY KEY,
+                        base_url TEXT,
+                        status TEXT NOT NULL,
+                        labels JSONB,
+                        capabilities JSONB,
+                        pid INTEGER,
+                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+                await cursor.execute(
+                    """
+                    INSERT INTO broker_registry (name, base_url, status, labels, capabilities, pid)
+                    VALUES (%s, COALESCE(%s,''), COALESCE(%s,'ready'), %s::jsonb, %s::jsonb, %s)
+                    ON CONFLICT (name) DO NOTHING
                     """,
-                    (name,)
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), pid)
+                )
+                await cursor.execute(
+                    """
+                    UPDATE broker_registry
+                    SET base_url = COALESCE(%s, base_url),
+                        status = COALESCE(%s, status),
+                        labels = COALESCE(%s::jsonb, labels),
+                        capabilities = COALESCE(%s::jsonb, capabilities),
+                        pid = COALESCE(%s, pid),
+                        last_heartbeat = now(),
+                        updated_at = now()
+                    WHERE name = %s
+                    RETURNING name, base_url, status, labels, capabilities, pid, last_heartbeat
+                    """,
+                    (base_url, status, json.dumps(labels) if labels is not None else None, json.dumps(capabilities) if capabilities is not None else None, pid, name)
                 )
                 row = await cursor.fetchone()
-                current = row[0] if row and row[0] else None
-                try:
-                    cur_payload = json.loads(current) if isinstance(current, str) else (current or {})
-                except Exception:
-                    cur_payload = {}
-
-                if base_url:
-                    cur_payload["base_url"] = base_url
-                if status:
-                    cur_payload["status"] = status
-                if labels is not None:
-                    cur_payload["labels"] = labels
-                if capabilities is not None:
-                    cur_payload["capabilities"] = capabilities
-                if not cur_payload.get("name"):
-                    cur_payload["name"] = name
-
+                # Mirror to catalog (legacy)
                 await cursor.execute(
                     """
                     INSERT INTO resource(name) VALUES ('broker')
@@ -2469,10 +2598,24 @@ async def heartbeat_broker(request: Request):
                     ON CONFLICT (resource_path, resource_version)
                     DO UPDATE SET payload = EXCLUDED.payload, meta = COALESCE(EXCLUDED.meta, catalog.meta), timestamp = CURRENT_TIMESTAMP
                     """,
-                    (name, json.dumps(cur_payload), json.dumps(meta) if meta is not None else json.dumps(None))
+                    (name, json.dumps({
+                        "name": row[0] if row else name,
+                        "base_url": row[1] if row else base_url,
+                        "status": row[2] if row else status,
+                        "labels": labels,
+                        "capabilities": capabilities,
+                        "pid": pid,
+                    }), json.dumps(meta) if meta is not None else json.dumps(None))
                 )
                 await conn.commit()
-        return {"status": "ok", "broker": cur_payload}
+        return {"status": "ok", "broker": {
+            "name": row[0] if row else name,
+            "base_url": row[1] if row else base_url,
+            "status": row[2] if row else status,
+            "labels": labels,
+            "capabilities": capabilities,
+            "pid": pid,
+        }}
     except HTTPException:
         raise
     except Exception as e:
@@ -2483,29 +2626,44 @@ async def heartbeat_broker(request: Request):
 @router.get("/brokers", response_class=JSONResponse)
 async def list_brokers(request: Request, status: Optional[str] = None):
     try:
+        ttl_seconds = int(os.environ.get('NOETL_HEARTBEAT_TTL', '60'))
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                # Mark stale brokers as offline
                 await cursor.execute(
+                    f"""
+                    UPDATE broker_registry
+                    SET status = 'offline', updated_at = now()
+                    WHERE (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
                     """
-                    SELECT resource_path, payload, timestamp
-                    FROM catalog
-                    WHERE resource_type='broker' AND resource_version='current'
-                    ORDER BY timestamp DESC
-                    """
+                )
+                conditions = []
+                params: List[Any] = []
+                if status:
+                    conditions.append("status = %s")
+                    params.append(status.lower())
+                where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+                await cursor.execute(
+                    f"""
+                    SELECT name, base_url, status, labels, capabilities, pid, last_heartbeat, updated_at
+                    FROM broker_registry
+                    {where_clause}
+                    ORDER BY updated_at DESC
+                    """,
+                    params
                 )
                 rows = await cursor.fetchall()
         items: List[Dict[str, Any]] = []
         for r in rows or []:
-            name = r[0]
-            payload = r[1]
-            try:
-                data = json.loads(payload) if isinstance(payload, str) else (payload or {})
-            except Exception:
-                data = {}
-            data.setdefault("name", name)
-            items.append(data)
-        if status:
-            items = [b for b in items if str(b.get("status", "")) == status.lower()]
+            items.append({
+                "name": r[0],
+                "base_url": r[1],
+                "status": r[2],
+                "labels": r[3],
+                "capabilities": r[4],
+                "pid": r[5],
+                "last_heartbeat": r[6].isoformat() if r[6] else None,
+            })
         return {"items": items}
     except Exception as e:
         logger.exception(f"Error listing brokers: {e}")
@@ -2526,3 +2684,86 @@ async def poll_events_root(
     except Exception as e:
         logger.exception(f"Error polling events: {e}.")
         raise HTTPException(status_code=500, detail=f"Error polling events: {e}.")
+
+
+@router.delete("/worker/pool/deregister", response_class=JSONResponse)
+async def deregister_worker_pool(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("pool")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        delete = bool(body.get("delete", False))
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS worker_pool (
+                        name TEXT PRIMARY KEY,
+                        runtime TEXT NOT NULL,
+                        base_url TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        capacity INTEGER,
+                        labels JSONB,
+                        pid INTEGER,
+                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                """)
+                if delete:
+                    await cursor.execute("DELETE FROM worker_pool WHERE name = %s", (name,))
+                else:
+                    await cursor.execute(
+                        """
+                        UPDATE worker_pool SET status='offline', updated_at=now() WHERE name = %s
+                        """,
+                        (name,)
+                    )
+                await conn.commit()
+        return {"status": "ok", "name": name, "deleted": delete}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deregistering worker pool: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deregistering worker pool: {e}")
+
+
+@router.delete("/broker/deregister", response_class=JSONResponse)
+async def deregister_broker(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("broker")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        delete = bool(body.get("delete", False))
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS broker_registry (
+                        name TEXT PRIMARY KEY,
+                        base_url TEXT,
+                        status TEXT NOT NULL,
+                        labels JSONB,
+                        capabilities JSONB,
+                        pid INTEGER,
+                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                """)
+                if delete:
+                    await cursor.execute("DELETE FROM broker_registry WHERE name = %s", (name,))
+                else:
+                    await cursor.execute(
+                        """
+                        UPDATE broker_registry SET status='offline', updated_at=now() WHERE name = %s
+                        """,
+                        (name,)
+                    )
+                await conn.commit()
+        return {"status": "ok", "name": name, "deleted": delete}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deregistering broker: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deregistering broker: {e}")
