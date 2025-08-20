@@ -12,12 +12,18 @@ import {
   Row,
   Col,
   Progress,
+  Tabs,
+  Select,
+  DatePicker,
+  Input,
 } from "antd";
 import {
   PlayCircleOutlined,
   StopOutlined,
   ReloadOutlined,
   EyeOutlined,
+  FilterOutlined,
+  SearchOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
 import { ExecutionData } from "../types";
@@ -40,6 +46,9 @@ import "@xyflow/react/dist/style.css";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
+const { TabPane } = Tabs;
+const { Option } = Select;
+const { RangePicker } = DatePicker;
 
 // Node types for workflow visualization
 const nodeTypes = {
@@ -64,6 +73,7 @@ interface TaskNode {
 
 const Execution: React.FC = () => {
   const [executions, setExecutions] = useState<ExecutionData[]>([]);
+  const [filteredExecutions, setFilteredExecutions] = useState<ExecutionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -74,6 +84,14 @@ const Execution: React.FC = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [workflowLoading, setWorkflowLoading] = useState(false);
+
+  // Filtering state
+  const [activeTab, setActiveTab] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [playbookFilter, setPlaybookFilter] = useState<string>("");
+  const [searchText, setSearchText] = useState<string>("");
+  const [dateRange, setDateRange] = useState<[any, any] | null>(null);
+
   const navigate = useNavigate();
 
   const onConnect = useCallback(
@@ -128,6 +146,7 @@ const Execution: React.FC = () => {
 
       const response = await apiService.getExecutions();
       setExecutions(response);
+      setFilteredExecutions(response); // Initialize filtered executions
     } catch (err) {
       console.error("Failed to fetch executions:", err);
       setError("Failed to load execution data.");
@@ -135,6 +154,62 @@ const Execution: React.FC = () => {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  // Filter executions based on current filters
+  const applyFilters = useCallback(() => {
+    let filtered = [...executions];
+
+    // Filter by tab (event type)
+    if (activeTab !== "all") {
+      filtered = filtered.filter((exec) => exec.status === activeTab);
+    }
+
+    // Filter by status (multiple selection)
+    if (statusFilter.length > 0) {
+      filtered = filtered.filter((exec) => statusFilter.includes(exec.status));
+    }
+
+    // Filter by playbook name
+    if (playbookFilter) {
+      filtered = filtered.filter((exec) =>
+        exec.playbook_name.toLowerCase().includes(playbookFilter.toLowerCase())
+      );
+    }
+
+    // Filter by search text (search in playbook name and ID)
+    if (searchText) {
+      filtered = filtered.filter(
+        (exec) =>
+          exec.playbook_name.toLowerCase().includes(searchText.toLowerCase()) ||
+          exec.id.toLowerCase().includes(searchText.toLowerCase()) ||
+          exec.playbook_id.toLowerCase().includes(searchText.toLowerCase())
+      );
+    }
+
+    // Filter by date range
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      const [startDate, endDate] = dateRange;
+      filtered = filtered.filter((exec) => {
+        const execDate = new Date(exec.start_time);
+        return execDate >= startDate.toDate() && execDate <= endDate.toDate();
+      });
+    }
+
+    setFilteredExecutions(filtered);
+  }, [executions, activeTab, statusFilter, playbookFilter, searchText, dateRange]);
+
+  // Apply filters whenever filter criteria change
+  useEffect(() => {
+    applyFilters();
+  }, [applyFilters]);
+
+  const clearFilters = () => {
+    setActiveTab("all");
+    setStatusFilter([]);
+    setPlaybookFilter("");
+    setSearchText("");
+    setDateRange(null);
   };
 
   const handleStopExecution = async (executionId: string) => {
@@ -518,17 +593,22 @@ const Execution: React.FC = () => {
     },
   ];
 
-  const runningExecutions = executions.filter(
+  const runningExecutions = filteredExecutions.filter(
     (exec) => exec.status === "running",
   );
-  const pendingExecutions = executions.filter(
+  const pendingExecutions = filteredExecutions.filter(
     (exec) => exec.status === "pending",
   );
-  const completedExecutions = executions.filter(
+  const completedExecutions = filteredExecutions.filter(
     (exec) => exec.status === "completed",
   );
-  const failedExecutions = executions.filter(
+  const failedExecutions = filteredExecutions.filter(
     (exec) => exec.status === "failed",
+  );
+
+  // Get unique playbook names for filter dropdown
+  const uniquePlaybooks = Array.from(
+    new Set(executions.map((exec) => exec.playbook_name))
   );
 
   if (loading) {
@@ -652,6 +732,81 @@ const Execution: React.FC = () => {
             </Col>
           </Row>
 
+          {/* Event Type Filtering Section */}
+          <Card title={<><FilterOutlined /> Event Type Filters</>} size="small">
+            <Space direction="vertical" style={{ width: "100%" }}>
+              {/* Tabs for main event types */}
+              <Tabs
+                activeKey={activeTab}
+                onChange={setActiveTab}
+                size="small"
+              >
+                <TabPane tab="All Events" key="all" />
+                <TabPane tab={`Running (${executions.filter(e => e.status === "running").length})`} key="running" />
+                <TabPane tab={`Pending (${executions.filter(e => e.status === "pending").length})`} key="pending" />
+                <TabPane tab={`Completed (${executions.filter(e => e.status === "completed").length})`} key="completed" />
+                <TabPane tab={`Failed (${executions.filter(e => e.status === "failed").length})`} key="failed" />
+              </Tabs>
+
+              {/* Additional Filters */}
+              <Row gutter={16}>
+                <Col span={6}>
+                  <Input
+                    placeholder="Search executions..."
+                    prefix={<SearchOutlined />}
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    allowClear
+                  />
+                </Col>
+                <Col span={6}>
+                  <Select
+                    mode="multiple"
+                    placeholder="Filter by status"
+                    style={{ width: "100%" }}
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    allowClear
+                  >
+                    <Option value="running">Running</Option>
+                    <Option value="pending">Pending</Option>
+                    <Option value="completed">Completed</Option>
+                    <Option value="failed">Failed</Option>
+                  </Select>
+                </Col>
+                <Col span={6}>
+                  <Select
+                    placeholder="Filter by playbook"
+                    style={{ width: "100%" }}
+                    value={playbookFilter}
+                    onChange={setPlaybookFilter}
+                    allowClear
+                    showSearch
+                  >
+                    {uniquePlaybooks.map((playbook) => (
+                      <Option key={playbook} value={playbook}>
+                        {playbook}
+                      </Option>
+                    ))}
+                  </Select>
+                </Col>
+                <Col span={4}>
+                  <RangePicker
+                    placeholder={["Start date", "End date"]}
+                    style={{ width: "100%" }}
+                    value={dateRange}
+                    onChange={setDateRange}
+                  />
+                </Col>
+                <Col span={2}>
+                  <Button onClick={clearFilters} type="default">
+                    Clear
+                  </Button>
+                </Col>
+              </Row>
+            </Space>
+          </Card>
+
           {/* Execution Statistics */}
           <Row gutter={16}>
             <Col span={6}>
@@ -698,7 +853,7 @@ const Execution: React.FC = () => {
 
           {/* Executions Table */}
           <Table
-            dataSource={executions}
+            dataSource={filteredExecutions}
             columns={columns}
             rowKey="id"
             pagination={{
@@ -706,10 +861,24 @@ const Execution: React.FC = () => {
               showSizeChanger: true,
               showQuickJumper: true,
               showTotal: (total, range) =>
-                `${range[0]}-${range[1]} of ${total} executions`,
+                `${range[0]}-${range[1]} of ${total} executions (${filteredExecutions.length} filtered from ${executions.length} total)`,
             }}
             loading={refreshing}
           />
+
+          {filteredExecutions.length === 0 && executions.length > 0 && (
+            <Alert
+              message="No executions match current filters"
+              description="Try adjusting your filters to see more results."
+              type="info"
+              showIcon
+              action={
+                <Button size="small" onClick={clearFilters}>
+                  Clear Filters
+                </Button>
+              }
+            />
+          )}
 
           {executions.length === 0 && (
             <Alert
