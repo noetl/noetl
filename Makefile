@@ -336,3 +336,39 @@ run-server-api-dev: env-check
 	else \
 		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
 	fi
+
+
+
+.PHONY: run-broker run-worker-api run-worker-api-dev
+
+# Run Broker control loop (event-driven)
+run-broker: env-check
+	set -a; [ -f .env ] && . .env; set +a; \
+	if [ -x "$(VENV)/bin/python" ]; then PYBIN="$(VENV)/bin/python"; else PYBIN="python"; fi; \
+	"$$PYBIN" -c "import os; from noetl.broker import run_control_loop; run_control_loop(os.getenv('NOETL_SERVER_URL','http://localhost:8082'), poll_interval=float(os.getenv('NOETL_BROKER_POLL_INTERVAL','2.0')), stop_after=(int(os.getenv('NOETL_BROKER_STOP_AFTER','0')) or None))"
+
+# Run Worker API
+run-worker-api: env-check
+	set -a; [ -f .env ] && . .env; set +a; \
+	export NOETL_ENABLE_WORKER_API=true; \
+	export NOETL_HOST=$${NOETL_WORKER_HOST:-0.0.0.0}; \
+	export NOETL_PORT=$${NOETL_WORKER_PORT:-8081}; \
+	if [ -z "$$NOETL_WORKER_BASE_URL" ]; then export NOETL_WORKER_BASE_URL="http://localhost:$${NOETL_PORT}/api/worker"; fi; \
+	if [ -x "$(VENV)/bin/uvicorn" ]; then \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	else \
+		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	fi
+
+# Run Worker API (dev, autoreload)
+run-worker-api-dev: env-check
+	set -a; [ -f .env ] && . .env; set +a; \
+	export NOETL_ENABLE_WORKER_API=true; \
+	export NOETL_HOST=$${NOETL_WORKER_HOST:-0.0.0.0}; \
+	export NOETL_PORT=$${NOETL_WORKER_PORT:-8081}; \
+	if [ -z "$$NOETL_WORKER_BASE_URL" ]; then export NOETL_WORKER_BASE_URL="http://localhost:$${NOETL_PORT}/api/worker"; fi; \
+	if [ -x "$(VENV)/bin/uvicorn" ]; then \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	else \
+		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+	fi

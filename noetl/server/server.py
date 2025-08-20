@@ -2510,3 +2510,19 @@ async def list_brokers(request: Request, status: Optional[str] = None):
     except Exception as e:
         logger.exception(f"Error listing brokers: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing brokers: {e}")
+
+
+@router.get("/events", response_class=JSONResponse)
+async def poll_events_root(
+    request: Request,
+    event_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 10
+):
+    try:
+        event_service = get_event_service()
+        items = await event_service.poll_events(event_type=event_type, status=status, limit=limit)
+        return {"items": items}
+    except Exception as e:
+        logger.exception(f"Error polling events: {e}.")
+        raise HTTPException(status_code=500, detail=f"Error polling events: {e}.")

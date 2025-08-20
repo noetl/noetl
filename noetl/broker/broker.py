@@ -1759,14 +1759,19 @@ def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _O
     while True:
         try:
             # Step 1: poll for pending agent execution requests
-            poll_url = f"{server_url}/api/events/poll"
             params = {"event_type": "AgentExecutionRequested", "status": "REQUESTED", "limit": 10}
+            primary_url = f"{server_url}/api/events"
+            fallback_url = f"{server_url}/api/events/poll"
             with httpx.Client(timeout=float(os.environ.get('NOETL_BROKER_HTTP_TIMEOUT', '15'))) as client:
-                resp = client.get(poll_url, params=params)
+                resp = client.get(primary_url, params=params)
                 if resp.status_code != 200:
-                    logger.debug(f"BrokerLoop: poll error {resp.status_code}: {resp.text}")
-                    _time.sleep(poll_interval)
-                    continue
+                    logger.debug(f"BrokerLoop: poll primary error {resp.status_code}: {resp.text}")
+                    resp2 = client.get(fallback_url, params=params)
+                    if resp2.status_code != 200:
+                        logger.debug(f"BrokerLoop: poll fallback error {resp2.status_code}: {resp2.text}")
+                        _time.sleep(poll_interval)
+                        continue
+                    resp = resp2
                 items = (resp.json() or {}).get('items', [])
 
             if not items:

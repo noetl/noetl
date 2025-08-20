@@ -274,7 +274,8 @@ def initialize_db_pool():
     if db_pool is None and ConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10)
+            db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10, open=False)
+            db_pool.open()
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
@@ -286,7 +287,7 @@ async def initialize_async_db_pool():
     if async_db_pool is None and AsyncConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=1, max_size=10)
+            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=1, max_size=10, open=False)
             await async_db_pool.open()
             logger.info("Async database connection pool initialized successfully")
         except Exception as e:
