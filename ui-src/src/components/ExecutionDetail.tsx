@@ -20,7 +20,8 @@ import {
 import {
   ArrowLeftOutlined,
   FilterOutlined,
-  SearchOutlined
+  SearchOutlined,
+  RightOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
 import { ExecutionData } from "../types";
@@ -150,10 +151,30 @@ const ExecutionDetail: React.FC = () => {
     setDateRange(null);
   };
 
+  // Helper to pick the first existing key from possible aliases
+  const pickField = (obj: any, keys: string[]) => {
+    for (const k of keys) {
+      if (obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined && obj[k] !== null) {
+        return obj[k];
+      }
+    }
+    return undefined;
+  };
+
+  const renderJSON = (value: any) => {
+    if (value === undefined || value === null) return "-";
+    try {
+      if (typeof value === "string") return value;
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  };
+
   // Get unique values for filter dropdowns
-  const uniqueEventTypes = Array.from(new Set(events.map((event) => event.event_type)));
-  const uniqueStatuses = Array.from(new Set(events.map((event) => event.status)));
-  const uniqueNodes = Array.from(new Set(events.map((event) => event.node_name)));
+  const uniqueEventTypes: string[] = Array.from(new Set(events.map((event: any) => event.event_type)));
+  const uniqueStatuses: string[] = Array.from(new Set(events.map((event: any) => event.status)));
+  const uniqueNodes: string[] = Array.from(new Set(events.map((event: any) => event.node_name)));
 
   if (loading) {
     return <Spin className="execution-detail-loading" />;
@@ -344,7 +365,7 @@ const ExecutionDetail: React.FC = () => {
                 onChange={setEventTypeFilter}
                 allowClear
               >
-                {uniqueEventTypes.map((type) => (
+                {uniqueEventTypes.map((type: string) => (
                   <Option key={type} value={type}>
                     {type}
                   </Option>
@@ -360,7 +381,7 @@ const ExecutionDetail: React.FC = () => {
                 onChange={setStatusFilter}
                 allowClear
               >
-                {uniqueStatuses.map((status) => (
+                {uniqueStatuses.map((status: string) => (
                   <Option key={status} value={status}>
                     {status}
                   </Option>
@@ -376,7 +397,7 @@ const ExecutionDetail: React.FC = () => {
                 allowClear
                 showSearch
               >
-                {uniqueNodes.map((node) => (
+                {uniqueNodes.map((node: string) => (
                   <Option key={node} value={node}>
                     {node}
                   </Option>
@@ -418,6 +439,74 @@ const ExecutionDetail: React.FC = () => {
             setPageSize(size);
             setCurrentPage(1);
           },
+        }}
+        expandable={{
+          expandIconColumnIndex: columns.length,
+          columnWidth: 44,
+          expandRowByClick: true,
+          expandIcon: ({ expanded, onExpand, record }) => (
+            <span
+              className={`execution-detail-expand-icon ${expanded ? "expanded" : ""}`}
+              onClick={(e) => onExpand(record, e)}
+              role="button"
+              aria-label={expanded ? "Collapse" : "Expand"}
+            >
+              <RightOutlined />
+            </span>
+          ),
+          expandedRowRender: (record: any) => (
+            <div className="execution-detail-expanded">
+              <Row gutter={[24, 12]}>
+                <Col xs={24} md={12}>
+                  <div className="execution-detail-field">
+                    <Text className="execution-detail-label">Node Name</Text>
+                    <Text className="execution-detail-value">{record.node_name || "-"}</Text>
+                  </div>
+                </Col>
+                <Col xs={24} md={12}>
+                  <div className="execution-detail-field">
+                    <Text className="execution-detail-label">Context Value</Text>
+                    <Text code className="execution-detail-value execution-detail-result">
+                      {renderJSON(pickField(record, ["context", "context_value", "contextValue"]))}
+                    </Text>
+                  </div>
+                </Col>
+                <Col xs={24} md={12}>
+                  <div className="execution-detail-field">
+                    <Text className="execution-detail-label">Input Result</Text>
+                    <Text code className="execution-detail-value execution-detail-result">
+                      {renderJSON(pickField(record, ["input_result", "input", "inputData"]))}
+                    </Text>
+                  </div>
+                </Col>
+                <Col xs={24} md={12}>
+                  <div className="execution-detail-field">
+                    <Text className="execution-detail-label">Output Result</Text>
+                    <Text code className="execution-detail-value execution-detail-result">
+                      {renderJSON(pickField(record, ["output_result", "output", "outputData", "result"]))}
+                    </Text>
+                  </div>
+                </Col>
+                <Col xs={24}>
+                  <div className="execution-detail-field">
+                    <Text className="execution-detail-label">Metadata</Text>
+                    <Text code className="execution-detail-value execution-detail-result">
+                      {renderJSON(pickField(record, ["metadata", "meta"]))}
+                    </Text>
+                  </div>
+                </Col>
+                <Col xs={24}>
+                  <div className="execution-detail-field">
+                    <Text className="execution-detail-label">Error</Text>
+                    <Text type="danger" className="execution-detail-value execution-detail-result">
+                      {renderJSON(pickField(record, ["error", "message", "error_message"]))}
+                    </Text>
+                  </div>
+                </Col>
+              </Row>
+            </div>
+          ),
+          rowExpandable: () => true,
         }}
         size="small"
       />
