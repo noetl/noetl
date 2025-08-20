@@ -315,3 +315,24 @@ diagram:
 	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
 	echo "Generating diagram from $(PLAYBOOK) -> $$out (format=$$fmt) using '$$cli'"; \
 	"$$cli" diagram "$(PLAYBOOK)" -f "$$fmt" -o "$$out"
+
+
+.PHONY: run-server-api run-server-api-dev env-check
+env-check:
+	@if [ ! -f .env ]; then echo "Warning: .env file not found. Using current environment or defaults."; fi
+
+run-server-api: env-check
+	set -a; [ -f .env ] && . .env; set +a; \
+	if [ -x "$(VENV)/bin/uvicorn" ]; then \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+	else \
+		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+	fi
+
+run-server-api-dev: env-check
+	set -a; [ -f .env ] && . .env; set +a; \
+	if [ -x "$(VENV)/bin/uvicorn" ]; then \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+	else \
+		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+	fi

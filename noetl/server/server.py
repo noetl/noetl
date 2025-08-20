@@ -290,6 +290,74 @@ class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
+    async def poll_events(self, event_type: Optional[str] = None, status: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Fetch recent events filtered by type and status from event_log.
+        Args:
+            event_type: optional filter for event_type
+            status: optional filter for status (e.g., REQUESTED)
+            limit: max number of events to return
+        Returns: list of event dicts
+        """
+        try:
+            conditions = []
+            params: List[Any] = []
+            if event_type:
+                conditions.append("event_type = %s")
+                params.append(event_type)
+            if status:
+                conditions.append("status = %s")
+                params.append(status)
+            where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+            sql = f"""
+                SELECT 
+                    execution_id,
+                    event_id,
+                    parent_event_id,
+                    timestamp,
+                    event_type,
+                    node_id,
+                    node_name,
+                    node_type,
+                    status,
+                    duration,
+                    input_context,
+                    output_result,
+                    metadata,
+                    error
+                FROM event_log
+                {where_clause}
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """
+            params.append(limit)
+            results: List[Dict[str, Any]] = []
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, params)
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        results.append({
+                            "execution_id": r[0],
+                            "event_id": r[1],
+                            "parent_event_id": r[2],
+                            "timestamp": r[3].isoformat() if r[3] else None,
+                            "event_type": r[4],
+                            "node_id": r[5],
+                            "node_name": r[6],
+                            "node_type": r[7],
+                            "status": r[8],
+                            "duration": r[9],
+                            "input_context": json.loads(r[10]) if r[10] else None,
+                            "output_result": json.loads(r[11]) if r[11] else None,
+                            "metadata": json.loads(r[12]) if r[12] else None,
+                            "error": r[13],
+                        })
+            return results
+        except Exception as e:
+            logger.exception(f"Error polling events: {e}")
+            return []
+    
     async def get_all_executions(self) -> List[Dict[str, Any]]:
         """
         Get all executions from the event_log table.
@@ -1028,6 +1096,21 @@ async def create_event(
             detail=f"Error creating event: {e}."
         )
 
+@router.get("/events/poll", response_class=JSONResponse)
+async def poll_events(
+    request: Request,
+    event_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 10
+):
+    try:
+        event_service = get_event_service()
+        items = await event_service.poll_events(event_type=event_type, status=status, limit=limit)
+        return {"items": items}
+    except Exception as e:
+        logger.exception(f"Error polling events: {e}.")
+        raise HTTPException(status_code=500, detail=f"Error polling events: {e}.")
+
 
 @router.post("/agent/execute", response_class=JSONResponse)
 async def execute_agent(
@@ -1156,6 +1239,14 @@ async def execute_agent_async(
         }
 
         initial_event = await event_service.emit(initial_event_data)
+
+        # If broker loop is enabled, do not execute locally; let broker pick this up.
+        try:
+            broker_mode = os.environ.get('NOETL_BROKER_MODE', 'false').lower() in ('1','true','yes','on')
+        except Exception:
+            broker_mode = False
+        if broker_mode:
+            return {"status": "accepted", "event": initial_event}
 
         def execute_agent_task():
             try:
@@ -1447,27 +1538,28 @@ async def execute_playbook(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/catalog/playbooks/content", response_class=JSONResponse)
-async def get_catalog_playbook_content(playbook_id: str = Query(...)):
-    """Get playbook content"""
+async def get_catalog_playbook_content(playbook_id: str = Query(...), version: Optional[str] = Query(default=None)):
+    """Get playbook content. If version is omitted, latest is used."""
     try:
-        logger.info(f"Received playbook_id: '{playbook_id}'")
+        logger.info(f"Received playbook_id: '{playbook_id}', version: '{version}'")
         if playbook_id.startswith("playbooks/"):
             playbook_id = playbook_id[10:]
             logger.info(f"Fixed playbook_id: '{playbook_id}'")
         
         catalog_service = get_catalog_service()
-        latest_version = await catalog_service.get_latest_version(playbook_id)
-        logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
+        if not version:
+            version = await catalog_service.get_latest_version(playbook_id)
+            logger.info(f"Latest version for '{playbook_id}': '{version}'")
         
-        entry = await catalog_service.fetch_entry(playbook_id, latest_version)
+        entry = await catalog_service.fetch_entry(playbook_id, version)
         
         if not entry:
             raise HTTPException(
                 status_code=404,
-                detail=f"Playbook '{playbook_id}' not found."
+                detail=f"Playbook '{playbook_id}' version '{version}' not found."
             )
         
-        return {"content": entry.get('content', '')}
+        return {"content": entry.get('content', ''), "version": version}
     except HTTPException:
         raise
     except Exception as e:
@@ -2120,7 +2212,7 @@ async def execute_postgres(
 
 
 # === Worker Pool Registry Endpoints ===
-from typing import Optional as _OptStr
+# _OptStr alias removed; using Optional[str] directly
 
 @router.post("/worker/pool/register", response_class=JSONResponse)
 async def register_worker_pool(request: Request):
@@ -2236,7 +2328,7 @@ async def heartbeat_worker_pool(request: Request):
 
 
 @router.get("/worker/pools", response_class=JSONResponse)
-async def list_worker_pools(request: Request, runtime: _OptStr = None, status: _OptStr = None):
+async def list_worker_pools(request: Request, runtime: Optional[str] = None, status: Optional[str] = None):
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
@@ -2268,3 +2360,153 @@ async def list_worker_pools(request: Request, runtime: _OptStr = None, status: _
     except Exception as e:
         logger.exception(f"Error listing worker pools: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing worker pools: {e}")
+
+
+# === Broker Registry Endpoints ===
+@router.post("/broker/register", response_class=JSONResponse)
+async def register_broker(request: Request):
+    """Register or update a broker instance with its base_url and metadata.
+    Stored in catalog as resource_type='broker', resource_version='current'.
+    """
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("broker")
+        base_url = body.get("base_url") or body.get("url")
+        status = (body.get("status") or "ready").lower()
+        labels = body.get("labels")
+        capabilities = body.get("capabilities")
+        meta = body.get("meta") or {}
+        if not name or not base_url:
+            raise HTTPException(status_code=400, detail="Missing required fields: name, base_url")
+
+        payload = {
+            "name": name,
+            "base_url": base_url,
+            "status": status,
+            "labels": labels,
+            "capabilities": capabilities,
+        }
+
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO resource(name) VALUES ('broker')
+                    ON CONFLICT (name) DO NOTHING
+                    """
+                )
+                await cursor.execute(
+                    """
+                    INSERT INTO catalog (
+                        resource_path, resource_type, resource_version, source,
+                        resource_location, content, payload, meta, template, timestamp
+                    )
+                    VALUES (%s, 'broker', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = EXCLUDED.meta, timestamp = CURRENT_TIMESTAMP
+                    """,
+                    (name, json.dumps(payload), json.dumps(meta))
+                )
+                await conn.commit()
+        return {"status": "ok", "broker": {**payload, "meta": meta}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error registering broker: {e}")
+        raise HTTPException(status_code=500, detail=f"Error registering broker: {e}")
+
+
+@router.post("/broker/heartbeat", response_class=JSONResponse)
+async def heartbeat_broker(request: Request):
+    """Heartbeat/update an existing broker record in the catalog."""
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("broker")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        base_url = body.get("base_url") or body.get("url")
+        status = (body.get("status") or "").lower() or None
+        labels = body.get("labels")
+        capabilities = body.get("capabilities")
+        meta = body.get("meta")
+
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT payload FROM catalog WHERE resource_type='broker' AND resource_path=%s AND resource_version='current'
+                    """,
+                    (name,)
+                )
+                row = await cursor.fetchone()
+                current = row[0] if row and row[0] else None
+                try:
+                    cur_payload = json.loads(current) if isinstance(current, str) else (current or {})
+                except Exception:
+                    cur_payload = {}
+
+                if base_url:
+                    cur_payload["base_url"] = base_url
+                if status:
+                    cur_payload["status"] = status
+                if labels is not None:
+                    cur_payload["labels"] = labels
+                if capabilities is not None:
+                    cur_payload["capabilities"] = capabilities
+                if not cur_payload.get("name"):
+                    cur_payload["name"] = name
+
+                await cursor.execute(
+                    """
+                    INSERT INTO resource(name) VALUES ('broker')
+                    ON CONFLICT (name) DO NOTHING
+                    """
+                )
+                await cursor.execute(
+                    """
+                    INSERT INTO catalog (resource_path, resource_type, resource_version, source, resource_location, content, payload, meta, template, timestamp)
+                    VALUES (%s, 'broker', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = COALESCE(EXCLUDED.meta, catalog.meta), timestamp = CURRENT_TIMESTAMP
+                    """,
+                    (name, json.dumps(cur_payload), json.dumps(meta) if meta is not None else json.dumps(None))
+                )
+                await conn.commit()
+        return {"status": "ok", "broker": cur_payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in broker heartbeat: {e}")
+        raise HTTPException(status_code=500, detail=f"Error in broker heartbeat: {e}")
+
+
+@router.get("/brokers", response_class=JSONResponse)
+async def list_brokers(request: Request, status: Optional[str] = None):
+    try:
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT resource_path, payload, timestamp
+                    FROM catalog
+                    WHERE resource_type='broker' AND resource_version='current'
+                    ORDER BY timestamp DESC
+                    """
+                )
+                rows = await cursor.fetchall()
+        items: List[Dict[str, Any]] = []
+        for r in rows or []:
+            name = r[0]
+            payload = r[1]
+            try:
+                data = json.loads(payload) if isinstance(payload, str) else (payload or {})
+            except Exception:
+                data = {}
+            data.setdefault("name", name)
+            items.append(data)
+        if status:
+            items = [b for b in items if str(b.get("status", "")) == status.lower()]
+        return {"items": items}
+    except Exception as e:
+        logger.exception(f"Error listing brokers: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing brokers: {e}")

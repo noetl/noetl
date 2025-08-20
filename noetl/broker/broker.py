@@ -1735,3 +1735,176 @@ class Broker:
 
         step_result = self.agent.get_step_results()
         return step_result
+
+
+
+# === Broker control loop ===
+import time as _time
+from typing import Optional as _Optional
+
+
+def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _Optional[int] = None) -> None:
+    """
+    Continuous control loop that:
+      1) polls the server for AgentExecutionRequested events in REQUESTED status,
+      2) claims each event (set status RUNNING),
+      3) fetches the referenced playbook content,
+      4) orchestrates execution via Broker (which dispatches tasks to worker pools),
+      5) reports final COMPLETED/ERROR event back to the server.
+    This function is intended to be executed as a separate broker process.
+    """
+    server_url = (server_url or '').rstrip('/')
+    processed = 0
+
+    while True:
+        try:
+            # Step 1: poll for pending agent execution requests
+            poll_url = f"{server_url}/api/events/poll"
+            params = {"event_type": "AgentExecutionRequested", "status": "REQUESTED", "limit": 10}
+            with httpx.Client(timeout=float(os.environ.get('NOETL_BROKER_HTTP_TIMEOUT', '15'))) as client:
+                resp = client.get(poll_url, params=params)
+                if resp.status_code != 200:
+                    logger.debug(f"BrokerLoop: poll error {resp.status_code}: {resp.text}")
+                    _time.sleep(poll_interval)
+                    continue
+                items = (resp.json() or {}).get('items', [])
+
+            if not items:
+                _time.sleep(poll_interval)
+                continue
+
+            for evt in items:
+                try:
+                    event_id = evt.get('event_id')
+                    metadata = evt.get('metadata') or {}
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except Exception:
+                            metadata = {}
+                    input_payload = evt.get('output_result')  # 'result' mapped to output_result on emit
+                    if input_payload is None:
+                        input_payload = {}
+
+                    path = metadata.get('resource_path') or (evt.get('input_context') or {}).get('path')
+                    version = metadata.get('resource_version') or (evt.get('input_context') or {}).get('version')
+                    if not path:
+                        logger.warning(f"BrokerLoop: event {event_id} missing resource_path, skipping")
+                        continue
+
+                    # Step 2: claim event (RUNNING)
+                    try:
+                        claim_body = {"event_id": event_id, "status": "RUNNING", "event_type": evt.get('event_type')}
+                        with httpx.Client(timeout=7.5) as client:
+                            client.post(f"{server_url}/api/events", json=claim_body)
+                    except Exception as ce:
+                        logger.debug(f"BrokerLoop: failed to claim event {event_id}: {ce}")
+
+                    # Step 3: fetch playbook content
+                    try:
+                        with httpx.Client(timeout=10.0) as client:
+                            content_resp = client.get(
+                                f"{server_url}/api/catalog/playbooks/content",
+                                params={"playbook_id": path, "version": version}
+                            )
+                            if content_resp.status_code != 200:
+                                raise RuntimeError(f"fetch content {content_resp.status_code}: {content_resp.text}")
+                            content_json = content_resp.json() or {}
+                            content_text = content_json.get('content')
+                            version = content_json.get('version') or version
+                    except Exception as fe:
+                        # report error and continue
+                        try:
+                            err_body = {
+                                "event_id": event_id,
+                                "execution_id": event_id,
+                                "event_type": "agent_execution_error",
+                                "status": "ERROR",
+                                "error": str(fe),
+                                "result": {"error": str(fe)},
+                                "meta": {"resource_path": path, "resource_version": version},
+                                "node_type": "playbooks",
+                                "node_name": path,
+                            }
+                            with httpx.Client(timeout=7.5) as client:
+                                client.post(f"{server_url}/api/events", json=err_body)
+                        except Exception:
+                            pass
+                        continue
+
+                    # Step 4: write temp YAML and orchestrate
+                    temp_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tf:
+                            tf.write((content_text or '').encode('utf-8'))
+                            temp_path = tf.name
+
+                        # Build Worker and Broker
+                        agent = Worker(temp_path, mock_mode=False, pgdb=None)
+
+                        # Apply input payload (deep merge)
+                        workload = agent.playbook.get('workload', {}) or {}
+                        merged = deep_merge(workload, input_payload or {})
+                        for k, v in merged.items():
+                            agent.update_context(k, v)
+                        agent.update_context('workload', merged)
+                        agent.store_workload(merged)
+
+                        child_broker = Broker(agent, server_url=server_url)
+                        results = child_broker.run()
+
+                        # Step 5: report completion
+                        try:
+                            done_body = {
+                                "event_id": event_id,
+                                "execution_id": agent.execution_id,
+                                "event_type": "agent_execution_completed",
+                                "status": "COMPLETED",
+                                "result": results,
+                                "meta": {
+                                    "resource_path": path,
+                                    "resource_version": version,
+                                    "execution_id": agent.execution_id,
+                                },
+                                "node_type": "playbooks",
+                                "node_name": path,
+                            }
+                            with httpx.Client(timeout=10.0) as client:
+                                client.post(f"{server_url}/api/events", json=done_body)
+                        except Exception as re:
+                            logger.debug(f"BrokerLoop: failed to report completion for {event_id}: {re}")
+
+                    except Exception as ex:
+                        # On unexpected execution error, report failure
+                        try:
+                            err_body = {
+                                "event_id": event_id,
+                                "execution_id": event_id,
+                                "event_type": "agent_execution_error",
+                                "status": "ERROR",
+                                "error": str(ex),
+                                "result": {"error": str(ex)},
+                                "meta": {"resource_path": path, "resource_version": version},
+                                "node_type": "playbooks",
+                                "node_name": path,
+                            }
+                            with httpx.Client(timeout=7.5) as client:
+                                client.post(f"{server_url}/api/events", json=err_body)
+                        except Exception:
+                            pass
+                    finally:
+                        if temp_path and os.path.exists(temp_path):
+                            try:
+                                os.unlink(temp_path)
+                            except Exception:
+                                pass
+
+                    processed += 1
+                    if stop_after is not None and processed >= stop_after:
+                        return
+                except Exception as per_evt:
+                    logger.debug(f"BrokerLoop: per-event error: {per_evt}")
+
+        except Exception as loop_err:
+            logger.debug(f"BrokerLoop: loop error: {loop_err}")
+            _time.sleep(poll_interval)
