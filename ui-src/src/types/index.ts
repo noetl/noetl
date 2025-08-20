@@ -31,6 +31,14 @@ export interface ExecutionData {
   progress: number;
   result?: any;
   error?: string;
+  events?: Array<{
+    event_id: string;
+    event_type: string;
+    node_name: string;
+    status: string;
+    timestamp: string;
+    duration: number;
+  }>;
 }
 
 export interface DashboardStats {
@@ -54,6 +62,7 @@ export interface VisualizationWidget {
     height?: number;
     showLegend?: boolean;
     responsive?: boolean;
+    pagination?: boolean | object;
   };
 }
 

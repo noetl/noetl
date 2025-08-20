@@ -74,13 +74,13 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   playbookName,
   content
 }) => {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds: Edge[]) => addEdge(params, eds)),
+    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges]
   );
 
@@ -310,7 +310,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               source: sourceTask.id,
               target: task.id,
               animated: true,
-              style: { stroke: '#1890ff', strokeWidth: 2 }
+              style: { stroke: '#1890ff', strokeWidth: 2, strokeDasharray: '0' }
             });
           }
         });
@@ -321,7 +321,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           source: tasks[index - 1].id,
           target: task.id,
           animated: true,
-          style: { stroke: '#1890ff', strokeWidth: 2 }
+          style: { stroke: '#1890ff', strokeWidth: 2, strokeDasharray: '0' }
         });
       }
     });

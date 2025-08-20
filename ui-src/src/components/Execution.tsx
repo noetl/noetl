@@ -52,13 +52,13 @@ const Execution: React.FC = () => {
   const [showWorkflowVisualization, setShowWorkflowVisualization] = useState(false);
   const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
   const [selectedPlaybookName, setSelectedPlaybookName] = useState<string>('');
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const navigate = useNavigate();
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds: Edge[]) => addEdge(params, eds)),
+    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges]
   );
 
@@ -316,7 +316,7 @@ const Execution: React.FC = () => {
               source: sourceTask.id,
               target: task.id,
               animated: true,
-              style: { stroke: '#1890ff', strokeWidth: 3 }
+              style: { stroke: '#1890ff', strokeWidth: 3, strokeDasharray: '0' }
             });
           }
         });
@@ -326,7 +326,7 @@ const Execution: React.FC = () => {
           source: tasks[index - 1].id,
           target: task.id,
           animated: true,
-          style: { stroke: '#1890ff', strokeWidth: 3 }
+          style: { stroke: '#1890ff', strokeWidth: 3, strokeDasharray: '0' }
         });
       }
     });

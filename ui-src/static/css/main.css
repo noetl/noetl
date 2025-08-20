@@ -11,6 +11,31 @@ body {
 }
 
 /* ==========================================================================
+   ReactFlow Edge Styles - Solid Lines
+   ========================================================================== */
+.react-flow__edge-path,
+.react-flow__edge,
+.react-flow__edge.animated path,
+.react-flow__edge.animated,
+.react-flow__connection .animated,
+.react-flow__connection-line {
+    stroke-dasharray: 0 !important;
+}
+
+/* Override any animated edges */
+.react-flow__edge.animated path,
+.react-flow__edge.animated {
+    stroke-dasharray: 0 !important;
+    animation: none !important;
+}
+
+/* Override connection lines */
+.react-flow__connection .animated {
+    stroke-dasharray: 0 !important;
+    animation: none !important;
+}
+
+/* ==========================================================================
    Layout Components - Used by main.tsx
    ========================================================================== */
 .app-header {
