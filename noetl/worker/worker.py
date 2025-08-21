@@ -11,6 +11,7 @@ from noetl.render import render_template
 from noetl.secret import SecretManager
 from noetl.sqlcmd import *
 from noetl.logger import setup_logger, log_error
+from noetl.common import get_snowflake_id_str
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -95,7 +96,7 @@ class EventReporter:
         """
         Send an event to the server. Returns the server response JSON (which echoes event fields).
         """
-        eid = event_id or f"evt_{uuid.uuid4().hex}"
+        eid = event_id or get_snowflake_id_str()
         payload: Dict[str, Any] = {
             "event_id": eid,
             "event_type": event_type,
@@ -145,7 +146,7 @@ class Worker:
         
         self.playbook_path = playbook_path
         self.mock_mode = mock_mode
-        self.execution_id = str(uuid.uuid4())
+        self.execution_id = get_snowflake_id_str()
         logger.debug(f"WORKER.__INIT__: Generated execution_id={self.execution_id}")
         
         logger.debug("WORKER.__INIT__: Loading playbook")
@@ -1018,7 +1019,7 @@ def _maybe_install(reqs: Optional[List[str]], allow_flag: Optional[bool]) -> Dic
 
 @router.post("/task/execute", response_model=ExecuteTaskResponse)
 async def execute_single_task(payload: ExecuteTaskRequest) -> ExecuteTaskResponse:
-    execution_id = payload.execution_id or str(uuid.uuid4())
+    execution_id = payload.execution_id or get_snowflake_id_str()
     task_name = payload.task.task or "inline_task"
 
     install_info = _maybe_install(payload.requirements, payload.allow_installs)
@@ -1066,7 +1067,7 @@ async def execute_single_task(payload: ExecuteTaskRequest) -> ExecuteTaskRespons
             except Exception as e:  # pragma: no cover
                 logger.warning(f"WorkerAPI: EventReporter.emit failed: {e}")
         if not eid:
-            eid = str(uuid.uuid4())
+            eid = get_snowflake_id_str()
         if payload.callback_url and httpx is not None:
             try:
                 data = {

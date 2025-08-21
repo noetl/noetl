@@ -64,6 +64,8 @@ help:
 	@echo "  make k8s-noetl-apply             Apply config, services, and deployments in order (NAMESPACE=ns)"
 	@echo "  make k8s-noetl-delete            Delete NoETL resources (reverse order) (NAMESPACE=ns)"
 	@echo "  make k8s-noetl-restart           Rollout restart server and worker deployments (NAMESPACE=ns)"
+	@echo "  make k8s-postgres-apply          Apply ONLY Postgres manifests (NAMESPACE=ns)"
+	@echo "  make k8s-postgres-delete         Delete ONLY Postgres manifests (NAMESPACE=ns)"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -237,6 +239,7 @@ release:
 KUBECTL ?= kubectl
 NAMESPACE ?= default
 K8S_NOETL_DIR ?= $(K8S_DIR)/noetl
+K8S_POSTGRES_DIR ?= $(K8S_DIR)/postgres
 
 .PHONY: k8s-noetl-config k8s-noetl-services k8s-noetl-deployments k8s-noetl-apply k8s-noetl-delete k8s-noetl-restart
 
@@ -283,7 +286,28 @@ k8s-noetl-restart:
 	-$(KUBECTL) -n $(NAMESPACE) rollout restart deployment/noetl-worker-cpu || true
 	-$(KUBECTL) -n $(NAMESPACE) rollout restart deployment/noetl-worker-qpu || true
 
+# === Postgres (only) on Kubernetes ===
+.PHONY: k8s-postgres-apply k8s-postgres-delete
 
+k8s-postgres-apply:
+	@echo "Applying ONLY Postgres manifests to namespace $(NAMESPACE)..."
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-pv.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-service.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-configmap.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-secret.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-config-files.yaml
+	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-deployment.yaml
+	@echo "Postgres applied. NodePort may be exposed at 30543 (see postgres-service.yaml)."
+
+k8s-postgres-delete:
+	@echo "Deleting ONLY Postgres manifests from namespace $(NAMESPACE)..."
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-deployment.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-config-files.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-secret.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-configmap.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-service.yaml --ignore-not-found
+	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-pv.yaml --ignore-not-found
+	@echo "Postgres resources deleted (PVC/PV may persist depending on cluster policy)."
 
 # Generate a DAG diagram using the NoETL CLI
 .PHONY: diagram

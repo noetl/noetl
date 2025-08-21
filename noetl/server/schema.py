@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import traceback
+import datetime
 from typing import List, Optional, Dict, Any, Union
 import psycopg
 from noetl.common import make_serializable
@@ -346,9 +347,15 @@ class DatabaseSchema:
                     distributed_state VARCHAR,
                     context_key VARCHAR,
                     context_value TEXT,
+                    trace_component JSONB,
                     PRIMARY KEY (execution_id, event_id)
                 )
             """)
+            # Ensure trace_component exists (for upgrades)
+            try:
+                cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB")
+            except Exception:
+                pass
 
             logger.info("Creating workflow table.")
             cursor.execute(f"""
@@ -390,7 +397,7 @@ class DatabaseSchema:
             logger.info("Creating error_log table.")
             cursor.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.noetl_schema}.error_log (
-                    error_id SERIAL PRIMARY KEY,
+                    error_id BIGINT PRIMARY KEY,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     error_type VARCHAR(50),
                     error_message TEXT,
@@ -408,6 +415,11 @@ class DatabaseSchema:
                     resolution_timestamp TIMESTAMP
                 )
             """)
+            # Attempt to migrate existing error_log.error_id to BIGINT if previously SERIAL
+            try:
+                cursor.execute(f"ALTER TABLE {self.noetl_schema}.error_log ALTER COLUMN error_id TYPE BIGINT")
+            except Exception:
+                pass
             
             cursor.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON {self.noetl_schema}.error_log (timestamp);
@@ -442,41 +454,83 @@ class DatabaseSchema:
                 pass
 
             self.conn.commit()
-            logger.info("Creating worker_pool registry table.")
+            logger.info("Creating runtime_registry table with runtime_id primary key.")
             cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.worker_pool (
-                    name TEXT PRIMARY KEY,
-                    runtime TEXT NOT NULL CHECK (runtime IN ('cpu','gpu','qpu')),
-                    base_url TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    capacity INTEGER,
-                    labels JSONB,
-                    pid INTEGER,
-                    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-            """)
-            cursor.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_worker_pool_runtime ON {self.noetl_schema}.worker_pool (runtime);
-            """)
-
-            logger.info("Creating broker_registry table.")
-            cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.broker_registry (
-                    name TEXT PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.runtime_registry (
+                    runtime_id BIGINT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
                     base_url TEXT,
                     status TEXT NOT NULL,
                     labels JSONB,
                     capabilities JSONB,
-                    pid INTEGER,
+                    capacity INTEGER,
+                    runtime JSONB,
                     last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+            # Ensure compatibility: ensure runtime_id column exists (for older deployments)
+            try:
+                cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT")
+            except Exception:
+                pass
+            # Ensure composite uniqueness on (component_type, name) and indexes for queries
+            cursor.execute(f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON {self.noetl_schema}.runtime_registry (component_type, name);
+            """)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_runtime_registry_type ON {self.noetl_schema}.runtime_registry (component_type);
+            """)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_runtime_registry_status ON {self.noetl_schema}.runtime_registry (status);
+            """)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_runtime_registry_runtime_type ON {self.noetl_schema}.runtime_registry ((runtime->>'type'));
+            """)
 
             self.conn.commit()
+            # --- Migration: populate runtime_id for existing rows and make it primary key if safe ---
+            try:
+                try:
+                    from noetl.common import get_snowflake_id
+                except Exception:
+                    get_snowflake_id = lambda: int(datetime.now().timestamp() * 1000)
+
+                # Fill missing runtime_id values with unique snowflake ids
+                cursor.execute(f"SELECT component_type, name FROM {self.noetl_schema}.runtime_registry WHERE runtime_id IS NULL")
+                rows_to_update = cursor.fetchall()
+                for comp, name in rows_to_update:
+                    sf = get_snowflake_id()
+                    cursor.execute(f"UPDATE {self.noetl_schema}.runtime_registry SET runtime_id = %s WHERE component_type = %s AND name = %s AND runtime_id IS NULL", (sf, comp, name))
+
+                # Ensure runtime_id has a unique index
+                cursor.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_runtime_id ON {self.noetl_schema}.runtime_registry (runtime_id);")
+
+                # Inspect current primary key; if it's not runtime_id, replace it with runtime_id PK
+                cursor.execute("""
+                    SELECT tc.constraint_name, kc.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kc ON kc.constraint_name = tc.constraint_name
+                    WHERE tc.table_schema = %s AND tc.table_name = 'runtime_registry' AND tc.constraint_type = 'PRIMARY KEY'
+                """, (self.noetl_schema,))
+                pk_info = cursor.fetchall()
+                pk_columns = [r[1] for r in pk_info] if pk_info else []
+                if pk_columns and not (len(pk_columns) == 1 and pk_columns[0] == 'runtime_id'):
+                    # Drop existing primary key constraint and set runtime_id as primary key
+                    constraint_name = pk_info[0][0]
+                    try:
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime_registry DROP CONSTRAINT {constraint_name}")
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime_registry ADD PRIMARY KEY (runtime_id)")
+                    except Exception:
+                        # If we cannot change PK, leave indices in place and continue
+                        logger.info("Could not replace primary key on runtime_registry automatically; leaving existing PK in place.")
+
+                self.conn.commit()
+            except Exception:
+                # Non-fatal: log and continue
+                logger.exception("Runtime registry migration to runtime_id primary key encountered an issue; manual migration may be required.")
             logger.info("Postgres database tables initialized in noetl schema.")
 
     def test_workload_table(self):
@@ -617,15 +671,21 @@ class DatabaseSchema:
                 self.initialize_connection()
                 
             with self.conn.cursor() as cursor:
+                # Use snowflake-based error_id for natural ordering
+                try:
+                    from noetl.common import get_snowflake_id
+                except Exception:
+                    get_snowflake_id = lambda: int(datetime.now().timestamp() * 1000)
+                sf_id = get_snowflake_id()
                 cursor.execute(f"""
                     INSERT INTO {self.noetl_schema}.error_log (
-                        error_type, error_message, execution_id, step_id, step_name,
+                        error_id, error_type, error_message, execution_id, step_id, step_name,
                         template_string, context_data, stack_trace, input_data, output_data, severity
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
                     ) RETURNING error_id
                 """, (
-                    error_type, error_message, execution_id, step_id, step_name,
+                    sf_id, error_type, error_message, execution_id, step_id, step_name,
                     template_string, context_data_json, stack_trace, input_data_json, output_data_json, severity
                 ))
                 

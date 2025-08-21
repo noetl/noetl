@@ -5,6 +5,8 @@ import logging
 import yaml
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone, date
+import time
+import threading
 import random
 import string
 from decimal import Decimal
@@ -29,6 +31,42 @@ except ImportError:
 #===================================
 #  time calendar
 #===================================
+
+# Snowflake ID generator (41-bit ms timestamp, 10-bit node id, 12-bit sequence)
+_SNOWFLAKE_EPOCH_MS = int(os.environ.get("NOETL_SNOWFLAKE_EPOCH_MS", str(int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000))))
+_SNOWFLAKE_NODE_ID = int(os.environ.get("NOETL_NODE_ID", os.environ.get("NOETL_SHARD_ID", "0"))) & 0x3FF  # 10 bits
+_SNOWFLAKE_LOCK = threading.Lock()
+_SNOWFLAKE_LAST_TS = 0
+_SNOWFLAKE_SEQ = 0
+
+
+def get_snowflake_id() -> int:
+    global _SNOWFLAKE_LAST_TS, _SNOWFLAKE_SEQ
+    with _SNOWFLAKE_LOCK:
+        ts = int(time.time() * 1000)
+        if ts < _SNOWFLAKE_LAST_TS:
+            # clock moved backwards; wait until last ts
+            ts = _SNOWFLAKE_LAST_TS
+        if ts == _SNOWFLAKE_LAST_TS:
+            _SNOWFLAKE_SEQ = (_SNOWFLAKE_SEQ + 1) & 0xFFF  # 12 bits
+            if _SNOWFLAKE_SEQ == 0:
+                # sequence overflow within same ms; wait next ms
+                while True:
+                    ts = int(time.time() * 1000)
+                    if ts > _SNOWFLAKE_LAST_TS:
+                        break
+        else:
+            _SNOWFLAKE_SEQ = 0
+        _SNOWFLAKE_LAST_TS = ts
+        elapsed = ts - _SNOWFLAKE_EPOCH_MS
+        if elapsed < 0:
+            elapsed = 0
+        # Compose 64-bit id
+        return ((elapsed & ((1 << 41) - 1)) << (10 + 12)) | ((_SNOWFLAKE_NODE_ID & 0x3FF) << 12) | (_SNOWFLAKE_SEQ & 0xFFF)
+
+
+def get_snowflake_id_str() -> str:
+    return str(get_snowflake_id())
 
 def generate_id() -> str:
     start_date_time = datetime.now()

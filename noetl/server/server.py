@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Backgroun
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
-from noetl.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection
+from noetl.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.logger import setup_logger
 from noetl.worker import Worker
 from noetl.broker import Broker
@@ -473,7 +473,7 @@ class EventService:
 
     async def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
+            event_id = event_data.get("event_id") or get_snowflake_id_str()
             event_data["event_id"] = event_id
             event_type = event_data.get("event_type", "UNKNOWN")
             status = event_data.get("status", "CREATED")
@@ -499,6 +499,26 @@ class EventService:
                     exists_row = await cursor.fetchone()
                     exists = exists_row[0] > 0 if exists_row else False
 
+                    # Build trace_component JSON
+                    server_name = os.environ.get("NOETL_SERVER_NAME") or os.environ.get("HOSTNAME")
+                    shard_id = os.environ.get("NOETL_NODE_ID") or os.environ.get("NOETL_SHARD_ID")
+                    trace_component = {
+                        "server_api": {
+                            "name": server_name,
+                            "pid": os.getpid(),
+                            "shard_id": shard_id
+                        }
+                    }
+                    try:
+                        if isinstance(metadata, dict):
+                            if "worker" in metadata:
+                                trace_component["worker_pool"] = metadata.get("worker")
+                            if "broker" in metadata:
+                                trace_component["broker"] = metadata.get("broker")
+                    except Exception:
+                        pass
+                    trace_component_str = json.dumps(trace_component)
+
                     if exists:
                         await cursor.execute("""
                             UPDATE event_log SET
@@ -509,6 +529,7 @@ class EventService:
                                 output_result = %s,
                                 metadata = %s,
                                 error = %s,
+                                trace_component = %s::jsonb,
                                 timestamp = CURRENT_TIMESTAMP
                             WHERE execution_id = %s AND event_id = %s
                         """, (
@@ -519,6 +540,7 @@ class EventService:
                             output_result,
                             metadata_str,
                             error,
+                            trace_component_str,
                             execution_id,
                             event_id
                         ))
@@ -527,11 +549,11 @@ class EventService:
                             INSERT INTO event_log (
                                 execution_id, event_id, parent_event_id, timestamp, event_type,
                                 node_id, node_name, node_type, status, duration,
-                                input_context, output_result, metadata, error
+                                input_context, output_result, metadata, error, trace_component
                             ) VALUES (
                                 %s, %s, %s, CURRENT_TIMESTAMP, %s,
                                 %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s
+                                %s, %s, %s, %s, %s::jsonb
                             )
                         """, (
                             execution_id,
@@ -546,7 +568,8 @@ class EventService:
                             input_context,
                             output_result,
                             metadata_str,
-                            error
+                            error,
+                            trace_component_str
                         ))
 
                     await conn.commit()
@@ -2166,33 +2189,30 @@ async def execute_postgres(
                     if parameters:
                         await cursor.execute(query, parameters)
                     else:
-                        await cursor.execute(query)
-                else:
-                    logger.debug(f"EXECUTE_POSTGRES: Calling procedure: {procedure}")
-                    if parameters:
-                        placeholders = ", ".join(["%s"] * len(parameters))
-                        call_sql = f"CALL {procedure}({placeholders})"
-                        await cursor.execute(call_sql, parameters)
-                    else:
-                        call_sql = f"CALL {procedure}()"
-                        await cursor.execute(call_sql)
-                
-                try:
-                    results = await cursor.fetchall()
-                    logger.debug(f"EXECUTE_POSTGRES: Fetched {len(results)} rows")
-                except psycopg.ProgrammingError:
-                    results = []
-                    logger.debug("EXECUTE_POSTGRES: No results to fetch")
-                
+                        # runtime_registry migrations are managed centrally; ensure compatibility
+                        await cursor.execute("""
+                            ALTER TABLE IF EXISTS runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                        """)
+                        await cursor.execute("""
+                            CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON runtime_registry (component_type, name);
+                        """)
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                
+                # Fetch results for select queries
+                if cursor.description:
+                    try:
+                        results = await cursor.fetchall()
+                    except Exception:
+                        results = []
+                else:
+                    results = []
+
                 response_data = {
                     "success": True,
                     "rows_affected": cursor.rowcount if cursor.rowcount >= 0 else 0,
                     "columns": columns,
                     "results": results
                 }
-                
+
                 logger.debug(f"EXECUTE_POSTGRES: Returning response with {len(results)} results")
                 logger.debug("=== EXECUTE_POSTGRES: Function exit ===")
                 return response_data
@@ -2219,19 +2239,33 @@ async def register_worker_pool(request: Request):
     try:
         body = await request.json()
         name = body.get("name") or body.get("id") or body.get("pool")
-        runtime = (body.get("runtime") or "cpu").lower()
         base_url = body.get("base_url")
         status = (body.get("status") or "ready").lower()
         capacity = body.get("capacity")
         labels = body.get("labels")
         meta = body.get("meta") or {}
         pid = body.get("pid")
+        r = body.get("runtime")
+        # Support both string (type) and dict (details)
+        if isinstance(r, dict):
+            runtime_json = r
+            runtime_type = r.get("type") or (body.get("runtime_type") if body.get("runtime_type") else None)
+        else:
+            runtime_type = (r or body.get("runtime_type") or "cpu")
+            runtime_json = {"type": (runtime_type.lower() if isinstance(runtime_type, str) else runtime_type)}
+        # Ensure pid is embedded into runtime JSON (transient runtime info)
+        try:
+            if pid is not None:
+                if isinstance(runtime_json, dict):
+                    runtime_json = {**runtime_json, "pid": pid}
+        except Exception:
+            pass
         if not name or not base_url:
             raise HTTPException(status_code=400, detail="Missing required fields: name, base_url")
 
         payload = {
             "name": name,
-            "runtime": runtime,
+            "runtime": runtime_json,
             "base_url": base_url,
             "status": status,
             "capacity": capacity,
@@ -2240,32 +2274,25 @@ async def register_worker_pool(request: Request):
         }
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                # runtime_registry table is managed in server/schema.py migrations.
+                # Ensure runtime_id column and necessary indexes exist for compatibility.
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON runtime_registry (component_type, name);
+                """)
+                sf_id = get_snowflake_id()
                 await cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS worker_pool (
-                        name TEXT PRIMARY KEY,
-                        runtime TEXT NOT NULL,
-                        base_url TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        capacity INTEGER,
-                        labels JSONB,
-                        pid INTEGER,
-                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-                await cursor.execute(
-                    """
-                    INSERT INTO worker_pool (name, runtime, base_url, status, capacity, labels, pid, last_heartbeat, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, now(), now(), now())
-                    ON CONFLICT (name)
-                    DO UPDATE SET runtime=EXCLUDED.runtime, base_url=EXCLUDED.base_url, status=EXCLUDED.status,
-                                  capacity=EXCLUDED.capacity, labels=EXCLUDED.labels, pid=EXCLUDED.pid,
-                                  last_heartbeat=now(), updated_at=now()
+                    INSERT INTO runtime_registry (name, component_type, base_url, status, labels, capabilities, capacity, runtime, runtime_id, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, 'worker_pool', %s, %s, %s::jsonb, NULL, %s, %s::jsonb, %s, now(), now(), now())
+                    ON CONFLICT (component_type, name)
+                    DO UPDATE SET base_url=EXCLUDED.base_url, status=EXCLUDED.status,
+                                  labels=EXCLUDED.labels, capacity=EXCLUDED.capacity,
+                                  runtime=EXCLUDED.runtime, last_heartbeat=now(), updated_at=now()
                     """,
-                    (name, runtime, base_url, status, capacity, json.dumps(labels) if labels is not None else json.dumps(None), pid)
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), capacity, json.dumps(runtime_json), sf_id)
                 )
                 # Backward-compat: also mirror to catalog for any existing consumers
                 await cursor.execute("""
@@ -2301,7 +2328,8 @@ async def heartbeat_worker_pool(request: Request):
         if not name:
             raise HTTPException(status_code=400, detail="Missing required field: name")
         # Optional updates
-        runtime = (body.get("runtime") or "").lower() or None
+        r = body.get("runtime")
+        runtime_json = r if isinstance(r, dict) else ({"type": (r.lower() if isinstance(r, str) and r else None)} if r else None)
         base_url = body.get("base_url")
         status = (body.get("status") or "").lower() or None
         capacity = body.get("capacity")
@@ -2312,48 +2340,39 @@ async def heartbeat_worker_pool(request: Request):
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
                 # Ensure table exists
-                await cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS worker_pool (
-                        name TEXT PRIMARY KEY,
-                        runtime TEXT NOT NULL,
-                        base_url TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        capacity INTEGER,
-                        labels JSONB,
-                        pid INTEGER,
-                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
+                # runtime_registry table is managed by server/schema.py; ensure compatibility columns/indexes
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON runtime_registry (component_type, name);
+                """)
                 # Upsert minimal record to ensure existence then update fields
+                sf_id = get_snowflake_id()
                 await cursor.execute(
                     """
-                    INSERT INTO worker_pool (name, runtime, base_url, status, capacity, labels, pid)
-                    VALUES (%s, COALESCE(%s,'cpu'), COALESCE(%s,''), COALESCE(%s,'ready'), %s, %s::jsonb, %s)
-                    ON CONFLICT (name) DO NOTHING
+                    INSERT INTO runtime_registry (name, component_type, base_url, status, capacity, labels, runtime_id)
+                    VALUES (%s, 'worker_pool', COALESCE(%s,''), COALESCE(%s,'ready'), %s, %s::jsonb, %s)
+                    ON CONFLICT (component_type, name) DO NOTHING
                     """,
-                    (name, runtime, base_url, status, capacity, json.dumps(labels) if labels is not None else json.dumps(None), pid)
+                    (name, base_url, status, capacity, json.dumps(labels) if labels is not None else json.dumps(None), sf_id)
                 )
                 # Apply updates and heartbeat
                 await cursor.execute(
                     """
-                    UPDATE worker_pool
+                    UPDATE runtime_registry
                     SET
-                        runtime = COALESCE(%s, runtime),
                         base_url = COALESCE(%s, base_url),
                         status = COALESCE(%s, status),
                         capacity = COALESCE(%s, capacity),
                         labels = COALESCE(%s::jsonb, labels),
-                        pid = COALESCE(%s, pid),
+                        runtime = COALESCE(%s::jsonb, runtime),
                         last_heartbeat = now(),
                         updated_at = now()
-                    WHERE name = %s
-                    RETURNING name, runtime, base_url, status, capacity, labels, pid, last_heartbeat
+                    WHERE component_type = 'worker_pool' AND name = %s
+                    RETURNING name, runtime, base_url, status, capacity, labels, COALESCE((runtime->>'pid')::int, NULL) as pid, last_heartbeat, runtime_id
                     """,
-                    (runtime, base_url, status, capacity, json.dumps(labels) if labels is not None else None, pid, name)
+                    (base_url, status, capacity, json.dumps(labels) if labels is not None else None, json.dumps(runtime_json) if runtime_json is not None else None, name)
                 )
                 row = await cursor.fetchone()
                 # Mirror to catalog (legacy) to avoid breaking older consumers
@@ -2370,7 +2389,7 @@ async def heartbeat_worker_pool(request: Request):
                     """,
                     (name, json.dumps({
                         "name": row[0] if row else name,
-                        "runtime": row[1] if row else runtime,
+                        "runtime": row[1] if row else runtime_json,
                         "base_url": row[2] if row else base_url,
                         "status": row[3] if row else status,
                         "capacity": row[4] if row else capacity,
@@ -2381,7 +2400,7 @@ async def heartbeat_worker_pool(request: Request):
                 await conn.commit()
         return {"status": "ok", "pool": {
             "name": row[0] if row else name,
-            "runtime": row[1] if row else runtime,
+            "runtime": row[1] if row else runtime_json,
             "base_url": row[2] if row else base_url,
             "status": row[3] if row else status,
             "capacity": row[4] if row else capacity,
@@ -2404,15 +2423,15 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
                 # Mark stale worker pools as offline if heartbeat is older than TTL
                 await cursor.execute(
                     f"""
-                    UPDATE worker_pool
+                    UPDATE runtime_registry
                     SET status = 'offline', updated_at = now()
-                    WHERE (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
+                    WHERE component_type='worker_pool' AND (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
                     """
                 )
-                conditions = []
+                conditions = ["component_type='worker_pool'"]
                 params: List[Any] = []
                 if runtime:
-                    conditions.append("runtime = %s")
+                    conditions.append("(runtime->>'type') = %s")
                     params.append(runtime.lower())
                 if status:
                     conditions.append("status = %s")
@@ -2420,8 +2439,8 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
                 where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
                 await cursor.execute(
                     f"""
-                    SELECT name, runtime, base_url, status, capacity, labels, pid, last_heartbeat, updated_at
-                    FROM worker_pool
+                    SELECT name, runtime, base_url, status, capacity, labels, COALESCE((runtime->>'pid')::int, NULL) as pid, last_heartbeat, updated_at, runtime_id
+                    FROM runtime_registry
                     {where_clause}
                     ORDER BY updated_at DESC
                     """,
@@ -2439,6 +2458,7 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
                 "labels": r[5],
                 "pid": r[6],
                 "last_heartbeat": r[7].isoformat() if r[7] else None,
+                "runtime_id": r[9],
             })
         return {"items": pools}
     except Exception as e:
@@ -2449,9 +2469,7 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
 # === Broker Registry Endpoints ===
 @router.post("/broker/register", response_class=JSONResponse)
 async def register_broker(request: Request):
-    """Register or update a broker instance with base_url and metadata.
-    Persisted to broker_registry and mirrored to catalog for backward compatibility.
-    """
+    """Register or update a broker instance with base_url and metadata using unified runtime_registry."""
     try:
         body = await request.json()
         name = body.get("name") or body.get("id") or body.get("broker")
@@ -2461,6 +2479,38 @@ async def register_broker(request: Request):
         capabilities = body.get("capabilities")
         pid = body.get("pid")
         meta = body.get("meta") or {}
+        r = body.get("runtime")
+        runtime_json = r if isinstance(r, dict) else ({"type": r} if isinstance(r, str) else None)
+        # Ensure pid is embedded inside runtime JSON when present
+        try:
+            if pid is not None:
+                if isinstance(runtime_json, dict):
+                    runtime_json = {**runtime_json, "pid": pid}
+        except Exception:
+            pass
+        # Provide a sensible default runtime JSON for broker if missing
+        if not runtime_json:
+            try:
+                import socket
+                host = os.environ.get("HOSTNAME") or socket.gethostname()
+                pod = os.environ.get("POD_NAME")
+                ip = os.environ.get("POD_IP")
+                node = os.environ.get("NODE_NAME")
+                svc = os.environ.get("SERVICE_NAME") or os.environ.get("NOETL_SERVICE_NAME")
+                ns = os.environ.get("NAMESPACE") or os.environ.get("POD_NAMESPACE")
+                runtime_json = {
+                    "type": "broker",
+                    "host": host,
+                    "pod": pod,
+                    "ip": ip,
+                    "node": node,
+                    "service": svc,
+                    "namespace": ns,
+                }
+                if pid is not None:
+                    runtime_json["pid"] = pid
+            except Exception:
+                runtime_json = {"type": "broker", "pid": pid} if pid is not None else {"type": "broker"}
         if not name:
             raise HTTPException(status_code=400, detail="Missing required fields: name")
 
@@ -2471,34 +2521,28 @@ async def register_broker(request: Request):
             "labels": labels,
             "capabilities": capabilities,
             "pid": pid,
+            "runtime": runtime_json,
         }
 
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                # runtime_registry table managed via migrations in server/schema.py
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON runtime_registry (component_type, name);
+                """)
                 await cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS broker_registry (
-                        name TEXT PRIMARY KEY,
-                        base_url TEXT,
-                        status TEXT NOT NULL,
-                        labels JSONB,
-                        capabilities JSONB,
-                        pid INTEGER,
-                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-                await cursor.execute(
-                    """
-                    INSERT INTO broker_registry (name, base_url, status, labels, capabilities, pid, last_heartbeat, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, now(), now(), now())
-                    ON CONFLICT (name)
+                    INSERT INTO runtime_registry (name, component_type, base_url, status, labels, capabilities, capacity, runtime, runtime_id, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, 'broker', %s, %s, %s::jsonb, %s::jsonb, NULL, %s::jsonb, %s, now(), now(), now())
+                    ON CONFLICT (component_type, name)
                     DO UPDATE SET base_url=EXCLUDED.base_url, status=EXCLUDED.status, labels=EXCLUDED.labels,
-                                  capabilities=EXCLUDED.capabilities, pid=EXCLUDED.pid, last_heartbeat=now(), updated_at=now()
+                                  capabilities=EXCLUDED.capabilities, runtime=EXCLUDED.runtime,
+                                  last_heartbeat=now(), updated_at=now()
                     """,
-                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), pid)
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), json.dumps(runtime_json) if runtime_json is not None else json.dumps(None), get_snowflake_id())
                 )
                 # Mirror to catalog for legacy consumers
                 await cursor.execute(
@@ -2530,7 +2574,7 @@ async def register_broker(request: Request):
 
 @router.post("/broker/heartbeat", response_class=JSONResponse)
 async def heartbeat_broker(request: Request):
-    """Heartbeat/update an existing broker record in the broker_registry."""
+    """Heartbeat/update an existing broker record in the runtime_registry."""
     try:
         body = await request.json()
         name = body.get("name") or body.get("id") or body.get("broker")
@@ -2542,46 +2586,48 @@ async def heartbeat_broker(request: Request):
         capabilities = body.get("capabilities")
         pid = body.get("pid")
         meta = body.get("meta")
+        r = body.get("runtime")
+        runtime_json = r if isinstance(r, dict) else ({"type": r} if isinstance(r, str) else None)
+        # Ensure pid is embedded inside runtime JSON when present
+        try:
+            if pid is not None:
+                if isinstance(runtime_json, dict):
+                    runtime_json = {**runtime_json, "pid": pid}
+        except Exception:
+            pass
 
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                # runtime_registry table is created by schema migrations; ensure compatibility columns/indexes
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON runtime_registry (component_type, name);
+                """)
                 await cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS broker_registry (
-                        name TEXT PRIMARY KEY,
-                        base_url TEXT,
-                        status TEXT NOT NULL,
-                        labels JSONB,
-                        capabilities JSONB,
-                        pid INTEGER,
-                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-                await cursor.execute(
-                    """
-                    INSERT INTO broker_registry (name, base_url, status, labels, capabilities, pid)
-                    VALUES (%s, COALESCE(%s,''), COALESCE(%s,'ready'), %s::jsonb, %s::jsonb, %s)
-                    ON CONFLICT (name) DO NOTHING
+                    INSERT INTO runtime_registry (name, component_type, base_url, status, labels, capabilities, runtime)
+                    VALUES (%s, 'broker', COALESCE(%s,''), COALESCE(%s,'ready'), %s::jsonb, %s::jsonb, %s::jsonb)
+                    ON CONFLICT (component_type, name) DO NOTHING
                     """,
-                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), pid)
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), json.dumps(runtime_json) if runtime_json is not None else json.dumps(None))
                 )
                 await cursor.execute(
                     """
-                    UPDATE broker_registry
+                    UPDATE runtime_registry
                     SET base_url = COALESCE(%s, base_url),
                         status = COALESCE(%s, status),
                         labels = COALESCE(%s::jsonb, labels),
                         capabilities = COALESCE(%s::jsonb, capabilities),
-                        pid = COALESCE(%s, pid),
+                        runtime = COALESCE(%s::jsonb, runtime),
+                        runtime_id = COALESCE(runtime_id, %s),
                         last_heartbeat = now(),
                         updated_at = now()
-                    WHERE name = %s
-                    RETURNING name, base_url, status, labels, capabilities, pid, last_heartbeat
+                    WHERE component_type='broker' AND name = %s
+                    RETURNING name, base_url, status, labels, capabilities, COALESCE((runtime->>'pid')::int, NULL) as pid, runtime, last_heartbeat, runtime_id
                     """,
-                    (base_url, status, json.dumps(labels) if labels is not None else None, json.dumps(capabilities) if capabilities is not None else None, pid, name)
+                    (base_url, status, json.dumps(labels) if labels is not None else None, json.dumps(capabilities) if capabilities is not None else None, json.dumps(runtime_json) if runtime_json is not None else None, get_snowflake_id(), name)
                 )
                 row = await cursor.fetchone()
                 # Mirror to catalog (legacy)
@@ -2605,6 +2651,7 @@ async def heartbeat_broker(request: Request):
                         "labels": labels,
                         "capabilities": capabilities,
                         "pid": pid,
+                        "runtime": (row[6] if row else runtime_json),
                     }), json.dumps(meta) if meta is not None else json.dumps(None))
                 )
                 await conn.commit()
@@ -2615,6 +2662,7 @@ async def heartbeat_broker(request: Request):
             "labels": labels,
             "capabilities": capabilities,
             "pid": pid,
+            "runtime": (row[6] if row else runtime_json),
         }}
     except HTTPException:
         raise
@@ -2632,12 +2680,12 @@ async def list_brokers(request: Request, status: Optional[str] = None):
                 # Mark stale brokers as offline
                 await cursor.execute(
                     f"""
-                    UPDATE broker_registry
+                    UPDATE runtime_registry
                     SET status = 'offline', updated_at = now()
-                    WHERE (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
+                    WHERE component_type='broker' AND (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
                     """
                 )
-                conditions = []
+                conditions = ["component_type='broker'"]
                 params: List[Any] = []
                 if status:
                     conditions.append("status = %s")
@@ -2645,8 +2693,8 @@ async def list_brokers(request: Request, status: Optional[str] = None):
                 where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
                 await cursor.execute(
                     f"""
-                    SELECT name, base_url, status, labels, capabilities, pid, last_heartbeat, updated_at
-                    FROM broker_registry
+                    SELECT name, base_url, status, labels, capabilities, COALESCE((runtime->>'pid')::int, NULL) as pid, last_heartbeat, updated_at, runtime_id
+                    FROM runtime_registry
                     {where_clause}
                     ORDER BY updated_at DESC
                     """,
@@ -2663,6 +2711,7 @@ async def list_brokers(request: Request, status: Optional[str] = None):
                 "capabilities": r[4],
                 "pid": r[5],
                 "last_heartbeat": r[6].isoformat() if r[6] else None,
+                "runtime_id": r[8],
             })
         return {"items": items}
     except Exception as e:
@@ -2696,26 +2745,19 @@ async def deregister_worker_pool(request: Request):
         delete = bool(body.get("delete", False))
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                # runtime_registry table created via migrations; ensure compatibility
                 await cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS worker_pool (
-                        name TEXT PRIMARY KEY,
-                        runtime TEXT NOT NULL,
-                        base_url TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        capacity INTEGER,
-                        labels JSONB,
-                        pid INTEGER,
-                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
+                    ALTER TABLE IF EXISTS runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON runtime_registry (component_type, name);
                 """)
                 if delete:
-                    await cursor.execute("DELETE FROM worker_pool WHERE name = %s", (name,))
+                    await cursor.execute("DELETE FROM runtime_registry WHERE component_type='worker_pool' AND name = %s", (name,))
                 else:
                     await cursor.execute(
                         """
-                        UPDATE worker_pool SET status='offline', updated_at=now() WHERE name = %s
+                        UPDATE runtime_registry SET status='offline', updated_at=now() WHERE component_type='worker_pool' AND name = %s
                         """,
                         (name,)
                     )
@@ -2738,25 +2780,19 @@ async def deregister_broker(request: Request):
         delete = bool(body.get("delete", False))
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
+                # runtime_registry table created via migrations; ensure compatibility
                 await cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS broker_registry (
-                        name TEXT PRIMARY KEY,
-                        base_url TEXT,
-                        status TEXT NOT NULL,
-                        labels JSONB,
-                        capabilities JSONB,
-                        pid INTEGER,
-                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
+                    ALTER TABLE IF EXISTS runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON runtime_registry (component_type, name);
                 """)
                 if delete:
-                    await cursor.execute("DELETE FROM broker_registry WHERE name = %s", (name,))
+                    await cursor.execute("DELETE FROM runtime_registry WHERE component_type='broker' AND name = %s", (name,))
                 else:
                     await cursor.execute(
                         """
-                        UPDATE broker_registry SET status='offline', updated_at=now() WHERE name = %s
+                        UPDATE runtime_registry SET status='offline', updated_at=now() WHERE component_type='broker' AND name = %s
                         """,
                         (name,)
                     )
