@@ -92,7 +92,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         @app.on_event("startup")
         async def _register_server_startup():
             try:
-                register_server_from_env()
+                await register_server_from_env()
             except Exception as e:
                 logger.warning(f"Server self-registration failed: {e}")
     except Exception:

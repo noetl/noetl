@@ -20,7 +20,7 @@ logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
 
-def register_server_from_env() -> None:
+async def register_server_from_env() -> None:
     """If NOETL_SELF_REGISTER_ENDPOINT is set, POST a registration payload to that URL.
 
     Env:
@@ -30,10 +30,12 @@ def register_server_from_env() -> None:
       - NOETL_SERVER_LABELS: optional CSV string
     """
     try:
-        import requests
+        import httpx
         endpoint = os.environ.get("NOETL_SELF_REGISTER_ENDPOINT", "").strip()
         if not endpoint:
             return
+
+        # Prepare common registration fields (useful for both HTTP and direct-DB flows)
         name = os.environ.get("NOETL_SERVER_NAME") or os.environ.get("HOSTNAME")
         base_url = os.environ.get("NOETL_SERVER_URL") or f"http://{os.environ.get('NOETL_HOST','localhost')}:{os.environ.get('NOETL_PORT','8080')}"
         labels = os.environ.get("NOETL_SERVER_LABELS")
@@ -54,6 +56,52 @@ def register_server_from_env() -> None:
         except Exception:
             runtime_json = {"type": "server_api", "pid": pid}
 
+        # Ensure we have a sensible name to insert (some environments don't set HOSTNAME)
+        if not name:
+            try:
+                import socket
+                fallback_host = os.environ.get("HOSTNAME") or socket.gethostname()
+            except Exception:
+                fallback_host = None
+            name = fallback_host or f"server-{get_snowflake_id_str()}"
+
+        # Support special value to register directly into the database (helpful for self-registration
+        # during startup when the HTTP server may not yet be accepting connections):
+        if endpoint.upper() in ("DB", "INTERNAL", "DIRECT"):
+            try:
+                logger.info(f"Attempting direct DB registration for server name='{name}' base_url='{base_url}' pid={pid}")
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor() as cursor:
+                        # Ensure runtime_id column exists for compatibility
+                        await cursor.execute("ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;")
+                        await cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);")
+                        sf_id = get_snowflake_id()
+                        logger.debug(f"Generated snowflake id {sf_id} for server registration")
+                        await cursor.execute(
+                            """
+                            INSERT INTO runtime (name, component_type, base_url, status, labels, capabilities, capacity, runtime, runtime_id, last_heartbeat, created_at, updated_at)
+                            VALUES (%s, 'server_api', %s, %s, %s::jsonb, NULL, NULL, %s::jsonb, %s, now(), now(), now())
+                            ON CONFLICT (component_type, name)
+                            DO UPDATE SET base_url=EXCLUDED.base_url, status=EXCLUDED.status, labels=EXCLUDED.labels,
+                                          runtime=EXCLUDED.runtime, last_heartbeat=now(), updated_at=now()
+                            """,
+                            (name, base_url, 'running', json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(runtime_json), sf_id)
+                        )
+                    try:
+                        await conn.commit()
+                        logger.info(f"Server self-registered directly in DB: {name} (id={sf_id})")
+                    except Exception as ce:
+                        logger.warning(f"Commit failed during server direct DB registration: {ce}")
+                        raise
+                try:
+                    with open('/tmp/noetl_server_name', 'w') as f:
+                        f.write(name or '')
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"Server direct DB registration failed: {e}")
+            return
+
         payload = {
             "name": name,
             "base_url": base_url,
@@ -64,7 +112,9 @@ def register_server_from_env() -> None:
         }
 
         try:
-            resp = requests.post(endpoint, json=payload, timeout=5.0)
+            timeout = httpx.Timeout(5.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(endpoint, json=payload)
             if resp.status_code == 200:
                 logger.info(f"Server self-registration succeeded: {name} -> {endpoint}")
                 try:
@@ -2667,11 +2717,11 @@ async def heartbeat_broker(request: Request):
                 """)
                 await cursor.execute(
                     """
-                    INSERT INTO runtime (name, component_type, base_url, status, labels, capabilities, runtime)
-                    VALUES (%s, 'broker', COALESCE(%s,''), COALESCE(%s,'ready'), %s::jsonb, %s::jsonb, %s::jsonb)
+                    INSERT INTO runtime (name, component_type, base_url, status, labels, capabilities, runtime, runtime_id)
+                    VALUES (%s, 'broker', COALESCE(%s,''), COALESCE(%s,'ready'), %s::jsonb, %s::jsonb, %s::jsonb, %s)
                     ON CONFLICT (component_type, name) DO NOTHING
                     """,
-                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), json.dumps(runtime_json) if runtime_json is not None else json.dumps(None))
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), json.dumps(runtime_json) if runtime_json is not None else json.dumps(None), get_snowflake_id())
                 )
                 await cursor.execute(
                     """
