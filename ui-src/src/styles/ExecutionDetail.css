@@ -1,0 +1,192 @@
+/**
+ * ExecutionDetail.css
+ * Styles for the ExecutionDetail component
+ * Handles execution details view, event filtering, and event display
+ */
+
+/* ==========================================================================
+   Main Layout
+   ========================================================================== */
+
+.execution-detail-container {
+    margin: 40px;
+}
+
+.execution-detail-loading {
+    display: block;
+    margin: 40px auto;
+}
+
+.execution-detail-error {
+    margin: 40px;
+}
+
+.execution-detail-not-found {
+    margin: 40px;
+}
+
+/* ==========================================================================
+   Navigation
+   ========================================================================== */
+
+.execution-detail-back-button {
+    margin-bottom: 16px;
+}
+
+/* ==========================================================================
+   Events Section
+   ========================================================================== */
+
+.execution-detail-events-title {
+    margin-top: 32px;
+}
+
+/* ==========================================================================
+   Event Filtering
+   ========================================================================== */
+
+.execution-detail-filter-card {
+    margin-bottom: 16px;
+}
+
+.execution-detail-filter-space {
+    width: 100%;
+}
+
+/* Filter Controls */
+.execution-detail-event-type-select {
+    width: 100%;
+}
+
+.execution-detail-status-select {
+    width: 100%;
+}
+
+.execution-detail-node-select {
+    width: 100%;
+}
+
+.execution-detail-date-picker {
+    width: 100%;
+}
+
+/* ==========================================================================
+   Alert States
+   ========================================================================== */
+
+.execution-detail-no-filtered-events {
+    margin-top: 16px;
+}
+
+.execution-detail-no-events {
+    margin-top: 16px;
+}
+
+/* ==========================================================================
+   Execution Information Grid
+   ========================================================================== */
+
+.execution-detail-info-card {
+    margin-bottom: 24px;
+}
+
+.execution-detail-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.execution-detail-label {
+    font-weight: 600;
+    color: #8c8c8c;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.execution-detail-value {
+    font-size: 14px;
+    color: #262626;
+    word-break: break-all;
+}
+
+.execution-detail-progress {
+    margin-top: 4px;
+}
+
+.execution-detail-result {
+    max-width: 100%;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    background: #f6f6f6;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* ==========================================================================
+   Expanded Row Styling
+   ========================================================================== */
+
+.execution-detail-expand-button {
+    color: #595959;
+}
+
+.execution-detail-expand-button:hover {
+    color: #1f1f1f;
+}
+
+/* Smooth expand animation */
+.execution-detail-expanded {
+    animation: execution-detail-fade-in 160ms ease-in;
+}
+
+@keyframes execution-detail-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(-2px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Expand icon styling */
+.execution-detail-expand-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: #595959;
+    transition: transform 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+/* Rotate when expanded */
+.execution-detail-expand-icon.expanded {
+    transform: rotate(90deg);
+    color: #1f1f1f;
+}
+
+.execution-detail-expand-icon:hover {
+    background-color: #f5f5f5;
+}
+
+/* Make rows feel clickable */
+.ant-table-tbody>tr:hover {
+    cursor: pointer;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .execution-detail-field {
+        margin-bottom: 16px;
+    }
+
+    .execution-detail-value {
+        font-size: 13px;
+    }
+}

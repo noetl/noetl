@@ -1,10 +1,34 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Layout, Table, Button, Typography, Space, Spin, Alert, Tag, Card, Row, Col, Progress } from 'antd';
-import { PlayCircleOutlined, StopOutlined, ReloadOutlined, EyeOutlined } from '@ant-design/icons';
-import { apiService } from '../services/api';
-import { ExecutionData } from '../types';
-import moment from 'moment';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  Layout,
+  Table,
+  Button,
+  Typography,
+  Space,
+  Spin,
+  Alert,
+  Tag,
+  Card,
+  Row,
+  Col,
+  Progress,
+  Tabs,
+  Select,
+  DatePicker,
+  Input,
+} from "antd";
+import {
+  PlayCircleOutlined,
+  StopOutlined,
+  ReloadOutlined,
+  EyeOutlined,
+  FilterOutlined,
+  SearchOutlined,
+} from "@ant-design/icons";
+import { apiService } from "../services/api";
+import { ExecutionData } from "../types";
+import moment from "moment";
+import { useNavigate } from "react-router-dom";
 import {
   ReactFlow,
   MiniMap,
@@ -17,23 +41,27 @@ import {
   Edge,
   Connection,
   BackgroundVariant,
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import "../styles/Execution.css";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
+const { TabPane } = Tabs;
+const { Option } = Select;
+const { RangePicker } = DatePicker;
 
 // Node types for workflow visualization
 const nodeTypes = {
-  log: { color: '#52c41a', icon: '📝' },
-  http: { color: '#1890ff', icon: '🌐' },
-  sql: { color: '#722ed1', icon: '🗄️' },
-  script: { color: '#fa8c16', icon: '⚙️' },
-  secret: { color: '#eb2f96', icon: '🔑' },
-  export: { color: '#13c2c2', icon: '📤' },
-  python: { color: '#3776ab', icon: '🐍' },
-  workbook: { color: '#ff6b35', icon: '📊' },
-  default: { color: '#8c8c8c', icon: '📄' }
+  log: { color: "#52c41a", icon: "📝" },
+  http: { color: "#1890ff", icon: "🌐" },
+  sql: { color: "#722ed1", icon: "🗄️" },
+  script: { color: "#fa8c16", icon: "⚙️" },
+  secret: { color: "#eb2f96", icon: "🔑" },
+  export: { color: "#13c2c2", icon: "📤" },
+  python: { color: "#3776ab", icon: "🐍" },
+  workbook: { color: "#ff6b35", icon: "📊" },
+  default: { color: "#8c8c8c", icon: "📄" },
 };
 
 interface TaskNode {
@@ -46,29 +74,43 @@ interface TaskNode {
 
 const Execution: React.FC = () => {
   const [executions, setExecutions] = useState<ExecutionData[]>([]);
+  const [filteredExecutions, setFilteredExecutions] = useState<ExecutionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [showWorkflowVisualization, setShowWorkflowVisualization] = useState(false);
-  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
-  const [selectedPlaybookName, setSelectedPlaybookName] = useState<string>('');
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [showWorkflowVisualization, setShowWorkflowVisualization] =
+    useState(false);
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>("");
+  const [selectedPlaybookName, setSelectedPlaybookName] = useState<string>("");
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [workflowLoading, setWorkflowLoading] = useState(false);
+
+  // Pagination state for executions table
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+
+  // Filtering state
+  const [activeTab, setActiveTab] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [playbookFilter, setPlaybookFilter] = useState<string>("");
+  const [searchText, setSearchText] = useState<string>("");
+  const [dateRange, setDateRange] = useState<[any, any] | null>(null);
+
   const navigate = useNavigate();
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds: Edge[]) => addEdge(params, eds)),
-    [setEdges]
+    [setEdges],
   );
 
   // Check URL parameters for workflow visualization
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const playbookId = urlParams.get('playbook');
-    const view = urlParams.get('view');
-    
-    if (playbookId && view === 'workflow') {
+    const playbookId = urlParams.get("playbook");
+    const view = urlParams.get("view");
+
+    if (playbookId && view === "workflow") {
       setSelectedPlaybookId(playbookId);
       setSelectedPlaybookName(playbookId); // We'll use the ID as name for now
       setShowWorkflowVisualization(true);
@@ -82,7 +124,12 @@ const Execution: React.FC = () => {
     const interval = setInterval(async () => {
       try {
         const response = await apiService.getExecutions();
-        if (response.some((exec: ExecutionData) => exec.status === 'running' || exec.status === 'pending')) {
+        if (
+          response.some(
+            (exec: ExecutionData) =>
+              exec.status === "running" || exec.status === "pending",
+          )
+        ) {
           setExecutions(response);
         }
       } catch (err) {
@@ -104,13 +151,76 @@ const Execution: React.FC = () => {
 
       const response = await apiService.getExecutions();
       setExecutions(response);
+      setFilteredExecutions(response); // Initialize filtered executions
     } catch (err) {
-      console.error('Failed to fetch executions:', err);
-      setError('Failed to load execution data.');
+      console.error("Failed to fetch executions:", err);
+      setError("Failed to load execution data.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  // Filter executions based on current filters
+  const applyFilters = useCallback(() => {
+    let filtered = [...executions];
+
+    // Filter by tab (event type)
+    if (activeTab !== "all") {
+      filtered = filtered.filter((exec) => exec.status === activeTab);
+    }
+
+    // Filter by status (multiple selection)
+    if (statusFilter.length > 0) {
+      filtered = filtered.filter((exec) => statusFilter.includes(exec.status));
+    }
+
+    // Filter by playbook name
+    if (playbookFilter) {
+      filtered = filtered.filter((exec) =>
+        exec.playbook_name.toLowerCase().includes(playbookFilter.toLowerCase())
+      );
+    }
+
+    // Filter by search text (search in playbook name and ID)
+    if (searchText) {
+      filtered = filtered.filter(
+        (exec) =>
+          exec.playbook_name.toLowerCase().includes(searchText.toLowerCase()) ||
+          exec.id.toLowerCase().includes(searchText.toLowerCase()) ||
+          exec.playbook_id.toLowerCase().includes(searchText.toLowerCase())
+      );
+    }
+
+    // Filter by date range
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      const [startDate, endDate] = dateRange;
+      filtered = filtered.filter((exec) => {
+        const execDate = new Date(exec.start_time);
+        return execDate >= startDate.toDate() && execDate <= endDate.toDate();
+      });
+    }
+
+    setFilteredExecutions(filtered);
+  }, [executions, activeTab, statusFilter, playbookFilter, searchText, dateRange]);
+
+  // Apply filters whenever filter criteria change
+  useEffect(() => {
+    applyFilters();
+  }, [applyFilters]);
+
+  // Reset to first page when filters or page size change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filteredExecutions.length, pageSize]);
+
+  const clearFilters = () => {
+    setActiveTab("all");
+    setStatusFilter([]);
+    setPlaybookFilter("");
+    setSearchText("");
+    setDateRange(null);
+    setCurrentPage(1);
   };
 
   const handleStopExecution = async (executionId: string) => {
@@ -118,27 +228,37 @@ const Execution: React.FC = () => {
       await apiService.stopExecution(executionId);
       await fetchExecutions(true);
     } catch (err) {
-      console.error('Failed to stop execution:', err);
+      console.error("Failed to stop execution:", err);
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'running': return 'processing';
-      case 'completed': return 'success';
-      case 'failed': return 'error';
-      case 'pending': return 'default';
-      default: return 'default';
+      case "running":
+        return "processing";
+      case "completed":
+        return "success";
+      case "failed":
+        return "error";
+      case "pending":
+        return "default";
+      default:
+        return "default";
     }
   };
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'running': return 'Running';
-      case 'completed': return 'Completed';
-      case 'failed': return 'Failed';
-      case 'pending': return 'Pending';
-      default: return status;
+      case "running":
+        return "Running";
+      case "completed":
+        return "Completed";
+      case "failed":
+        return "Failed";
+      case "pending":
+        return "Pending";
+      default:
+        return status;
     }
   };
 
@@ -158,9 +278,9 @@ const Execution: React.FC = () => {
 
   const parsePlaybookContent = (content: string): TaskNode[] => {
     try {
-      console.log('🔍 PARSING PLAYBOOK CONTENT');
-      
-      const lines = content.split('\n');
+      console.log("🔍 PARSING PLAYBOOK CONTENT");
+
+      const lines = content.split("\n");
       const tasks: TaskNode[] = [];
       let currentTask: Partial<TaskNode> = {};
       let inWorkflowSection = false;
@@ -173,11 +293,16 @@ const Execution: React.FC = () => {
         const line = lines[i];
         const trimmed = line.trim();
         const indent = line.length - line.trimStart().length;
-        
+
         // Look for workflow/tasks/steps section
-        if (trimmed === 'workflow:' || trimmed.startsWith('workflow:') ||
-            trimmed === 'tasks:' || trimmed.startsWith('tasks:') || 
-            trimmed === 'steps:' || trimmed.startsWith('steps:')) {
+        if (
+          trimmed === "workflow:" ||
+          trimmed.startsWith("workflow:") ||
+          trimmed === "tasks:" ||
+          trimmed.startsWith("tasks:") ||
+          trimmed === "steps:" ||
+          trimmed.startsWith("steps:")
+        ) {
           inWorkflowSection = true;
           workflowIndent = indent;
           continue;
@@ -185,10 +310,16 @@ const Execution: React.FC = () => {
 
         if (inWorkflowSection) {
           // Check if we've left the workflow section
-          if (trimmed && indent <= workflowIndent && !trimmed.startsWith('-') && trimmed.includes(':') && !trimmed.startsWith('#')) {
+          if (
+            trimmed &&
+            indent <= workflowIndent &&
+            !trimmed.startsWith("-") &&
+            trimmed.includes(":") &&
+            !trimmed.startsWith("#")
+          ) {
             break;
           }
-          
+
           // Detect nested logic sections
           if (trimmed.match(/^(next|then|else|when):/)) {
             if (!inNestedLogic) {
@@ -197,37 +328,55 @@ const Execution: React.FC = () => {
             }
             continue;
           }
-          
+
           // Process main workflow steps
-          if (trimmed.startsWith('- step:') && !inNestedLogic && indent === workflowIndent + 2) {
+          if (
+            trimmed.startsWith("- step:") &&
+            !inNestedLogic &&
+            indent === workflowIndent + 2
+          ) {
             if (currentTask.name) {
               tasks.push(currentTask as TaskNode);
               taskIndex++;
             }
-            
+
             const stepMatch = trimmed.match(/step:\s*([^'"]+)/);
-            const taskName = stepMatch ? stepMatch[1].trim() : `Step ${taskIndex + 1}`;
-            
+            const taskName = stepMatch
+              ? stepMatch[1].trim()
+              : `Step ${taskIndex + 1}`;
+
             currentTask = {
-              id: taskName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase(),
+              id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
               name: taskName,
-              type: 'default'
+              type: "default",
             };
-            
-          } else if (trimmed.startsWith('desc:') && currentTask.name && !inNestedLogic) {
-            const descMatch = trimmed.match(/desc:\s*['"](.*?)['"]|desc:\s*(.+)/);
+          } else if (
+            trimmed.startsWith("desc:") &&
+            currentTask.name &&
+            !inNestedLogic
+          ) {
+            const descMatch = trimmed.match(
+              /desc:\s*['"](.*?)['"]|desc:\s*(.+)/,
+            );
             if (descMatch) {
-              const description = (descMatch[1] || descMatch[2] || '').trim().replace(/^["']|["']$/g, '');
+              const description = (descMatch[1] || descMatch[2] || "")
+                .trim()
+                .replace(/^["']|["']$/g, "");
               currentTask.name = description;
             }
-            
-          } else if (trimmed.startsWith('type:') && currentTask.name && !inNestedLogic) {
-            const typeMatch = trimmed.match(/type:\s*['"](.*?)['"]|type:\s*([^'"]+)/);
+          } else if (
+            trimmed.startsWith("type:") &&
+            currentTask.name &&
+            !inNestedLogic
+          ) {
+            const typeMatch = trimmed.match(
+              /type:\s*['"](.*?)['"]|type:\s*([^'"]+)/,
+            );
             if (typeMatch) {
-              currentTask.type = (typeMatch[1] || typeMatch[2] || '').trim();
+              currentTask.type = (typeMatch[1] || typeMatch[2] || "").trim();
             }
           }
-          
+
           if (inNestedLogic && indent <= nestedLevel) {
             inNestedLogic = false;
           }
@@ -240,83 +389,92 @@ const Execution: React.FC = () => {
 
       return tasks;
     } catch (error) {
-      console.error('💥 Error parsing playbook content:', error);
+      console.error("💥 Error parsing playbook content:", error);
       return [];
     }
   };
 
-  const createFlowFromTasks = (tasks: TaskNode[]): { nodes: Node[], edges: Edge[] } => {
+  const createFlowFromTasks = (
+    tasks: TaskNode[],
+  ): { nodes: Node[]; edges: Edge[] } => {
     const flowNodes: Node[] = [];
     const flowEdges: Edge[] = [];
-    
+
     tasks.forEach((task, index) => {
-      const nodeType = nodeTypes[task.type as keyof typeof nodeTypes] || nodeTypes.default;
-      
+      const nodeType =
+        nodeTypes[task.type as keyof typeof nodeTypes] || nodeTypes.default;
+
       const x = (index % 4) * 280 + 50;
       const y = Math.floor(index / 4) * 160 + 50;
-      
+
       flowNodes.push({
         id: task.id,
-        type: 'default',
+        type: "default",
         position: { x, y },
         data: {
           label: (
-            <div style={{ 
-              padding: '16px 20px',
-              borderRadius: '12px',
-              background: 'white',
-              border: `2px solid ${nodeType.color}`,
-              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-              minWidth: '180px',
-              textAlign: 'center',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}>
-              <div style={{ fontSize: '24px', marginBottom: '8px' }}>
+            <div
+              style={{
+                padding: "16px 20px",
+                borderRadius: "12px",
+                background: "white",
+                border: `2px solid ${nodeType.color}`,
+                boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+                minWidth: "180px",
+                textAlign: "center",
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+              }}
+            >
+              <div style={{ fontSize: "24px", marginBottom: "8px" }}>
                 {nodeType.icon}
               </div>
-              <div style={{ 
-                fontWeight: 'bold', 
-                fontSize: '14px',
-                color: '#262626',
-                marginBottom: '6px',
-                lineHeight: '1.3'
-              }}>
+              <div
+                style={{
+                  fontWeight: "bold",
+                  fontSize: "14px",
+                  color: "#262626",
+                  marginBottom: "6px",
+                  lineHeight: "1.3",
+                }}
+              >
                 {task.name}
               </div>
-              <div style={{ 
-                fontSize: '11px', 
-                color: nodeType.color,
-                textTransform: 'uppercase',
-                fontWeight: '600',
-                letterSpacing: '0.5px'
-              }}>
+              <div
+                style={{
+                  fontSize: "11px",
+                  color: nodeType.color,
+                  textTransform: "uppercase",
+                  fontWeight: "600",
+                  letterSpacing: "0.5px",
+                }}
+              >
                 {task.type}
               </div>
             </div>
-          )
+          ),
         },
         style: {
-          background: 'transparent',
-          border: 'none',
+          background: "transparent",
+          border: "none",
           padding: 0,
-          width: 'auto',
-          height: 'auto'
-        }
+          width: "auto",
+          height: "auto",
+        },
       });
     });
 
     tasks.forEach((task, index) => {
       if (task.dependencies && task.dependencies.length > 0) {
-        task.dependencies.forEach(dep => {
-          const sourceTask = tasks.find(t => t.name === dep);
+        task.dependencies.forEach((dep) => {
+          const sourceTask = tasks.find((t) => t.name === dep);
           if (sourceTask) {
             flowEdges.push({
               id: `edge-${sourceTask.id}-${task.id}`,
               source: sourceTask.id,
               target: task.id,
               animated: true,
-              style: { stroke: '#1890ff', strokeWidth: 3 }
+              style: { stroke: "#1890ff", strokeWidth: 3 },
             });
           }
         });
@@ -326,7 +484,7 @@ const Execution: React.FC = () => {
           source: tasks[index - 1].id,
           target: task.id,
           animated: true,
-          style: { stroke: '#1890ff', strokeWidth: 3 }
+          style: { stroke: "#1890ff", strokeWidth: 3 },
         });
       }
     });
@@ -336,30 +494,32 @@ const Execution: React.FC = () => {
 
   const loadWorkflowVisualization = async () => {
     if (!selectedPlaybookId) return;
-    
+
     setWorkflowLoading(true);
     try {
       const content = await apiService.getPlaybookContent(selectedPlaybookId);
       if (content && content.trim()) {
         const tasks = parsePlaybookContent(content);
         if (tasks.length > 0) {
-          const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(tasks);
+          const { nodes: flowNodes, edges: flowEdges } =
+            createFlowFromTasks(tasks);
           setNodes(flowNodes);
           setEdges(flowEdges);
         } else {
           // Show demo flow if no tasks found
           const demoTasks: TaskNode[] = [
-            { id: 'demo-1', name: 'Initialize Process', type: 'log' },
-            { id: 'demo-2', name: 'Process Data', type: 'script' },
-            { id: 'demo-3', name: 'Export Results', type: 'export' }
+            { id: "demo-1", name: "Initialize Process", type: "log" },
+            { id: "demo-2", name: "Process Data", type: "script" },
+            { id: "demo-3", name: "Export Results", type: "export" },
           ];
-          const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(demoTasks);
+          const { nodes: flowNodes, edges: flowEdges } =
+            createFlowFromTasks(demoTasks);
           setNodes(flowNodes);
           setEdges(flowEdges);
         }
       }
     } catch (error) {
-      console.error('Failed to load workflow:', error);
+      console.error("Failed to load workflow:", error);
     } finally {
       setWorkflowLoading(false);
     }
@@ -373,55 +533,53 @@ const Execution: React.FC = () => {
 
   const columns = [
     {
-      title: 'Execution ID',
-      dataIndex: 'id',
-      key: 'id',
-      render: (id: string) => (
-        <Text code>{id.substring(0, 8)}</Text>
-      ),
+      title: "Execution ID",
+      dataIndex: "id",
+      key: "id",
+      render: (id: string) => <Text code>{id.substring(0, 8)}</Text>,
     },
     {
-      title: 'Playbook',
-      dataIndex: 'playbook_name',
-      key: 'playbook_name',
+      title: "Playbook",
+      dataIndex: "playbook_name",
+      key: "playbook_name",
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
+      title: "Status",
+      dataIndex: "status",
+      key: "status",
       render: (status: string) => (
-        <Tag color={getStatusColor(status)}>
-          {getStatusText(status)}
-        </Tag>
+        <Tag color={getStatusColor(status)}>{getStatusText(status)}</Tag>
       ),
     },
     {
-      title: 'Progress',
-      dataIndex: 'progress',
-      key: 'progress',
+      title: "Progress",
+      dataIndex: "progress",
+      key: "progress",
       render: (progress: number, record: ExecutionData) => (
         <Progress
           percent={progress}
           size="small"
-          status={record.status === 'failed' ? 'exception' : 'active'}
+          status={record.status === "failed" ? "exception" : "active"}
           showInfo={false}
         />
       ),
     },
     {
-      title: 'Start Time',
-      dataIndex: 'start_time',
-      key: 'start_time',
-      render: (startTime: string) => moment(startTime).format('YYYY-MM-DD HH:mm:ss'),
+      title: "Start Time",
+      dataIndex: "start_time",
+      key: "start_time",
+      render: (startTime: string) =>
+        moment(startTime).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
-      title: 'Duration',
-      key: 'duration',
-      render: (record: ExecutionData) => formatDuration(record.start_time, record.end_time),
+      title: "Duration",
+      key: "duration",
+      render: (record: ExecutionData) =>
+        formatDuration(record.start_time, record.end_time),
     },
     {
-      title: 'Actions',
-      key: 'actions',
+      title: "Actions",
+      key: "actions",
       render: (record: ExecutionData) => (
         <Space>
           <Button
@@ -431,7 +589,7 @@ const Execution: React.FC = () => {
           >
             View
           </Button>
-          {(record.status === 'running' || record.status === 'pending') && (
+          {(record.status === "running" || record.status === "pending") && (
             <Button
               type="text"
               danger
@@ -446,33 +604,46 @@ const Execution: React.FC = () => {
     },
   ];
 
-  const runningExecutions = executions.filter(exec => exec.status === 'running');
-  const pendingExecutions = executions.filter(exec => exec.status === 'pending');
-  const completedExecutions = executions.filter(exec => exec.status === 'completed');
-  const failedExecutions = executions.filter(exec => exec.status === 'failed');
+  const runningExecutions = filteredExecutions.filter(
+    (exec) => exec.status === "running",
+  );
+  const pendingExecutions = filteredExecutions.filter(
+    (exec) => exec.status === "pending",
+  );
+  const completedExecutions = filteredExecutions.filter(
+    (exec) => exec.status === "completed",
+  );
+  const failedExecutions = filteredExecutions.filter(
+    (exec) => exec.status === "failed",
+  );
+
+  // Get unique playbook names for filter dropdown
+  const uniquePlaybooks = Array.from(
+    new Set(executions.map((exec) => exec.playbook_name))
+  );
 
   if (loading) {
     return (
-      <Content style={{ padding: '50px', textAlign: 'center' }}>
+      <Content className="execution-loading-content">
         <Spin size="large" />
-        <div style={{ marginTop: 16 }}>Loading executions...</div>
+        <div className="execution-loading-text">Loading executions...</div>
       </Content>
     );
   }
 
   if (error) {
     return (
-      <Content style={{ padding: '50px' }}>
+      <Content className="execution-error-content">
         <Alert message="Error" description={error} type="error" showIcon />
       </Content>
     );
   }
 
   return (
-    <Content>
+    <Content className="execution-main-content">
       {showWorkflowVisualization ? (
         // Show workflow visualization when accessed via View button
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
+        <Space direction="vertical" size="large" className="execution-space-vertical">
           <Row justify="space-between" align="middle">
             <Col>
               <Title level={2}>
@@ -484,27 +655,22 @@ const Execution: React.FC = () => {
                 type="default"
                 onClick={() => {
                   setShowWorkflowVisualization(false);
-                  navigate('/execution');
+                  navigate("/execution");
                 }}
               >
                 Back to Executions
               </Button>
             </Col>
           </Row>
-          
+
           {/* Inline Flow Visualization */}
-          <div style={{ height: '80vh', border: '1px solid #d9d9d9', borderRadius: '8px', padding: '20px' }}>
+          <div className="execution-flow-container">
             {workflowLoading ? (
-              <div style={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                height: '100%',
-                flexDirection: 'column',
-                gap: '16px'
-              }}>
+              <div className="execution-flow-toolbar">
                 <Spin size="large" />
-                <div style={{ color: '#8c8c8c' }}>Loading workflow visualization...</div>
+                <div className="execution-flow-toolbar-loading">
+                  Loading workflow visualization...
+                </div>
               </div>
             ) : (
               <ReactFlow
@@ -517,24 +683,24 @@ const Execution: React.FC = () => {
                 fitViewOptions={{ padding: 0.3 }}
                 attributionPosition="bottom-left"
               >
-                <Controls 
+                <Controls
                   style={{
-                    background: 'white',
-                    border: '1px solid #d9d9d9',
-                    borderRadius: '8px'
+                    background: "white",
+                    border: "1px solid #d9d9d9",
+                    borderRadius: "8px",
                   }}
                 />
-                <MiniMap 
-                  nodeColor={(node) => '#1890ff'}
+                <MiniMap
+                  nodeColor={(node) => "#1890ff"}
                   style={{
-                    background: 'white',
-                    border: '1px solid #d9d9d9',
-                    borderRadius: '8px'
+                    background: "white",
+                    border: "1px solid #d9d9d9",
+                    borderRadius: "8px",
                   }}
                 />
-                <Background 
-                  variant={BackgroundVariant.Dots} 
-                  gap={20} 
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={20}
                   size={1}
                   color="#f0f0f0"
                 />
@@ -544,92 +710,186 @@ const Execution: React.FC = () => {
         </Space>
       ) : (
         // Show normal execution history
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        <Row justify="space-between" align="middle">
-          <Col>
-            <Title level={2}>
-              ⚡ Execution History
-            </Title>
-          </Col>
-          <Col>
-            <Button
-              type="default"
-              icon={<ReloadOutlined />}
-              loading={refreshing}
-              onClick={() => fetchExecutions(true)}
-            >
-              Refresh
-            </Button>
-          </Col>
-        </Row>
+        <Space direction="vertical" size="large" className="execution-space-vertical">
+          <Row justify="space-between" align="middle">
+            <Col>
+              <Title level={2}>⚡ Execution History</Title>
+            </Col>
+            <Col>
+              <Button
+                type="default"
+                icon={<ReloadOutlined />}
+                loading={refreshing}
+                onClick={() => fetchExecutions(true)}
+              >
+                Refresh
+              </Button>
+            </Col>
+          </Row>
 
-        {/* Execution Statistics */}
-        <Row gutter={16}>
-          <Col span={6}>
-            <Card>
-              <Space direction="vertical" size="small">
-                <Text type="secondary">Running</Text>
-                <Title level={3} style={{ margin: 0, color: '#1890ff' }}>
-                  {runningExecutions.length}
-                </Title>
-              </Space>
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Space direction="vertical" size="small">
-                <Text type="secondary">Pending</Text>
-                <Title level={3} style={{ margin: 0, color: '#faad14' }}>
-                  {pendingExecutions.length}
-                </Title>
-              </Space>
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Space direction="vertical" size="small">
-                <Text type="secondary">Completed</Text>
-                <Title level={3} style={{ margin: 0, color: '#52c41a' }}>
-                  {completedExecutions.length}
-                </Title>
-              </Space>
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Space direction="vertical" size="small">
-                <Text type="secondary">Failed</Text>
-                <Title level={3} style={{ margin: 0, color: '#ff4d4f' }}>
-                  {failedExecutions.length}
-                </Title>
-              </Space>
-            </Card>
-          </Col>
-        </Row>
+          {/* Event Type Filtering Section */}
+          <Card title={<><FilterOutlined /> Event Type Filters</>} size="small">
+            <Space direction="vertical" className="execution-filter-space">
+              {/* Tabs for main event types */}
+              <Tabs
+                activeKey={activeTab}
+                onChange={setActiveTab}
+                size="small"
+              >
+                <TabPane tab="All Events" key="all" />
+                <TabPane tab={`Running (${executions.filter(e => e.status === "running").length})`} key="running" />
+                <TabPane tab={`Pending (${executions.filter(e => e.status === "pending").length})`} key="pending" />
+                <TabPane tab={`Completed (${executions.filter(e => e.status === "completed").length})`} key="completed" />
+                <TabPane tab={`Failed (${executions.filter(e => e.status === "failed").length})`} key="failed" />
+              </Tabs>
 
-        {/* Executions Table */}
-        <Table
-          dataSource={executions}
-          columns={columns}
-          rowKey="id"
-          pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total, range) =>
-              `${range[0]}-${range[1]} of ${total} executions`,
-          }}
-          loading={refreshing}
-        />
+              {/* Additional Filters */}
+              <Row gutter={16}>
+                <Col span={6}>
+                  <Input
+                    placeholder="Search executions..."
+                    prefix={<SearchOutlined />}
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    allowClear
+                  />
+                </Col>
+                <Col span={6}>
+                  <Select
+                    mode="multiple"
+                    placeholder="Filter by status"
+                    className="execution-filter-select"
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    allowClear
+                  >
+                    <Option value="running">Running</Option>
+                    <Option value="pending">Pending</Option>
+                    <Option value="completed">Completed</Option>
+                    <Option value="failed">Failed</Option>
+                  </Select>
+                </Col>
+                <Col span={6}>
+                  <Select
+                    placeholder="Filter by playbook"
+                    className="execution-filter-select"
+                    value={playbookFilter}
+                    onChange={setPlaybookFilter}
+                    allowClear
+                    showSearch
+                  >
+                    {uniquePlaybooks.map((playbook) => (
+                      <Option key={playbook} value={playbook}>
+                        {playbook}
+                      </Option>
+                    ))}
+                  </Select>
+                </Col>
+                <Col span={4}>
+                  <RangePicker
+                    placeholder={["Start date", "End date"]}
+                    className="execution-date-picker"
+                    value={dateRange}
+                    onChange={setDateRange}
+                  />
+                </Col>
+                <Col span={2}>
+                  <Button onClick={clearFilters} type="default">
+                    Clear
+                  </Button>
+                </Col>
+              </Row>
+            </Space>
+          </Card>
 
-        {executions.length === 0 && (
-          <Alert
-            message="No executions found"
-            description="No playbook executions have been started yet."
-            type="info"
-            showIcon
+          {/* Execution Statistics */}
+          <Row gutter={16}>
+            <Col span={6}>
+              <Card>
+                <Space direction="vertical" size="small">
+                  <Text type="secondary">Running</Text>
+                  <Title level={3} className="execution-stats-title running">
+                    {runningExecutions.length}
+                  </Title>
+                </Space>
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Space direction="vertical" size="small">
+                  <Text type="secondary">Pending</Text>
+                  <Title level={3} className="execution-stats-title pending">
+                    {pendingExecutions.length}
+                  </Title>
+                </Space>
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Space direction="vertical" size="small">
+                  <Text type="secondary">Completed</Text>
+                  <Title level={3} className="execution-stats-title completed">
+                    {completedExecutions.length}
+                  </Title>
+                </Space>
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Space direction="vertical" size="small">
+                  <Text type="secondary">Failed</Text>
+                  <Title level={3} className="execution-stats-title failed">
+                    {failedExecutions.length}
+                  </Title>
+                </Space>
+              </Card>
+            </Col>
+          </Row>
+
+          {/* Executions Table */}
+          <Table
+            dataSource={filteredExecutions}
+            columns={columns}
+            rowKey="id"
+            pagination={{
+              current: currentPage,
+              pageSize: pageSize,
+              pageSizeOptions: ["10", "20", "50", "100"],
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) =>
+                `${range[0]}-${range[1]} of ${total} executions (${filteredExecutions.length} filtered from ${executions.length} total)`,
+              onChange: (page) => setCurrentPage(page),
+              onShowSizeChange: (_current, size) => {
+                setPageSize(size);
+                setCurrentPage(1);
+              },
+            }}
+            loading={refreshing}
           />
-        )}
+
+          {filteredExecutions.length === 0 && executions.length > 0 && (
+            <Alert
+              message="No executions match current filters"
+              description="Try adjusting your filters to see more results."
+              type="info"
+              showIcon
+              action={
+                <Button size="small" onClick={clearFilters}>
+                  Clear Filters
+                </Button>
+              }
+            />
+          )}
+
+          {executions.length === 0 && (
+            <Alert
+              message="No executions found"
+              description="No playbook executions have been started yet."
+              type="info"
+              showIcon
+            />
+          )}
         </Space>
       )}
     </Content>

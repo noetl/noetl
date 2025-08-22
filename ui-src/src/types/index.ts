@@ -1,7 +1,7 @@
 // Common types used across the application
 
 export interface ServerStatus {
-  status: 'ok' | 'healthy' | 'error' | 'warning' | string;
+  status: "ok" | "healthy" | "error" | "warning" | string;
   message: string;
   timestamp: string;
 }
@@ -13,7 +13,7 @@ export interface PlaybookData {
   resource_version: string;
   meta: any;
   timestamp: string;
-  status: 'active' | 'inactive' | 'draft';
+  status: "active" | "inactive" | "draft";
   tasks_count: number;
   updated_at: string;
   description?: string;
@@ -24,7 +24,7 @@ export interface ExecutionData {
   id: string;
   playbook_id: string;
   playbook_name: string;
-  status: 'running' | 'completed' | 'failed' | 'pending';
+  status: "running" | "completed" | "failed" | "pending";
   start_time: string;
   end_time?: string;
   duration?: number;
@@ -43,13 +43,13 @@ export interface DashboardStats {
 
 export interface VisualizationWidget {
   id: string;
-  type: 'chart' | 'table' | 'metric' | 'text' | 'progress' | 'list';
+  type: "chart" | "table" | "metric" | "text" | "progress" | "list";
   title: string;
   data: any;
   config: {
-    chartType?: 'line' | 'bar' | 'pie' | 'area';
+    chartType?: "line" | "bar" | "pie" | "area";
     columns?: string[];
-    format?: 'number' | 'percentage' | 'currency';
+    format?: "number" | "percentage" | "currency";
     color?: string;
     height?: number;
     showLegend?: boolean;
@@ -88,7 +88,7 @@ export interface TableColumn {
 }
 
 export interface ChartConfig {
-  type: 'line' | 'bar' | 'pie' | 'area' | 'scatter';
+  type: "line" | "bar" | "pie" | "area" | "scatter";
   xAxis?: string;
   yAxis?: string;
   series?: string[];
