@@ -8,6 +8,7 @@ from .server import (
     get_event_service,    # unused here, kept for __all__
     get_pgdb_connection,
     router,
+    register_server_from_env,
     psycopg,
 )
 

@@ -309,6 +309,25 @@ k8s-postgres-delete:
 	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-pv.yaml --ignore-not-found
 	@echo "Postgres resources deleted (PVC/PV may persist depending on cluster policy)."
 
+.PHONY: postgres-reset-schema
+
+postgres-reset-schema:
+	@echo "Resetting NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)."
+	set -a; [ -f .env ] && . .env; set +a; \
+	export PGHOST=$$POSTGRES_HOST PGPORT=$$POSTGRES_PORT PGUSER=$$POSTGRES_USER PGPASSWORD=$$POSTGRES_PASSWORD PGDATABASE=$$POSTGRES_DB; \
+	echo "Dropping schema $${NOETL_SCHEMA:-noetl}..."; \
+	psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS $${NOETL_SCHEMA:-noetl} CASCADE;"; \
+	echo "Applying schema DDL..."; \
+	if $(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files >/dev/null 2>&1 ; then \
+		$(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files -o jsonpath='{.data.schema_ddl\.sql}' | psql -v ON_ERROR_STOP=1 -f - ; \
+	else \
+		if [ -f k8s/postgres/schema_ddl.sql ]; then \
+			psql -v ON_ERROR_STOP=1 -f k8s/postgres/schema_ddl.sql ; \
+		else \
+			echo "Could not find schema_ddl.sql locally or in cluster configmap; aborting."; exit 1; \
+		fi; \
+	fi
+
 # Generate a DAG diagram using the NoETL CLI
 .PHONY: diagram
 # Usage examples:

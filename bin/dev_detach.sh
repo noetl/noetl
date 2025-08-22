@@ -383,6 +383,20 @@ case "$cmd" in
   stop)
     # Also stop any tailers
     kill_tailers || true
+    # Attempt graceful deregistration for worker and broker before killing processes
+    if [[ -f "/tmp/noetl_worker_pool_name" ]]; then
+      WNAME=$(cat /tmp/noetl_worker_pool_name || true)
+      if [[ -n "$WNAME" ]]; then
+        echo "Calling server to deregister worker pool: $WNAME"
+        curl -s -X DELETE "${NOETL_SERVER_URL:-http://localhost:8082}/api/worker/pool/deregister" -H 'Content-Type: application/json' -d "{\"name\": \"$WNAME\"}" || true
+        rm -f /tmp/noetl_worker_pool_name || true
+      fi
+    fi
+    # Broker name may be environment-driven; attempt best-effort deregister
+    if [[ -n "${NOETL_BROKER_NAME:-}" ]]; then
+      echo "Calling server to deregister broker: ${NOETL_BROKER_NAME}"
+      curl -s -X DELETE "${NOETL_SERVER_URL:-http://localhost:8082}/api/broker/deregister" -H 'Content-Type: application/json' -d "{\"name\": \"${NOETL_BROKER_NAME}\"}" || true
+    fi
     stop_service "worker2-api-dev" "$PID_DIR/worker2.pid"
     stop_service "worker-api-dev" "$PID_DIR/worker.pid"
     stop_service "broker"         "$PID_DIR/broker.pid"

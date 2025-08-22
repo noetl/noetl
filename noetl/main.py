@@ -86,6 +86,19 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             except Exception as e:
                 logger.warning(f"Worker pool self-registration failed: {e}")
 
+    # Server self-registration (optional) - post to configurable endpoint
+    try:
+        from noetl.server import register_server_from_env
+        @app.on_event("startup")
+        async def _register_server_startup():
+            try:
+                register_server_from_env()
+            except Exception as e:
+                logger.warning(f"Server self-registration failed: {e}")
+    except Exception:
+        # ignore if import fails
+        pass
+
     @app.get("/health", include_in_schema=False)
     async def health():
         return {"status": "ok"}

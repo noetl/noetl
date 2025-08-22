@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import uuid
 import datetime
 import tempfile
@@ -27,6 +28,15 @@ class Broker:
         self.server_url = server_url or os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
         self.event_reporting_enabled = True
         self.validate_server_url()
+        # graceful shutdown flag
+        self._shutdown_requested = False
+        # install signal handlers for graceful deregister (SIGTERM and SIGINT)
+        try:
+            signal.signal(signal.SIGTERM, self._on_sigterm)
+            signal.signal(signal.SIGINT, self._on_sigterm)
+        except Exception:
+            # signal may not be available in some environments
+            pass
 
     def has_log_event(self):
         """
@@ -264,21 +274,37 @@ class Broker:
                 'error': f"Worker dispatch exception: {e}"
             }
 
-        result_obj = body.get('result') if isinstance(body, dict) else None
-        if isinstance(result_obj, dict) and 'status' in result_obj:
-            return {
-                'id': result_obj.get('id', body.get('task_id')),
-                'status': result_obj.get('status', body.get('status')),
-                'data': result_obj.get('data'),
-                'error': result_obj.get('error')
-            }
-        else:
-            return {
-                'id': body.get('task_id'),
-                'status': body.get('status', 'error'),
-                'data': None,
-                'error': body.get('error') or 'No result object returned from worker'
-            }
+    def _on_sigterm(self, signum, frame):
+        """Signal handler: request graceful shutdown and attempt deregister with retries."""
+        logger.info(f"Broker: received signal {signum}, initiating graceful shutdown")
+        self._shutdown_requested = True
+        # attempt to deregister synchronously with retries/backoff
+        try:
+            import socket, os as _os, time
+            name = _os.environ.get('NOETL_BROKER_NAME') or f"broker-{socket.gethostname()}-{_os.getpid()}"
+            retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
+            backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
+            success = False
+            for attempt in range(1, retries + 1):
+                try:
+                    with httpx.Client(timeout=5.0) as client:
+                        resp = client.delete(f"{self.server_url.rstrip('/')}/api/broker/deregister", json={"name": name})
+                        if resp.status_code == 200:
+                            logger.info(f"Broker: deregister succeeded for {name} (attempt {attempt})")
+                            success = True
+                            break
+                        else:
+                            logger.warning(f"Broker: deregister returned {resp.status_code} on attempt {attempt}: {resp.text}")
+                except Exception as _dereg_err:
+                    logger.debug(f"Broker: deregister attempt {attempt} failed: {_dereg_err}")
+                # backoff before next try
+                if attempt < retries:
+                    sleep_for = backoff_base * (2 ** (attempt - 1))
+                    time.sleep(sleep_for)
+            if not success:
+                logger.warning(f"Broker: all deregister attempts failed for {name}")
+        except Exception as _dereg_err:
+            logger.exception(f"Broker: unexpected error during deregister attempt: {_dereg_err}")
 
     def execute_playbook_call(self, path: str, version: str = None, input_payload: Dict = None, merge: bool = True) -> Dict:
         """

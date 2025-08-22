@@ -454,9 +454,9 @@ class DatabaseSchema:
                 pass
 
             self.conn.commit()
-            logger.info("Creating runtime_registry table with runtime_id primary key.")
+            logger.info("Creating runtime table with runtime_id primary key.")
             cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.runtime_registry (
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.runtime (
                     runtime_id BIGINT PRIMARY KEY,
                     name TEXT NOT NULL,
                     component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
@@ -473,21 +473,21 @@ class DatabaseSchema:
             """)
             # Ensure compatibility: ensure runtime_id column exists (for older deployments)
             try:
-                cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT")
+                cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT")
             except Exception:
                 pass
             # Ensure composite uniqueness on (component_type, name) and indexes for queries
             cursor.execute(f"""
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON {self.noetl_schema}.runtime_registry (component_type, name);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON {self.noetl_schema}.runtime (component_type, name);
             """)
             cursor.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_runtime_registry_type ON {self.noetl_schema}.runtime_registry (component_type);
+                CREATE INDEX IF NOT EXISTS idx_runtime_type ON {self.noetl_schema}.runtime (component_type);
             """)
             cursor.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_runtime_registry_status ON {self.noetl_schema}.runtime_registry (status);
+                CREATE INDEX IF NOT EXISTS idx_runtime_status ON {self.noetl_schema}.runtime (status);
             """)
             cursor.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_runtime_registry_runtime_type ON {self.noetl_schema}.runtime_registry ((runtime->>'type'));
+                CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON {self.noetl_schema}.runtime ((runtime->>'type'));
             """)
 
             self.conn.commit()
@@ -499,21 +499,21 @@ class DatabaseSchema:
                     get_snowflake_id = lambda: int(datetime.now().timestamp() * 1000)
 
                 # Fill missing runtime_id values with unique snowflake ids
-                cursor.execute(f"SELECT component_type, name FROM {self.noetl_schema}.runtime_registry WHERE runtime_id IS NULL")
+                cursor.execute(f"SELECT component_type, name FROM {self.noetl_schema}.runtime WHERE runtime_id IS NULL")
                 rows_to_update = cursor.fetchall()
                 for comp, name in rows_to_update:
                     sf = get_snowflake_id()
-                    cursor.execute(f"UPDATE {self.noetl_schema}.runtime_registry SET runtime_id = %s WHERE component_type = %s AND name = %s AND runtime_id IS NULL", (sf, comp, name))
+                    cursor.execute(f"UPDATE {self.noetl_schema}.runtime SET runtime_id = %s WHERE component_type = %s AND name = %s AND runtime_id IS NULL", (sf, comp, name))
 
                 # Ensure runtime_id has a unique index
-                cursor.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_runtime_id ON {self.noetl_schema}.runtime_registry (runtime_id);")
+                cursor.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_runtime_id ON {self.noetl_schema}.runtime (runtime_id);")
 
                 # Inspect current primary key; if it's not runtime_id, replace it with runtime_id PK
                 cursor.execute("""
                     SELECT tc.constraint_name, kc.column_name
                     FROM information_schema.table_constraints tc
                     JOIN information_schema.key_column_usage kc ON kc.constraint_name = tc.constraint_name
-                    WHERE tc.table_schema = %s AND tc.table_name = 'runtime_registry' AND tc.constraint_type = 'PRIMARY KEY'
+                    WHERE tc.table_schema = %s AND tc.table_name = 'runtime' AND tc.constraint_type = 'PRIMARY KEY'
                 """, (self.noetl_schema,))
                 pk_info = cursor.fetchall()
                 pk_columns = [r[1] for r in pk_info] if pk_info else []
@@ -521,11 +521,11 @@ class DatabaseSchema:
                     # Drop existing primary key constraint and set runtime_id as primary key
                     constraint_name = pk_info[0][0]
                     try:
-                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime_registry DROP CONSTRAINT {constraint_name}")
-                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime_registry ADD PRIMARY KEY (runtime_id)")
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime DROP CONSTRAINT {constraint_name}")
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime ADD PRIMARY KEY (runtime_id)")
                     except Exception:
                         # If we cannot change PK, leave indices in place and continue
-                        logger.info("Could not replace primary key on runtime_registry automatically; leaving existing PK in place.")
+                            logger.info("Could not replace primary key on runtime automatically; leaving existing PK in place.")
 
                 self.conn.commit()
             except Exception:

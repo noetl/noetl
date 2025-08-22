@@ -127,8 +127,8 @@ ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB;
 -- Ensure error_log.error_id is BIGINT for snowflake IDs
 ALTER TABLE noetl.error_log ALTER COLUMN error_id TYPE BIGINT;
 
--- Unified runtime registry table (transient runtime info)
-CREATE TABLE IF NOT EXISTS noetl.runtime_registry (
+-- Unified runtime table (transient runtime info)
+CREATE TABLE IF NOT EXISTS noetl.runtime (
     runtime_id BIGINT PRIMARY KEY,
     name TEXT NOT NULL,
     component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
@@ -144,10 +144,10 @@ CREATE TABLE IF NOT EXISTS noetl.runtime_registry (
 );
 
 -- Ensure runtime_id exists for older deployments
-ALTER TABLE noetl.runtime_registry ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+ALTER TABLE noetl.runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
 -- Ensure composite uniqueness on component_type + name
-CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_component_name ON noetl.runtime_registry (component_type, name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON noetl.runtime (component_type, name);
 
-CREATE INDEX IF NOT EXISTS idx_runtime_registry_type ON noetl.runtime_registry (component_type);
-CREATE INDEX IF NOT EXISTS idx_runtime_registry_status ON noetl.runtime_registry (status);
-CREATE INDEX IF NOT EXISTS idx_runtime_registry_runtime_type ON noetl.runtime_registry ((runtime->>'type'));
+CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
+CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
+CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));

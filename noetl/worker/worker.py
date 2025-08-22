@@ -5,6 +5,7 @@ import uuid
 import datetime
 import time
 import requests
+import signal
 from typing import Dict, List, Any, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
 from noetl.render import render_template
@@ -38,6 +39,7 @@ def register_worker_pool_from_env() -> None:
         labels = os.environ.get("NOETL_WORKER_LABELS")
         if labels:
             labels = [s.strip() for s in labels.split(',') if s.strip()]
+
         payload = {
             "name": name,
             "runtime": runtime,
@@ -51,12 +53,76 @@ def register_worker_pool_from_env() -> None:
             resp = requests.post(url, json=payload, timeout=5.0)
             if resp.status_code == 200:
                 logger.info(f"Worker pool registered: {name} ({runtime}) -> {base_url}")
+                # persist name for possible deregistration
+                try:
+                    with open('/tmp/noetl_worker_pool_name', 'w') as f:
+                        f.write(name)
+                except Exception:
+                    pass
             else:
                 logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
         except Exception as e:
             logger.warning(f"Worker pool register exception: {e}")
     except Exception:
         logger.exception("Unexpected error during worker pool registration")
+
+
+def deregister_worker_pool_from_env() -> None:
+    """Attempt to deregister worker pool using stored name (best-effort)."""
+    try:
+        name = None
+        if os.path.exists('/tmp/noetl_worker_pool_name'):
+            try:
+                with open('/tmp/noetl_worker_pool_name', 'r') as f:
+                    name = f.read().strip()
+            except Exception:
+                name = None
+        if not name:
+            name = os.environ.get('NOETL_WORKER_POOL_NAME')
+        if not name:
+            return
+        server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+        try:
+            requests.delete(f"{server_url}/api/worker/pool/deregister", json={"name": name}, timeout=5.0)
+            try:
+                os.remove('/tmp/noetl_worker_pool_name')
+            except Exception:
+                pass
+            logger.info(f"Deregistered worker pool: {name}")
+        except Exception as e:
+            logger.debug(f"Worker deregister attempt failed: {e}")
+    except Exception:
+        pass
+
+
+def _on_worker_terminate(signum, frame):
+    logger.info(f"Worker pool process received signal {signum}, attempting graceful deregister")
+    try:
+        # attempt retries/backoff
+        retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
+        backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
+        success = False
+        for attempt in range(1, retries + 1):
+            try:
+                deregister_worker_pool_from_env()
+                success = True
+                logger.info(f"Worker: deregister succeeded (attempt {attempt})")
+                break
+            except Exception as e:
+                logger.debug(f"Worker: deregister attempt {attempt} failed: {e}")
+            if attempt < retries:
+                time.sleep(backoff_base * (2 ** (attempt - 1)))
+        if not success:
+            logger.warning("Worker: all deregister attempts failed")
+    finally:
+        # do not prevent process from exiting
+        pass
+
+try:
+    signal.signal(signal.SIGTERM, _on_worker_terminate)
+    signal.signal(signal.SIGINT, _on_worker_terminate)
+except Exception:
+    pass
 
 class EventReporter:
     """
