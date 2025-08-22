@@ -287,6 +287,23 @@ class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
+    # Added helper to normalize heterogeneous status values emitted by various components
+    def _normalize_status(self, raw: str | None) -> str:
+        if not raw:
+            return 'pending'
+        s = str(raw).strip().lower()
+        if s in {'completed', 'complete', 'success', 'succeeded', 'done'}:
+            return 'completed'
+        if s in {'error', 'failed', 'failure'}:
+            return 'failed'
+        if s in {'running', 'run', 'in_progress', 'in-progress', 'progress', 'started', 'start'}:
+            return 'running'
+        # treat created/queued/pending/default as pending
+        if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
+            return 'pending'
+        # fallback
+        return 'pending'
+
     def get_all_executions(self) -> List[Dict[str, Any]]:
         """
         Get all executions from the event_log table.
@@ -329,15 +346,8 @@ class EventService:
                         output_result = json.loads(row[6]) if row[6] else {}
                         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
                         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-                        status = row[2]
-                        if status == 'COMPLETED':
-                            status = 'completed'
-                        elif status == 'ERROR':
-                            status = 'failed'
-                        elif status == 'RUNNING':
-                            status = 'running'
-                        else:
-                            status = 'pending'
+                        raw_status = row[2]
+                        status = self._normalize_status(raw_status)
 
                         start_time = row[3].isoformat() if row[3] else None
                         end_time = None
@@ -365,17 +375,13 @@ class EventService:
 
                         progress = 100 if status in ['completed', 'failed'] else 0
                         if status == 'running':
+                            # Count total events & those considered finished (completed/failed)
                             cursor.execute("""
-                                SELECT COUNT(*) FROM event_log WHERE execution_id = %s
+                                SELECT status FROM event_log WHERE execution_id = %s
                             """, (execution_id,))
-                            total_steps = cursor.fetchone()[0]
-
-                            cursor.execute("""
-                                SELECT COUNT(*) FROM event_log 
-                                WHERE execution_id = %s AND status IN ('COMPLETED', 'ERROR')
-                            """, (execution_id,))
-                            completed_steps = cursor.fetchone()[0]
-
+                            event_statuses = [self._normalize_status(r[0]) for r in cursor.fetchall()]
+                            total_steps = len(event_statuses)
+                            completed_steps = sum(1 for s in event_statuses if s in {'completed', 'failed'})
                             if total_steps > 0:
                                 progress = int((completed_steps / total_steps) * 100)
 
@@ -540,7 +546,8 @@ class EventService:
                                 "error": row[11],
                                 "execution_id": execution_id,
                                 "resource_path": None,
-                                "resource_version": None
+                                "resource_version": None,
+                                "normalized_status": self._normalize_status(row[5])
                             }
 
                             if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
@@ -1649,15 +1656,8 @@ async def get_execution(execution_id: str):
         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
         
-        status = latest_event.get("status", "")
-        if status == 'COMPLETED':
-            status = 'completed'
-        elif status == 'ERROR':
-            status = 'failed'
-        elif status == 'RUNNING':
-            status = 'running'
-        else:
-            status = 'pending'
+        raw_status = latest_event.get("status", "")
+        status = event_service._normalize_status(raw_status)
         
         timestamps = [event.get("timestamp", "") for event in events.get("events", []) if event.get("timestamp")]
         timestamps.sort()
@@ -1674,13 +1674,15 @@ async def get_execution(execution_id: str):
             except Exception as e:
                 logger.error(f"Error calculating duration: {e}")
         
-        progress = 100 if status in ['completed', 'failed'] else 0
-        if status == 'running':
-            total_steps = len(events.get("events", []))
-            completed_steps = sum(1 for event in events.get("events", []) if event.get("status") in ['COMPLETED', 'ERROR'])
-            
-            if total_steps > 0:
-                progress = int((completed_steps / total_steps) * 100)
+        if status in ['completed', 'failed']:
+            progress = 100
+        elif status == 'running':
+            normalized_statuses = [event_service._normalize_status(e.get('status')) for e in events.get('events', [])]
+            total = len(normalized_statuses)
+            done = sum(1 for s in normalized_statuses if s in {'completed', 'failed'})
+            progress = int((done / total) * 100) if total else 0
+        else:
+            progress = 0
         
         execution_data = {
             "id": execution_id,

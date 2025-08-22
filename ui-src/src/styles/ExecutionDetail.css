@@ -180,6 +180,51 @@
     cursor: pointer;
 }
 
+/* JSON Wrapper and Preformatted Text */
+.execution-detail-json-wrapper {
+    position: relative;
+    padding: 8px 12px 8px 8px;
+    background: #fafafa;
+    border: 1px solid #f0f0f0;
+    border-radius: 6px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.execution-detail-pre {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    max-height: 260px;
+    overflow: auto;
+    flex: 1;
+    background: transparent;
+    padding: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.execution-detail-pre.collapsed {
+    max-height: 120px;
+}
+
+.execution-detail-json-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.execution-detail-json-btn {
+    color: #595959;
+}
+
+.execution-detail-json-btn:hover {
+    color: #262626;
+    background: #f5f5f5;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .execution-detail-field {

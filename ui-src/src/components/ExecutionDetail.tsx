@@ -15,7 +15,9 @@ import {
   Row,
   Col,
   DatePicker,
-  Progress
+  Progress,
+  message,
+  Tooltip
 } from "antd";
 import {
   ArrowLeftOutlined,
@@ -27,6 +29,7 @@ import { apiService } from "../services/api";
 import { ExecutionData } from "../types";
 import moment from "moment";
 import "../styles/ExecutionDetail.css";
+import { CopyOutlined, ExpandAltOutlined, CompressOutlined } from "@ant-design/icons";
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
@@ -53,6 +56,9 @@ const ExecutionDetail: React.FC = () => {
   const [nodeFilter, setNodeFilter] = useState<string>("");
   const [searchText, setSearchText] = useState<string>("");
   const [dateRange, setDateRange] = useState<[any, any] | null>(null);
+
+  // Expanded fields state for JSON rendering
+  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const fetchExecution = async () => {
@@ -161,6 +167,14 @@ const ExecutionDetail: React.FC = () => {
     return undefined;
   };
 
+  const toggleField = (id: string) => {
+    setExpandedFields(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   const renderJSON = (value: any) => {
     if (value === undefined || value === null) return "-";
     try {
@@ -169,6 +183,44 @@ const ExecutionDetail: React.FC = () => {
     } catch {
       return String(value);
     }
+  };
+
+  const renderJSONExpandable = (record: any, fieldKey: string, value: any) => {
+    const key = `${record.event_id}:${fieldKey}`;
+    const str = renderJSON(value);
+    const isLong = str && str.length > 100;
+    const expanded = expandedFields.has(key);
+    if (!isLong) return <pre className="execution-detail-pre">{str}</pre>;
+    const preview = expanded ? str : str.substring(0, 100) + "...";
+    const handleCopy = () => {
+      navigator.clipboard.writeText(str);
+      message.success("Copied to clipboard");
+    };
+    return (
+      <div className="execution-detail-json-wrapper">
+        <pre className={`execution-detail-pre ${expanded ? "expanded" : "collapsed"}`}>{preview}</pre>
+        <div className="execution-detail-json-actions">
+          <Tooltip title={expanded ? "Collapse" : "Expand"}>
+            <Button
+              type="text"
+              size="small"
+              icon={expanded ? <CompressOutlined /> : <ExpandAltOutlined />}
+              onClick={() => toggleField(key)}
+              className="execution-detail-json-btn"
+            />
+          </Tooltip>
+          <Tooltip title="Copy full JSON">
+            <Button
+              type="text"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={handleCopy}
+              className="execution-detail-json-btn"
+            />
+          </Tooltip>
+        </div>
+      </div>
+    );
   };
 
   // Get unique values for filter dropdowns
@@ -466,43 +518,51 @@ const ExecutionDetail: React.FC = () => {
                 <Col xs={24} md={12}>
                   <div className="execution-detail-field">
                     <Text className="execution-detail-label">Context Value</Text>
-                    <Text code className="execution-detail-value execution-detail-result">
-                      {renderJSON(pickField(record, ["context", "context_value", "contextValue"]))}
-                    </Text>
+                    <div className="execution-detail-value execution-detail-result">
+                      {renderJSONExpandable(record, "context", pickField(record, ["context", "context_value", "contextValue", "input_context"]))}
+                    </div>
                   </div>
                 </Col>
                 <Col xs={24} md={12}>
                   <div className="execution-detail-field">
                     <Text className="execution-detail-label">Input Result</Text>
-                    <Text code className="execution-detail-value execution-detail-result">
-                      {renderJSON(pickField(record, ["input_result", "input", "inputData"]))}
-                    </Text>
+                    <div className="execution-detail-value execution-detail-result">
+                      {renderJSONExpandable(record, "input", pickField(record, ["input_result", "input", "inputData", "input_context"]))}
+                    </div>
                   </div>
                 </Col>
                 <Col xs={24} md={12}>
                   <div className="execution-detail-field">
                     <Text className="execution-detail-label">Output Result</Text>
-                    <Text code className="execution-detail-value execution-detail-result">
-                      {renderJSON(pickField(record, ["output_result", "output", "outputData", "result"]))}
-                    </Text>
+                    <div className="execution-detail-value execution-detail-result">
+                      {renderJSONExpandable(record, "output", pickField(record, ["output_result", "output", "outputData", "result"]))}
+                    </div>
                   </div>
                 </Col>
                 <Col xs={24}>
                   <div className="execution-detail-field">
                     <Text className="execution-detail-label">Metadata</Text>
-                    <Text code className="execution-detail-value execution-detail-result">
-                      {renderJSON(pickField(record, ["metadata", "meta"]))}
-                    </Text>
+                    <div className="execution-detail-value execution-detail-result">
+                      {renderJSONExpandable(record, "metadata", pickField(record, ["metadata", "meta"]))}
+                    </div>
                   </div>
                 </Col>
                 <Col xs={24}>
                   <div className="execution-detail-field">
                     <Text className="execution-detail-label">Error</Text>
-                    <Text type="danger" className="execution-detail-value execution-detail-result">
-                      {renderJSON(pickField(record, ["error", "message", "error_message"]))}
-                    </Text>
+                    <div className="execution-detail-value execution-detail-result">
+                      {renderJSONExpandable(record, "error", pickField(record, ["error", "message", "error_message"]))}
+                    </div>
                   </div>
                 </Col>
+                {record.normalized_status && (
+                  <Col xs={24} md={12}>
+                    <div className="execution-detail-field">
+                      <Text className="execution-detail-label">Normalized Status</Text>
+                      <Text className="execution-detail-value">{record.normalized_status}</Text>
+                    </div>
+                  </Col>
+                )}
               </Row>
             </div>
           ),
