@@ -172,7 +172,7 @@ def start_server(
 
     if server == "auto":
         try:
-            import gunicorn
+            import gunicorn  # type: ignore
             server_type = "gunicorn"
             logger.info("Auto-detected Gunicorn as the server runtime.")
         except ImportError:
@@ -369,6 +369,7 @@ def manage_catalog(
     else:
         if action == "execute":
             resource_path = resource_type_or_path
+            resource_type = "playbook"  # Default to playbook for execute
         elif action == "list":
             resource_type = resource_type_or_path
             if resource_type not in ["playbook"]:
@@ -414,7 +415,7 @@ def manage_catalog(
     elif action == "execute":
         if not path:
             logger.error("Resource path is required for execute action")
-            logger.info(f"Example: noetl catalog execute {resource_type} weather_example --version 0.1.0")
+            logger.info(f"Example: noetl catalog execute playbook weather_example --version 0.1.0")
             raise typer.Exit(code=1)
 
         try:

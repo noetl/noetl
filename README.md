@@ -219,3 +219,15 @@ For information about contributing to NoETL or building from source:
 ## License
 
 NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## For UI developers
+
+- `make install-dev`
+- `docker compose up database -d`
+- `./start_server.sh`
+- `./bin/register_examples.sh`
+- check __API_BASE_URL__ in vite.config.js for actual noetl base url
+- `cd ui-src`
+- `npm run dev`
+- before commit in ui use `npx prettier  . --write`
+

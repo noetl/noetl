@@ -1,3 +1,3 @@
-import FlowVisualization from './components/FlowVisualization';
+import FlowVisualization from "./components/FlowVisualization";
 
-console.log('FlowVisualization imported successfully:', FlowVisualization);
+console.log("FlowVisualization imported successfully:", FlowVisualization);
