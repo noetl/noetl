@@ -8,6 +8,7 @@ import requests
 import tempfile
 import signal
 import time
+import asyncio
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,7 @@ from noetl.common import deep_merge, DateTimeEncoder
 from noetl.logger import setup_logger
 from noetl.schema import DatabaseSchema
 from noetl.worker import Worker
-from noetl.config import settings
+from noetl.config import get_settings
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -35,11 +36,6 @@ def create_app() -> FastAPI:
         datefmt='%Y-%m-%dT%H:%M:%S',
         level=logging.INFO
     )
-    
-    print("=== ENVIRONMENT VARIABLES AT SERVER STARTUP ===")
-    for key, value in sorted(os.environ.items()):
-        print(f"ENV: {key}={value}")
-    print("=== END ENVIRONMENT VARIABLES ===")
     
     return _create_app(_enable_ui)
 
@@ -103,24 +99,14 @@ PID_FILE_DIR = os.path.expanduser("~/.noetl")
 PID_FILE_PATH = os.path.join(PID_FILE_DIR, "noetl_server.pid")
 
 @server_app.command("start")
-def start_server(
-    host: str = typer.Option(settings.host, help="Host to bind the server"),
-    port: int = typer.Option(settings.port, help="Port to bind the server"),
-    workers: int = typer.Option(1, help="Number of worker processes"),
-    reload: bool = typer.Option(False, help="Enable auto-reload (development mode)"),
-    no_ui: bool = typer.Option(not settings.enable_ui, "--no-ui", help="Disable the UI components"),
-    debug: bool = typer.Option(settings.debug, help="Enable debug logging mode"),
-    server: str = typer.Option("uvicorn", help="Server type: uvicorn, gunicorn, or auto")
-):
+def start_server():
     """
-    Start the NoETL server using Uvicorn, Gunicorn, or auto-detection.
+    Start the NoETL server using settings loaded from environment.
+    All runtime settings (host, port, enable_ui, debug, server runtime, workers, reload) are read from config.
     """
     global _enable_ui
 
-    settings.host = host
-    settings.port = port
-    settings.debug = debug
-    settings.enable_ui = not no_ui
+    settings = get_settings()
 
     _enable_ui = settings.enable_ui
 
@@ -131,46 +117,28 @@ def start_server(
         level=logging.DEBUG if settings.debug else logging.INFO
     )
 
-    ui_status = "disabled" if not settings.enable_ui else "enabled"
+    ui_status = "enabled" if settings.enable_ui else "disabled"
     debug_status = "enabled" if settings.debug else "disabled"
-    logger.info(f"Starting NoETL API server at http://{settings.host}:{settings.port} (UI {ui_status}, Debug {debug_status}, Workers: {workers})")
+    logger.info(f"Starting NoETL API server at http://{settings.host}:{settings.port} (UI {ui_status}, Debug {debug_status})")
 
-    logger.info("=== ENVIRONMENT VARIABLES AT SERVER STARTUP ===")
-    for key, value in sorted(os.environ.items()):
-        logger.info(f"ENV: {key}={value}")
-    logger.info("=== END ENVIRONMENT VARIABLES ===")
 
-    # Initialize database with retries to avoid crash on slow Postgres startup
-    max_startup_wait_secs = int(os.environ.get("NOETL_DB_STARTUP_TIMEOUT", "180"))
-    retry_interval_secs = int(os.environ.get("NOETL_DB_RETRY_INTERVAL", "5"))
-    start_time = time.time()
-    initialized = False
-    last_error = None
-    logger.info(
-        f"Initializing NoETL system metadata (will retry up to {max_startup_wait_secs}s, interval {retry_interval_secs}s)"
-    )
-    while time.time() - start_time < max_startup_wait_secs and not initialized:
-        try:
-            db_schema = DatabaseSchema(auto_setup=False)
-            db_schema.create_noetl_metadata()
-            db_schema.init_database()
-            logger.info("NoETL database schema initialized.")
-            initialized = True
-        except Exception as e:
-            last_error = e
-            logger.warning(
-                f"Database not ready or initialization failed: {e}. Retrying in {retry_interval_secs}s...",
-                exc_info=False,
-            )
-            time.sleep(retry_interval_secs)
-    if not initialized:
-        logger.error(
-            f"Error initializing NoETL system metadata after {max_startup_wait_secs}s: {last_error}",
-            exc_info=True,
-        )
-        logger.error("Continuing to start API without completed DB initialization. Some endpoints may fail until DB is ready.")
+    logger.info("Initializing NoETL system metadata.")
+    try:
+        db_schema = DatabaseSchema(auto_setup=True)
 
-    if server == "auto":
+        async def _init_db():
+            await db_schema.initialize_connection()
+            await db_schema.init_database()
+
+        asyncio.run(_init_db())
+        logger.info("NoETL database schema initialized.")
+    except Exception as e:
+        logger.error(f"FATAL: Error initializing NoETL system metadata: {e}", exc_info=True)
+        raise typer.Exit(code=1)
+
+    # Determine server runtime from settings (no defaults)
+    server_runtime = settings.server_runtime
+    if server_runtime == "auto":
         try:
             import gunicorn  # type: ignore
             server_type = "gunicorn"
@@ -179,7 +147,7 @@ def start_server(
             server_type = "uvicorn"
             logger.info("Auto-detected Uvicorn as the server runtime (Gunicorn not available).")
     else:
-        server_type = server
+        server_type = server_runtime
         logger.info(f"Using {server_type} as the server runtime.")
 
     os.makedirs(PID_FILE_DIR, exist_ok=True)
@@ -189,10 +157,12 @@ def start_server(
     logger.info(f"Server PID {os.getpid()} saved to {PID_FILE_PATH}")
     
     try:
+        workers = int(settings.server_workers)
+        reload = bool(settings.server_reload)
         if server_type == "gunicorn":
-            _run_with_gunicorn(host, port, workers, reload, log_level)
+            _run_with_gunicorn(settings.host, settings.port, workers, reload, log_level)
         else:
-            _run_with_uvicorn(host, port, workers, reload, log_level)
+            _run_with_uvicorn(settings.host, settings.port, workers, reload, log_level)
     finally:
         if os.path.exists(PID_FILE_PATH):
             os.remove(PID_FILE_PATH)
@@ -282,19 +252,11 @@ def stop_server(
         raise typer.Exit(code=1)
 
 @cli_app.command("server", hidden=True)
-def run_server(
-    host: str = typer.Option(settings.host, help="Server host."),
-    port: int = typer.Option(settings.port, help="Server port."),
-    reload: bool = typer.Option(False, help="Server auto-reload."),
-    no_ui: bool = typer.Option(not settings.enable_ui, "--no-ui", help="Disable the UI components."),
-    debug: bool = typer.Option(settings.debug, "--debug", help="Enable debug logging mode."),
-    server: str = typer.Option("uvicorn", help="Server type: uvicorn, gunicorn, or auto")
-):
+def run_server():
     """
-    Start the NoETL server for backward compatibility.
-    Maps to 'noetl server start' command.
+    Backward-compatible entry; starts server using runtime settings from config.
     """
-    start_server(host=host, port=port, workers=1, reload=reload, no_ui=no_ui, debug=debug, server=server)
+    start_server()
 
 
 @cli_app.command("catalog")
@@ -305,8 +267,8 @@ def manage_catalog(
     version: str = typer.Option(None, "--version", "-v", help="Version of the resource to execute."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
     payload: str = typer.Option(None, "--payload", help="Payload string."),
-    host: str = typer.Option(os.environ.get("NOETL_HOST", "localhost"), "--host", help="NoETL server host for client connections."),
-    port: int = typer.Option(int(os.environ.get("NOETL_PORT", "8080")), "--port", "-p", help="NoETL server port."),
+    host: str | None = typer.Option(None, "--host", help="NoETL server host for client connections."),
+    port: int | None = typer.Option(None, "--port", "-p", help="NoETL server port."),
     sync: bool = typer.Option(True, "--sync", help="Sync up execution data to Postgres."),
     merge: bool = typer.Option(False, "--merge", help="Merge the input payload with the workload section of resource.")
 ):
@@ -384,6 +346,9 @@ def manage_catalog(
             with open(file_path, 'r') as f:
                 content = f.read()
             content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+            settings = get_settings()
+            host = host or settings.host
+            port = port or settings.port
             url = f"http://{host}:{port}/api/catalog/register"
             headers = {"Content-Type": "application/json"}
             data = {
@@ -622,8 +587,8 @@ def execute_playbook(
     version: str = typer.Option(None, "--version", "-v", help="Version of the playbook."),
     input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
     payload: str = typer.Option(None, "--payload", help="Payload string."),
-    host: str = typer.Option("127.0.0.1", "--host", help="NoETL server host."),
-    port: int = typer.Option(8080, "--port", help="NoETL server port."),
+    host: str | None = typer.Option(None, "--host", help="NoETL server host."),
+    port: int | None = typer.Option(None, "--port", help="NoETL server port."),
 ):
     """
     Execute a NoETL playbook via the REST API.
@@ -652,6 +617,11 @@ def execute_playbook(
             except Exception as e:
                 typer.echo(f"Error parsing payload JSON: {e}")
                 raise typer.Exit(code=1)
+
+        # Default host/port from settings when not provided
+        settings = get_settings()
+        host = host or settings.host
+        port = port or settings.port
 
         url = f"http://{host}:{port}/api/agent/execute"
         request_data = {
@@ -691,8 +661,8 @@ def execute_playbook(
 @cli_app.command("register")
 def register_playbook(
     playbook_file: str = typer.Argument(help="Path to playbook file to register"),
-    host: str = typer.Option(os.environ.get("NOETL_HOST", "localhost"), "--host", help="NoETL server host for client connections."),
-    port: int = typer.Option(int(os.environ.get("NOETL_PORT", "8080")), "--port", "-p", help="NoETL server port.")
+    host: str | None = typer.Option(None, "--host", help="NoETL server host for client connections."),
+    port: int | None = typer.Option(None, "--port", "-p", help="NoETL server port.")
 ):
     """
     Register a playbook for 'noetl catalog register playbook'
@@ -709,6 +679,9 @@ def register_playbook(
         with open(playbook_file, 'r') as f:
             content = f.read()
         content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+        settings = get_settings()
+        host = host or settings.host
+        port = port or settings.port
         url = f"http://{host}:{port}/api/catalog/register"
         headers = {"Content-Type": "application/json"}
         data = {
@@ -756,36 +729,32 @@ def run_cli_mode():
 @cli_app.command("worker")
 def run_worker(
     playbook_path: str = typer.Argument(..., help="Path or name of the playbook to execute as a worker"),
-    version: str = typer.Option(settings.playbook_version, "--version", "-v", help="Version of the playbook to execute."),
-    mock_mode: bool = typer.Option(settings.mock_mode, "--mock", help="Run in mock mode without executing real operations."),
-    debug: bool = typer.Option(settings.debug, "--debug", help="Enable debug logging mode."),
+    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
+    mock_mode: bool = typer.Option(False, "--mock", help="Run in mock mode without executing real operations."),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging mode."),
     pgdb: str = typer.Option(None, "--pgdb", help="Postgres connection string. If not provided, uses environment variables.")
 ):
     """
     Run a worker process to execute a playbook.
-    
+
     This command starts a worker process that executes the specified playbook.
     The worker runs independently from the server and can be used for background processing.
-    
+
     Examples:
         noetl worker /path/to/playbook.yaml
         noetl worker playbook_name --version 0.1.0
         noetl worker playbook_name --mock
     """
-    settings.playbook_path = playbook_path
-    settings.playbook_version = version
-    settings.mock_mode = mock_mode
-    settings.debug = debug
-    settings.run_mode = "worker"
-    
-    log_level = "debug" if settings.debug else "info"
+    _ = get_settings()
+
+    log_level = "debug" if debug else "info"
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
         datefmt='%Y-%m-%dT%H:%M:%S',
-        level=logging.DEBUG if settings.debug else logging.INFO
+        level=logging.DEBUG if debug else logging.INFO
     )
     
-    logger.info(f"Starting NoETL worker for playbook: {settings.playbook_path}")
+    logger.info(f"Starting NoETL worker for playbook: {playbook_path}")
     
     try:
         logger.info("Initializing NoETL system metadata.")

@@ -1,111 +1,244 @@
 import os
+import sys
 from typing import Optional, Dict, Any, ClassVar
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from noetl.common import get_bool
+
+
+_ENV_LOADED = False
+
+def _load_env_file(path: str) -> None:
+    """
+    Minimal .env loader: loads KEY=VALUE pairs into os.environ if not already set.
+    - Ignores empty lines and lines starting with '#'
+    - Supports values wrapped in single or double quotes
+    - Does not override existing environment variables
+    """
+    try:
+        if not path or not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                # Strip matching quotes
+                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                # Do not override existing envs
+                if key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        # Silent fallback: env loading is best-effort
+        pass
+
+def load_env_if_present() -> None:
+    """
+    Load environment variables from a specified .env file once (best-effort).
+    Only loads when NOETL_ENV_FILE is provided; otherwise relies on the current process environment.
+    """
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    custom = os.environ.get("NOETL_ENV_FILE")
+    if custom:
+        _load_env_file(custom)
+    _ENV_LOADED = True
+
+def validate_mandatory_env_vars():
+    """
+    Validate that all mandatory environment variables are present and not empty.
+    Exit immediately if any are missing.
+    """
+    mandatory_vars = [
+        # Admin DB
+        'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB', 'POSTGRES_HOST', 'POSTGRES_PORT',
+        # NoETL principal
+        'NOETL_USER', 'NOETL_PASSWORD', 'NOETL_SCHEMA',
+        # Runtime config
+        'NOETL_HOST', 'NOETL_PORT', 'NOETL_ENABLE_UI', 'NOETL_DEBUG',
+        # Server runtime
+        'NOETL_SERVER', 'NOETL_SERVER_WORKERS', 'NOETL_SERVER_RELOAD',
+        # Drop schema control
+        'NOETL_DROP_SCHEMA'
+    ]
+
+    missing_vars = []
+    empty_vars = []
+
+    for var in mandatory_vars:
+        if var not in os.environ:
+            missing_vars.append(var)
+        elif not os.environ[var] or not os.environ[var].strip():
+            empty_vars.append(var)
+
+    if missing_vars or empty_vars:
+        error_msg = []
+        if missing_vars:
+            error_msg.append(f"Missing environment variables: {', '.join(missing_vars)}")
+        if empty_vars:
+            error_msg.append(f"Empty environment variables: {', '.join(empty_vars)}")
+
+        print(f"FATAL: {' | '.join(error_msg)}", file=sys.stderr)
+        print("FATAL: Missing required environment variables for server start", file=sys.stderr)
+        print("FATAL: Required variables:", file=sys.stderr)
+        for var in mandatory_vars:
+            value = os.environ.get(var, '<MISSING>')
+            if value and value.strip():
+                if 'PASSWORD' in var:
+                    masked_value = '*' * len(value)
+                    print(f"  {var}={masked_value}", file=sys.stderr)
+                else:
+                    print(f"  {var}={value}", file=sys.stderr)
+            else:
+                print(f"  {var}=<MISSING OR EMPTY>", file=sys.stderr)
+
+        sys.exit(1)
+
+    print("All mandatory environment variables validated successfully")
 
 class Settings(BaseModel):
     """
     NoETL application settings from environment variables.
     """
+    model_config = ConfigDict(validate_assignment=True)
+
     app_name: str = "NoETL"
-    app_version: str = "0.1.36"
-    debug: bool = False
-    
-    host: str = "0.0.0.0"
-    port: int = 8080
-    enable_ui: bool = True
-    
-    run_mode: str = "server"  # "server", "worker", "cli"
-    
-    playbook_path: Optional[str] = None
-    playbook_version: Optional[str] = None
-    mock_mode: bool = False
-    
-    postgres_user: str = "noetl"
-    postgres_password: str = "noetl"
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_db: str = "noetl"
-    postgres_schema: str = "noetl"
-    
-    admin_postgres_user: str = "postgres"
-    admin_postgres_password: str = "postgres"
-    
-    data_dir: str = "./data"
-    
-    model_config = ConfigDict(
-        extra="ignore"
-    )
-    
-    env_prefix: ClassVar[str] = "NOETL_"
-    env_file: ClassVar[str] = ".env"
-    
-    env_mappings: ClassVar[Dict[str, str]] = {
-        "postgres_user": "POSTGRES_USER",
-        "postgres_password": "POSTGRES_PASSWORD",
-        "postgres_host": "POSTGRES_HOST",
-        "postgres_port": "POSTGRES_PORT",
-        "postgres_db": "POSTGRES_DB",
-        "postgres_schema": "POSTGRES_SCHEMA",
-        "admin_postgres_user": "POSTGRES_USER",
-        "admin_postgres_password": "POSTGRES_PASSWORD",
-    }
-    
-    @model_validator(mode='before')
-    @classmethod
-    def load_from_env(cls, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Load settings from environment variables."""
-        if isinstance(data, dict):
-            for key in cls.__annotations__:
-                env_var = f"{cls.env_prefix}{key.upper()}"
-                if env_var in os.environ:
-                    data[key] = os.environ[env_var]
-            
-            for field_name, env_var in cls.env_mappings.items():
-                if env_var in os.environ:
-                    data[field_name] = os.environ[env_var]
-                    
-            if "port" in data and isinstance(data["port"], str):
-                data["port"] = int(data["port"])
-            if "postgres_port" in data and isinstance(data["postgres_port"], str):
-                data["postgres_port"] = int(data["postgres_port"])
-            if "debug" in data and isinstance(data["debug"], str):
-                data["debug"] = data["debug"].lower() == "true"
-            if "enable_ui" in data and isinstance(data["enable_ui"], str):
-                data["enable_ui"] = data["enable_ui"].lower() == "true"
-            if "mock_mode" in data and isinstance(data["mock_mode"], str):
-                data["mock_mode"] = data["mock_mode"].lower() == "true"
-                
-        return data
-    
-    def get_database_url(self, admin: bool = False) -> str:
-        """
-        Get the database URL for connecting to Postgres.
-        
-        Args:
-            admin: If True, use admin credentials
-            
-        Returns:
-            Database URL string
-        """
-        user = self.admin_postgres_user if admin else self.postgres_user
-        password = self.admin_postgres_password if admin else self.postgres_password
-        
-        return f"postgresql://{user}:{password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-    
-    def get_pgdb_connection_string(self, admin: bool = False) -> str:
-        """
-        Get the Postgres connection string in psycopg format.
-        
-        Args:
-            admin: If True, use admin credentials
-            
-        Returns:
-            Connection string
-        """
-        user = self.admin_postgres_user if admin else self.postgres_user
-        password = self.admin_postgres_password if admin else self.postgres_password
-        
-        return f"dbname={self.postgres_db} user={user} password={password} host={self.postgres_host} port={self.postgres_port}"
+    app_version: str = "0.1.39"
 
+    # Runtime configuration (required; no defaults)
+    host: str = Field(..., alias="NOETL_HOST")
+    port: int = Field(..., alias="NOETL_PORT")
+    enable_ui: bool = Field(..., alias="NOETL_ENABLE_UI")
+    debug: bool = Field(..., alias="NOETL_DEBUG")
 
-settings = Settings()
+    # Database configuration (required)
+    postgres_user: str = Field(..., alias="POSTGRES_USER")
+    postgres_password: str = Field(..., alias="POSTGRES_PASSWORD") 
+    postgres_db: str = Field(..., alias="POSTGRES_DB")
+    postgres_host: str = Field(..., alias="POSTGRES_HOST")
+    postgres_port: str = Field(..., alias="POSTGRES_PORT")
+
+    # NoETL-specific DB principal (required)
+    noetl_user: str = Field(..., alias="NOETL_USER")
+    noetl_password: str = Field(..., alias="NOETL_PASSWORD")
+    noetl_schema: str = Field(..., alias="NOETL_SCHEMA")
+
+    # Drop schema flag (required; admin will drop schema when true)
+    noetl_drop_schema: bool = Field(..., alias="NOETL_DROP_SCHEMA")
+
+    # Server runtime (required; no defaults)
+    server_runtime: str = Field(..., alias="NOETL_SERVER")            # "uvicorn" | "gunicorn" | "auto"
+    server_workers: int = Field(..., alias="NOETL_SERVER_WORKERS")    # >= 1
+    server_reload: bool = Field(..., alias="NOETL_SERVER_RELOAD")     # true/false
+
+    @field_validator('postgres_user', 'postgres_password', 'postgres_db', 'postgres_host',
+                     'postgres_port', 'noetl_user', 'noetl_password', 'noetl_schema', 'host', 'server_runtime', mode='before')
+    def validate_not_empty_str(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Value cannot be empty or whitespace only")
+        return v.strip()
+
+    @field_validator('enable_ui', 'debug', 'noetl_drop_schema', 'server_reload', mode='before')
+    def coerce_bool(cls, v):
+        if isinstance(v, bool):
+            return v
+        if not isinstance(v, str):
+            raise ValueError("Expected string for boolean field")
+        val = v.strip().lower()
+        if val in ("true", "1", "yes", "y", "on"):
+            return True
+        if val in ("false", "0", "no", "n", "off"):
+            return False
+        raise ValueError(f"Invalid boolean value: {v}")
+
+    @model_validator(mode='after')
+    def validate_database_config(self):
+        """Database and server configuration validation"""
+        try:
+            port = int(self.postgres_port)
+            if port < 1 or port > 65535:
+                raise ValueError(f"Invalid port number: {port}")
+        except ValueError as e:
+            print(f"FATAL: Invalid POSTGRES_PORT value '{self.postgres_port}': {e}", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            if self.port < 1 or self.port > 65535:
+                raise ValueError(f"Invalid NOETL_PORT number: {self.port}")
+        except Exception as e:
+            print(f"FATAL: Invalid NOETL_PORT value '{self.port}': {e}", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            if int(self.server_workers) < 1:
+                raise ValueError("NOETL_SERVER_WORKERS must be >= 1")
+        except Exception as e:
+            print(f"FATAL: Invalid NOETL_SERVER_WORKERS value '{self.server_workers}': {e}", file=sys.stderr)
+            sys.exit(1)
+
+        valid_runtimes = {"uvicorn", "gunicorn", "auto"}
+        if self.server_runtime not in valid_runtimes:
+            print(f"FATAL: Invalid NOETL_SERVER value '{self.server_runtime}'. Expected one of {sorted(valid_runtimes)}", file=sys.stderr)
+            sys.exit(1)
+
+        return self
+
+    @property
+    def admin_conn_string(self) -> str:
+        """Get admin connection string for database operations"""
+        return f"dbname={self.postgres_db} user={self.postgres_user} password={self.postgres_password} host={self.postgres_host} port={self.postgres_port}"
+
+    @property
+    def noetl_conn_string(self) -> str:
+        """Get NoETL user connection string"""
+        return f"dbname={self.postgres_db} user={self.noetl_user} password={self.noetl_password} host={self.postgres_host} port={self.postgres_port}"
+
+_settings: Optional[Settings] = None
+
+def get_settings() -> Settings:
+    """
+    Get application settings. Validates environment variables on first call.
+    """
+    global _settings
+    if _settings is None:
+        load_env_if_present()
+
+        validate_mandatory_env_vars()
+
+        try:
+            _settings = Settings(
+                # Admin DB
+                POSTGRES_USER=os.environ['POSTGRES_USER'],
+                POSTGRES_PASSWORD=os.environ['POSTGRES_PASSWORD'],
+                POSTGRES_DB=os.environ['POSTGRES_DB'],
+                POSTGRES_HOST=os.environ['POSTGRES_HOST'],
+                POSTGRES_PORT=os.environ['POSTGRES_PORT'],
+                # NoETL principal
+                NOETL_USER=os.environ['NOETL_USER'],
+                NOETL_PASSWORD=os.environ['NOETL_PASSWORD'],
+                NOETL_SCHEMA=os.environ['NOETL_SCHEMA'],
+                # Runtime (cast to proper types)
+                NOETL_HOST=os.environ['NOETL_HOST'],
+                NOETL_PORT=int(os.environ['NOETL_PORT']),
+                NOETL_ENABLE_UI=get_bool(os.environ['NOETL_ENABLE_UI']),
+                NOETL_DEBUG=get_bool(os.environ['NOETL_DEBUG']),
+                # Server runtime config
+                NOETL_SERVER=os.environ['NOETL_SERVER'],
+                NOETL_SERVER_WORKERS=int(os.environ['NOETL_SERVER_WORKERS']),
+                NOETL_SERVER_RELOAD=get_bool(os.environ['NOETL_SERVER_RELOAD']),
+                # Drop schema flag
+                NOETL_DROP_SCHEMA=get_bool(os.environ['NOETL_DROP_SCHEMA'])
+            )
+        except Exception as e:
+            print(f"FATAL: Failed to initialize settings: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    return _settings

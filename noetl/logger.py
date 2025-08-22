@@ -1,19 +1,17 @@
-import os
-import asyncio
-import re
+# import os
+# import asyncio
+# import re
 import sys
 import json
 import logging
-from typing import Dict, Any, Optional, List, Union, TYPE_CHECKING
-import psycopg
-from psycopg.rows import dict_row
-from contextlib import contextmanager
+from typing import Dict, TYPE_CHECKING
+# import psycopg
+# from psycopg.rows import dict_row
+# from contextlib import contextmanager
 import traceback
 
 if TYPE_CHECKING:
     from noetl.schema import DatabaseSchema
-
-
 
 try:
     from psycopg_pool import ConnectionPool
@@ -22,9 +20,9 @@ except ImportError:
 
 _db_schema = None
 
-def get_db_schema() -> 'DatabaseSchema':
+async def get_db_schema() -> 'DatabaseSchema':
     """
-    Get a global instance of DatabaseSchema.
+    Get a global instance of DatabaseSchema (async).
     Returns:
         A DatabaseSchema instance
     """
@@ -32,6 +30,7 @@ def get_db_schema() -> 'DatabaseSchema':
     if _db_schema is None:
         from noetl.schema import DatabaseSchema
         _db_schema = DatabaseSchema(auto_setup=True)
+        await _db_schema.initialize_async()
     return _db_schema
 
 def log_error(

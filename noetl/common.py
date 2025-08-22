@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import json
 import logging
@@ -270,8 +271,8 @@ def initialize_db_pool():
             db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10)
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
-            logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
-            db_pool = None
+            logger.error(f"FATAL: Failed to initialize connection pool: {e}")
+            sys.exit(1)
     return db_pool
 
 @contextmanager
@@ -293,8 +294,12 @@ def get_db_connection(optional=False):
             finally:
                 pool.putconn(conn)
         except Exception as pool_error:
-            logger.warning(f"Connection pool error: {pool_error}. Falling back to direct connection.")
+            logger.error(f"FATAL: Connection pool error: {pool_error}")
+            # Fail fast: do not fallback to direct connection when pool is configured
+            raise
 
+    # If no pool implementation is available at all (psycopg_pool not installed),
+    # allow direct connections as the only mode (not a fallback).
     conn = None
     try:
         conn = psycopg.connect(get_pgdb_connection())
