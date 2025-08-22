@@ -129,7 +129,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
             handleTypeChange(value);
           }}
           size="small"
-          className="flow-node-type-select"
+          className="flow-node-type-select nodrag"
           dropdownClassName="flow-node-type-dropdown"
           placeholder="Select type"
           showSearch={false}
