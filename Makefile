@@ -66,6 +66,9 @@ help:
 	@echo "  make k8s-noetl-restart           Rollout restart server and worker deployments (NAMESPACE=ns)"
 	@echo "  make k8s-postgres-apply          Apply ONLY Postgres manifests (NAMESPACE=ns)"
 	@echo "  make k8s-postgres-delete         Delete ONLY Postgres manifests (NAMESPACE=ns)"
+	@echo "  make postgres-reset-schema       Recreates noetl schema only in running postgres database instance"
+
+
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -366,18 +369,22 @@ env-check:
 
 run-server-api: env-check
 	set -a; [ -f .env ] && . .env; set +a; \
+	ACCESS_FLAG=""; \
+	if ! printf "%s" "$${SERVER_ACCESS_LOG:-$${NOETL_ACCESS_LOG:-0}}" | grep -qiE "^(1|true|yes|y|on)$$"; then ACCESS_FLAG="--no-access-log"; fi; \
 	if [ -x "$(VENV)/bin/uvicorn" ]; then \
-		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082} $$ACCESS_FLAG; \
 	else \
-		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082} $$ACCESS_FLAG; \
 	fi
 
 run-server-api-dev: env-check
 	set -a; [ -f .env ] && . .env; set +a; \
+	ACCESS_FLAG=""; \
+	if ! printf "%s" "$${SERVER_ACCESS_LOG:-$${NOETL_ACCESS_LOG:-0}}" | grep -qiE "^(1|true|yes|y|on)$$"; then ACCESS_FLAG="--no-access-log"; fi; \
 	if [ -x "$(VENV)/bin/uvicorn" ]; then \
-		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082} $$ACCESS_FLAG; \
 	else \
-		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082}; \
+		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST:-0.0.0.0} --port $${NOETL_PORT:-8082} $$ACCESS_FLAG; \
 	fi
 
 
@@ -397,10 +404,12 @@ run-worker-api: env-check
 	export NOETL_HOST=$${NOETL_WORKER_HOST:-0.0.0.0}; \
 	export NOETL_PORT=$${NOETL_WORKER_PORT:-8081}; \
 	if [ -z "$$NOETL_WORKER_BASE_URL" ]; then export NOETL_WORKER_BASE_URL="http://localhost:$${NOETL_PORT}/api/worker"; fi; \
+	ACCESS_FLAG=""; \
+	if ! printf "%s" "$${SERVER_ACCESS_LOG:-$${NOETL_ACCESS_LOG:-0}}" | grep -qiE "^(1|true|yes|y|on)$$"; then ACCESS_FLAG="--no-access-log"; fi; \
 	if [ -x "$(VENV)/bin/uvicorn" ]; then \
-		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	else \
-		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	fi
 
 # Run Worker API (dev, autoreload)
@@ -410,10 +419,12 @@ run-worker-api-dev: env-check
 	export NOETL_HOST=$${NOETL_WORKER_HOST:-0.0.0.0}; \
 	export NOETL_PORT=$${NOETL_WORKER_PORT:-8081}; \
 	if [ -z "$$NOETL_WORKER_BASE_URL" ]; then export NOETL_WORKER_BASE_URL="http://localhost:$${NOETL_PORT}/api/worker"; fi; \
+	ACCESS_FLAG=""; \
+	if ! printf "%s" "$${SERVER_ACCESS_LOG:-$${NOETL_ACCESS_LOG:-0}}" | grep -qiE "^(1|true|yes|y|on)$$"; then ACCESS_FLAG="--no-access-log"; fi; \
 	if [ -x "$(VENV)/bin/uvicorn" ]; then \
-		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	else \
-		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	fi
 
 # Run Worker2 API
@@ -428,10 +439,12 @@ run-worker2-api: env-check
 	export NOETL_WORKER_BASE_URL=$${NOETL_WORKER2_BASE_URL:-http://localhost:9081/api/worker}; \
 	export NOETL_WORKER_CAPACITY=$${NOETL_WORKER2_CAPACITY:-1}; \
 	export NOETL_WORKER_LABELS=$${NOETL_WORKER2_LABELS:-local,dev,gpu}; \
+	ACCESS_FLAG=""; \
+	if ! printf "%s" "$${SERVER_ACCESS_LOG:-$${NOETL_ACCESS_LOG:-0}}" | grep -qiE "^(1|true|yes|y|on)$$"; then ACCESS_FLAG="--no-access-log"; fi; \
 	if [ -x "$(VENV)/bin/uvicorn" ]; then \
-		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	else \
-		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		python -m uvicorn noetl.main:create_app --factory --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	fi
 
 # Run Worker2 API (dev, autoreload)
@@ -446,8 +459,10 @@ run-worker2-api-dev: env-check
 	export NOETL_WORKER_BASE_URL=$${NOETL_WORKER2_BASE_URL:-http://localhost:9081/api/worker}; \
 	export NOETL_WORKER_CAPACITY=$${NOETL_WORKER2_CAPACITY:-1}; \
 	export NOETL_WORKER_LABELS=$${NOETL_WORKER2_LABELS:-local,dev,gpu}; \
+	ACCESS_FLAG=""; \
+	if ! printf "%s" "$${SERVER_ACCESS_LOG:-$${NOETL_ACCESS_LOG:-0}}" | grep -qiE "^(1|true|yes|y|on)$$"; then ACCESS_FLAG="--no-access-log"; fi; \
 	if [ -x "$(VENV)/bin/uvicorn" ]; then \
-		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		"$(VENV)/bin/uvicorn" noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	else \
-		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT}; \
+		python -m uvicorn noetl.main:create_app --factory --reload --host $${NOETL_HOST} --port $${NOETL_PORT} $$ACCESS_FLAG; \
 	fi

@@ -295,7 +295,7 @@ def get_pgdb_connection(
     host = host or os.environ.get('POSTGRES_HOST')
     port = port or os.environ.get('POSTGRES_PORT')
     schema = schema or os.environ.get('NOETL_SCHEMA')
-    logger.debug(f"Database connection parameters: db={db_name}, user={user}, host={host}, port={port}, schema={schema}")
+    # logger.debug(f"Database connection parameters: db={db_name}, user={user}, host={host}, port={port}, schema={schema}")
     return f"dbname={db_name} user={user} password={password} host={host} port={port} hostaddr='' gssencmode=disable options='-c search_path={schema}'"
 
 #===================================

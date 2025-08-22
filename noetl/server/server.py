@@ -2913,3 +2913,28 @@ async def deregister_broker(request: Request):
     except Exception as e:
         logger.exception(f"Error deregistering broker: {e}")
         raise HTTPException(status_code=500, detail=f"Error deregistering broker: {e}")
+
+
+# === Legacy server module deactivation notice ===
+# The monolithic router and endpoints in this module have been superseded by:
+#   - noetl.server.router (which aggregates routers from noetl.server.api.*)
+#   - noetl.server.services (service-layer logic)
+# To avoid duplicated behavior and accidental imports, we intentionally shadow
+# any previously-declared `router` here with a new, empty APIRouter instance.
+# Only register_server_from_env and psycopg are intended to be imported from this module.
+try:
+    from fastapi import APIRouter as _APIRouter  # type: ignore
+    router = _APIRouter()
+except Exception:
+    # FastAPI may not be available in certain unit-test contexts; ignore.
+    pass
+
+# Limit what this module publicly exports to avoid legacy usage.
+try:
+    __all__  # type: ignore  # keep if already defined above
+except NameError:
+    __all__ = []
+
+for _name in ("register_server_from_env", "psycopg"):
+    if _name not in __all__:
+        __all__.append(_name)

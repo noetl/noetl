@@ -3,13 +3,15 @@ from typing import Any, Dict, Optional, List
 import json
 import yaml
 import os
+from noetl.common import get_pgdb_connection
+from .router import router
 from .server import (
-    get_catalog_service,  # unused here, kept for __all__
-    get_event_service,    # unused here, kept for __all__
-    get_pgdb_connection,
-    router,
     register_server_from_env,
     psycopg,
+)
+from .services import (
+    get_catalog_service,
+    get_event_service,
 )
 
 

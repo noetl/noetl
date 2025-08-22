@@ -169,6 +169,18 @@ find_pid_by_port() {
 
 start_service() {
   local name="$1" command="$2" logfile="$3" pidfile="$4"
+  # If a pidfile exists and the process is alive, do not start another instance
+  if [[ -f "$pidfile" ]]; then
+    local existing_pid
+    existing_pid="$(cat "$pidfile" 2>/dev/null || true)"
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      echo "$name already running (pid=$existing_pid). Skipping start."
+      return 0
+    else
+      # stale pidfile
+      rm -f "$pidfile" 2>/dev/null || true
+    fi
+  fi
   : > "$logfile"
   echo "Starting $name -> $logfile"
   nohup bash -c "source .env >/dev/null 2>&1 || true; exec $command" >>"$logfile" 2>&1 &
