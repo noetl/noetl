@@ -2,6 +2,7 @@ import os
 import sys
 from typing import Optional, Dict, Any, ClassVar
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from pathlib import Path
 from noetl.common import get_bool
 
 
@@ -200,6 +201,35 @@ class Settings(BaseModel):
     def noetl_conn_string(self) -> str:
         """Get NoETL user connection string"""
         return f"dbname={self.postgres_db} user={self.noetl_user} password={self.noetl_password} host={self.postgres_host} port={self.postgres_port}"
+
+    @property
+    def ui_build_path(self) -> Path:
+        """
+        Path to built UI assets inside the package (noetl/ui/build).
+        Derived from the package location to avoid hard-coded paths.
+        """
+        return (Path(__file__).resolve().parent / "ui" / "build")
+
+    @property
+    def favicon_file(self) -> Path:
+        """
+        Path to UI favicon file within the built assets directory.
+        """
+        return self.ui_build_path / "favicon.ico"
+
+    @property
+    def pid_file_dir(self) -> str:
+        """
+        Directory for storing server PID file.
+        """
+        return os.path.expanduser("~/.noetl")
+
+    @property
+    def pid_file_path(self) -> str:
+        """
+        Full path to server PID file.
+        """
+        return os.path.join(self.pid_file_dir, "noetl_server.pid")
 
 _settings: Optional[Settings] = None
 
