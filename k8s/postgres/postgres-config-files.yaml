@@ -21,12 +21,10 @@ data:
     -- Schema DDL for NoETL
     CREATE SCHEMA IF NOT EXISTS noetl;
 
-    -- Create resource table
     CREATE TABLE IF NOT EXISTS noetl.resource (
         name TEXT PRIMARY KEY
     );
 
-    -- Create catalog table
     CREATE TABLE IF NOT EXISTS noetl.catalog (
         resource_path     TEXT     NOT NULL,
         resource_type     TEXT     NOT NULL REFERENCES noetl.resource(name),
@@ -41,7 +39,6 @@ data:
         PRIMARY KEY (resource_path, resource_version)
     );
 
-    -- Create workload table
     CREATE TABLE IF NOT EXISTS noetl.workload (
         execution_id VARCHAR,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -49,7 +46,6 @@ data:
         PRIMARY KEY (execution_id)
     );
 
-    -- Create event_log table
     CREATE TABLE IF NOT EXISTS noetl.event_log (
         execution_id VARCHAR,
         event_id VARCHAR,
@@ -76,10 +72,12 @@ data:
         distributed_state VARCHAR,
         context_key VARCHAR,
         context_value TEXT,
+        trace_component JSONB,
         PRIMARY KEY (execution_id, event_id)
     );
 
-    -- Create workflow table
+    ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB;
+
     CREATE TABLE IF NOT EXISTS noetl.workflow (
         execution_id VARCHAR,
         step_id VARCHAR,
@@ -90,7 +88,6 @@ data:
         PRIMARY KEY (execution_id, step_id)
     );
 
-    -- Create workbook table
     CREATE TABLE IF NOT EXISTS noetl.workbook (
         execution_id VARCHAR,
         task_id VARCHAR,
@@ -100,7 +97,6 @@ data:
         PRIMARY KEY (execution_id, task_id)
     );
 
-    -- Create transition table
     CREATE TABLE IF NOT EXISTS noetl.transition (
         execution_id VARCHAR,
         from_step VARCHAR,
@@ -110,9 +106,8 @@ data:
         PRIMARY KEY (execution_id, from_step, to_step, condition)
     );
 
-    -- Create error_log table
     CREATE TABLE IF NOT EXISTS noetl.error_log (
-        error_id SERIAL PRIMARY KEY,
+        error_id BIGINT PRIMARY KEY,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         error_type VARCHAR(50),
         error_message TEXT,
@@ -130,11 +125,49 @@ data:
         resolution_timestamp TIMESTAMP
     );
 
-    -- Create indexes for error_log table
+    ALTER TABLE noetl.error_log ALTER COLUMN error_id TYPE BIGINT;
+
     CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON noetl.error_log (timestamp);
     CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON noetl.error_log (error_type);
     CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON noetl.error_log (execution_id);
     CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON noetl.error_log (resolved);
+
+    CREATE TABLE IF NOT EXISTS noetl.credential (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL,
+        data_encrypted TEXT NOT NULL,
+        meta JSONB,
+        tags TEXT[],
+        description TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_credential_type ON noetl.credential (type);
+    ALTER TABLE noetl.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
+
+    -- Unified runtime table for servers, brokers, and worker pools (transient runtime info)
+    CREATE TABLE IF NOT EXISTS noetl.runtime (
+        runtime_id BIGINT PRIMARY KEY,
+        name TEXT NOT NULL,
+        component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
+        base_url TEXT,
+        status TEXT NOT NULL,
+        labels JSONB,
+        capabilities JSONB,
+        capacity INTEGER,
+        runtime JSONB,
+        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    ALTER TABLE noetl.runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON noetl.runtime (component_type, name);
+
+    CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
+    CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
+    CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
 
   postgresql.conf: |
     # PostgreSQL configuration file
