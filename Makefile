@@ -192,34 +192,50 @@ ui:
 
 .PHONY: server-start server-stop worker-start worker-stop
 
+.PHONY: server-start server-stop
+
 server-start:
 	@mkdir -p logs
-	@/bin/bash -lc '\
-		set -a; \
-		if [ -f .env.server ]; then . .env.server; elif [ -f .env ]; then . .env; fi; \
-		# Require NOETL_SCHEMA_VALIDATE (true/false) \
-		if [ -z "$${NOETL_SCHEMA_VALIDATE}" ]; then \
-			echo "ERROR: NOETL_SCHEMA_VALIDATE must be set (true/false) in your .env[.server]"; \
-			exit 1; \
-		fi; \
-		case "$${NOETL_SCHEMA_VALIDATE}" in true|false) ;; \
-		  *) echo "ERROR: NOETL_SCHEMA_VALIDATE must be 'true' or 'false'"; exit 1;; \
-		esac; \
-		set +a; \
-		nohup noetl server start > logs/server.log 2>&1 & \
-		bgpid=$$!; \
-		echo $$bgpid > logs/server.pid; \
-		echo "NoETL server started: PID=$$bgpid | logs at logs/server.log" \
-	'
-	@sleep 1
-	@if [ -f logs/server.pid ]; then \
-		echo "NoETL server started: PID=$$(cat logs/server.pid) | logs at logs/server.log"; \
+	@set -a; \
+	if [ -f .env ]; then . .env; fi; \
+	if [ -f .env.server ]; then . .env.server; fi; \
+	set +a; \
+	if [ -z "$${NOETL_SCHEMA_VALIDATE:-}" ]; then \
+	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be set (true/false) in your .env[.server]"; \
+	  exit 1; \
+	fi; \
+	if [[ "$${NOETL_SCHEMA_VALIDATE}" != "true" && "$${NOETL_SCHEMA_VALIDATE}" != "false" ]]; then \
+	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be 'true' or 'false'"; \
+	  exit 1; \
+	fi; \
+	if command -v setsid >/dev/null 2>&1; then \
+	  setsid nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > logs/server.pid; \
 	else \
-		echo "NoETL server start issued; check logs/server.log"; \
+	  nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > logs/server.pid; \
+	fi; \
+	sleep 1; \
+	if ps -p $$(cat logs/server.pid) >/dev/null 2>&1; then \
+	  echo "NoETL server started: PID=$$(cat logs/server.pid) | logs at logs/server.log"; \
+	else \
+	  echo "Server failed to stay up. Last 50 log lines:"; \
+	  tail -n 50 logs/server.log || true; \
+	  exit 1; \
 	fi
 
 server-stop:
-	-@noetl server stop -f || true
+	@if [ -f logs/server.pid ]; then \
+	  pid=$$(cat logs/server.pid); \
+	  kill -TERM $$pid 2>/dev/null || true; \
+	  sleep 0.5; \
+	  if ps -p $$pid >/dev/null 2>&1; then kill -KILL $$pid 2>/dev/null || true; fi; \
+	  rm -f logs/server.pid; \
+	  echo "NoETL server stop: PID=$$pid"; \
+	else \
+	  noetl server stop -f || true; \
+	fi
+
+
+
 
 
 worker-start:
