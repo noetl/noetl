@@ -14,7 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from noetl.server import router as server_router
-from noetl.system import router as system_router
 from noetl.worker import router as worker_router
 from noetl.common import DateTimeEncoder
 from noetl.logger import setup_logger
@@ -100,7 +99,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     ui_build_path = settings.ui_build_path
 
     app.include_router(server_router, prefix="/api")
-    app.include_router(system_router, prefix="/api/sys", tags=["System"])
 
     @app.get("/health", include_in_schema=False)
     async def health():

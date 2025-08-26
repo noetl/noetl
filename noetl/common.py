@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import yaml
+import time
+import threading
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone, date
 import random
@@ -23,6 +25,40 @@ try:
 except ImportError:
     ConnectionPool = None
     AsyncConnectionPool = None
+
+
+# Snowflake ID generator (41-bit ms timestamp, 10-bit node id, 12-bit sequence)
+_SNOWFLAKE_EPOCH_MS = int(os.environ.get("NOETL_SNOWFLAKE_EPOCH_MS", str(int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000))))
+_SNOWFLAKE_NODE_ID = int(os.environ.get("NOETL_NODE_ID", os.environ.get("NOETL_SHARD_ID", "0"))) & 0x3FF  # 10 bits
+_SNOWFLAKE_LOCK = threading.Lock()
+_SNOWFLAKE_LAST_TS = 0
+_SNOWFLAKE_SEQ = 0
+
+
+def get_snowflake_id() -> int:
+    global _SNOWFLAKE_LAST_TS, _SNOWFLAKE_SEQ
+    with _SNOWFLAKE_LOCK:
+        ts = int(time.time() * 1000)
+        if ts < _SNOWFLAKE_LAST_TS:
+            ts = _SNOWFLAKE_LAST_TS
+        if ts == _SNOWFLAKE_LAST_TS:
+            _SNOWFLAKE_SEQ = (_SNOWFLAKE_SEQ + 1) & 0xFFF
+            if _SNOWFLAKE_SEQ == 0:
+                while True:
+                    ts = int(time.time() * 1000)
+                    if ts > _SNOWFLAKE_LAST_TS:
+                        break
+        else:
+            _SNOWFLAKE_SEQ = 0
+        _SNOWFLAKE_LAST_TS = ts
+        elapsed = ts - _SNOWFLAKE_EPOCH_MS
+        if elapsed < 0:
+            elapsed = 0
+        return ((elapsed & ((1 << 41) - 1)) << (10 + 12)) | ((_SNOWFLAKE_NODE_ID & 0x3FF) << 12) | (_SNOWFLAKE_SEQ & 0xFFF)
+
+
+def get_snowflake_id_str() -> str:
+    return str(get_snowflake_id())
 
 #===================================
 #  time calendar

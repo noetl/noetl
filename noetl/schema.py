@@ -389,6 +389,38 @@ class DatabaseSchema:
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON {self.noetl_schema}.runtime ((runtime->>'type'));
                 """)
+                # Queue table (work dispatch)
+                queue_sql = """
+                    CREATE TABLE IF NOT EXISTS {schema}.queue (
+                        id BIGSERIAL PRIMARY KEY,
+                        created_at TIMESTAMPTZ DEFAULT now(),
+                        available_at TIMESTAMPTZ DEFAULT now(),
+                        lease_until TIMESTAMPTZ,
+                        last_heartbeat TIMESTAMPTZ,
+                        status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','leased','done','failed','dead')),
+                        execution_id UUID NOT NULL,
+                        node_id TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        input_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        priority INT NOT NULL DEFAULT 0,
+                        attempts INT NOT NULL DEFAULT 0,
+                        max_attempts INT NOT NULL DEFAULT 5,
+                        worker_id TEXT
+                    )
+                """.format(schema=self.noetl_schema)
+                cursor.execute(queue_sql)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_status_available ON {self.noetl_schema}.queue (status, available_at, priority DESC, id)
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_exec ON {self.noetl_schema}.queue (execution_id)
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_worker ON {self.noetl_schema}.queue (worker_id)
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_lease_until ON {self.noetl_schema}.queue (lease_until)
+                """)
                 # ===== Identity & Collaboration Tables =====
                 
                 # 1.	Snowflake IDs for all tables → globally unique.

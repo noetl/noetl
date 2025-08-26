@@ -11,6 +11,8 @@ KUBECTL ?= kubectl
 NAMESPACE ?= postgres
 K8S_NOETL_DIR ?= $(K8S_DIR)/noetl
 K8S_POSTGRES_DIR ?= $(K8S_DIR)/postgres
+KIND ?= kind
+KIND_CLUSTER ?= noetl
 
 
 #   export PAT=<PERSONAL_ACCESS_TOKEN>
@@ -54,9 +56,14 @@ help:
 	@echo "  make test-playbook   Run playbook tests"
 	@echo ""
 	@echo "Kubernetes Commands:"
-	@echo "  make k8s-postgres-apply          Apply ONLY Postgres manifests (NAMESPACE=ns)"
-	@echo "  make k8s-postgres-delete         Delete ONLY Postgres manifests (NAMESPACE=ns)"
-	@echo "  make postgres-reset-schema       Recreates noetl schema only in running postgres database instance"
+	@echo "  make k8s-kind-create          Create kind cluster (or use existing) and set kubectl context"
+	@echo "  make k8s-kind-delete          Delete kind cluster"
+	@echo "  make k8s-kind-recreate        Recreate kind cluster (delete + create)"
+	@echo "  make k8s-reset                Recreate kind cluster and apply Postgres (delete + create + apply)"
+	@echo "  make k8s-postgres-apply       Apply ONLY Postgres manifests (NAMESPACE=ns)"
+	@echo "  make k8s-postgres-delete      Delete ONLY Postgres manifests (NAMESPACE=ns)"
+	@echo "  make k8s-postgres-recreate    Recreate ONLY Postgres (delete + apply) in namespace"
+	@echo "  make postgres-reset-schema    Recreates noetl schema only in running postgres database instance"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -214,11 +221,48 @@ worker-start:
 worker-stop:
 	-@noetl worker stop -f || true
 
+# === kind Kubernetes cluster management ===
+.PHONY: k8s-kind-create k8s-kind-delete k8s-kind-recreate k8s-context
+
+k8s-kind-create:
+	@echo "Ensuring kind cluster '$(KIND_CLUSTER)' exists and kubectl context is set..."
+	@if ! command -v $(KIND) >/dev/null 2>&1; then \
+		echo "Error: kind is not installed. See https://kind.sigs.k8s.io/docs/user/quick-start/"; \
+		exit 1; \
+	fi
+	@if $(KIND) get clusters | grep -qx "$(KIND_CLUSTER)"; then \
+		echo "kind cluster $(KIND_CLUSTER) already exists"; \
+	else \
+		cfg="kind-config.yaml"; \
+		if [ -f $$cfg ]; then \
+			echo "Creating kind cluster $(KIND_CLUSTER) with $$cfg..."; \
+			$(KIND) create cluster --name $(KIND_CLUSTER) --config $$cfg; \
+		else \
+			echo "Creating kind cluster $(KIND_CLUSTER) with default config..."; \
+			$(KIND) create cluster --name $(KIND_CLUSTER); \
+		fi; \
+	fi
+	@echo "Setting kubectl context to kind-$(KIND_CLUSTER)"
+	@$(KUBECTL) config use-context kind-$(KIND_CLUSTER)
+	@echo "Creating namespace '$(NAMESPACE)' if missing..."
+	@$(KUBECTL) get ns $(NAMESPACE) >/dev/null 2>&1 || $(KUBECTL) create ns $(NAMESPACE)
+	@echo "Cluster is ready. You can now run: make k8s-postgres-apply"
+
+k8s-kind-delete:
+	@echo "Deleting kind cluster '$(KIND_CLUSTER)'..."
+	@$(KIND) delete cluster --name $(KIND_CLUSTER) || true
+
+k8s-kind-recreate: k8s-kind-delete k8s-kind-create
+
+k8s-context:
+	@$(KUBECTL) config use-context kind-$(KIND_CLUSTER)
+
 # === Postgres only on Kubernetes ===
 .PHONY: k8s-postgres-apply k8s-postgres-delete
 
-k8s-postgres-apply:
+k8s-postgres-apply: k8s-kind-create
 	@echo "Applying ONLY Postgres manifests to namespace $(NAMESPACE)..."
+	@$(KUBECTL) get ns $(NAMESPACE) >/dev/null 2>&1 || $(KUBECTL) create ns $(NAMESPACE)
 	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-pv.yaml
 	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-service.yaml
 	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-configmap.yaml
@@ -227,15 +271,26 @@ k8s-postgres-apply:
 	$(KUBECTL) -n $(NAMESPACE) apply -f $(K8S_POSTGRES_DIR)/postgres-deployment.yaml
 	@echo "Postgres applied. NodePort may be exposed at 30543 (see postgres-service.yaml)."
 
+.PHONY: k8s-postgres-recreate k8s-reset
+k8s-postgres-recreate: k8s-postgres-delete k8s-postgres-apply
+	@echo "Recreated Postgres manifests in namespace $(NAMESPACE)."
+
+k8s-reset: k8s-kind-recreate k8s-postgres-apply
+	@echo "Kind cluster '$(KIND_CLUSTER)' recreated and Postgres applied in namespace $(NAMESPACE)."
+
 k8s-postgres-delete:
 	@echo "Deleting ONLY Postgres manifests from namespace $(NAMESPACE)..."
-	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-deployment.yaml --ignore-not-found
-	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-config-files.yaml --ignore-not-found
-	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-secret.yaml --ignore-not-found
-	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-configmap.yaml --ignore-not-found
-	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-service.yaml --ignore-not-found
-	-$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-pv.yaml --ignore-not-found
-	@echo "Postgres resources deleted (PVC/PV may persist depending on cluster policy)."
+	@if ! $(KUBECTL) cluster-info >/dev/null 2>&1; then \
+		echo "No active Kubernetes cluster detected. Skipping delete."; \
+	else \
+		$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-deployment.yaml --ignore-not-found || true; \
+		$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-config-files.yaml --ignore-not-found || true; \
+		$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-secret.yaml --ignore-not-found || true; \
+		$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-configmap.yaml --ignore-not-found || true; \
+		$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-service.yaml --ignore-not-found || true; \
+		$(KUBECTL) -n $(NAMESPACE) delete -f $(K8S_POSTGRES_DIR)/postgres-pv.yaml --ignore-not-found || true; \
+		echo "Postgres resources deleted (PVC/PV may persist depending on cluster policy)."; \
+	fi
 
 .PHONY: postgres-reset-schema
 

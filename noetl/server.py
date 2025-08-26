@@ -17,1378 +17,1122 @@ from psycopg.rows import dict_row
 from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
 from noetl.logger import setup_logger
 from noetl.broker import Broker, execute_playbook_via_broker
+from noetl.api import router as api_router
 # Removed external cron/timezone libraries (croniter, pytz) per requirement; using simple internal parser.
 
 logger = setup_logger(__name__, include_location=True)
 
 router = APIRouter()
-
-class CatalogService:
-    def __init__(self, pgdb_conn_string: str | None = None):
-        pass
-
-    async def get_latest_version(self, resource_path: str) -> str:
-        try:
-            from noetl.common import get_async_db_connection
-            async with get_async_db_connection(optional=True) as conn:
-                if conn is None:
-                    logger.warning(f"Database not available, returning default version for '{resource_path}'")
-                    return "0.1.0"
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
-                        (resource_path,)
-                    )
-                    row = await cursor.fetchone()
-                    count = row[0] if row else 0
-
-                    if count == 0:
-                        return "0.1.0"
-
-                    await cursor.execute(
-                        """
-                        WITH parsed_versions AS (
-                            SELECT 
-                                resource_version,
-                                CAST(SPLIT_PART(resource_version, '.', 1) AS INTEGER) AS major,
-                                CAST(SPLIT_PART(resource_version, '.', 2) AS INTEGER) AS minor,
-                                CAST(SPLIT_PART(resource_version, '.', 3) AS INTEGER) AS patch
-                            FROM catalog
-                            WHERE resource_path = %s
-                        )
-                        SELECT resource_version
-                        FROM parsed_versions
-                        ORDER BY major DESC, minor DESC, patch DESC
-                        LIMIT 1
-                        """,
-                        (resource_path,)
-                    )
-                    result = await cursor.fetchone()
-
-                    if result:
-                        latest_version = result[0]
-                        return latest_version
-
-                    return "0.1.0"
-        except Exception as e:
-            logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
-            return "0.1.0"
-
-    async def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
-        try:
-            from noetl.common import get_async_db_connection
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        """
-                        SELECT resource_path, resource_type, resource_version, content, payload, meta
-                        FROM catalog
-                        WHERE resource_path = %s AND resource_version = %s
-                        """,
-                        (path, version)
-                    )
-
-                    result = await cursor.fetchone()
-
-                    if not result and '/' in path:
-                        filename = path.split('/')[-1]
-                        logger.info(f"Path not found. Trying to match filename: {filename}")
-
-                        await cursor.execute(
-                            """
-                            SELECT resource_path, resource_type, resource_version, content, payload, meta
-                            FROM catalog
-                            WHERE resource_path = %s AND resource_version = %s
-                            """,
-                            (filename, version)
-                        )
-
-                        result = await cursor.fetchone()
-
-                if result:
-                    return {
-                        "resource_path": result[0],
-                        "resource_type": result[1],
-                        "resource_version": result[2],
-                        "content": result[3],
-                        "payload": result[4],
-                        "meta": result[5]
-                    }
-                return None
-
-        except Exception as e:
-            logger.exception(f"Error fetching catalog entry: {e}.")
-            return None
-
-    def increment_version(self, version: str) -> str:
-        try:
-            parts = version.split('.')
-            while len(parts) < 3:
-                parts.append('0')
-            major, minor, patch = map(int, parts[:3])
-            patch += 1
-            return f"{major}.{minor}.{patch}"
-        except Exception as e:
-            logger.exception(f"Error incrementing version: {e}")
-            return f"{version}.1"
-
-
-    async def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
-        try:
-            from noetl.common import get_async_db_connection
-            resource_data = yaml.safe_load(content)
-            resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
-            resource_version = "0.1.0"
-            
-            async with get_async_db_connection(optional=True) as conn:
-                if conn is not None:
-                    latest_version = await self.get_latest_version(resource_path)
-                    
-                    if latest_version != '0.1.0':
-                        resource_version = self.increment_version(latest_version)
-                    else:
-                        resource_version = latest_version
-
-                    attempt = 0
-                    max_attempts = 5
-                    async with conn.cursor() as cursor:
-                        while attempt < max_attempts:
-                            await cursor.execute(
-                                "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
-                                (resource_path, resource_version)
-                            )
-                            row = await cursor.fetchone()
-                            count = int(row[0]) if row else 0
-                            if count == 0:
-                                break
-                            resource_version = self.increment_version(resource_version)
-                            attempt += 1
-
-                        if attempt >= max_attempts:
-                            logger.error(f"Failed to find version after {max_attempts} attempts")
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"Failed to find version after {max_attempts} attempts"
-                            )
-
-                        logger.info(
-                            f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
-
-                        await cursor.execute(
-                            "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
-                            (resource_type,)
-                        )
-                        
-                        await cursor.execute(
-                            """
-                            INSERT INTO catalog
-                            (resource_path, resource_type, resource_version, content, payload, meta)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            """,
-                            (
-                                resource_path,
-                                resource_type,
-                                resource_version,
-                                content,
-                                json.dumps(resource_data),
-                                json.dumps({"registered_at": "now()"})
-                            )
-                        )
-                        await conn.commit()
-                else:
-                    logger.warning(f"Database not available, registering resource '{resource_path}' in memory only")
-                    logger.warning("The resource will not be persisted and will be lost when the server restarts")
-                    
-
-            return {
-                "status": "success",
-                "message": f"Resource '{resource_path}' version '{resource_version}' registered.",
-                "resource_path": resource_path,
-                "resource_version": resource_version,
-                "resource_type": resource_type
-            }
-
-        except Exception as e:
-            logger.exception(f"Error registering resource: {e}.")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error registering resource: {e}."
-            )
-    async def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
-        try:
-            from noetl.common import get_async_db_connection
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    if resource_type:
-                        await cursor.execute(
-                            """
-                            SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
-                            FROM catalog
-                            WHERE resource_type = %s
-                            ORDER BY timestamp DESC
-                            """,
-                            (resource_type,)
-                        )
-                    else:
-                        await cursor.execute(
-                            """
-                            SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
-                            FROM catalog
-                            ORDER BY timestamp DESC
-                            """
-                        )
-
-                    results = await cursor.fetchall()
-
-                entries = []
-                for row in results:
-                    entries.append({
-                        "resource_path": row[0],
-                        "resource_type": row[1],
-                        "resource_version": row[2],
-                        "content": row[3],
-                        "payload": row[4],
-                        "meta": row[5],
-                        "timestamp": row[6]
-                    })
-
-                return entries
-
-        except Exception as e:
-            logger.exception(f"Error listing catalog entries: {e}")
-            return []
-
-
-def get_catalog_service() -> CatalogService:
-    return CatalogService()
-
-async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
-    logger.info(f"Dependency received playbook_id: '{playbook_id}'")
-    path_to_lookup = playbook_id.replace('%2F', '/')
-    if path_to_lookup.startswith("playbooks/"):
-        path_to_lookup = path_to_lookup.removeprefix("playbooks/")
-        logger.info(f"Trimmed playbook_id to: '{path_to_lookup}'")
-    version_to_lookup = None
-    if ':' in path_to_lookup:
-        path_parts = path_to_lookup.rsplit(':', 1)
-        if path_parts[1].replace('.', '').isdigit():
-            path_to_lookup = path_parts[0]
-            logger.info(f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
-
-    catalog_service = get_catalog_service()
-    latest_version = await catalog_service.get_latest_version(path_to_lookup)
-    logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
-
-    entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
-    if not entry:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Playbook '{path_to_lookup}' with version '{latest_version}' not found in catalog."
-        )
-    return entry
-
-class EventService:
-    def __init__(self, pgdb_conn_string: str | None = None):
-        pass
-
-    def _normalize_status(self, raw: str | None) -> str:
-        if not raw:
-            return 'pending'
-        s = str(raw).strip().lower()
-        if s in {'completed', 'complete', 'success', 'succeeded', 'done'}:
-            return 'completed'
-        if s in {'error', 'failed', 'failure'}:
-            return 'failed'
-        if s in {'running', 'run', 'in_progress', 'in-progress', 'progress', 'started', 'start'}:
-            return 'running'
-        if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
-            return 'pending'
-        # fallback
-        return 'pending'
-
-    def get_all_executions(self) -> List[Dict[str, Any]]:
-        """
-        Get all executions from the event_log table.
-        
-        Returns:
-            A list of execution data dictionaries
-        """
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        WITH latest_events AS (
-                            SELECT 
-                                execution_id,
-                                MAX(timestamp) as latest_timestamp
-                            FROM event_log
-                            GROUP BY execution_id
-                        )
-                        SELECT 
-                            e.execution_id,
-                            e.event_type,
-                            e.status,
-                            e.timestamp,
-                            e.metadata,
-                            e.input_context,
-                            e.output_result,
-                            e.error
-                        FROM event_log e
-                        JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
-                        ORDER BY e.timestamp DESC
-                    """)
-
-                    rows = cursor.fetchall()
-                    executions = []
-
-                    for row in rows:
-                        execution_id = row[0]
-                        metadata = json.loads(row[4]) if row[4] else {}
-                        input_context = json.loads(row[5]) if row[5] else {}
-                        output_result = json.loads(row[6]) if row[6] else {}
-                        playbook_id = metadata.get('resource_path', input_context.get('path', ''))
-                        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-                        raw_status = row[2]
-                        status = self._normalize_status(raw_status)
-
-                        start_time = row[3].isoformat() if row[3] else None
-                        end_time = None
-                        duration = None
-
-                        cursor.execute("""
-                            SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
-                        """, (execution_id,))
-                        min_time_row = cursor.fetchone()
-                        if min_time_row and min_time_row[0]:
-                            start_time = min_time_row[0].isoformat()
-
-                        if status in ['completed', 'failed']:
-                            cursor.execute("""
-                                SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
-                            """, (execution_id,))
-                            max_time_row = cursor.fetchone()
-                            if max_time_row and max_time_row[0]:
-                                end_time = max_time_row[0].isoformat()
-
-                                if start_time:
-                                    start_dt = datetime.fromisoformat(start_time)
-                                    end_dt = datetime.fromisoformat(end_time)
-                                    duration = (end_dt - start_dt).total_seconds()
-
-                        progress = 100 if status in ['completed', 'failed'] else 0
-                        if status == 'running':
-                            # Count total events & those considered finished (completed/failed)
-                            cursor.execute("""
-                                SELECT status FROM event_log WHERE execution_id = %s
-                            """, (execution_id,))
-                            event_statuses = [self._normalize_status(r[0]) for r in cursor.fetchall()]
-                            total_steps = len(event_statuses)
-                            completed_steps = sum(1 for s in event_statuses if s in {'completed', 'failed'})
-                            if total_steps > 0:
-                                progress = int((completed_steps / total_steps) * 100)
-
-                        execution_data = {
-                            "id": execution_id,
-                            "playbook_id": playbook_id,
-                            "playbook_name": playbook_name,
-                            "status": status,
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "duration": duration,
-                            "progress": progress,
-                            "result": output_result,
-                            "error": row[7]
-                        }
-
-                        executions.append(execution_data)
-
-                    return executions
-
-        except Exception as e:
-            logger.exception(f"Error getting all executions: {e}")
-            return []
-
-    def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
-            event_data["event_id"] = event_id
-            event_type = event_data.get("event_type", "UNKNOWN")
-            status = event_data.get("status", "CREATED")
-            parent_event_id = event_data.get("parent_id") or event_data.get("parent_event_id")
-            execution_id = event_data.get("execution_id", event_id)
-            node_id = event_data.get("node_id", event_id)
-            node_name = event_data.get("node_name", event_type)
-            node_type = event_data.get("node_type", "event")
-            duration = event_data.get("duration", 0.0)
-            metadata = event_data.get("meta", {})
-            error = event_data.get("error")
-            input_context = json.dumps(event_data.get("context", {}))
-            output_result = json.dumps(event_data.get("result", {}))
-            metadata_str = json.dumps(metadata)
-
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT COUNT(*) FROM event_log 
-                        WHERE execution_id = %s AND event_id = %s
-                    """, (execution_id, event_id))
-
-                    exists = cursor.fetchone()[0] > 0
-
-                    if exists:
-                        cursor.execute("""
-                            UPDATE event_log SET
-                                event_type = %s,
-                                status = %s,
-                                duration = %s,
-                                input_context = %s,
-                                output_result = %s,
-                                metadata = %s,
-                                error = %s,
-                                timestamp = CURRENT_TIMESTAMP
-                            WHERE execution_id = %s AND event_id = %s
-                        """, (
-                            event_type,
-                            status,
-                            duration,
-                            input_context,
-                            output_result,
-                            metadata_str,
-                            error,
-                            execution_id,
-                            event_id
-                        ))
-                    else:
-                        cursor.execute("""
-                            INSERT INTO event_log (
-                                execution_id, event_id, parent_event_id, timestamp, event_type,
-                                node_id, node_name, node_type, status, duration,
-                                input_context, output_result, metadata, error
-                            ) VALUES (
-                                %s, %s, %s, CURRENT_TIMESTAMP, %s,
-                                %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s
-                            )
-                        """, (
-                            execution_id,
-                            event_id,
-                            parent_event_id,
-                            event_type,
-                            node_id,
-                            node_name,
-                            node_type,
-                            status,
-                            duration,
-                            input_context,
-                            output_result,
-                            metadata_str,
-                            error
-                        ))
-
-                    conn.commit()
-
-            logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
-            return event_data
-
-        except Exception as e:
-            logger.exception(f"Error emitting event: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error emitting event: {e}"
-            )
-
-    def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get all events for a specific execution.
-
-        Args:
-            execution_id: The ID of the execution
-
-        Returns:
-            A dictionary containing events or None if not found
-        """
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT 
-                            event_id, 
-                            event_type, 
-                            node_id, 
-                            node_name, 
-                            node_type, 
-                            status, 
-                            duration, 
-                            timestamp, 
-                            input_context, 
-                            output_result, 
-                            metadata, 
-                            error
-                        FROM event_log 
-                        WHERE execution_id = %s
-                        ORDER BY timestamp
-                    """, (execution_id,))
-
-                    rows = cursor.fetchall()
-                    if rows:
-                        events = []
-                        for row in rows:
-                            event_data = {
-                                "event_id": row[0],
-                                "event_type": row[1],
-                                "node_id": row[2],
-                                "node_name": row[3],
-                                "node_type": row[4],
-                                "status": row[5],
-                                "duration": row[6],
-                                "timestamp": row[7].isoformat() if row[7] else None,
-                                "input_context": json.loads(row[8]) if row[8] else None,
-                                "output_result": json.loads(row[9]) if row[9] else None,
-                                "metadata": json.loads(row[10]) if row[10] else None,
-                                "error": row[11],
-                                "execution_id": execution_id,
-                                "resource_path": None,
-                                "resource_version": None,
-                                "normalized_status": self._normalize_status(row[5])
-                            }
-
-                            if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
-                                event_data["resource_path"] = event_data["metadata"]["playbook_path"]
-
-                            if event_data["input_context"] and "path" in event_data["input_context"]:
-                                event_data["resource_path"] = event_data["input_context"]["path"]
-
-                            if event_data["input_context"] and "version" in event_data["input_context"]:
-                                event_data["resource_version"] = event_data["input_context"]["version"]
-
-                            events.append(event_data)
-
-                        return {"events": events}
-
-                    return None
-        except Exception as e:
-            logger.exception(f"Error getting events by execution_id: {e}")
-            return None
-
-    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a single event by its ID.
-
-        Args:
-            event_id: The ID of the event
-
-        Returns:
-            A dictionary containing the event or None if not found
-        """
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT 
-                            event_id, 
-                            event_type, 
-                            node_id, 
-                            node_name, 
-                            node_type, 
-                            status, 
-                            duration, 
-                            timestamp, 
-                            input_context, 
-                            output_result, 
-                            metadata, 
-                            error,
-                            execution_id
-                        FROM event_log 
-                        WHERE event_id = %s
-                    """, (event_id,))
-
-                    row = cursor.fetchone()
-                    if row:
-                        event_data = {
-                            "event_id": row[0],
-                            "event_type": row[1],
-                            "node_id": row[2],
-                            "node_name": row[3],
-                            "node_type": row[4],
-                            "status": row[5],
-                            "duration": row[6],
-                            "timestamp": row[7].isoformat() if row[7] else None,
-                            "input_context": json.loads(row[8]) if row[8] else None,
-                            "output_result": json.loads(row[9]) if row[9] else None,
-                            "metadata": json.loads(row[10]) if row[10] else None,
-                            "error": row[11],
-                            "execution_id": row[12],
-                            "resource_path": None,
-                            "resource_version": None
-                        }
-                        if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
-                            event_data["resource_path"] = event_data["metadata"]["playbook_path"]
-
-                        if event_data["input_context"] and "path" in event_data["input_context"]:
-                            event_data["resource_path"] = event_data["input_context"]["path"]
-
-                        if event_data["input_context"] and "version" in event_data["input_context"]:
-                            event_data["resource_version"] = event_data["input_context"]["version"]
-                        return {"events": [event_data]}
-
-                    return None
-        except Exception as e:
-            logger.exception(f"Error getting event by ID: {e}")
-            return None
-
-    def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
-        """
-        Get events by execution_id or event_id (legacy method for backward compatibility).
-
-        Args:
-            id_param: Either an execution_id or an event_id
-
-        Returns:
-            A dictionary containing events or None if not found
-        """
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT COUNT(*) FROM event_log WHERE execution_id = %s
-                    """, (id_param,))
-                    count = cursor.fetchone()[0]
-
-                    if count > 0:
-                        events = self.get_events_by_execution_id(id_param)
-                        if events:
-                            return events
-
-                event = self.get_event_by_id(id_param)
-                if event:
-                    return event
-
-                with get_db_connection() as conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute("""
-                            SELECT DISTINCT execution_id FROM event_log 
-                            WHERE event_id = %s
-                        """, (id_param,))
-                        execution_ids = [row[0] for row in cursor.fetchall()]
-
-                        if execution_ids:
-                            events = self.get_events_by_execution_id(execution_ids[0])
-                            if events:
-                                return events
-
-                return None
-        except Exception as e:
-            logger.exception(f"Error in get_event: {e}")
-            return None
-
-def get_event_service() -> EventService:
-    return EventService()
-
-def get_catalog_service_dependency() -> CatalogService:
-    return CatalogService()
-
-def get_event_service_dependency() -> EventService:
-    return EventService()
-
-
-class AgentService:
-
-    def __init__(self, pgdb_conn_string: str | None = None):
-        self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
-        self.agent = None
-
-    def store_transition(self, params: tuple):
-        """
-        Store the transition in the database.
-
-        Args:
-            params: A tuple containing the transition parameters
-        """
-        if self.agent:
-            self.agent.store_transition(params)
-
-    def get_step_results(self) -> Dict[str, Any]:
-        """
-        Get the results of all steps.
-
-        Returns:
-            A dictionary mapping the step names to results
-        """
-        if self.agent:
-            return self.agent.get_step_results()
-        return {}
-
-    def execute_agent(
-        self, 
-        playbook_content: str, 
-        playbook_path: str, 
-        playbook_version: str, 
-        input_payload: Optional[Dict[str, Any]] = None,
-        sync_to_postgres: bool = True,
-        merge: bool = False
-    ) -> Dict[str, Any]:
-        try:
-            logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function entry ===")
-            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Parameters - playbook_path={playbook_path}, playbook_version={playbook_version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
-            
-            temp_file_path = None
-            logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Creating temporary file for playbook content")
-            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
-                temp_file.write(playbook_content.encode('utf-8'))
-                temp_file_path = temp_file.name
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Created temporary file at {temp_file_path}")
-            
-            try:
-                pgdb_conn = self.pgdb_conn_string if sync_to_postgres else None
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Using pgdb_conn={pgdb_conn}")
-                
-                # NOTE: Worker class removed / not imported; if legacy functionality required, reintroduce minimal executor.
-                agent = self.agent  # remains None; placeholder for future implementation
-                logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Worker functionality disabled (no Worker class).")
-                
-                workload = agent.playbook.get('workload', {})
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Loaded workload from playbook: {workload}")
-                
-                if input_payload:
-                    if merge:
-                        logger.info("AGENT_SERVICE.EXECUTE_AGENT: Merge mode: deep merging input payload with workload.")
-                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Input payload for merge: {input_payload}")
-                        merged_workload = deep_merge(workload, input_payload)
-                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Merged workload: {merged_workload}")
-                        for key, value in merged_workload.items():
-                            agent.update_context(key, value)
-                            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
-                        agent.update_context('workload', merged_workload)
-                        agent.store_workload(merged_workload)
-                    else:
-                        logger.info("AGENT_SERVICE.EXECUTE_AGENT: Override mode: replacing workload keys with input payload.")
-                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Input payload for override: {input_payload}")
-                        merged_workload = workload.copy()
-                        for key, value in input_payload.items():
-                            merged_workload[key] = value
-                            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Overriding key={key} with value={value}")
-                        for key, value in merged_workload.items():
-                            agent.update_context(key, value)
-                            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
-                        agent.update_context('workload', merged_workload)
-                        agent.store_workload(merged_workload)
-                else:
-                    logger.info("AGENT_SERVICE.EXECUTE_AGENT: No input payload provided. Default workload from playbooks is used.")
-                    for key, value in workload.items():
-                        agent.update_context(key, value)
-                        logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
-                    agent.update_context('workload', workload)
-                    agent.store_workload(workload)
-                
-                server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Using server_url={server_url}")
-                
-                logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Initializing Broker")
-                daemon = Broker(agent, server_url=server_url)
-                
-                logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Calling daemon.run()")
-                results = daemon.run()
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: daemon.run() returned results={results}")
-
-                export_path = None
-
-                result = {
-                    "status": "success",
-                    "message": f"Agent executed for playbooks '{playbook_path}' version '{playbook_version}'.",
-                    "result": results,
-                    "execution_id": agent.execution_id,
-                    "export_path": export_path
-                }
-                
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Returning result={result}")
-                logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function exit ===")
-                return result
-            finally:
-                if os.path.exists(temp_file_path):
-                    logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Removing temporary file {temp_file_path}")
-                    os.unlink(temp_file_path)
-
-        except Exception as e:
-            logger.exception(f"AGENT_SERVICE.EXECUTE_AGENT: Error executing agent: {e}.")
-            error_result = {
-                "status": "error",
-                "message": f"Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}.",
-                "error": str(e)
-            }
-            logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Returning error result={error_result}")
-            logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function exit with error ===")
-            return error_result
-
-def get_agent_service() -> AgentService:
-    return AgentService(get_pgdb_connection())
-
-def get_agent_service_dependency() -> AgentService:
-    return AgentService()
-
-@router.post("/catalog/register", response_class=JSONResponse)
-async def register_resource(
-    request: Request,
-    content_base64: str = None,
-    content: str = None,
-    resource_type: str = "Playbook"
-):
-    try:
-        if not content_base64 and not content:
-            try:
-                body = await request.json()
-                content_base64 = body.get("content_base64")
-                content = body.get("content")
-                resource_type = body.get("resource_type", resource_type)
-            except:
-                pass
-
-        if content_base64:
-            import base64
-            content = base64.b64decode(content_base64).decode('utf-8')
-        elif not content:
-            raise HTTPException(
-                status_code=400,
-                detail="The content or content_base64 must be provided."
-            )
-
-        catalog_service = get_catalog_service()
-        result = await catalog_service.register_resource(content, resource_type)
-        return result
-
-    except Exception as e:
-        logger.exception(f"Error registering resource: {e}.")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error registering resource: {e}."
-        )
-
-@router.get("/catalog/list", response_class=JSONResponse)
-async def list_resources(
-    request: Request,
-    resource_type: str = None
-):
-    try:
-        catalog_service = get_catalog_service()
-        entries = await catalog_service.list_entries(resource_type)
-        return {"entries": entries}
-
-    except Exception as e:
-        logger.exception(f"Error listing resources: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error listing resources: {e}"
-        )
-
-@router.get("/events/by-execution/{execution_id}", response_class=JSONResponse)
-async def get_events_by_execution(
-    request: Request,
-    execution_id: str
-):
-    """
-    Get all events for a specific execution.
-    """
-    try:
-        event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
-        if not events:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No events found for execution '{execution_id}'."
-            )
-        return events
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error fetching events by execution: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching events by execution: {e}"
-        )
-
-@router.get("/events/by-id/{event_id}", response_class=JSONResponse)
-async def get_event_by_id(
-    request: Request,
-    event_id: str
-):
-    """
-    Get a single event by its ID.
-    """
-    try:
-        event_service = get_event_service()
-        event = event_service.get_event_by_id(event_id)
-        if not event:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Event with ID '{event_id}' not found."
-            )
-        return event
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error fetching event by ID: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching event by ID: {e}"
-        )
-
-@router.get("/events/{event_id}", response_class=JSONResponse)
-async def get_event(
-    request: Request,
-    event_id: str
-):
-    """
-    Legacy endpoint for getting events by execution_id or event_id.
-    Use /events/by-execution/{execution_id} or /events/by-id/{event_id} instead.
-    """
-    try:
-        event_service = get_event_service()
-        event = event_service.get_event(event_id)
-        if not event:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Event '{event_id}' not found."
-            )
-        return event
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error fetching event: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching event: {e}"
-        )
-
-@router.get("/events/query", response_class=JSONResponse)
-async def get_event_by_query(
-    request: Request,
-    event_id: str = None
-):
-    if not event_id:
-        raise HTTPException(
-            status_code=400,
-            detail="event_id query parameter is required."
-        )
-
-    try:
-        event_service = get_event_service()
-        event = event_service.get_event(event_id)
-        if not event:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Event '{event_id}' not found."
-            )
-        return event
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error fetching event: {e}.")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching event: {e}."
-        )
-
-@router.get("/execution/data/{execution_id}", response_class=JSONResponse)
-async def get_execution_data(
-    request: Request,
-    execution_id: str
-):
-    try:
-        event_service = get_event_service()
-        event = event_service.get_event(execution_id)
-        if not event:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Execution '{execution_id}' not found."
-            )
-        return event
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error fetching execution data: {e}.")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching execution data: {e}."
-        )
-
-@router.post("/events", response_class=JSONResponse)
-async def create_event(
-    request: Request,
-    background_tasks: BackgroundTasks
-):
-    try:
-        body = await request.json()
-        event_service = get_event_service()
-        result = event_service.emit(body)
-        try:
-            execution_id = result.get("execution_id") or body.get("execution_id")
-            if execution_id:
-                background_tasks.add_task(_evaluate_broker_for_execution, execution_id)
-        except Exception as _:
-            pass
-        return result
-    except Exception as e:
-        logger.exception(f"Error creating event: {e}.")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error creating event: {e}."
-        )
-
-
-@router.post("/agent/execute", response_class=JSONResponse)
-async def execute_agent(
-    request: Request,
-    path: str = None,
-    version: str = None,
-    input_payload: Dict[str, Any] = None,
-    sync_to_postgres: bool = True,
-    merge: bool = False
-):
-    try:
-        logger.debug("=== EXECUTE_AGENT: Function entry ===")
-        logger.debug(f"EXECUTE_AGENT: Initial parameters - path={path}, version={version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
-        
-        if not path:
-            try:
-                body = await request.json()
-                path = body.get("path", path)
-                version = body.get("version", version)
-                input_payload = body.get("input_payload", input_payload)
-                sync_to_postgres = body.get("sync_to_postgres", sync_to_postgres)
-                merge = body.get("merge", merge)
-                logger.debug(f"EXECUTE_AGENT: Parameters from request body - path={path}, version={version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
-            except Exception as e:
-                logger.debug(f"EXECUTE_AGENT: Failed to parse request body: {e}")
-                pass
-
-        if not path:
-            logger.error("EXECUTE_AGENT: Missing required parameter path")
-            raise HTTPException(
-                status_code=400,
-                detail="Path is a required parameter."
-            )
-
-        logger.debug(f"EXECUTE_AGENT: Getting catalog service")
-        catalog_service = get_catalog_service()
-        if not version:
-            version = await catalog_service.get_latest_version(path)
-            logger.debug(f"EXECUTE_AGENT: Version not specified, using latest version: {version}")
-
-        logger.debug(f"EXECUTE_AGENT: Fetching entry for path={path}, version={version}")
-        entry = await catalog_service.fetch_entry(path, version)
-        if not entry:
-            logger.error(f"EXECUTE_AGENT: Playbook '{path}' with version '{version}' not found")
-            raise HTTPException(
-                status_code=404,
-                detail=f"Playbook '{path}' with version '{version}' not found."
-            )
-
-        logger.debug(f"EXECUTE_AGENT: Calling broker.execute_playbook_via_broker with playbook_path={path}, playbook_version={version}")
-        result = await asyncio.to_thread(
-            execute_playbook_via_broker,
-            entry.get("content"),
-            path,
-            version,
-            input_payload,
-            sync_to_postgres,
-            merge
-        )
-        logger.debug(f"EXECUTE_AGENT: broker.execute_playbook_via_broker returned result={result}")
-
-        logger.debug("=== EXECUTE_AGENT: Function exit ===")
-        return result
-
-    except Exception as e:
-        logger.exception(f"Error executing agent: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error executing agent for playbooks '{path}' version '{version}': {e}."
-        )
-
-@router.post("/agent/execute-async", response_class=JSONResponse)
-async def execute_agent_async(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    path: str = None,
-    version: str = None,
-    input_payload: Dict[str, Any] = None,
-    sync_to_postgres: bool = True,
-    merge: bool = False
-):
-
-    try:
-        if not path:
-            try:
-                body = await request.json()
-                path = body.get("path", path)
-                version = body.get("version", version)
-                input_payload = body.get("input_payload", input_payload)
-                sync_to_postgres = body.get("sync_to_postgres", sync_to_postgres)
-                merge = body.get("merge", merge)
-            except:
-                pass
-
-        if not path:
-            raise HTTPException(
-                status_code=400,
-                detail="Path is a required parameter."
-            )
-
-        catalog_service = get_catalog_service()
-
-        if not version:
-            version = await catalog_service.get_latest_version(path)
-            logger.info(f"Version not specified, using latest version: {version}")
-
-        entry = await catalog_service.fetch_entry(path, version)
-        if not entry:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Playbook '{path}' with version '{version}' not found."
-            )
-
-        event_service = get_event_service()
-        initial_event_data = {
-            "event_type": "AgentExecutionRequested",
-            "status": "REQUESTED",
-            "meta": {
-                "resource_path": path,
-                "resource_version": version,
-            },
-            "result": input_payload,
-            "node_type": "playbooks",
-            "node_name": path
-        }
-
-        initial_event = event_service.emit(initial_event_data)
-
-        def execute_agent_task():
-            try:
-                result = execute_playbook_via_broker(
-                    entry.get("content"),
-                    path,
-                    version,
-                    input_payload,
-                    sync_to_postgres,
-                    merge
-                )
-                event_id = initial_event.get("event_id")
-                if result.get("status") == "success":
-                    execution_id = result.get("execution_id")
-                    update_event = {
-                        "event_id": event_id,
-                        "execution_id": execution_id,
-                        "event_type": "agent_execution_completed",
-                        "status": "COMPLETED",
-                        "result": result.get("result"),
-                        "meta": {
-                            "resource_path": path,
-                            "resource_version": version,
-                            "execution_id": execution_id
-                        },
-                        "node_type": "playbooks",
-                        "node_name": path
-                    }
-                    event_service.emit(update_event)
-                    logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
-                else:
-                    error_event = {
-                        "event_id": event_id,
-                        "execution_id": event_id,
-                        "event_type": "agent_execution_error",
-                        "status": "ERROR",
-                        "error": result.get("error"),
-                        "result": {"error": result.get("error")},
-                        "meta": {
-                            "resource_path": path,
-                            "resource_version": version,
-                            "error": result.get("error")
-                        },
-                        "node_type": "playbooks",
-                        "node_name": path
-                    }
-                    event_service.emit(error_event)
-                    logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
-            except Exception as e:
-                logger.exception(f"Error in background agent execution: {e}.")
-                event_id = initial_event.get("event_id")
-                error_event = {
-                    "event_id": event_id,
-                    "execution_id": event_id,
-                    "event_type": "agent_execution_error",
-                    "status": "ERROR",
-                    "error": str(e),
-                    "result": {"error": str(e)},
-                    "meta": {
-                        "resource_path": path,
-                        "resource_version": version,
-                        "error": str(e)
-                    },
-                    "node_type": "playbooks",
-                    "node_name": path
-                }
-                event_service.emit(error_event)
-                logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
-
-        background_tasks.add_task(execute_agent_task)
-
-        return {
-            "status": "accepted",
-            "message": f"Agent execution started for playbooks '{path}' version '{version}'.",
-            "event_id": initial_event.get("event_id")
-        }
-
-    except Exception as e:
-        logger.exception(f"Error starting agent execution: {e}.")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error starting agent execution for playbooks '{path}' version '{version}': {e}"
-        )
-
-
-@router.get("/dashboard/stats", response_class=JSONResponse)
-async def get_dashboard_stats():
-    """Get dashboard statistics"""
-    try:
-        return {
-            "total_executions": 0,
-            "successful_executions": 0,
-            "failed_executions": 0,
-            "total_playbooks": 0,
-            "active_workflows": 0
-        }
-    except Exception as e:
-        logger.error(f"Error getting dashboard stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/dashboard/widgets", response_class=JSONResponse)
-async def get_dashboard_widgets():
-    """Get dashboard widgets"""
-    try:
-        return []
-    except Exception as e:
-        logger.error(f"Error getting dashboard widgets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/playbooks", response_class=JSONResponse)
-async def get_playbooks():
-    """Get all playbooks (legacy endpoint)"""
-    return await get_catalog_playbooks()
-
-@router.get("/catalog/playbooks", response_class=JSONResponse)
-async def get_catalog_playbooks():
-    """Get all playbooks"""
-    try:
-        catalog_service = get_catalog_service()
-        entries = await catalog_service.list_entries('Playbook')
-
-        playbooks = []
-        for entry in entries:
-            meta = entry.get('meta', {})
-            
-            description = ""
-            payload = entry.get('payload', {})
-            
-            if isinstance(payload, str):
-                try:
-                    payload_data = json.loads(payload)
-                    description = payload_data.get('description', '')
-                except json.JSONDecodeError:
-                    description = ""
-            elif isinstance(payload, dict):
-                description = payload.get('description', '')
-            
-            if not description:
-                description = meta.get('description', '')
-
-            playbook = {
-                "id": entry.get('resource_path', ''),
-                "name": entry.get('resource_path', '').split('/')[-1],
-                "resource_type": entry.get('resource_type', ''),
-                "resource_version": entry.get('resource_version', ''),
-                "meta": entry.get('meta', ''),
-                "timestamp": entry.get('timestamp', ''),
-                "description": description,
-                "created_at": entry.get('timestamp', ''),
-                "updated_at": entry.get('timestamp', ''),
-                "status": meta.get('status', 'active'),
-                "tasks_count": meta.get('tasks_count', 0)
-            }
-            playbooks.append(playbook)
-        
-        return playbooks
-    except Exception as e:
-        logger.error(f"Error getting playbooks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/catalog/playbooks", response_class=JSONResponse)
-async def create_catalog_playbook(request: Request):
-    """Create a new playbooks"""
-    try:
-        body = await request.json()
-        name = body.get("name", "New Playbook")
-        description = body.get("description", "")
-        status = body.get("status", "draft")
-        
-        content = f"""# {name}
-name: "{name.lower().replace(' ', '-')}"
-description: "{description}"
-tasks:
-  - name: "sample-task"
-    type: "log"
-    config:
-      message: "Hello from NoETL!"
-"""
-        
-        catalog_service = get_catalog_service()
-        result = await catalog_service.register_resource(content, "playbooks")
-        
-        playbook = {
-            "id": result.get("resource_path", ""),
-            "name": name,
-            "description": description,
-            "created_at": result.get("timestamp", ""),
-            "updated_at": result.get("timestamp", ""),
-            "status": status,
-            "tasks_count": 1,
-            "version": result.get("resource_version", "")
-        }
-        
-        return playbook
-    except Exception as e:
-        logger.error(f"Error creating playbooks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/catalog/playbooks/validate", response_class=JSONResponse)
-async def validate_catalog_playbook(request: Request):
-    """Validate playbooks content"""
-    try:
-        body = await request.json()
-        content = body.get("content")
-        
-        if not content:
-            raise HTTPException(
-                status_code=400,
-                detail="Content is required."
-            )
-        
-        try:
-            yaml.safe_load(content)
-            return {"valid": True}
-        except Exception as yaml_error:
-            return {
-                "valid": False,
-                "errors": [str(yaml_error)]
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error validating playbooks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+router.include_router(api_router)
+
+
+# class EventService:
+#     def __init__(self, pgdb_conn_string: str | None = None):
+#         pass
+#
+#     def _normalize_status(self, raw: str | None) -> str:
+#         if not raw:
+#             return 'pending'
+#         s = str(raw).strip().lower()
+#         if s in {'completed', 'complete', 'success', 'succeeded', 'done'}:
+#             return 'completed'
+#         if s in {'error', 'failed', 'failure'}:
+#             return 'failed'
+#         if s in {'running', 'run', 'in_progress', 'in-progress', 'progress', 'started', 'start'}:
+#             return 'running'
+#         if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
+#             return 'pending'
+#         # fallback
+#         return 'pending'
+#
+#     def get_all_executions(self) -> List[Dict[str, Any]]:
+#         """
+#         Get all executions from the event_log table.
+#
+#         Returns:
+#             A list of execution data dictionaries
+#         """
+#         try:
+#             with get_db_connection() as conn:
+#                 with conn.cursor() as cursor:
+#                     cursor.execute("""
+#                         WITH latest_events AS (
+#                             SELECT
+#                                 execution_id,
+#                                 MAX(timestamp) as latest_timestamp
+#                             FROM event_log
+#                             GROUP BY execution_id
+#                         )
+#                         SELECT
+#                             e.execution_id,
+#                             e.event_type,
+#                             e.status,
+#                             e.timestamp,
+#                             e.metadata,
+#                             e.input_context,
+#                             e.output_result,
+#                             e.error
+#                         FROM event_log e
+#                         JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
+#                         ORDER BY e.timestamp DESC
+#                     """)
+#
+#                     rows = cursor.fetchall()
+#                     executions = []
+#
+#                     for row in rows:
+#                         execution_id = row[0]
+#                         metadata = json.loads(row[4]) if row[4] else {}
+#                         input_context = json.loads(row[5]) if row[5] else {}
+#                         output_result = json.loads(row[6]) if row[6] else {}
+#                         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+#                         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+#                         raw_status = row[2]
+#                         status = self._normalize_status(raw_status)
+#
+#                         start_time = row[3].isoformat() if row[3] else None
+#                         end_time = None
+#                         duration = None
+#
+#                         cursor.execute("""
+#                             SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
+#                         """, (execution_id,))
+#                         min_time_row = cursor.fetchone()
+#                         if min_time_row and min_time_row[0]:
+#                             start_time = min_time_row[0].isoformat()
+#
+#                         if status in ['completed', 'failed']:
+#                             cursor.execute("""
+#                                 SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
+#                             """, (execution_id,))
+#                             max_time_row = cursor.fetchone()
+#                             if max_time_row and max_time_row[0]:
+#                                 end_time = max_time_row[0].isoformat()
+#
+#                                 if start_time:
+#                                     start_dt = datetime.fromisoformat(start_time)
+#                                     end_dt = datetime.fromisoformat(end_time)
+#                                     duration = (end_dt - start_dt).total_seconds()
+#
+#                         progress = 100 if status in ['completed', 'failed'] else 0
+#                         if status == 'running':
+#                             # Count total events & those considered finished (completed/failed)
+#                             cursor.execute("""
+#                                 SELECT status FROM event_log WHERE execution_id = %s
+#                             """, (execution_id,))
+#                             event_statuses = [self._normalize_status(r[0]) for r in cursor.fetchall()]
+#                             total_steps = len(event_statuses)
+#                             completed_steps = sum(1 for s in event_statuses if s in {'completed', 'failed'})
+#                             if total_steps > 0:
+#                                 progress = int((completed_steps / total_steps) * 100)
+#
+#                         execution_data = {
+#                             "id": execution_id,
+#                             "playbook_id": playbook_id,
+#                             "playbook_name": playbook_name,
+#                             "status": status,
+#                             "start_time": start_time,
+#                             "end_time": end_time,
+#                             "duration": duration,
+#                             "progress": progress,
+#                             "result": output_result,
+#                             "error": row[7]
+#                         }
+#
+#                         executions.append(execution_data)
+#
+#                     return executions
+#
+#         except Exception as e:
+#             logger.exception(f"Error getting all executions: {e}")
+#             return []
+#
+#     def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+#         try:
+#             event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
+#             event_data["event_id"] = event_id
+#             event_type = event_data.get("event_type", "UNKNOWN")
+#             status = event_data.get("status", "CREATED")
+#             parent_event_id = event_data.get("parent_id") or event_data.get("parent_event_id")
+#             execution_id = event_data.get("execution_id", event_id)
+#             node_id = event_data.get("node_id", event_id)
+#             node_name = event_data.get("node_name", event_type)
+#             node_type = event_data.get("node_type", "event")
+#             duration = event_data.get("duration", 0.0)
+#             metadata = event_data.get("meta", {})
+#             error = event_data.get("error")
+#             input_context = json.dumps(event_data.get("context", {}))
+#             output_result = json.dumps(event_data.get("result", {}))
+#             metadata_str = json.dumps(metadata)
+#
+#             with get_db_connection() as conn:
+#                 with conn.cursor() as cursor:
+#                     cursor.execute("""
+#                         SELECT COUNT(*) FROM event_log
+#                         WHERE execution_id = %s AND event_id = %s
+#                     """, (execution_id, event_id))
+#
+#                     exists = cursor.fetchone()[0] > 0
+#
+#                     if exists:
+#                         cursor.execute("""
+#                             UPDATE event_log SET
+#                                 event_type = %s,
+#                                 status = %s,
+#                                 duration = %s,
+#                                 input_context = %s,
+#                                 output_result = %s,
+#                                 metadata = %s,
+#                                 error = %s,
+#                                 timestamp = CURRENT_TIMESTAMP
+#                             WHERE execution_id = %s AND event_id = %s
+#                         """, (
+#                             event_type,
+#                             status,
+#                             duration,
+#                             input_context,
+#                             output_result,
+#                             metadata_str,
+#                             error,
+#                             execution_id,
+#                             event_id
+#                         ))
+#                     else:
+#                         cursor.execute("""
+#                             INSERT INTO event_log (
+#                                 execution_id, event_id, parent_event_id, timestamp, event_type,
+#                                 node_id, node_name, node_type, status, duration,
+#                                 input_context, output_result, metadata, error
+#                             ) VALUES (
+#                                 %s, %s, %s, CURRENT_TIMESTAMP, %s,
+#                                 %s, %s, %s, %s, %s,
+#                                 %s, %s, %s, %s
+#                             )
+#                         """, (
+#                             execution_id,
+#                             event_id,
+#                             parent_event_id,
+#                             event_type,
+#                             node_id,
+#                             node_name,
+#                             node_type,
+#                             status,
+#                             duration,
+#                             input_context,
+#                             output_result,
+#                             metadata_str,
+#                             error
+#                         ))
+#
+#                     conn.commit()
+#
+#             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
+#             return event_data
+#
+#         except Exception as e:
+#             logger.exception(f"Error emitting event: {e}")
+#             raise HTTPException(
+#                 status_code=500,
+#                 detail=f"Error emitting event: {e}"
+#             )
+#
+#     def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
+#         """
+#         Get all events for a specific execution.
+#
+#         Args:
+#             execution_id: The ID of the execution
+#
+#         Returns:
+#             A dictionary containing events or None if not found
+#         """
+#         try:
+#             with get_db_connection() as conn:
+#                 with conn.cursor() as cursor:
+#                     cursor.execute("""
+#                         SELECT
+#                             event_id,
+#                             event_type,
+#                             node_id,
+#                             node_name,
+#                             node_type,
+#                             status,
+#                             duration,
+#                             timestamp,
+#                             input_context,
+#                             output_result,
+#                             metadata,
+#                             error
+#                         FROM event_log
+#                         WHERE execution_id = %s
+#                         ORDER BY timestamp
+#                     """, (execution_id,))
+#
+#                     rows = cursor.fetchall()
+#                     if rows:
+#                         events = []
+#                         for row in rows:
+#                             event_data = {
+#                                 "event_id": row[0],
+#                                 "event_type": row[1],
+#                                 "node_id": row[2],
+#                                 "node_name": row[3],
+#                                 "node_type": row[4],
+#                                 "status": row[5],
+#                                 "duration": row[6],
+#                                 "timestamp": row[7].isoformat() if row[7] else None,
+#                                 "input_context": json.loads(row[8]) if row[8] else None,
+#                                 "output_result": json.loads(row[9]) if row[9] else None,
+#                                 "metadata": json.loads(row[10]) if row[10] else None,
+#                                 "error": row[11],
+#                                 "execution_id": execution_id,
+#                                 "resource_path": None,
+#                                 "resource_version": None,
+#                                 "normalized_status": self._normalize_status(row[5])
+#                             }
+#
+#                             if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
+#                                 event_data["resource_path"] = event_data["metadata"]["playbook_path"]
+#
+#                             if event_data["input_context"] and "path" in event_data["input_context"]:
+#                                 event_data["resource_path"] = event_data["input_context"]["path"]
+#
+#                             if event_data["input_context"] and "version" in event_data["input_context"]:
+#                                 event_data["resource_version"] = event_data["input_context"]["version"]
+#
+#                             events.append(event_data)
+#
+#                         return {"events": events}
+#
+#                     return None
+#         except Exception as e:
+#             logger.exception(f"Error getting events by execution_id: {e}")
+#             return None
+#
+#     def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+#         """
+#         Get a single event by its ID.
+#
+#         Args:
+#             event_id: The ID of the event
+#
+#         Returns:
+#             A dictionary containing the event or None if not found
+#         """
+#         try:
+#             with get_db_connection() as conn:
+#                 with conn.cursor() as cursor:
+#                     cursor.execute("""
+#                         SELECT
+#                             event_id,
+#                             event_type,
+#                             node_id,
+#                             node_name,
+#                             node_type,
+#                             status,
+#                             duration,
+#                             timestamp,
+#                             input_context,
+#                             output_result,
+#                             metadata,
+#                             error,
+#                             execution_id
+#                         FROM event_log
+#                         WHERE event_id = %s
+#                     """, (event_id,))
+#
+#                     row = cursor.fetchone()
+#                     if row:
+#                         event_data = {
+#                             "event_id": row[0],
+#                             "event_type": row[1],
+#                             "node_id": row[2],
+#                             "node_name": row[3],
+#                             "node_type": row[4],
+#                             "status": row[5],
+#                             "duration": row[6],
+#                             "timestamp": row[7].isoformat() if row[7] else None,
+#                             "input_context": json.loads(row[8]) if row[8] else None,
+#                             "output_result": json.loads(row[9]) if row[9] else None,
+#                             "metadata": json.loads(row[10]) if row[10] else None,
+#                             "error": row[11],
+#                             "execution_id": row[12],
+#                             "resource_path": None,
+#                             "resource_version": None
+#                         }
+#                         if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
+#                             event_data["resource_path"] = event_data["metadata"]["playbook_path"]
+#
+#                         if event_data["input_context"] and "path" in event_data["input_context"]:
+#                             event_data["resource_path"] = event_data["input_context"]["path"]
+#
+#                         if event_data["input_context"] and "version" in event_data["input_context"]:
+#                             event_data["resource_version"] = event_data["input_context"]["version"]
+#                         return {"events": [event_data]}
+#
+#                     return None
+#         except Exception as e:
+#             logger.exception(f"Error getting event by ID: {e}")
+#             return None
+#
+#     def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
+#         """
+#         Get events by execution_id or event_id (legacy method for backward compatibility).
+#
+#         Args:
+#             id_param: Either an execution_id or an event_id
+#
+#         Returns:
+#             A dictionary containing events or None if not found
+#         """
+#         try:
+#             with get_db_connection() as conn:
+#                 with conn.cursor() as cursor:
+#                     cursor.execute("""
+#                         SELECT COUNT(*) FROM event_log WHERE execution_id = %s
+#                     """, (id_param,))
+#                     count = cursor.fetchone()[0]
+#
+#                     if count > 0:
+#                         events = self.get_events_by_execution_id(id_param)
+#                         if events:
+#                             return events
+#
+#                 event = self.get_event_by_id(id_param)
+#                 if event:
+#                     return event
+#
+#                 with get_db_connection() as conn:
+#                     with conn.cursor() as cursor:
+#                         cursor.execute("""
+#                             SELECT DISTINCT execution_id FROM event_log
+#                             WHERE event_id = %s
+#                         """, (id_param,))
+#                         execution_ids = [row[0] for row in cursor.fetchall()]
+#
+#                         if execution_ids:
+#                             events = self.get_events_by_execution_id(execution_ids[0])
+#                             if events:
+#                                 return events
+#
+#                 return None
+#         except Exception as e:
+#             logger.exception(f"Error in get_event: {e}")
+#             return None
+#
+# def get_event_service() -> EventService:
+#     return EventService()
+#
+# def get_catalog_service_dependency() -> CatalogService:
+#     return CatalogService()
+#
+# def get_event_service_dependency() -> EventService:
+#     return EventService()
+
+
+# class AgentService:
+#
+#     def __init__(self, pgdb_conn_string: str | None = None):
+#         self.pgdb_conn_string = pgdb_conn_string if pgdb_conn_string else get_pgdb_connection()
+#         self.agent = None
+#
+#     def store_transition(self, params: tuple):
+#         """
+#         Store the transition in the database.
+#
+#         Args:
+#             params: A tuple containing the transition parameters
+#         """
+#         if self.agent:
+#             self.agent.store_transition(params)
+#
+#     def get_step_results(self) -> Dict[str, Any]:
+#         """
+#         Get the results of all steps.
+#
+#         Returns:
+#             A dictionary mapping the step names to results
+#         """
+#         if self.agent:
+#             return self.agent.get_step_results()
+#         return {}
+#
+#     def execute_agent(
+#         self,
+#         playbook_content: str,
+#         playbook_path: str,
+#         playbook_version: str,
+#         input_payload: Optional[Dict[str, Any]] = None,
+#         sync_to_postgres: bool = True,
+#         merge: bool = False
+#     ) -> Dict[str, Any]:
+#         try:
+#             logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function entry ===")
+#             logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Parameters - playbook_path={playbook_path}, playbook_version={playbook_version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
+#
+#             temp_file_path = None
+#             logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Creating temporary file for playbook content")
+#             with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
+#                 temp_file.write(playbook_content.encode('utf-8'))
+#                 temp_file_path = temp_file.name
+#                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Created temporary file at {temp_file_path}")
+#
+#             try:
+#                 pgdb_conn = self.pgdb_conn_string if sync_to_postgres else None
+#                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Using pgdb_conn={pgdb_conn}")
+#
+#                 # NOTE: Worker class removed / not imported; if legacy functionality required, reintroduce minimal executor.
+#                 agent = self.agent  # remains None; placeholder for future implementation
+#                 logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Worker functionality disabled (no Worker class).")
+#
+#                 workload = agent.playbook.get('workload', {})
+#                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Loaded workload from playbook: {workload}")
+#
+#                 if input_payload:
+#                     if merge:
+#                         logger.info("AGENT_SERVICE.EXECUTE_AGENT: Merge mode: deep merging input payload with workload.")
+#                         logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Input payload for merge: {input_payload}")
+#                         merged_workload = deep_merge(workload, input_payload)
+#                         logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Merged workload: {merged_workload}")
+#                         for key, value in merged_workload.items():
+#                             agent.update_context(key, value)
+#                             logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
+#                         agent.update_context('workload', merged_workload)
+#                         agent.store_workload(merged_workload)
+#                     else:
+#                         logger.info("AGENT_SERVICE.EXECUTE_AGENT: Override mode: replacing workload keys with input payload.")
+#                         logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Input payload for override: {input_payload}")
+#                         merged_workload = workload.copy()
+#                         for key, value in input_payload.items():
+#                             merged_workload[key] = value
+#                             logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Overriding key={key} with value={value}")
+#                         for key, value in merged_workload.items():
+#                             agent.update_context(key, value)
+#                             logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
+#                         agent.update_context('workload', merged_workload)
+#                         agent.store_workload(merged_workload)
+#                 else:
+#                     logger.info("AGENT_SERVICE.EXECUTE_AGENT: No input payload provided. Default workload from playbooks is used.")
+#                     for key, value in workload.items():
+#                         agent.update_context(key, value)
+#                         logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Updated context with key={key}, value={value}")
+#                     agent.update_context('workload', workload)
+#                     agent.store_workload(workload)
+#
+#                 server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
+#                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Using server_url={server_url}")
+#
+#                 logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Initializing Broker")
+#                 daemon = Broker(agent, server_url=server_url)
+#
+#                 logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Calling daemon.run()")
+#                 results = daemon.run()
+#                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: daemon.run() returned results={results}")
+#
+#                 export_path = None
+#
+#                 result = {
+#                     "status": "success",
+#                     "message": f"Agent executed for playbooks '{playbook_path}' version '{playbook_version}'.",
+#                     "result": results,
+#                     "execution_id": agent.execution_id,
+#                     "export_path": export_path
+#                 }
+#
+#                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Returning result={result}")
+#                 logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function exit ===")
+#                 return result
+#             finally:
+#                 if os.path.exists(temp_file_path):
+#                     logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Removing temporary file {temp_file_path}")
+#                     os.unlink(temp_file_path)
+#
+#         except Exception as e:
+#             logger.exception(f"AGENT_SERVICE.EXECUTE_AGENT: Error executing agent: {e}.")
+#             error_result = {
+#                 "status": "error",
+#                 "message": f"Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}.",
+#                 "error": str(e)
+#             }
+#             logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Returning error result={error_result}")
+#             logger.debug("=== AGENT_SERVICE.EXECUTE_AGENT: Function exit with error ===")
+#             return error_result
+#
+# def get_agent_service() -> AgentService:
+#     return AgentService(get_pgdb_connection())
+#
+# def get_agent_service_dependency() -> AgentService:
+#     return AgentService()
+
+# @router.post("/catalog/register", response_class=JSONResponse)
+# async def register_resource(
+#     request: Request,
+#     content_base64: str = None,
+#     content: str = None,
+#     resource_type: str = "Playbook"
+# ):
+#     try:
+#         if not content_base64 and not content:
+#             try:
+#                 body = await request.json()
+#                 content_base64 = body.get("content_base64")
+#                 content = body.get("content")
+#                 resource_type = body.get("resource_type", resource_type)
+#             except:
+#                 pass
+#
+#         if content_base64:
+#             import base64
+#             content = base64.b64decode(content_base64).decode('utf-8')
+#         elif not content:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="The content or content_base64 must be provided."
+#             )
+#
+#         catalog_service = get_catalog_service()
+#         result = await catalog_service.register_resource(content, resource_type)
+#         return result
+#
+#     except Exception as e:
+#         logger.exception(f"Error registering resource: {e}.")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error registering resource: {e}."
+#         )
+#
+# @router.get("/catalog/list", response_class=JSONResponse)
+# async def list_resources(
+#     request: Request,
+#     resource_type: str = None
+# ):
+#     try:
+#         catalog_service = get_catalog_service()
+#         entries = await catalog_service.list_entries(resource_type)
+#         return {"entries": entries}
+#
+#     except Exception as e:
+#         logger.exception(f"Error listing resources: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error listing resources: {e}"
+#         )
+
+# @router.get("/events/by-execution/{execution_id}", response_class=JSONResponse)
+# async def get_events_by_execution(
+#     request: Request,
+#     execution_id: str
+# ):
+#     """
+#     Get all events for a specific execution.
+#     """
+#     try:
+#         event_service = get_event_service()
+#         events = event_service.get_events_by_execution_id(execution_id)
+#         if not events:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"No events found for execution '{execution_id}'."
+#             )
+#         return events
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error fetching events by execution: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error fetching events by execution: {e}"
+#         )
+#
+# @router.get("/events/by-id/{event_id}", response_class=JSONResponse)
+# async def get_event_by_id(
+#     request: Request,
+#     event_id: str
+# ):
+#     """
+#     Get a single event by its ID.
+#     """
+#     try:
+#         event_service = get_event_service()
+#         event = event_service.get_event_by_id(event_id)
+#         if not event:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Event with ID '{event_id}' not found."
+#             )
+#         return event
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error fetching event by ID: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error fetching event by ID: {e}"
+#         )
+#
+# @router.get("/events/{event_id}", response_class=JSONResponse)
+# async def get_event(
+#     request: Request,
+#     event_id: str
+# ):
+#     """
+#     Legacy endpoint for getting events by execution_id or event_id.
+#     Use /events/by-execution/{execution_id} or /events/by-id/{event_id} instead.
+#     """
+#     try:
+#         event_service = get_event_service()
+#         event = event_service.get_event(event_id)
+#         if not event:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Event '{event_id}' not found."
+#             )
+#         return event
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error fetching event: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error fetching event: {e}"
+#         )
+#
+# @router.get("/events/query", response_class=JSONResponse)
+# async def get_event_by_query(
+#     request: Request,
+#     event_id: str = None
+# ):
+#     if not event_id:
+#         raise HTTPException(
+#             status_code=400,
+#             detail="event_id query parameter is required."
+#         )
+#
+#     try:
+#         event_service = get_event_service()
+#         event = event_service.get_event(event_id)
+#         if not event:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Event '{event_id}' not found."
+#             )
+#         return event
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error fetching event: {e}.")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error fetching event: {e}."
+#         )
+
+# @router.get("/execution/data/{execution_id}", response_class=JSONResponse)
+# async def get_execution_data(
+#     request: Request,
+#     execution_id: str
+# ):
+#     try:
+#         event_service = get_event_service()
+#         event = event_service.get_event(execution_id)
+#         if not event:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Execution '{execution_id}' not found."
+#             )
+#         return event
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error fetching execution data: {e}.")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error fetching execution data: {e}."
+#         )
+
+# @router.post("/events", response_class=JSONResponse)
+# async def create_event(
+#     request: Request,
+#     background_tasks: BackgroundTasks
+# ):
+#     try:
+#         body = await request.json()
+#         event_service = get_event_service()
+#         result = event_service.emit(body)
+#         try:
+#             execution_id = result.get("execution_id") or body.get("execution_id")
+#             if execution_id:
+#                 # schedule async evaluator without blocking the request
+#                 try:
+#                     asyncio.create_task(evaluate_broker_for_execution(execution_id))
+#                 except Exception:
+#                     # fallback to background task for environments without running loop
+#                     background_tasks.add_task(lambda eid=execution_id: _evaluate_broker_for_execution(eid))
+#         except Exception:
+#             pass
+#         return result
+#     except Exception as e:
+#         logger.exception(f"Error creating event: {e}.")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error creating event: {e}."
+#         )
+
+
+# @router.post("/agent/execute", response_class=JSONResponse)
+# async def execute_agent(
+#     request: Request,
+#     path: str = None,
+#     version: str = None,
+#     input_payload: Dict[str, Any] = None,
+#     sync_to_postgres: bool = True,
+#     merge: bool = False
+# ):
+#     try:
+#         logger.debug("=== EXECUTE_AGENT: Function entry ===")
+#         logger.debug(f"EXECUTE_AGENT: Initial parameters - path={path}, version={version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
+#
+#         if not path:
+#             try:
+#                 body = await request.json()
+#                 path = body.get("path", path)
+#                 version = body.get("version", version)
+#                 input_payload = body.get("input_payload", input_payload)
+#                 sync_to_postgres = body.get("sync_to_postgres", sync_to_postgres)
+#                 merge = body.get("merge", merge)
+#                 logger.debug(f"EXECUTE_AGENT: Parameters from request body - path={path}, version={version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}")
+#             except Exception as e:
+#                 logger.debug(f"EXECUTE_AGENT: Failed to parse request body: {e}")
+#                 pass
+#
+#         if not path:
+#             logger.error("EXECUTE_AGENT: Missing required parameter path")
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Path is a required parameter."
+#             )
+#
+#         logger.debug(f"EXECUTE_AGENT: Getting catalog service")
+#         catalog_service = get_catalog_service()
+#         if not version:
+#             version = await catalog_service.get_latest_version(path)
+#             logger.debug(f"EXECUTE_AGENT: Version not specified, using latest version: {version}")
+#
+#         logger.debug(f"EXECUTE_AGENT: Fetching entry for path={path}, version={version}")
+#         entry = await catalog_service.fetch_entry(path, version)
+#         if not entry:
+#             logger.error(f"EXECUTE_AGENT: Playbook '{path}' with version '{version}' not found")
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Playbook '{path}' with version '{version}' not found."
+#             )
+#
+#         logger.debug(f"EXECUTE_AGENT: Calling broker.execute_playbook_via_broker with playbook_path={path}, playbook_version={version}")
+#         result = await asyncio.to_thread(
+#             execute_playbook_via_broker,
+#             entry.get("content"),
+#             path,
+#             version,
+#             input_payload,
+#             sync_to_postgres,
+#             merge
+#         )
+#         logger.debug(f"EXECUTE_AGENT: broker.execute_playbook_via_broker returned result={result}")
+#
+#         logger.debug("=== EXECUTE_AGENT: Function exit ===")
+#         return result
+#
+#     except Exception as e:
+#         logger.exception(f"Error executing agent: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error executing agent for playbooks '{path}' version '{version}': {e}."
+#         )
+#
+# @router.post("/agent/execute-async", response_class=JSONResponse)
+# async def execute_agent_async(
+#     request: Request,
+#     background_tasks: BackgroundTasks,
+#     path: str = None,
+#     version: str = None,
+#     input_payload: Dict[str, Any] = None,
+#     sync_to_postgres: bool = True,
+#     merge: bool = False
+# ):
+#
+#     try:
+#         if not path:
+#             try:
+#                 body = await request.json()
+#                 path = body.get("path", path)
+#                 version = body.get("version", version)
+#                 input_payload = body.get("input_payload", input_payload)
+#                 sync_to_postgres = body.get("sync_to_postgres", sync_to_postgres)
+#                 merge = body.get("merge", merge)
+#             except:
+#                 pass
+#
+#         if not path:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Path is a required parameter."
+#             )
+#
+#         catalog_service = get_catalog_service()
+#
+#         if not version:
+#             version = await catalog_service.get_latest_version(path)
+#             logger.info(f"Version not specified, using latest version: {version}")
+#
+#         entry = await catalog_service.fetch_entry(path, version)
+#         if not entry:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Playbook '{path}' with version '{version}' not found."
+#             )
+#
+#         event_service = get_event_service()
+#         initial_event_data = {
+#             "event_type": "AgentExecutionRequested",
+#             "status": "REQUESTED",
+#             "meta": {
+#                 "resource_path": path,
+#                 "resource_version": version,
+#             },
+#             "result": input_payload,
+#             "node_type": "playbooks",
+#             "node_name": path
+#         }
+#
+#         initial_event = event_service.emit(initial_event_data)
+#
+#         def execute_agent_task():
+#             try:
+#                 result = execute_playbook_via_broker(
+#                     entry.get("content"),
+#                     path,
+#                     version,
+#                     input_payload,
+#                     sync_to_postgres,
+#                     merge
+#                 )
+#                 event_id = initial_event.get("event_id")
+#                 if result.get("status") == "success":
+#                     execution_id = result.get("execution_id")
+#                     update_event = {
+#                         "event_id": event_id,
+#                         "execution_id": execution_id,
+#                         "event_type": "agent_execution_completed",
+#                         "status": "COMPLETED",
+#                         "result": result.get("result"),
+#                         "meta": {
+#                             "resource_path": path,
+#                             "resource_version": version,
+#                             "execution_id": execution_id
+#                         },
+#                         "node_type": "playbooks",
+#                         "node_name": path
+#                     }
+#                     event_service.emit(update_event)
+#                     logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
+#                 else:
+#                     error_event = {
+#                         "event_id": event_id,
+#                         "execution_id": event_id,
+#                         "event_type": "agent_execution_error",
+#                         "status": "ERROR",
+#                         "error": result.get("error"),
+#                         "result": {"error": result.get("error")},
+#                         "meta": {
+#                             "resource_path": path,
+#                             "resource_version": version,
+#                             "error": result.get("error")
+#                         },
+#                         "node_type": "playbooks",
+#                         "node_name": path
+#                     }
+#                     event_service.emit(error_event)
+#                     logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
+#             except Exception as e:
+#                 logger.exception(f"Error in background agent execution: {e}.")
+#                 event_id = initial_event.get("event_id")
+#                 error_event = {
+#                     "event_id": event_id,
+#                     "execution_id": event_id,
+#                     "event_type": "agent_execution_error",
+#                     "status": "ERROR",
+#                     "error": str(e),
+#                     "result": {"error": str(e)},
+#                     "meta": {
+#                         "resource_path": path,
+#                         "resource_version": version,
+#                         "error": str(e)
+#                     },
+#                     "node_type": "playbooks",
+#                     "node_name": path
+#                 }
+#                 event_service.emit(error_event)
+#                 logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
+#
+#         background_tasks.add_task(execute_agent_task)
+#
+#         return {
+#             "status": "accepted",
+#             "message": f"Agent execution started for playbooks '{path}' version '{version}'.",
+#             "event_id": initial_event.get("event_id")
+#         }
+#
+#     except Exception as e:
+#         logger.exception(f"Error starting agent execution: {e}.")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error starting agent execution for playbooks '{path}' version '{version}': {e}"
+#         )
+
+
+# @router.get("/dashboard/stats", response_class=JSONResponse)
+# async def get_dashboard_stats():
+#     """Get dashboard statistics"""
+#     try:
+#         return {
+#             "total_executions": 0,
+#             "successful_executions": 0,
+#             "failed_executions": 0,
+#             "total_playbooks": 0,
+#             "active_workflows": 0
+#         }
+#     except Exception as e:
+#         logger.error(f"Error getting dashboard stats: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @router.get("/dashboard/widgets", response_class=JSONResponse)
+# async def get_dashboard_widgets():
+#     """Get dashboard widgets"""
+#     try:
+#         return []
+#     except Exception as e:
+#         logger.error(f"Error getting dashboard widgets: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+
+# @router.get("/playbooks", response_class=JSONResponse)
+# async def get_playbooks():
+#     """Get all playbooks (legacy endpoint)"""
+#     return await get_catalog_playbooks()
+#
+# @router.get("/catalog/playbooks", response_class=JSONResponse)
+# async def get_catalog_playbooks():
+#     """Get all playbooks"""
+#     try:
+#         catalog_service = get_catalog_service()
+#         entries = await catalog_service.list_entries('Playbook')
+#
+#         playbooks = []
+#         for entry in entries:
+#             meta = entry.get('meta', {})
+#
+#             description = ""
+#             payload = entry.get('payload', {})
+#
+#             if isinstance(payload, str):
+#                 try:
+#                     payload_data = json.loads(payload)
+#                     description = payload_data.get('description', '')
+#                 except json.JSONDecodeError:
+#                     description = ""
+#             elif isinstance(payload, dict):
+#                 description = payload.get('description', '')
+#
+#             if not description:
+#                 description = meta.get('description', '')
+#
+#             playbook = {
+#                 "id": entry.get('resource_path', ''),
+#                 "name": entry.get('resource_path', '').split('/')[-1],
+#                 "resource_type": entry.get('resource_type', ''),
+#                 "resource_version": entry.get('resource_version', ''),
+#                 "meta": entry.get('meta', ''),
+#                 "timestamp": entry.get('timestamp', ''),
+#                 "description": description,
+#                 "created_at": entry.get('timestamp', ''),
+#                 "updated_at": entry.get('timestamp', ''),
+#                 "status": meta.get('status', 'active'),
+#                 "tasks_count": meta.get('tasks_count', 0)
+#             }
+#             playbooks.append(playbook)
+#
+#         return playbooks
+#     except Exception as e:
+#         logger.error(f"Error getting playbooks: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @router.post("/catalog/playbooks", response_class=JSONResponse)
+# async def create_catalog_playbook(request: Request):
+#     """Create a new playbooks"""
+#     try:
+#         body = await request.json()
+#         name = body.get("name", "New Playbook")
+#         description = body.get("description", "")
+#         status = body.get("status", "draft")
+#
+#         content = f"""# {name}
+# name: "{name.lower().replace(' ', '-')}"
+# description: "{description}"
+# tasks:
+#   - name: "sample-task"
+#     type: "log"
+#     config:
+#       message: "Hello from NoETL!"
+# """
+#
+#         catalog_service = get_catalog_service()
+#         result = await catalog_service.register_resource(content, "playbooks")
+#
+#         playbook = {
+#             "id": result.get("resource_path", ""),
+#             "name": name,
+#             "description": description,
+#             "created_at": result.get("timestamp", ""),
+#             "updated_at": result.get("timestamp", ""),
+#             "status": status,
+#             "tasks_count": 1,
+#             "version": result.get("resource_version", "")
+#         }
+#
+#         return playbook
+#     except Exception as e:
+#         logger.error(f"Error creating playbooks: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @router.post("/catalog/playbooks/validate", response_class=JSONResponse)
+# async def validate_catalog_playbook(request: Request):
+#     """Validate playbooks content"""
+#     try:
+#         body = await request.json()
+#         content = body.get("content")
+#
+#         if not content:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Content is required."
+#             )
+#
+#         try:
+#             yaml.safe_load(content)
+#             return {"valid": True}
+#         except Exception as yaml_error:
+#             return {
+#                 "valid": False,
+#                 "errors": [str(yaml_error)]
+#             }
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error validating playbooks: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/executions/run", response_class=JSONResponse)
 async def execute_playbook(request: Request):
@@ -1437,769 +1181,559 @@ async def execute_playbook(request: Request):
         logger.error(f"Error executing playbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/catalog/playbooks/content", response_class=JSONResponse)
-async def get_catalog_playbook_content(playbook_id: str = Query(...)):
-    """Get playbook content"""
-    try:
-        logger.info(f"Received playbook_id: '{playbook_id}'")
-        if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]
-            logger.info(f"Fixed playbook_id: '{playbook_id}'")
-        
-        catalog_service = get_catalog_service()
-        latest_version = await catalog_service.get_latest_version(playbook_id)
-        logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
-        
-        entry = await catalog_service.fetch_entry(playbook_id, latest_version)
-        
-        if not entry:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Playbook '{playbook_id}' not found."
-            )
-        
-        return {"content": entry.get('content', '')}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting playbook content: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# @router.get("/catalog/playbooks/content", response_class=JSONResponse)
+# async def get_catalog_playbook_content(playbook_id: str = Query(...)):
+#     """Get playbook content"""
+#     try:
+#         logger.info(f"Received playbook_id: '{playbook_id}'")
+#         if playbook_id.startswith("playbooks/"):
+#             playbook_id = playbook_id[10:]
+#             logger.info(f"Fixed playbook_id: '{playbook_id}'")
+#
+#         catalog_service = get_catalog_service()
+#         latest_version = await catalog_service.get_latest_version(playbook_id)
+#         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
+#
+#         entry = await catalog_service.fetch_entry(playbook_id, latest_version)
+#
+#         if not entry:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Playbook '{playbook_id}' not found."
+#             )
+#
+#         return {"content": entry.get('content', '')}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error getting playbook content: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @router.get("/catalog/playbook", response_class=JSONResponse)
+# async def get_catalog_playbook(
+#     playbook_id: str = Query(...),
+#     # entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
+# ):
+#     """Get a single playbook by ID"""
+#     try:
+#         entry: Dict[str, Any] = await get_playbook_entry_from_catalog(playbook_id=playbook_id)
+#         meta = entry.get('meta', {})
+#         playbook_data = {
+#             "id": entry.get('resource_path', ''),
+#             "name": entry.get('resource_path', '').split('/')[-1],
+#             "description": meta.get('description', ''),
+#             "created_at": entry.get('timestamp', ''),
+#             "updated_at": entry.get('timestamp', ''),
+#             "status": meta.get('status', 'active'),
+#             "tasks_count": meta.get('tasks_count', 0),
+#             "version": entry.get('resource_version', '')
+#         }
+#         return playbook_data
+#     except Exception as e:
+#         logger.error(f"Error processing playbook entry: {e}")
+#         raise HTTPException(status_code=500, detail="Error processing playbook data.")
+#
+# @router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
+# async def save_catalog_playbook_content(playbook_id: str, request: Request):
+#     """Save playbooks content"""
+#     try:
+#         logger.info(f"Received playbook_id for save: '{playbook_id}'")
+#         if playbook_id.startswith("playbooks/"):
+#             playbook_id = playbook_id[10:]
+#             logger.info(f"Fixed playbook_id for save: '{playbook_id}'")
+#
+#         body = await request.json()
+#         content = body.get("content")
+#
+#         if not content:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Content is required."
+#             )
+#         catalog_service = get_catalog_service()
+#         result = await catalog_service.register_resource(content, "playbooks")
+#
+#         return {
+#             "status": "success",
+#             "message": f"Playbook '{playbook_id}' content updated.",
+#             "resource_path": result.get("resource_path"),
+#             "resource_version": result.get("resource_version")
+#         }
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error saving playbooks content: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @router.get("/catalog/widgets", response_class=JSONResponse)
+# async def get_catalog_widgets():
+#     """Get catalog visualization widgets"""
+#     try:
+#         playbook_count = 0
+#         active_count = 0
+#         draft_count = 0
+#
+#         try:
+#             with get_db_connection() as conn:
+#                 with conn.cursor() as cursor:
+#                     cursor.execute(
+#                         "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
+#                     )
+#                     playbook_count = cursor.fetchone()[0]
+#
+#                     cursor.execute(
+#                         """
+#                         SELECT meta FROM catalog
+#                         WHERE resource_type = 'widget'
+#                         """
+#                     )
+#                     results = cursor.fetchall()
+#
+#                     for row in results:
+#                         meta_str = row[0]
+#                         if meta_str:
+#                             try:
+#                                 meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+#                                 status = meta.get('status', 'active')
+#                                 if status == 'active':
+#                                     active_count += 1
+#                                 elif status == 'draft':
+#                                     draft_count += 1
+#                             except (json.JSONDecodeError, TypeError):
+#                                 active_count += 1
+#                         else:
+#                             active_count += 1
+#         except Exception as db_error:
+#             logger.warning(f"Error getting catalog stats from database: {db_error}")
+#             playbook_count = 0
+#
+#         return [
+#             {
+#                 "id": "catalog-summary",
+#                 "type": "metric",
+#                 "title": "Total Playbooks",
+#                 "data": {
+#                     "value": playbook_count
+#                 },
+#                 "config": {
+#                     "format": "number",
+#                     "color": "#1890ff"
+#                 }
+#             },
+#             {
+#                 "id": "active-playbooks",
+#                 "type": "metric",
+#                 "title": "Active Playbooks",
+#                 "data": {
+#                     "value": active_count
+#                 },
+#                 "config": {
+#                     "format": "number",
+#                     "color": "#52c41a"
+#                 }
+#             },
+#             {
+#                 "id": "draft-playbooks",
+#                 "type": "metric",
+#                 "title": "Draft Playbooks",
+#                 "data": {
+#                     "value": draft_count
+#                 },
+#                 "config": {
+#                     "format": "number",
+#                     "color": "#faad14"
+#                 }
+#             }
+#         ]
+#     except Exception as e:
+#         logger.error(f"Error getting catalog widgets: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/catalog/playbook", response_class=JSONResponse)
-async def get_catalog_playbook(
-    playbook_id: str = Query(...),
-    # entry: Dict[str, Any] = Depends(get_playbook_entry_from_catalog)
-):
-    """Get a single playbook by ID"""
-    try:
-        entry: Dict[str, Any] = await get_playbook_entry_from_catalog(playbook_id=playbook_id)
-        meta = entry.get('meta', {})
-        playbook_data = {
-            "id": entry.get('resource_path', ''),
-            "name": entry.get('resource_path', '').split('/')[-1],
-            "description": meta.get('description', ''),
-            "created_at": entry.get('timestamp', ''),
-            "updated_at": entry.get('timestamp', ''),
-            "status": meta.get('status', 'active'),
-            "tasks_count": meta.get('tasks_count', 0),
-            "version": entry.get('resource_version', '')
-        }
-        return playbook_data
-    except Exception as e:
-        logger.error(f"Error processing playbook entry: {e}")
-        raise HTTPException(status_code=500, detail="Error processing playbook data.")
+# @router.get("/executions", response_class=JSONResponse)
+# async def get_executions():
+#     """Get all executions"""
+#     try:
+#         event_service = get_event_service()
+#         executions = event_service.get_all_executions()
+#         return executions
+#     except Exception as e:
+#         logger.error(f"Error getting executions: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @router.get("/executions/{execution_id}", response_class=JSONResponse)
+# async def get_execution(execution_id: str):
+#     try:
+#         event_service = get_event_service()
+#         events = event_service.get_events_by_execution_id(execution_id)
+#
+#         if not events:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Execution '{execution_id}' not found."
+#             )
+#
+#         latest_event = None
+#         for event in events.get("events", []):
+#             if not latest_event or (event.get("timestamp", "") > latest_event.get("timestamp", "")):
+#                 latest_event = event
+#
+#         if not latest_event:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"No events found for execution '{execution_id}'."
+#             )
+#
+#         metadata = latest_event.get("metadata", {})
+#         input_context = latest_event.get("input_context", {})
+#         output_result = latest_event.get("output_result", {})
+#
+#         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+#         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+#
+#         raw_status = latest_event.get("status", "")
+#         status = event_service._normalize_status(raw_status)
+#
+#         timestamps = [event.get("timestamp", "") for event in events.get("events", []) if event.get("timestamp")]
+#         timestamps.sort()
+#
+#         start_time = timestamps[0] if timestamps else None
+#         end_time = timestamps[-1] if timestamps and status in ['completed', 'failed'] else None
+#
+#         duration = None
+#         if start_time and end_time:
+#             try:
+#                 start_dt = datetime.fromisoformat(start_time)
+#                 end_dt = datetime.fromisoformat(end_time)
+#                 duration = (end_dt - start_dt).total_seconds()
+#             except Exception as e:
+#                 logger.error(f"Error calculating duration: {e}")
+#
+#         if status in ['completed', 'failed']:
+#             progress = 100
+#         elif status == 'running':
+#             normalized_statuses = [event_service._normalize_status(e.get('status')) for e in events.get('events', [])]
+#             total = len(normalized_statuses)
+#             done = sum(1 for s in normalized_statuses if s in {'completed', 'failed'})
+#             progress = int((done / total) * 100) if total else 0
+#         else:
+#             progress = 0
+#
+#         execution_data = {
+#             "id": execution_id,
+#             "playbook_id": playbook_id,
+#             "playbook_name": playbook_name,
+#             "status": status,
+#             "start_time": start_time,
+#             "end_time": end_time,
+#             "duration": duration,
+#             "progress": progress,
+#             "result": output_result,
+#             "error": latest_event.get("error"),
+#             "events": events.get("events", [])
+#         }
+#
+#         return execution_data
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error getting execution: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
-@router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
-async def save_catalog_playbook_content(playbook_id: str, request: Request):
-    """Save playbooks content"""
-    try:
-        logger.info(f"Received playbook_id for save: '{playbook_id}'")
-        if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]
-            logger.info(f"Fixed playbook_id for save: '{playbook_id}'")
-        
-        body = await request.json()
-        content = body.get("content")
-        
-        if not content:
-            raise HTTPException(
-                status_code=400,
-                detail="Content is required."
-            )
-        catalog_service = get_catalog_service()
-        result = await catalog_service.register_resource(content, "playbooks")
-        
-        return {
-            "status": "success",
-            "message": f"Playbook '{playbook_id}' content updated.",
-            "resource_path": result.get("resource_path"),
-            "resource_version": result.get("resource_version")
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error saving playbooks content: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# @router.get("/health", response_class=JSONResponse)
+# async def api_health():
+#     """API health check endpoint"""
+#     return {"status": "ok"}
 
-@router.get("/catalog/widgets", response_class=JSONResponse)
-async def get_catalog_widgets():
-    """Get catalog visualization widgets"""
-    try:
-        playbook_count = 0
-        active_count = 0
-        draft_count = 0
-        
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
-                    )
-                    playbook_count = cursor.fetchone()[0]
-                    
-                    cursor.execute(
-                        """
-                        SELECT meta FROM catalog 
-                        WHERE resource_type = 'widget'
-                        """
-                    )
-                    results = cursor.fetchall()
-                    
-                    for row in results:
-                        meta_str = row[0]
-                        if meta_str:
-                            try:
-                                meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
-                                status = meta.get('status', 'active')
-                                if status == 'active':
-                                    active_count += 1
-                                elif status == 'draft':
-                                    draft_count += 1
-                            except (json.JSONDecodeError, TypeError):
-                                active_count += 1
-                        else:
-                            active_count += 1
-        except Exception as db_error:
-            logger.warning(f"Error getting catalog stats from database: {db_error}")
-            playbook_count = 0
+# @router.post("/worker/pool/register", response_class=JSONResponse)
+# async def register_worker_pool(request: Request):
+#     """
+#     Register or update a worker pool in the runtime registry.
+#     Body:
+#       { name, runtime, base_url, status, capacity?, labels?, pid?, hostname?, meta? }
+#     """
+#     try:
+#         body = await request.json()
+#         name = (body.get("name") or "").strip()
+#         runtime = (body.get("runtime") or "").strip().lower()
+#         base_url = (body.get("base_url") or "").strip()
+#         status = (body.get("status") or "ready").strip().lower()
+#         capacity = body.get("capacity")
+#         labels = body.get("labels")
+#         pid = body.get("pid")
+#         hostname = body.get("hostname")
+#         meta = body.get("meta") or {}
+#         if not name or not runtime or not base_url:
+#             raise HTTPException(status_code=400, detail="name, runtime, and base_url are required")
+#
+#         import datetime as _dt
+#         try:
+#             from noetl.common import get_snowflake_id
+#             rid = get_snowflake_id()
+#         except Exception:
+#             rid = int(_dt.datetime.now().timestamp() * 1000)
+#
+#         payload_runtime = {
+#             "type": runtime,
+#             "pid": pid,
+#             "hostname": hostname,
+#             **({} if not isinstance(meta, dict) else meta),
+#         }
+#
+#         labels_json = json.dumps(labels) if labels is not None else None
+#         runtime_json = json.dumps(payload_runtime)
+#
+#         from noetl.common import get_db_connection
+#         with get_db_connection() as conn:
+#             with conn.cursor() as cursor:
+#                 cursor.execute(
+#                     f"""
+#                     INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+#                     VALUES (%s, %s, 'worker_pool', %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
+#                     ON CONFLICT (component_type, name)
+#                     DO UPDATE SET
+#                         base_url = EXCLUDED.base_url,
+#                         status = EXCLUDED.status,
+#                         labels = EXCLUDED.labels,
+#                         capacity = EXCLUDED.capacity,
+#                         runtime = EXCLUDED.runtime,
+#                         last_heartbeat = now(),
+#                         updated_at = now()
+#                     RETURNING runtime_id
+#                     """,
+#                     (rid, name, base_url, status, labels_json, capacity, runtime_json)
+#                 )
+#                 row = cursor.fetchone()
+#                 conn.commit()
+#         return {"status": "ok", "name": name, "runtime": runtime, "runtime_id": row[0] if row else rid}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error registering worker pool: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @router.delete("/worker/pool/deregister", response_class=JSONResponse)
+# async def deregister_worker_pool(request: Request):
+#     """
+#     Deregister a worker pool by name (marks as offline).
+#     Body: { name }
+#     """
+#     try:
+#         body = await request.json()
+#         name = (body.get("name") or "").strip()
+#         if not name:
+#             raise HTTPException(status_code=400, detail="name is required")
+#         from noetl.common import get_db_connection
+#         with get_db_connection() as conn:
+#             with conn.cursor() as cursor:
+#                 cursor.execute(
+#                     """
+#                     UPDATE runtime
+#                     SET status = 'offline', updated_at = now()
+#                     WHERE component_type = 'worker_pool' AND name = %s
+#                     """,
+#                     (name,)
+#                 )
+#                 conn.commit()
+#         return {"status": "ok", "name": name}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error deregistering worker pool: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
-        return [
-            {
-                "id": "catalog-summary",
-                "type": "metric",
-                "title": "Total Playbooks",
-                "data": {
-                    "value": playbook_count
-                },
-                "config": {
-                    "format": "number",
-                    "color": "#1890ff"
-                }
-            },
-            {
-                "id": "active-playbooks",
-                "type": "metric", 
-                "title": "Active Playbooks",
-                "data": {
-                    "value": active_count
-                },
-                "config": {
-                    "format": "number",
-                    "color": "#52c41a"
-                }
-            },
-            {
-                "id": "draft-playbooks",
-                "type": "metric",
-                "title": "Draft Playbooks", 
-                "data": {
-                    "value": draft_count
-                },
-                "config": {
-                    "format": "number",
-                    "color": "#faad14"
-                }
-            }
-        ]
-    except Exception as e:
-        logger.error(f"Error getting catalog widgets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/executions", response_class=JSONResponse)
-async def get_executions():
-    """Get all executions"""
-    try:
-        event_service = get_event_service()
-        executions = event_service.get_all_executions()
-        return executions
-    except Exception as e:
-        logger.error(f"Error getting executions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/executions/{execution_id}", response_class=JSONResponse)
-async def get_execution(execution_id: str):
-    try:
-        event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
-        
-        if not events:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Execution '{execution_id}' not found."
-            )
-        
-        latest_event = None
-        for event in events.get("events", []):
-            if not latest_event or (event.get("timestamp", "") > latest_event.get("timestamp", "")):
-                latest_event = event
-        
-        if not latest_event:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No events found for execution '{execution_id}'."
-            )
-        
-        metadata = latest_event.get("metadata", {})
-        input_context = latest_event.get("input_context", {})
-        output_result = latest_event.get("output_result", {})
-        
-        playbook_id = metadata.get('resource_path', input_context.get('path', ''))
-        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-        
-        raw_status = latest_event.get("status", "")
-        status = event_service._normalize_status(raw_status)
-        
-        timestamps = [event.get("timestamp", "") for event in events.get("events", []) if event.get("timestamp")]
-        timestamps.sort()
-        
-        start_time = timestamps[0] if timestamps else None
-        end_time = timestamps[-1] if timestamps and status in ['completed', 'failed'] else None
-        
-        duration = None
-        if start_time and end_time:
-            try:
-                start_dt = datetime.fromisoformat(start_time)
-                end_dt = datetime.fromisoformat(end_time)
-                duration = (end_dt - start_dt).total_seconds()
-            except Exception as e:
-                logger.error(f"Error calculating duration: {e}")
-        
-        if status in ['completed', 'failed']:
-            progress = 100
-        elif status == 'running':
-            normalized_statuses = [event_service._normalize_status(e.get('status')) for e in events.get('events', [])]
-            total = len(normalized_statuses)
-            done = sum(1 for s in normalized_statuses if s in {'completed', 'failed'})
-            progress = int((done / total) * 100) if total else 0
-        else:
-            progress = 0
-        
-        execution_data = {
-            "id": execution_id,
-            "playbook_id": playbook_id,
-            "playbook_name": playbook_name,
-            "status": status,
-            "start_time": start_time,
-            "end_time": end_time,
-            "duration": duration,
-            "progress": progress,
-            "result": output_result,
-            "error": latest_event.get("error"),
-            "events": events.get("events", [])
-        }
-        
-        return execution_data
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting execution: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/health", response_class=JSONResponse)
-async def api_health():
-    """API health check endpoint"""
-    return {"status": "ok"}
-
-@router.post("/worker/pool/register", response_class=JSONResponse)
-async def register_worker_pool(request: Request):
-    """
-    Register or update a worker pool in the runtime registry.
-    Body:
-      { name, runtime, base_url, status, capacity?, labels?, pid?, hostname?, meta? }
-    """
-    try:
-        body = await request.json()
-        name = (body.get("name") or "").strip()
-        runtime = (body.get("runtime") or "").strip().lower()
-        base_url = (body.get("base_url") or "").strip()
-        status = (body.get("status") or "ready").strip().lower()
-        capacity = body.get("capacity")
-        labels = body.get("labels")
-        pid = body.get("pid")
-        hostname = body.get("hostname")
-        meta = body.get("meta") or {}
-        if not name or not runtime or not base_url:
-            raise HTTPException(status_code=400, detail="name, runtime, and base_url are required")
-
-        import datetime as _dt
-        try:
-            from noetl.common import get_snowflake_id
-            rid = get_snowflake_id()
-        except Exception:
-            rid = int(_dt.datetime.now().timestamp() * 1000)
-
-        payload_runtime = {
-            "type": runtime,
-            "pid": pid,
-            "hostname": hostname,
-            **({} if not isinstance(meta, dict) else meta),
-        }
-
-        labels_json = json.dumps(labels) if labels is not None else None
-        runtime_json = json.dumps(payload_runtime)
-
-        from noetl.common import get_db_connection
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    f"""
-                    INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
-                    VALUES (%s, %s, 'worker_pool', %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
-                    ON CONFLICT (component_type, name)
-                    DO UPDATE SET
-                        base_url = EXCLUDED.base_url,
-                        status = EXCLUDED.status,
-                        labels = EXCLUDED.labels,
-                        capacity = EXCLUDED.capacity,
-                        runtime = EXCLUDED.runtime,
-                        last_heartbeat = now(),
-                        updated_at = now()
-                    RETURNING runtime_id
-                    """,
-                    (rid, name, base_url, status, labels_json, capacity, runtime_json)
-                )
-                row = cursor.fetchone()
-                conn.commit()
-        return {"status": "ok", "name": name, "runtime": runtime, "runtime_id": row[0] if row else rid}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error registering worker pool: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/worker/pool/deregister", response_class=JSONResponse)
-async def deregister_worker_pool(request: Request):
-    """
-    Deregister a worker pool by name (marks as offline).
-    Body: { name }
-    """
-    try:
-        body = await request.json()
-        name = (body.get("name") or "").strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="name is required")
-        from noetl.common import get_db_connection
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE runtime
-                    SET status = 'offline', updated_at = now()
-                    WHERE component_type = 'worker_pool' AND name = %s
-                    """,
-                    (name,)
-                )
-                conn.commit()
-        return {"status": "ok", "name": name}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error deregistering worker pool: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/catalog/{path:path}/{version}", response_class=JSONResponse)
-async def get_resource(
-    request: Request,
-    path: str,
-    version: str
-):
-    try:
-        catalog_service = get_catalog_service()
-        entry = await catalog_service.fetch_entry(path, version)
-        if not entry:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Resource '{path}' with version '{version}' not found."
-            )
-        return entry
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error fetching resource: {e}.")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching resource: {e}."
-        )
-
-@router.post("/postgres/execute", response_class=JSONResponse)
-async def execute_postgres(
-    request: Request,
-    query: str = None,
-    query_base64: str = None,
-    procedure: str = None,
-    parameters: Any = None,
-    schema: str = None,
-    connection_string: str = None
-):
-    """
-    Execute a Postgres query or stored procedure.
-    
-    Args:
-        query: SQL query to execute. Mutually exclusive with procedure and query_base64.
-        query_base64: Base64-encoded SQL query to execute. Mmutually exclusive with query and procedure.
-        procedure: Stored procedure to call. Mutually exclusive with query and query_base64.
-        parameters: List of parameters for the query or procedure
-        schema: Optional schema to use. Defaults to NOETL_SCHEMA from environment.
-        connection_string: Optional custom connection string to use instead of the default
-    
-    Returns:
-        JSON response with the results of the query or procedure
-    """
-    try:
-        logger.debug("=== EXECUTE_POSTGRES: Function entry ===")
-        
-        try:
-            body = await request.json()
-            query = body.get("query", query)
-            query_base64 = body.get("query_base64", query_base64)
-            procedure = body.get("procedure", procedure)
-            parameters = body.get("parameters", parameters)
-            schema = body.get("schema", schema)
-            connection_string = body.get("connection_string", connection_string)
-            logger.debug(f"EXECUTE_POSTGRES: Parameters from request body - query={query}, query_base64={query_base64}, procedure={procedure}, parameters={parameters}, schema={schema}, connection_string={connection_string}")
-        except Exception as e:
-            logger.debug(f"EXECUTE_POSTGRES: Failed to parse request body: {e}")
-            pass
-            
-        logger.debug(f"EXECUTE_POSTGRES: query={query}, query_base64={query_base64}, procedure={procedure}, parameters={parameters}, schema={schema}")
-        
-        decoded_query = None
-        if query_base64:
-            try:
-                decoded_query = base64.b64decode(query_base64).decode('utf-8')
-                logger.debug(f"EXECUTE_POSTGRES: Decoded base64 query: {decoded_query}")
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid base64 encoding for query_base64: {str(e)}"
-                )
-        
-        provided_params = sum(1 for p in [query, decoded_query, procedure] if p)
-        
-        if provided_params == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Either 'query', 'query_base64', or 'procedure' must be provided."
-            )
-        
-        if provided_params > 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Only one of 'query', 'query_base64', or 'procedure' can be provided."
-            )
-            
-        if decoded_query:
-            query = decoded_query
-        
-        conn = None
-        try:
-            if connection_string:
-                logger.debug(f"EXECUTE_POSTGRES: Using custom connection string")
-                conn = psycopg.connect(connection_string)
-            else:
-                logger.debug(f"EXECUTE_POSTGRES: Using default connection from pool")
-                return_conn = get_db_connection()
-                conn = return_conn.__enter__()
-            
-            with conn.cursor(row_factory=dict_row) as cursor:
-                if query:
-                    logger.debug(f"EXECUTE_POSTGRES: Executing query: {query}")
-                    if parameters:
-                        cursor.execute(query, parameters)
-                    else:
-                        cursor.execute(query)
-                else:
-                    logger.debug(f"EXECUTE_POSTGRES: Calling procedure: {procedure}")
-                    if parameters:
-                        placeholders = ", ".join(["%s"] * len(parameters))
-                        call_sql = f"CALL {procedure}({placeholders})"
-                        cursor.execute(call_sql, parameters)
-                    else:
-                        call_sql = f"CALL {procedure}()"
-                        cursor.execute(call_sql)
-                
-                try:
-                    results = cursor.fetchall()
-                    logger.debug(f"EXECUTE_POSTGRES: Fetched {len(results)} rows")
-                except psycopg.ProgrammingError:
-                    results = []
-                    logger.debug("EXECUTE_POSTGRES: No results to fetch")
-                
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                
-                response_data = {
-                    "success": True,
-                    "rows_affected": cursor.rowcount if cursor.rowcount >= 0 else 0,
-                    "columns": columns,
-                    "results": results
-                }
-                
-                logger.debug(f"EXECUTE_POSTGRES: Returning response with {len(results)} results")
-                logger.debug("=== EXECUTE_POSTGRES: Function exit ===")
-                return response_data
-        finally:
-            if connection_string and conn:
-                logger.debug("EXECUTE_POSTGRES: Closing custom connection")
-                conn.close()
-            elif conn and not connection_string:
-                logger.debug("EXECUTE_POSTGRES: Returning connection to pool")
-                return_conn.__exit__(None, None, None)
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error executing PostgreSQL query or procedure: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-def _evaluate_broker_for_execution(execution_id: str):
-    """
-    Minimal broker evaluator scheduled on each event. Intended to read event_log and
-    decide next steps to run. For now, it logs the trigger; future iterations can
-    reconstruct playbook context and push tasks to /worker/action accordingly.
-    """
-    try:
-        logger.info(f"Broker evaluation triggered for execution_id={execution_id}")
-        # Placeholder for event-driven evaluation based on event_log,
-        # transition, workbook, workflow, and workload tables.
-        # This function intentionally lightweight for minimal change scope.
-    except Exception as e:
-        logger.error(f"Broker evaluation error for execution_id={execution_id}: {e}")
-
-# ===================== SCHEDULER SUPPORT =====================
-
-def _compute_next_run(cron_expr: str | None, interval_seconds: int | None, from_dt: datetime) -> datetime | None:
-    """Compute next run time using a minimal internal cron/interval parser.
-
-    Supported cron format: 5 fields (min hour day month weekday) or 6 fields (sec min hour day month weekday).
-    Field tokens: '*', '*/N', or comma separated integers. No ranges (e.g. 1-5) to keep it simple.
-    Weekday accepts 0-6 (Mon=0) or 1-7 (Mon=1/Sun=7). All times treated as UTC.
-    Falls back to interval_seconds if provided when cron parsing fails.
-    Returns None if nothing can be computed.
-    """
-    def parse_int_list(token: str, min_v: int, max_v: int, field: str) -> List[int]:
-        values: List[int] = []
-        for part in token.split(','):
-            p = part.strip()
-            if p == '*':
-                values.extend(range(min_v, max_v + 1))
-            elif p.startswith('*/'):
-                try:
-                    step = int(p[2:])
-                    if step <= 0:
-                        raise ValueError
-                    values.extend(range(min_v, max_v + 1, step))
-                except Exception:
-                    raise ValueError(f"Invalid step in {field}: {p}")
-            else:
-                try:
-                    iv = int(p)
-                except Exception:
-                    raise ValueError(f"Invalid token in {field}: {p}")
-                if iv < min_v or iv > max_v:
-                    raise ValueError(f"{field} value out of range: {iv}")
-                values.append(iv)
-        return sorted(set(values))
-
-    try:
-        if cron_expr:
-            parts = cron_expr.split()
-            if len(parts) == 5:
-                second_values = [0]
-                minute_s, hour_s, day_s, month_s, weekday_s = parts
-            elif len(parts) == 6:
-                second_s, minute_s, hour_s, day_s, month_s, weekday_s = parts
-                second_values = parse_int_list(second_s, 0, 59, 'second')
-            else:
-                raise ValueError("cron expression must have 5 or 6 fields")
-
-            minute_values = parse_int_list(minute_s, 0, 59, 'minute')
-            hour_values = parse_int_list(hour_s, 0, 23, 'hour')
-            day_values = parse_int_list(day_s, 1, 31, 'day')
-            month_values = parse_int_list(month_s, 1, 12, 'month')
-            raw_weekdays = parse_int_list(weekday_s, 0, 7, 'weekday')
-            # Normalize weekday: allow 1-7 or 0-6 input, treat Monday=0
-            weekday_values = sorted({((d - 1) % 7) if d in (1,2,3,4,5,6,7) else d for d in raw_weekdays})
-
-            candidate = from_dt + timedelta(seconds=1)
-            # Iterate up to a safe cap
-            for _ in range(50000):
-                if (candidate.second in second_values and
-                    candidate.minute in minute_values and
-                    candidate.hour in hour_values and
-                    candidate.day in day_values and
-                    candidate.month in month_values and
-                    candidate.weekday() in weekday_values):
-                    return candidate
-                candidate += timedelta(seconds=1)
-            logger.warning(f"Cron scan iteration cap exceeded for expr '{cron_expr}' from {from_dt}")
-            return None
-        if interval_seconds and interval_seconds > 0:
-            return from_dt + timedelta(seconds=int(interval_seconds))
-    except Exception as e:
-        logger.warning(f"Failed to compute next run for cron='{cron_expr}' interval={interval_seconds}: {e}")
-    return None
-
-@router.post("/schedule", response_class=JSONResponse)
-async def create_schedule(request: Request):
-    """Create a schedule row for a playbook.
-    Body: { playbook_path, playbook_version?, cron?, interval_seconds?, enabled?, timezone?, input_payload?, meta? }
-    One of cron or interval_seconds must be provided.
-    """
-    try:
-        body = await request.json()
-        pb_path = body.get('playbook_path')
-        if not pb_path:
-            raise HTTPException(status_code=400, detail="playbook_path required")
-        cron_expr = body.get('cron')
-        interval_seconds = body.get('interval_seconds')
-        if not cron_expr and not interval_seconds:
-            raise HTTPException(status_code=400, detail="cron or interval_seconds required")
-        tzname = body.get('timezone') or 'UTC'
-        enabled = bool(body.get('enabled', True))
-        payload = body.get('input_payload') or {}
-        meta = body.get('meta') or {}
-        version = body.get('playbook_version')
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
-        next_run = None
-        if enabled:
-            next_run = _compute_next_run(cron_expr, interval_seconds, now)
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO schedule (playbook_path, playbook_version, cron, interval_seconds, enabled, timezone, next_run_at, input_payload, meta)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)
-                        RETURNING schedule_id, next_run_at""",
-                    (pb_path, version, cron_expr, interval_seconds, enabled, tzname, next_run, json.dumps(payload), json.dumps(meta))
-                )
-                row = cur.fetchone()
-                conn.commit()
-        return {"status": "ok", "schedule_id": row[0], "next_run_at": row[1]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error creating schedule")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/schedule", response_class=JSONResponse)
-async def list_schedules(playbook_path: str | None = None, enabled: bool | None = None):
-    try:
-        filters = []
-        params: list[Any] = []
-        if playbook_path:
-            filters.append("playbook_path = %s")
-            params.append(playbook_path)
-        if enabled is not None:
-            filters.append("enabled = %s")
-            params.append(enabled)
-        where = f"WHERE {' AND '.join(filters)}" if filters else ''
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT schedule_id, playbook_path, playbook_version, cron, interval_seconds, enabled, timezone, next_run_at, last_run_at, last_status, input_payload, meta FROM schedule {where} ORDER BY schedule_id", params)
-                rows = cur.fetchall()
-        out = []
-        for r in rows:
-            out.append({
-                "schedule_id": r[0],
-                "playbook_path": r[1],
-                "playbook_version": r[2],
-                "cron": r[3],
-                "interval_seconds": r[4],
-                "enabled": r[5],
-                "timezone": r[6],
-                "next_run_at": r[7].isoformat() if r[7] else None,
-                "last_run_at": r[8].isoformat() if r[8] else None,
-                "last_status": r[9],
-                "input_payload": json.loads(r[10]) if r[10] else {},
-                "meta": json.loads(r[11]) if r[11] else {}
-            })
-        return out
-    except Exception as e:
-        logger.exception("Error listing schedules")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/schedule/{schedule_id}/pause", response_class=JSONResponse)
-async def pause_schedule(schedule_id: int):
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("UPDATE schedule SET enabled = FALSE, updated_at = now() WHERE schedule_id = %s", (schedule_id,))
-                if cur.rowcount == 0:
-                    raise HTTPException(status_code=404, detail="schedule not found")
-                conn.commit()
-        return {"status": "ok", "schedule_id": schedule_id, "enabled": False}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Pause schedule error")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/schedule/{schedule_id}/resume", response_class=JSONResponse)
-async def resume_schedule(schedule_id: int):
-    try:
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT cron, interval_seconds FROM schedule WHERE schedule_id = %s", (schedule_id,))
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="schedule not found")
-                next_run = _compute_next_run(row[0], row[1], now)
-                cur.execute("UPDATE schedule SET enabled = TRUE, next_run_at = %s, updated_at = now() WHERE schedule_id = %s", (next_run, schedule_id))
-                conn.commit()
-        return {"status": "ok", "schedule_id": schedule_id, "enabled": True, "next_run_at": next_run}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Resume schedule error")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/schedule/{schedule_id}", response_class=JSONResponse)
-async def delete_schedule(schedule_id: int):
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM schedule WHERE schedule_id = %s", (schedule_id,))
-                if cur.rowcount == 0:
-                    raise HTTPException(status_code=404, detail="schedule not found")
-                conn.commit()
-        return {"status": "ok", "schedule_id": schedule_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Delete schedule error")
-        raise HTTPException(status_code=500, detail=str(e))
-
-def poll_and_trigger_schedules():
-    """Called periodically (e.g., every minute) by a scheduler action. Picks due schedules and enqueues executions."""
-    now = datetime.utcnow().replace(tzinfo=timezone.utc)
-    triggered: list[int] = []
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT schedule_id, playbook_path, COALESCE(playbook_version,''), cron, interval_seconds, timezone, input_payload FROM schedule WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= %s FOR UPDATE SKIP LOCKED", (now,))
-                rows = cur.fetchall()
-                for r in rows:
-                    sid, path, version, cron_expr, interval_seconds, tzname, pl_raw = r
-                    payload = json.loads(pl_raw) if pl_raw else {}
-                    # fetch playbook latest version if not specified
-                    playbook_version = version or asyncio.run(get_catalog_service().get_latest_version(path)) if ':' not in version else version
-                    # call execute
-                    try:
-                        # synchronous kickoff using existing helper
-                        entry = asyncio.run(get_catalog_service().fetch_entry(path, playbook_version))
-                        if entry:
-                            execute_playbook_via_broker(entry.get('content'), path, playbook_version, payload, True, False)
-                    except Exception as e_exec:
-                        logger.warning(f"Schedule {sid} execution error: {e_exec}")
-                    # compute next_run
-                    next_run = _compute_next_run(cron_expr, interval_seconds, now)
-                    cur.execute("UPDATE schedule SET last_run_at = %s, last_status = %s, next_run_at = %s, updated_at = now() WHERE schedule_id = %s", (now, 'triggered', next_run, sid))
-                    triggered.append(sid)
-                conn.commit()
-    except Exception as e:
-        logger.exception(f"Schedule polling error: {e}")
-    return {"triggered": triggered, "timestamp": now.isoformat()}
+# -------------------- Queue API --------------------
+# @router.post("/queue/enqueue", response_class=JSONResponse)
+# async def enqueue_job(request: Request):
+#     """Enqueue a job into the noetl.queue table.
+#     Body: { execution_id, node_id, action, input_context?, priority?, max_attempts?, available_at? }
+#     """
+#     try:
+#         body = await request.json()
+#         execution_id = body.get("execution_id")
+#         node_id = body.get("node_id")
+#         action = body.get("action")
+#         input_context = body.get("input_context", {})
+#         priority = int(body.get("priority", 0))
+#         max_attempts = int(body.get("max_attempts", 5))
+#         available_at = body.get("available_at")
+#
+#         if not execution_id or not node_id or not action:
+#             raise HTTPException(status_code=400, detail="execution_id, node_id and action are required")
+#
+#         with get_db_connection() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute(
+#                     """
+#                     INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+#                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+#                     RETURNING id
+#                     """,
+#                     (execution_id, node_id, action, json.dumps(input_context), priority, max_attempts, available_at)
+#                 )
+#                 row = cur.fetchone()
+#                 conn.commit()
+#         return {"status": "ok", "id": row[0]}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error enqueueing job: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+#
+# @router.post("/queue/lease", response_class=JSONResponse)
+# async def lease_job(request: Request):
+#     """Atomically lease a queued job for a worker.
+#     Body: { worker_id, lease_seconds? }
+#     Returns queued job or {status: 'empty'} when nothing available.
+#     """
+#     try:
+#         body = await request.json()
+#         worker_id = body.get("worker_id")
+#         lease_seconds = int(body.get("lease_seconds", 60))
+#         if not worker_id:
+#             raise HTTPException(status_code=400, detail="worker_id is required")
+#
+#         with get_db_connection() as conn:
+#             # return dict-like row for JSON friendliness
+#             with conn.cursor(row_factory=dict_row) as cur:
+#                 cur.execute(
+#                     """
+#                     WITH cte AS (
+#                       SELECT id FROM noetl.queue
+#                       WHERE status='queued' AND available_at <= now()
+#                       ORDER BY priority DESC, id
+#                       FOR UPDATE SKIP LOCKED
+#                       LIMIT 1
+#                     )
+#                     UPDATE noetl.queue q
+#                     SET status='leased',
+#                         worker_id=%s,
+#                         lease_until=now() + (%s || ' seconds')::interval,
+#                         last_heartbeat=now(),
+#                         attempts = q.attempts + 1
+#                     FROM cte
+#                     WHERE q.id = cte.id
+#                     RETURNING q.*;
+#                     """,
+#                     (worker_id, str(lease_seconds))
+#                 )
+#                 row = cur.fetchone()
+#                 conn.commit()
+#
+#         if not row:
+#             return {"status": "empty"}
+#
+#         # ensure JSON serializable
+#         if row.get("input_context") is None:
+#             row["input_context"] = {}
+#         return {"status": "ok", "job": row}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error leasing job: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+#
+# @router.post("/queue/{job_id}/complete", response_class=JSONResponse)
+# async def complete_job(job_id: int):
+#     """Mark a job completed."""
+#     try:
+#         with get_db_connection() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL, updated_at = now() WHERE id = %s RETURNING id", (job_id,))
+#                 row = cur.fetchone()
+#                 conn.commit()
+#         if not row:
+#             raise HTTPException(status_code=404, detail="job not found")
+#         return {"status": "ok", "id": job_id}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error completing job {job_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+#
+# @router.post("/queue/{job_id}/fail", response_class=JSONResponse)
+# async def fail_job(job_id: int, request: Request):
+#     """Mark job failed; optionally reschedule if attempts < max_attempts.
+#     Body: { retry_delay_seconds? }
+#     """
+#     try:
+#         body = await request.json()
+#         retry_delay = int(body.get("retry_delay_seconds", 60))
+#         with get_db_connection() as conn:
+#             with conn.cursor(row_factory=dict_row) as cur:
+#                 cur.execute("SELECT attempts, max_attempts FROM noetl.queue WHERE id = %s", (job_id,))
+#                 row = cur.fetchone()
+#                 if not row:
+#                     raise HTTPException(status_code=404, detail="job not found")
+#                 attempts = row.get("attempts", 0)
+#                 max_attempts = row.get("max_attempts", 5)
+#
+#                 if attempts >= max_attempts:
+#                     cur.execute("UPDATE noetl.queue SET status='dead', updated_at = now() WHERE id = %s RETURNING id", (job_id,))
+#                 else:
+#                     cur.execute("UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval, updated_at = now() WHERE id = %s RETURNING id", (str(retry_delay), job_id))
+#                 updated = cur.fetchone()
+#                 conn.commit()
+#         return {"status": "ok", "id": job_id}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error failing job {job_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+#
+# @router.post("/queue/{job_id}/heartbeat", response_class=JSONResponse)
+# async def heartbeat_job(job_id: int, request: Request):
+#     """Update heartbeat and optionally extend lease_until.
+#     Body: { worker_id?, extend_seconds? }
+#     """
+#     try:
+#         body = await request.json()
+#         worker_id = body.get("worker_id")
+#         extend = body.get("extend_seconds")
+#         with get_db_connection() as conn:
+#             with conn.cursor() as cur:
+#                 if extend:
+#                     cur.execute("UPDATE noetl.queue SET last_heartbeat = now(), lease_until = now() + (%s || ' seconds')::interval WHERE id = %s RETURNING id", (str(int(extend)), job_id))
+#                 else:
+#                     cur.execute("UPDATE noetl.queue SET last_heartbeat = now() WHERE id = %s RETURNING id", (job_id,))
+#                 row = cur.fetchone()
+#                 conn.commit()
+#         if not row:
+#             raise HTTPException(status_code=404, detail="job not found")
+#         return {"status": "ok", "id": job_id}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception(f"Error heartbeating job {job_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+#
+# @router.get("/queue", response_class=JSONResponse)
+# async def list_queue(status: str = None, execution_id: str = None, worker_id: str = None, limit: int = 100):
+#     try:
+#         filters = []
+#         params: list[Any] = []
+#         if status:
+#             filters.append("status = %s")
+#             params.append(status)
+#         if execution_id:
+#             filters.append("execution_id = %s")
+#             params.append(execution_id)
+#         if worker_id:
+#             filters.append("worker_id = %s")
+#             params.append(worker_id)
+#         where = f"WHERE {' AND '.join(filters)}" if filters else ''
+#         with get_db_connection() as conn:
+#             with conn.cursor(row_factory=dict_row) as cur:
+#                 cur.execute(f"SELECT * FROM noetl.queue {where} ORDER BY priority DESC, id LIMIT %s", params + [limit])
+#                 rows = cur.fetchall()
+#         for r in rows:
+#             if r.get('input_context') is None:
+#                 r['input_context'] = {}
+#         return {"status": "ok", "items": rows}
+#     except Exception as e:
+#         logger.exception(f"Error listing queue: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))

@@ -18,6 +18,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
+  namespace: postgres
   labels:
     app: postgres
 spec:
