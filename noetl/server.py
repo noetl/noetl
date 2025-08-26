@@ -6,13 +6,14 @@ import psycopg
 import base64
 from datetime import datetime
 from typing import Dict, Any, Optional, List
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
 from noetl.logger import setup_logger
 from noetl.worker import Worker
-from noetl.broker import Broker
+from noetl.broker import Broker, execute_playbook_via_broker
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -22,30 +23,25 @@ class CatalogService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
-    def get_latest_version(self, resource_path: str) -> str:
+    async def get_latest_version(self, resource_path: str) -> str:
         try:
-            with get_db_connection(optional=True) as conn:
+            from noetl.common import get_async_db_connection
+            async with get_async_db_connection(optional=True) as conn:
                 if conn is None:
                     logger.warning(f"Database not available, returning default version for '{resource_path}'")
                     return "0.1.0"
-                
-                with conn.cursor() as cursor:
-                    cursor.execute(
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
                         "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
                         (resource_path,)
                     )
-                    count = cursor.fetchone()[0]
+                    row = await cursor.fetchone()
+                    count = row[0] if row else 0
 
                     if count == 0:
                         return "0.1.0"
 
-                    cursor.execute(
-                        "SELECT resource_version FROM catalog WHERE resource_path = %s",
-                        (resource_path,)
-                    )
-                    versions = [row[0] for row in cursor.fetchall()]
-
-                    cursor.execute(
+                    await cursor.execute(
                         """
                         WITH parsed_versions AS (
                             SELECT 
@@ -63,7 +59,7 @@ class CatalogService:
                         """,
                         (resource_path,)
                     )
-                    result = cursor.fetchone()
+                    result = await cursor.fetchone()
 
                     if result:
                         latest_version = result[0]
@@ -74,11 +70,12 @@ class CatalogService:
             logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
             return "0.1.0"
 
-    def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
+    async def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
+            from noetl.common import get_async_db_connection
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
                         """
                         SELECT resource_path, resource_type, resource_version, content, payload, meta
                         FROM catalog
@@ -87,13 +84,13 @@ class CatalogService:
                         (path, version)
                     )
 
-                    result = cursor.fetchone()
+                    result = await cursor.fetchone()
 
                     if not result and '/' in path:
                         filename = path.split('/')[-1]
                         logger.info(f"Path not found. Trying to match filename: {filename}")
 
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta
                             FROM catalog
@@ -102,7 +99,7 @@ class CatalogService:
                             (filename, version)
                         )
 
-                        result = cursor.fetchone()
+                        result = await cursor.fetchone()
 
                 if result:
                     return {
@@ -132,15 +129,16 @@ class CatalogService:
             return f"{version}.1"
 
 
-    def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
+    async def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         try:
+            from noetl.common import get_async_db_connection
             resource_data = yaml.safe_load(content)
             resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
             resource_version = "0.1.0"
             
-            with get_db_connection(optional=True) as conn:
+            async with get_async_db_connection(optional=True) as conn:
                 if conn is not None:
-                    latest_version = self.get_latest_version(resource_path)
+                    latest_version = await self.get_latest_version(resource_path)
                     
                     if latest_version != '0.1.0':
                         resource_version = self.increment_version(latest_version)
@@ -149,13 +147,14 @@ class CatalogService:
 
                     attempt = 0
                     max_attempts = 5
-                    with conn.cursor() as cursor:
+                    async with conn.cursor() as cursor:
                         while attempt < max_attempts:
-                            cursor.execute(
+                            await cursor.execute(
                                 "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
                                 (resource_path, resource_version)
                             )
-                            count = int(cursor.fetchone()[0])
+                            row = await cursor.fetchone()
+                            count = int(row[0]) if row else 0
                             if count == 0:
                                 break
                             resource_version = self.increment_version(resource_version)
@@ -171,12 +170,12 @@ class CatalogService:
                         logger.info(
                             f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
 
-                        cursor.execute(
+                        await cursor.execute(
                             "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
                             (resource_type,)
                         )
                         
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             INSERT INTO catalog
                             (resource_path, resource_type, resource_version, content, payload, meta)
@@ -191,7 +190,7 @@ class CatalogService:
                                 json.dumps({"registered_at": "now()"})
                             )
                         )
-                        conn.commit()
+                        await conn.commit()
                 else:
                     logger.warning(f"Database not available, registering resource '{resource_path}' in memory only")
                     logger.warning("The resource will not be persisted and will be lost when the server restarts")
@@ -211,12 +210,13 @@ class CatalogService:
                 status_code=500,
                 detail=f"Error registering resource: {e}."
             )
-    def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
+            from noetl.common import get_async_db_connection
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
                     if resource_type:
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog
@@ -226,7 +226,7 @@ class CatalogService:
                             (resource_type,)
                         )
                     else:
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog
@@ -234,7 +234,7 @@ class CatalogService:
                             """
                         )
 
-                    results = cursor.fetchall()
+                    results = await cursor.fetchall()
 
                 entries = []
                 for row in results:
@@ -272,10 +272,10 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
             logger.info(f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
 
     catalog_service = get_catalog_service()
-    latest_version = catalog_service.get_latest_version(path_to_lookup)
+    latest_version = await catalog_service.get_latest_version(path_to_lookup)
     logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
 
-    entry = catalog_service.fetch_entry(path_to_lookup, latest_version)
+    entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
     if not entry:
         raise HTTPException(
             status_code=404,
@@ -287,7 +287,6 @@ class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
-    # Added helper to normalize heterogeneous status values emitted by various components
     def _normalize_status(self, raw: str | None) -> str:
         if not raw:
             return 'pending'
@@ -298,7 +297,6 @@ class EventService:
             return 'failed'
         if s in {'running', 'run', 'in_progress', 'in-progress', 'progress', 'started', 'start'}:
             return 'running'
-        # treat created/queued/pending/default as pending
         if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
             return 'pending'
         # fallback
@@ -851,7 +849,7 @@ async def register_resource(
             )
 
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, resource_type)
+        result = await catalog_service.register_resource(content, resource_type)
         return result
 
     except Exception as e:
@@ -868,7 +866,7 @@ async def list_resources(
 ):
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries(resource_type)
+        entries = await catalog_service.list_entries(resource_type)
         return {"entries": entries}
 
     except Exception as e:
@@ -1016,12 +1014,19 @@ async def get_execution_data(
 
 @router.post("/events", response_class=JSONResponse)
 async def create_event(
-    request: Request
+    request: Request,
+    background_tasks: BackgroundTasks
 ):
     try:
         body = await request.json()
         event_service = get_event_service()
         result = event_service.emit(body)
+        try:
+            execution_id = result.get("execution_id") or body.get("execution_id")
+            if execution_id:
+                background_tasks.add_task(_evaluate_broker_for_execution, execution_id)
+        except Exception as _:
+            pass
         return result
     except Exception as e:
         logger.exception(f"Error creating event: {e}.")
@@ -1067,11 +1072,11 @@ async def execute_agent(
         logger.debug(f"EXECUTE_AGENT: Getting catalog service")
         catalog_service = get_catalog_service()
         if not version:
-            version = catalog_service.get_latest_version(path)
+            version = await catalog_service.get_latest_version(path)
             logger.debug(f"EXECUTE_AGENT: Version not specified, using latest version: {version}")
 
         logger.debug(f"EXECUTE_AGENT: Fetching entry for path={path}, version={version}")
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry(path, version)
         if not entry:
             logger.error(f"EXECUTE_AGENT: Playbook '{path}' with version '{version}' not found")
             raise HTTPException(
@@ -1079,18 +1084,17 @@ async def execute_agent(
                 detail=f"Playbook '{path}' with version '{version}' not found."
             )
 
-        logger.debug(f"EXECUTE_AGENT: Getting agent service")
-        agent_service = get_agent_service()
-        logger.debug(f"EXECUTE_AGENT: Calling agent_service.execute_agent with playbook_path={path}, playbook_version={version}")
-        result = agent_service.execute_agent(
-            playbook_content=entry.get("content"),
-            playbook_path=path,
-            playbook_version=version,
-            input_payload=input_payload,
-            sync_to_postgres=sync_to_postgres,
-            merge=merge
+        logger.debug(f"EXECUTE_AGENT: Calling broker.execute_playbook_via_broker with playbook_path={path}, playbook_version={version}")
+        result = await asyncio.to_thread(
+            execute_playbook_via_broker,
+            entry.get("content"),
+            path,
+            version,
+            input_payload,
+            sync_to_postgres,
+            merge
         )
-        logger.debug(f"EXECUTE_AGENT: agent_service.execute_agent returned result={result}")
+        logger.debug(f"EXECUTE_AGENT: broker.execute_playbook_via_broker returned result={result}")
 
         logger.debug("=== EXECUTE_AGENT: Function exit ===")
         return result
@@ -1134,10 +1138,10 @@ async def execute_agent_async(
         catalog_service = get_catalog_service()
 
         if not version:
-            version = catalog_service.get_latest_version(path)
+            version = await catalog_service.get_latest_version(path)
             logger.info(f"Version not specified, using latest version: {version}")
 
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry(path, version)
         if not entry:
             raise HTTPException(
                 status_code=404,
@@ -1161,70 +1165,54 @@ async def execute_agent_async(
 
         def execute_agent_task():
             try:
-                with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
-                    temp_file.write(entry.get("content").encode('utf-8'))
-                    temp_file_path = temp_file.name
-
-                try:
-                    pgdb_conn = get_pgdb_connection() if sync_to_postgres else None
-                    agent = Worker(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
-                    workload = agent.playbook.get('workload', {})
-                    if input_payload:
-                        if merge:
-                            logger.info("Merge mode: deep merging input payload with workload.")
-                            merged_workload = deep_merge(workload, input_payload)
-
-                            for key, value in merged_workload.items():
-                                agent.update_context(key, value)
-
-                            agent.update_context('workload', merged_workload)
-                            agent.store_workload(merged_workload)
-                        else:
-                            logger.info("Override mode: replacing workload keys with input payload.")
-                            merged_workload = workload.copy()
-                            for key, value in input_payload.items():
-                                merged_workload[key] = value
-                            for key, value in merged_workload.items():
-                                agent.update_context(key, value)
-                            agent.update_context('workload', merged_workload)
-                            agent.store_workload(merged_workload)
-                    else:
-                        logger.info("No input payload provided. Default workload from playbooks is used.")
-
-                        for key, value in workload.items():
-                            agent.update_context(key, value)
-
-                        agent.update_context('workload', workload)
-                        agent.store_workload(workload)
-
-                    results = agent.run()
-                    event_id = initial_event.get("event_id")
+                result = execute_playbook_via_broker(
+                    entry.get("content"),
+                    path,
+                    version,
+                    input_payload,
+                    sync_to_postgres,
+                    merge
+                )
+                event_id = initial_event.get("event_id")
+                if result.get("status") == "success":
+                    execution_id = result.get("execution_id")
                     update_event = {
                         "event_id": event_id,
-                        "execution_id": agent.execution_id,
+                        "execution_id": execution_id,
                         "event_type": "agent_execution_completed",
                         "status": "COMPLETED",
-                        "result": results,
+                        "result": result.get("result"),
                         "meta": {
                             "resource_path": path,
                             "resource_version": version,
-                            "execution_id": agent.execution_id
+                            "execution_id": execution_id
                         },
                         "node_type": "playbooks",
                         "node_name": path
                     }
-
                     event_service.emit(update_event)
                     logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
-
-                finally:
-                    if os.path.exists(temp_file_path):
-                        os.unlink(temp_file_path)
-
+                else:
+                    error_event = {
+                        "event_id": event_id,
+                        "execution_id": event_id,
+                        "event_type": "agent_execution_error",
+                        "status": "ERROR",
+                        "error": result.get("error"),
+                        "result": {"error": result.get("error")},
+                        "meta": {
+                            "resource_path": path,
+                            "resource_version": version,
+                            "error": result.get("error")
+                        },
+                        "node_type": "playbooks",
+                        "node_name": path
+                    }
+                    event_service.emit(error_event)
+                    logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
             except Exception as e:
                 logger.exception(f"Error in background agent execution: {e}.")
                 event_id = initial_event.get("event_id")
-
                 error_event = {
                     "event_id": event_id,
                     "execution_id": event_id,
@@ -1240,7 +1228,6 @@ async def execute_agent_async(
                     "node_type": "playbooks",
                     "node_name": path
                 }
-
                 event_service.emit(error_event)
                 logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
 
@@ -1294,7 +1281,7 @@ async def get_catalog_playbooks():
     """Get all playbooks"""
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries('Playbook')
+        entries = await catalog_service.list_entries('Playbook')
 
         playbooks = []
         for entry in entries:
@@ -1355,7 +1342,7 @@ tasks:
 """
         
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource(content, "playbooks")
         
         playbook = {
             "id": result.get("resource_path", ""),
@@ -1457,10 +1444,10 @@ async def get_catalog_playbook_content(playbook_id: str = Query(...)):
             logger.info(f"Fixed playbook_id: '{playbook_id}'")
         
         catalog_service = get_catalog_service()
-        latest_version = catalog_service.get_latest_version(playbook_id)
+        latest_version = await catalog_service.get_latest_version(playbook_id)
         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
         
-        entry = catalog_service.fetch_entry(playbook_id, latest_version)
+        entry = await catalog_service.fetch_entry(playbook_id, latest_version)
         
         if not entry:
             raise HTTPException(
@@ -1517,7 +1504,7 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 detail="Content is required."
             )
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource(content, "playbooks")
         
         return {
             "status": "success",
@@ -1710,6 +1697,103 @@ async def api_health():
     """API health check endpoint"""
     return {"status": "ok"}
 
+@router.post("/worker/pool/register", response_class=JSONResponse)
+async def register_worker_pool(request: Request):
+    """
+    Register or update a worker pool in the runtime registry.
+    Body:
+      { name, runtime, base_url, status, capacity?, labels?, pid?, hostname?, meta? }
+    """
+    try:
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        runtime = (body.get("runtime") or "").strip().lower()
+        base_url = (body.get("base_url") or "").strip()
+        status = (body.get("status") or "ready").strip().lower()
+        capacity = body.get("capacity")
+        labels = body.get("labels")
+        pid = body.get("pid")
+        hostname = body.get("hostname")
+        meta = body.get("meta") or {}
+        if not name or not runtime or not base_url:
+            raise HTTPException(status_code=400, detail="name, runtime, and base_url are required")
+
+        import datetime as _dt
+        try:
+            from noetl.common import get_snowflake_id
+            rid = get_snowflake_id()
+        except Exception:
+            rid = int(_dt.datetime.now().timestamp() * 1000)
+
+        payload_runtime = {
+            "type": runtime,
+            "pid": pid,
+            "hostname": hostname,
+            **({} if not isinstance(meta, dict) else meta),
+        }
+
+        labels_json = json.dumps(labels) if labels is not None else None
+        runtime_json = json.dumps(payload_runtime)
+
+        from noetl.common import get_db_connection
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, %s, 'worker_pool', %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
+                    ON CONFLICT (component_type, name)
+                    DO UPDATE SET
+                        base_url = EXCLUDED.base_url,
+                        status = EXCLUDED.status,
+                        labels = EXCLUDED.labels,
+                        capacity = EXCLUDED.capacity,
+                        runtime = EXCLUDED.runtime,
+                        last_heartbeat = now(),
+                        updated_at = now()
+                    RETURNING runtime_id
+                    """,
+                    (rid, name, base_url, status, labels_json, capacity, runtime_json)
+                )
+                row = cursor.fetchone()
+                conn.commit()
+        return {"status": "ok", "name": name, "runtime": runtime, "runtime_id": row[0] if row else rid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error registering worker pool: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/worker/pool/deregister", response_class=JSONResponse)
+async def deregister_worker_pool(request: Request):
+    """
+    Deregister a worker pool by name (marks as offline).
+    Body: { name }
+    """
+    try:
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        from noetl.common import get_db_connection
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE runtime
+                    SET status = 'offline', updated_at = now()
+                    WHERE component_type = 'worker_pool' AND name = %s
+                    """,
+                    (name,)
+                )
+                conn.commit()
+        return {"status": "ok", "name": name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deregistering worker pool: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/catalog/{path:path}/{version}", response_class=JSONResponse)
 async def get_resource(
     request: Request,
@@ -1718,7 +1802,7 @@ async def get_resource(
 ):
     try:
         catalog_service = get_catalog_service()
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry(path, version)
         if not entry:
             raise HTTPException(
                 status_code=404,
@@ -1864,3 +1948,126 @@ async def execute_postgres(
     except Exception as e:
         logger.error(f"Error executing PostgreSQL query or procedure: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Worker action execution endpoint (isolated single action) ===
+@router.post("/worker/run-action", response_class=JSONResponse)
+async def worker_run_action(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """
+    Execute a single action (task) in isolated mode using BackgroundTasks.
+    Body example:
+    {
+      "execution_id": "...",                 # required
+      "parent_event_id": "...",              # optional
+      "node_id": "step1.task1",              # optional info
+      "node_name": "http_call",              # optional info
+      "node_type": "task",                   # optional info
+      "context": { ... },                      # optional context dict
+      "mock_mode": false,                      # optional, default False
+      "task": {                                # required task config as in playbook
+         "name": "http_call",
+         "type": "http",
+         "config": { ... }
+      }
+    }
+    """
+    try:
+        body = await request.json()
+        execution_id = body.get("execution_id")
+        if not execution_id:
+            raise HTTPException(status_code=400, detail="execution_id is required")
+        task_cfg = body.get("task")
+        if not task_cfg or not isinstance(task_cfg, dict):
+            raise HTTPException(status_code=400, detail="task is required and must be an object")
+        context = body.get("context") or {}
+        parent_event_id = body.get("parent_event_id")
+        node_id = body.get("node_id") or task_cfg.get("name") or f"task_{os.urandom(4).hex()}"
+        node_name = body.get("node_name") or task_cfg.get("name") or "task"
+        node_type = body.get("node_type") or "task"
+        mock_mode = bool(body.get("mock_mode", False))
+
+        event_service = get_event_service()
+        # Emit start/request event
+        start_event = {
+            "execution_id": execution_id,
+            "parent_event_id": parent_event_id,
+            "event_type": "action_started",
+            "status": "RUNNING",
+            "node_id": node_id,
+            "node_name": node_name,
+            "node_type": node_type,
+            "context": {"work": context, "task": task_cfg},
+        }
+        start_evt = event_service.emit(start_event)
+
+        def _run_action_background():
+            try:
+                from jinja2 import Environment, StrictUndefined, BaseLoader
+                from noetl.action import execute_task
+                jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+                jenv.filters['to_json'] = lambda obj: json.dumps(obj)
+                jenv.filters['b64encode'] = lambda s: __import__('base64').b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else __import__('base64').b64encode(str(s).encode('utf-8')).decode('utf-8')
+                jenv.globals['now'] = lambda: datetime.now().isoformat()
+                jenv.globals['env'] = os.environ
+
+                result = execute_task(jenv, task_cfg, context or {}, mock_mode=mock_mode)
+                complete_event = {
+                    "event_id": start_evt.get("event_id"),
+                    "execution_id": execution_id,
+                    "parent_event_id": parent_event_id,
+                    "event_type": "action_completed",
+                    "status": "COMPLETED",
+                    "node_id": node_id,
+                    "node_name": node_name,
+                    "node_type": node_type,
+                    "result": result,
+                }
+                event_service.emit(complete_event)
+                try:
+                    _evaluate_broker_for_execution(execution_id)
+                except Exception:
+                    pass
+            except Exception as e:
+                error_event = {
+                    "event_id": start_evt.get("event_id"),
+                    "execution_id": execution_id,
+                    "parent_event_id": parent_event_id,
+                    "event_type": "action_error",
+                    "status": "ERROR",
+                    "node_id": node_id,
+                    "node_name": node_name,
+                    "node_type": node_type,
+                    "error": str(e),
+                    "result": {"error": str(e)},
+                }
+                event_service.emit(error_event)
+                try:
+                    _evaluate_broker_for_execution(execution_id)
+                except Exception:
+                    pass
+
+        background_tasks.add_task(_run_action_background)
+        return {"status": "accepted", "message": "Action scheduled", "execution_id": execution_id, "event_id": start_evt.get("event_id")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error scheduling action: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _evaluate_broker_for_execution(execution_id: str):
+    """
+    Minimal broker evaluator scheduled on each event. Intended to read event_log and
+    decide next steps to run. For now, it logs the trigger; future iterations can
+    reconstruct playbook context and push tasks to /worker/run-action accordingly.
+    """
+    try:
+        logger.info(f"Broker evaluation triggered for execution_id={execution_id}")
+        # Placeholder for event-driven evaluation based on event_log,
+        # transition, workbook, workflow, and workload tables.
+        # This function intentionally lightweight for minimal change scope.
+    except Exception as e:
+        logger.error(f"Broker evaluation error for execution_id={execution_id}: {e}")

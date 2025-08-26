@@ -97,6 +97,311 @@ class DatabaseSchema:
             raise
 
 
+    def initialize_connection_sync(self):
+        try:
+            if self.admin_conn is None:
+                self.admin_conn = self.settings.admin_conn_string
+                logger.info(f"Using admin connection: dbname={self.settings.postgres_db} user={self.settings.postgres_user} host={self.settings.postgres_host} port={self.settings.postgres_port}")
+
+            if self.pgdb is None:
+                self.pgdb = self.settings.noetl_conn_string
+                logger.info(f"NoETL sync connection: dbname={self.settings.postgres_db} user={self.noetl_user} host={self.settings.postgres_host} port={self.settings.postgres_port}")
+
+            if self.auto_setup and (self.conn is None):
+                try:
+                    self.conn = psycopg.connect(self.pgdb)
+                    self.conn.autocommit = True
+                    self.is_postgres = True
+                    logger.info("Connected to Postgres database as noetl user (sync).")
+                except Exception as e:
+                    logger.warning(f"NoETL user sync connection failed, attempting to create user/schema: {e}")
+                    try:
+                        admin = psycopg.connect(self.admin_conn)
+                        try:
+                            admin.autocommit = True
+                            with admin.cursor() as ac:
+                                ac.execute("""
+                                    DO $$
+                                    BEGIN
+                                        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = %s) THEN
+                                            EXECUTE format('CREATE USER %s WITH PASSWORD %L CREATEDB LOGIN', %s, %s, %s);
+                                        END IF;
+                                    END $$;
+                                """, (self.noetl_user, self.noetl_user, self.noetl_password, self.noetl_user))
+                                ac.execute("""
+                                    DO $$
+                                    BEGIN
+                                        IF NOT EXISTS (
+                                            SELECT 1 FROM information_schema.schemata WHERE schema_name = %s
+                                        ) THEN
+                                            EXECUTE format('CREATE SCHEMA %I', %s);
+                                        END IF;
+                                    END $$;
+                                """, (self.noetl_schema, self.noetl_schema))
+                                try:
+                                    ac.execute(f"GRANT ALL PRIVILEGES ON SCHEMA {self.noetl_schema} TO {self.noetl_user}")
+                                except Exception:
+                                    pass
+                        finally:
+                            admin.close()
+                        self.conn = psycopg.connect(self.pgdb)
+                        self.conn.autocommit = True
+                        self.is_postgres = True
+                        logger.info("Connected to Postgres database as noetl user after creating infrastructure (sync).")
+                    except Exception as conn_error:
+                        logger.error(f"FATAL: Failed to connect after schema creation (sync): {conn_error}")
+                        raise
+            else:
+                if self.conn is None:
+                    self.conn = psycopg.connect(self.pgdb)
+                    self.conn.autocommit = True
+                    self.is_postgres = True
+                    logger.info("Connected to Postgres database as noetl user (sync).")
+        except Exception as e:
+            logger.error(f"FATAL: Failed to establish sync connection to Postgres: {e}")
+            raise
+
+    def test_connection_sync(self):
+        try:
+            if self.conn is None:
+                logger.error("FATAL: Database connection is None. Connection was not established properly (sync).")
+                raise ValueError("Database connection is None")
+            with self.conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                result = cursor.fetchone()
+                if not (result and result[0] == 1):
+                    raise ValueError("Database connection test failed (sync)")
+                logger.info("Database connected (sync).")
+        except Exception as e:
+            logger.error(f"FATAL: Error testing database connection (sync): {e}.", exc_info=True)
+            raise
+
+    def set_search_path_sync(self):
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(f"SET search_path TO {self.noetl_schema}, public")
+                if not getattr(self.conn, "autocommit", False):
+                    self.conn.commit()
+                logger.info(f"Search path set to '{self.noetl_schema}, public' (sync)")
+        except Exception as e:
+            logger.error(f"Error setting search path (sync): {e}.", exc_info=True)
+            raise
+
+    def create_postgres_tables_sync(self):
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.resource (
+                        name TEXT PRIMARY KEY
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.catalog (
+                        resource_path     TEXT     NOT NULL,
+                        resource_type     TEXT     NOT NULL REFERENCES {self.noetl_schema}.resource(name),
+                        resource_version  TEXT     NOT NULL,
+                        source            TEXT     NOT NULL DEFAULT 'inline',
+                        resource_location TEXT,
+                        content           TEXT,
+                        payload           JSONB    NOT NULL,
+                        meta              JSONB,
+                        template          TEXT,
+                        timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        PRIMARY KEY (resource_path, resource_version)
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workload (
+                        execution_id VARCHAR,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        data TEXT,
+                        PRIMARY KEY (execution_id)
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.event_log (
+                        execution_id VARCHAR,
+                        event_id VARCHAR,
+                        parent_event_id VARCHAR,
+                        timestamp TIMESTAMP,
+                        event_type VARCHAR,
+                        node_id VARCHAR,
+                        node_name VARCHAR,
+                        node_type VARCHAR,
+                        status VARCHAR,
+                        duration DOUBLE PRECISION,
+                        input_context TEXT,
+                        output_result TEXT,
+                        metadata TEXT,
+                        error TEXT,
+                        loop_id VARCHAR,
+                        loop_name VARCHAR,
+                        iterator VARCHAR,
+                        items TEXT,
+                        current_index INTEGER,
+                        current_item TEXT,
+                        results TEXT,
+                        worker_id VARCHAR,
+                        distributed_state VARCHAR,
+                        context_key VARCHAR,
+                        context_value TEXT,
+                        trace_component JSONB,
+                        PRIMARY KEY (execution_id, event_id)
+                    )
+                """)
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workflow (
+                        execution_id VARCHAR,
+                        step_id VARCHAR,
+                        step_name VARCHAR,
+                        step_type VARCHAR,
+                        description TEXT,
+                        raw_config TEXT,
+                        PRIMARY KEY (execution_id, step_id)
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workbook (
+                        execution_id VARCHAR,
+                        task_id VARCHAR,
+                        task_name VARCHAR,
+                        task_type VARCHAR,
+                        raw_config TEXT,
+                        PRIMARY KEY (execution_id, task_id)
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.transition (
+                        execution_id VARCHAR,
+                        from_step VARCHAR,
+                        to_step VARCHAR,
+                        condition TEXT,
+                        with_params TEXT,
+                        PRIMARY KEY (execution_id, from_step, to_step, condition)
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.error_log (
+                        error_id BIGINT PRIMARY KEY,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        error_type VARCHAR(50),
+                        error_message TEXT,
+                        execution_id VARCHAR,
+                        step_id VARCHAR,
+                        step_name VARCHAR,
+                        template_string TEXT,
+                        context_data JSONB,
+                        stack_trace TEXT,
+                        input_data JSONB,
+                        output_data JSONB,
+                        severity VARCHAR(20) DEFAULT 'error',
+                        resolved BOOLEAN DEFAULT FALSE,
+                        resolution_notes TEXT,
+                        resolution_timestamp TIMESTAMP
+                    )
+                """)
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.error_log OWNER TO {self.noetl_user}")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON {self.noetl_schema}.error_log (timestamp);
+                    CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON {self.noetl_schema}.error_log (error_type);
+                    CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON {self.noetl_schema}.error_log (execution_id);
+                    CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON {self.noetl_schema}.error_log (resolved);
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.credential (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE,
+                        type TEXT NOT NULL,
+                        data_encrypted TEXT NOT NULL,
+                        meta JSONB,
+                        tags TEXT[],
+                        description TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_credential_type ON {self.noetl_schema}.credential (type);
+                """)
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;")
+                except Exception:
+                    pass
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.runtime (
+                        runtime_id BIGINT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
+                        base_url TEXT,
+                        status TEXT NOT NULL,
+                        labels JSONB,
+                        capabilities JSONB,
+                        capacity INTEGER,
+                        runtime JSONB,
+                        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON {self.noetl_schema}.runtime (component_type, name);
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_runtime_type ON {self.noetl_schema}.runtime (component_type);
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_runtime_status ON {self.noetl_schema}.runtime (status);
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON {self.noetl_schema}.runtime ((runtime->>'type'));
+                """)
+                if not getattr(self.conn, "autocommit", False):
+                    self.conn.commit()
+                logger.info("Postgres database tables initialized in noetl schema (sync).")
+        except Exception as e:
+            logger.error(f"FATAL: Error creating postgres tables (sync): {e}", exc_info=True)
+            raise
+
+    def test_workload_table_sync(self):
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(f"""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = %s AND table_name = 'workload'
+                    )
+                """, (self.noetl_schema,))
+                result = cursor.fetchone()
+                table_exists = result[0] if result else False
+                if not table_exists:
+                    logger.error("FATAL: Failed to create workload table (sync).")
+                    raise ValueError("Workload table missing")
+                else:
+                    logger.info("Workload table present (sync).")
+        except Exception as e:
+            logger.error(f"FATAL: Error testing workload table (sync): {e}.", exc_info=True)
+            raise
+
+    def init_database_sync(self):
+        try:
+            self.test_connection_sync()
+            self.set_search_path_sync()
+            self.create_postgres_tables_sync()
+            self.test_workload_table_sync()
+            return True
+        except Exception as e:
+            logger.error(f"FATAL: Error initializing database (sync): {e}.", exc_info=True)
+            raise
+
     async def create_noetl_schema(self):
         try:
             logger.info(f"ATTEMPTING TO CREATE SCHEMA: Starting schema installation for '{self.noetl_schema}' with user '{self.noetl_user}'")

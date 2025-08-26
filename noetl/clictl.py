@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from noetl.server import router as server_router
 from noetl.system import router as system_router
+from noetl.worker import router as worker_router
 from noetl.common import DateTimeEncoder
 from noetl.logger import setup_logger
 from noetl.schema import DatabaseSchema
@@ -35,6 +36,49 @@ def create_app() -> FastAPI:
     )
 
     return _create_app(settings.enable_ui)
+
+
+def create_worker_app() -> FastAPI:
+    """Create a FastAPI app exposing the worker endpoints."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: auto-register worker pool
+        try:
+            base = os.environ.get("NOETL_WORKER_BASE_URL")
+            if not base:
+                host = os.environ.get("NOETL_WORKER_HOST", os.environ.get("NOETL_HOST", "localhost"))
+                port = os.environ.get("NOETL_WORKER_PORT", str(int(os.environ.get("NOETL_PORT", "8082")) + 1))
+                os.environ["NOETL_WORKER_BASE_URL"] = f"http://{host}:{port}/api"
+            from noetl.worker import register_worker_pool_from_env
+            register_worker_pool_from_env()
+        except Exception as e:
+            logger.warning(f"Worker auto-register skipped: {e}")
+        # Yield control to app
+        yield
+        # Shutdown: deregister worker pool
+        try:
+            from noetl.worker import deregister_worker_pool_from_env
+            deregister_worker_pool_from_env()
+        except Exception:
+            pass
+
+    app = FastAPI(title="NoETL Worker", description="NoETL Worker service", version=get_settings().app_version, lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(worker_router, prefix="/api", tags=["Worker"])
+
+    @app.get("/health", include_in_schema=False)
+    async def health():
+        return {"status": "ok", "component": "worker"}
+
+    return app
 
 def _create_app(enable_ui: bool = True) -> FastAPI:
     settings = get_settings()
@@ -92,7 +136,118 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 server_app = typer.Typer()
 cli_app.add_typer(server_app, name="server")
 
-# PID file paths are configured via settings (computed properties)
+worker_app = typer.Typer()
+cli_appprefix = "worker"
+cli_app.add_typer(worker_app, name=cli_appprefix)
+
+
+@worker_app.command("start")
+def start_worker_service():
+    """
+    Start the NoETL worker service (separate process exposing only worker endpoints).
+    Uses NOETL_WORKER_HOST/NOETL_WORKER_PORT if provided; otherwise falls back to server host/port+1.
+    """
+    settings = get_settings()
+
+    log_level = "debug" if settings.debug else "info"
+    logging.basicConfig(
+        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
+        datefmt='%Y-%m-%dT%H:%M:%S',
+        level=logging.DEBUG if settings.debug else logging.INFO
+    )
+
+    host = os.environ.get("NOETL_WORKER_HOST", settings.host)
+    try:
+        default_worker_port = str(int(settings.port) + 1)
+    except Exception:
+        default_worker_port = str(settings.port)
+    port = int(os.environ.get("NOETL_WORKER_PORT", default_worker_port))
+
+    server_runtime = settings.server_runtime
+    workers = int(os.environ.get("NOETL_WORKER_WORKERS", str(settings.server_workers)))
+    reload = os.environ.get("NOETL_WORKER_RELOAD", str(settings.server_reload)).lower() in ("true","1","yes","on")
+
+    pid_dir = settings.pid_file_dir
+    os.makedirs(pid_dir, exist_ok=True)
+    worker_pid_path = os.path.join(pid_dir, "noetl_worker.pid")
+    with open(worker_pid_path, 'w') as f:
+        f.write(str(os.getpid()))
+    logger.info(f"Worker PID {os.getpid()} saved to {worker_pid_path}")
+
+    try:
+        if server_runtime == "auto":
+            try:
+                import gunicorn  # type: ignore
+                runtime = "gunicorn"
+            except ImportError:
+                runtime = "uvicorn"
+        else:
+            runtime = server_runtime
+
+        if runtime == "gunicorn":
+            _run_worker_with_gunicorn(host, port, workers, reload, log_level)
+        else:
+            _run_worker_with_uvicorn(host, port, workers, reload, log_level)
+    finally:
+        if os.path.exists(worker_pid_path):
+            os.remove(worker_pid_path)
+            logger.info(f"Removed Worker PID file {worker_pid_path}")
+
+
+@worker_app.command("stop")
+def stop_worker_service(
+    force: bool = typer.Option(False, "--force", "-f", help="Force stop the worker without confirmation")
+):
+    """
+    Stop the running NoETL worker service.
+    This command should not require full environment configuration.
+    """
+    worker_pid_path = os.path.expanduser("~/.noetl/noetl_worker.pid")
+
+    if not os.path.exists(worker_pid_path):
+        typer.echo("No running NoETL worker service found.")
+        return
+
+    try:
+        with open(worker_pid_path, 'r') as f:
+            pid = int(f.read().strip())
+
+        try:
+            os.kill(pid, 0)
+
+            if not force:
+                confirm = typer.confirm(f"Stop NoETL worker with PID {pid}?")
+                if not confirm:
+                    typer.echo("Operation cancelled.")
+                    return
+
+            typer.echo(f"Stopping NoETL worker with PID {pid}...")
+            os.kill(pid, signal.SIGTERM)
+
+            for _ in range(10):
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.5)
+                except OSError:
+                    break
+            else:
+                if force or typer.confirm("Worker didn't stop gracefully. Force kill?"):
+                    typer.echo(f"Force killing NoETL worker with PID {pid}...")
+                    os.kill(pid, signal.SIGKILL)
+
+            if os.path.exists(worker_pid_path):
+                os.remove(worker_pid_path)
+
+            typer.echo("NoETL worker stopped successfully.")
+
+        except OSError:
+            typer.echo(f"No process found with PID {pid}. The worker may have been stopped already.")
+            if os.path.exists(worker_pid_path):
+                os.remove(worker_pid_path)
+
+    except Exception as e:
+        typer.echo(f"Error stopping NoETL worker service: {e}")
+        raise typer.Exit(code=1)
 
 @server_app.command("start")
 def start_server():
@@ -132,7 +287,6 @@ def start_server():
         logger.error(f"FATAL: Error initializing NoETL system metadata: {e}", exc_info=True)
         raise typer.Exit(code=1)
 
-    # Determine server runtime from settings (no defaults)
     server_runtime = settings.server_runtime
     if server_runtime == "auto":
         try:
@@ -167,7 +321,66 @@ def start_server():
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
 
+def _run_worker_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
+    uvicorn.run("noetl.clictl:create_worker_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+
 def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
+    try:
+        import subprocess
+        import sys
+
+        cmd = [
+            sys.executable, "-m", "gunicorn",
+            "noetl.main:create_app()",
+            "--bind", f"{host}:{port}",
+            "--workers", str(workers),
+            "--worker-class", "uvicorn.workers.UvicornWorker",
+            "--log-level", log_level
+        ]
+
+        if reload:
+            cmd.extend(["--reload"])
+
+        logger.info(f"Starting Gunicorn with command: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
+    except ImportError:
+        logger.error("Gunicorn is not installed. Please install it with: pip install gunicorn")
+        logger.info("Falling back to Uvicorn...")
+        _run_with_uvicorn(host, port, workers, reload, log_level)
+    except Exception as e:
+        logger.error(f"Error running Gunicorn: {e}")
+        logger.info("Falling back to Uvicorn...")
+        _run_with_uvicorn(host, port, workers, reload, log_level)
+
+def _run_worker_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
+    try:
+        import subprocess
+        import sys
+
+        cmd = [
+            sys.executable, "-m", "gunicorn",
+            "noetl.clictl:create_worker_app()",
+            "--bind", f"{host}:{port}",
+            "--workers", str(workers),
+            "--worker-class", "uvicorn.workers.UvicornWorker",
+            "--log-level", log_level
+        ]
+
+        if reload:
+            cmd.extend(["--reload"])
+
+        logger.info(f"Starting Gunicorn worker with command: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
+    except ImportError:
+        logger.error("Gunicorn is not installed. Please install it with: pip install gunicorn")
+        logger.info("Falling back to Uvicorn (worker)...")
+        _run_worker_with_uvicorn(host, port, workers, reload, log_level)
+    except Exception as e:
+        logger.error(f"Error running Gunicorn (worker): {e}")
+        logger.info("Falling back to Uvicorn (worker)...")
+        _run_worker_with_uvicorn(host, port, workers, reload, log_level)
     try:
         import subprocess
         import sys
@@ -201,15 +414,16 @@ def stop_server(
 ):
     """
     Stop the running NoETL server.
+    This command should not require full environment configuration.
     """
-    settings = get_settings()
+    pid_file_path = os.path.expanduser("~/.noetl/noetl_server.pid")
 
-    if not os.path.exists(settings.pid_file_path):
+    if not os.path.exists(pid_file_path):
         typer.echo("No running NoETL server found.")
         return
 
     try:
-        with open(settings.pid_file_path, 'r') as f:
+        with open(pid_file_path, 'r') as f:
             pid = int(f.read().strip())
 
         try:
@@ -236,15 +450,15 @@ def stop_server(
                     typer.echo(f"Force killing NoETL server with PID {pid}...")
                     os.kill(pid, signal.SIGKILL)
 
-            if os.path.exists(settings.pid_file_path):
-                os.remove(settings.pid_file_path)
+            if os.path.exists(pid_file_path):
+                os.remove(pid_file_path)
 
             typer.echo("NoETL server stopped successfully.")
 
         except OSError:
             typer.echo(f"No process found with PID {pid}. The server may have been stopped already.")
-            if os.path.exists(settings.pid_file_path):
-                os.remove(settings.pid_file_path)
+            if os.path.exists(pid_file_path):
+                os.remove(pid_file_path)
 
     except Exception as e:
         typer.echo(f"Error stopping NoETL server: {e}")
@@ -287,7 +501,6 @@ def manage_catalog(
     """
 
     auto_detect_mode = False
-    # Initialize to avoid use-before-assign warnings
     resource_type: str | None = None
     file_path: str | None = None
     detected_resource_type: str | None = None

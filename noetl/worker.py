@@ -13,6 +13,109 @@ from noetl.logger import setup_logger, log_error
 
 logger = setup_logger(__name__, include_location=True)
 
+import requests, time, signal
+from typing import Tuple
+
+def register_worker_pool_from_env() -> None:
+    """If worker pool env vars are set, register this worker pool with the server registry.
+    Env:
+      - NOETL_WORKER_POOL_RUNTIME: cpu|gpu|qpu (required to trigger)
+      - NOETL_WORKER_BASE_URL: base URL where this worker exposes /api/worker (required)
+      - NOETL_WORKER_POOL_NAME: identifier (optional; defaults to f"worker-{runtime}")
+      - NOETL_SERVER_URL: server base URL (default http://localhost:8082)
+      - NOETL_WORKER_CAPACITY: optional int
+      - NOETL_WORKER_LABELS: optional CSV string
+    """
+    try:
+        runtime = os.environ.get("NOETL_WORKER_POOL_RUNTIME", "").strip().lower()
+        base_url = os.environ.get("NOETL_WORKER_BASE_URL", "").strip()
+        if not runtime or not base_url:
+            return
+        name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
+        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+        capacity = os.environ.get("NOETL_WORKER_CAPACITY")
+        labels = os.environ.get("NOETL_WORKER_LABELS")
+        if labels:
+            labels = [s.strip() for s in labels.split(',') if s.strip()]
+        payload = {
+            "name": name,
+            "runtime": runtime,
+            "base_url": base_url,
+            "status": "ready",
+            "capacity": int(capacity) if capacity and str(capacity).isdigit() else None,
+            "labels": labels,
+            "pid": os.getpid(),
+            "hostname": os.environ.get("HOSTNAME"),
+        }
+        url = f"{server_url}/api/worker/pool/register"
+        try:
+            resp = requests.post(url, json=payload, timeout=5.0)
+            if resp.status_code == 200:
+                logger.info(f"Worker pool registered: {name} ({runtime}) -> {base_url}")
+                try:
+                    with open('/tmp/noetl_worker_pool_name', 'w') as f:
+                        f.write(name)
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Worker pool register exception: {e}")
+    except Exception:
+        logger.exception("Unexpected error during worker pool registration")
+
+
+def deregister_worker_pool_from_env() -> None:
+    """Attempt to deregister worker pool using stored name."""
+    try:
+        name = None
+        if os.path.exists('/tmp/noetl_worker_pool_name'):
+            try:
+                with open('/tmp/noetl_worker_pool_name', 'r') as f:
+                    name = f.read().strip()
+            except Exception:
+                name = None
+        if not name:
+            name = os.environ.get('NOETL_WORKER_POOL_NAME')
+        if not name:
+            return
+        server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+        try:
+            requests.delete(f"{server_url}/api/worker/pool/deregister", json={"name": name}, timeout=5.0)
+            try:
+                os.remove('/tmp/noetl_worker_pool_name')
+            except Exception:
+                pass
+            logger.info(f"Deregistered worker pool: {name}")
+        except Exception as e:
+            logger.debug(f"Worker deregister attempt failed: {e}")
+    except Exception:
+        pass
+
+
+def _on_worker_terminate(signum, frame):
+    logger.info(f"Worker pool process received signal {signum}, attempting graceful deregister")
+    try:
+        retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
+        backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
+        for attempt in range(1, retries + 1):
+            try:
+                deregister_worker_pool_from_env()
+                logger.info(f"Worker: deregister succeeded (attempt {attempt})")
+                break
+            except Exception as e:
+                logger.debug(f"Worker: deregister attempt {attempt} failed: {e}")
+            if attempt < retries:
+                time.sleep(backoff_base * (2 ** (attempt - 1)))
+    finally:
+        pass
+
+try:
+    signal.signal(signal.SIGTERM, _on_worker_terminate)
+    signal.signal(signal.SIGINT, _on_worker_terminate)
+except Exception:
+    pass
+
 class Worker:
 
     def __init__(self, playbook_path: str, mock_mode: bool = True, pgdb: str = None):
@@ -51,10 +154,11 @@ class Worker:
         
         logger.debug("WORKER.__INIT__: Initializing DatabaseSchema")
         self.db_schema = DatabaseSchema(pgdb=pgdb, auto_setup=True)
+        self.db_schema.initialize_connection_sync()
         self.conn = self.db_schema.conn
         
-        logger.debug("WORKER.__INIT__: Initializing database")
-        self.db_schema.init_database()
+        logger.debug("WORKER.__INIT__: Initializing database (sync)")
+        self.db_schema.init_database_sync()
 
         logger.debug("WORKER.__INIT__: Setting up initial context")
         self.context = {
@@ -108,9 +212,9 @@ class Worker:
                 table_exists = cursor.fetchone()[0]
                 if not table_exists:
                     logger.error("Workload table does not exist in the database.")
-                    self.db_schema.init_database()
+                    self.db_schema.init_database_sync()
                     self.conn.commit()
-                    logger.info("Database schema initialized.")
+                    logger.info("Database schema initialized (sync).")
 
             with self.conn.cursor() as cursor:
                 logger.info(f"Executing INSERT INTO workload for execution_id: {self.execution_id}")
@@ -817,3 +921,100 @@ class Worker:
         server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
         daemon = Broker(self, server_url=server_url)
         return daemon.run(mlflow)
+
+# === Worker service router (moved from worker_service.py) ===
+try:
+    from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+    from noetl.action import execute_task, report_event
+    # Environment, BaseLoader, StrictUndefined are already imported above
+
+    router = APIRouter()
+
+    def _get_server_url() -> str:
+        return os.environ.get("NOETL_SERVER_URL", "http://localhost:8082/api")
+
+    @router.get("/health", include_in_schema=False)
+    async def worker_health():
+        return {"status": "ok", "component": "worker"}
+
+    @router.post("/worker/run-action")
+    async def worker_run_action(request: Request, background_tasks: BackgroundTasks):
+        try:
+            body: Dict[str, Any] = await request.json()
+            execution_id = body.get("execution_id")
+            if not execution_id:
+                raise HTTPException(status_code=400, detail="execution_id is required")
+            task_cfg = body.get("task")
+            if not task_cfg or not isinstance(task_cfg, dict):
+                raise HTTPException(status_code=400, detail="task is required and must be an object")
+            context = body.get("context") or {}
+            parent_event_id = body.get("parent_event_id")
+            node_id = body.get("node_id") or task_cfg.get("name") or f"task_{os.urandom(4).hex()}"
+            node_name = body.get("node_name") or task_cfg.get("name") or "task"
+            node_type = body.get("node_type") or "task"
+            mock_mode = bool(body.get("mock_mode", False))
+
+            server_url = _get_server_url()
+
+            start_event = {
+                "execution_id": execution_id,
+                "parent_event_id": parent_event_id,
+                "event_type": "action_started",
+                "status": "RUNNING",
+                "node_id": node_id,
+                "node_name": node_name,
+                "node_type": node_type,
+                "context": {"work": context, "task": task_cfg},
+                "timestamp": datetime.datetime.now().isoformat(),
+            }
+            start_evt = report_event(start_event, server_url)
+
+            def _run_action_background():
+                try:
+                    jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+                    jenv.filters['to_json'] = lambda obj: json.dumps(obj)
+                    jenv.filters['b64encode'] = lambda s: __import__('base64').b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else __import__('base64').b64encode(str(s).encode('utf-8')).decode('utf-8')
+                    jenv.globals['now'] = lambda: datetime.datetime.now().isoformat()
+                    jenv.globals['env'] = os.environ
+
+                    # Keep same call pattern as worker_service version
+                    result = execute_task(jenv, task_cfg, context or {}, mock_mode=mock_mode)  # type: ignore
+                    complete_event = {
+                        "event_id": (start_evt or {}).get("event_id"),
+                        "execution_id": execution_id,
+                        "parent_event_id": parent_event_id,
+                        "event_type": "action_completed",
+                        "status": "COMPLETED",
+                        "node_id": node_id,
+                        "node_name": node_name,
+                        "node_type": node_type,
+                        "result": result,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    report_event(complete_event, server_url)
+                except Exception as e:
+                    error_event = {
+                        "event_id": (start_evt or {}).get("event_id"),
+                        "execution_id": execution_id,
+                        "parent_event_id": parent_event_id,
+                        "event_type": "action_error",
+                        "status": "ERROR",
+                        "node_id": node_id,
+                        "node_name": node_name,
+                        "node_type": node_type,
+                        "error": str(e),
+                        "result": {"error": str(e)},
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    report_event(error_event, server_url)
+
+            background_tasks.add_task(_run_action_background)
+            return {"status": "accepted", "message": "Action scheduled", "execution_id": execution_id, "event_id": (start_evt or {}).get("event_id")}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"Worker error scheduling action: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+except Exception:
+    # Allow import in environments without FastAPI
+    router = None  # type: ignore

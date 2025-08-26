@@ -1531,3 +1531,117 @@ class Broker:
 
         step_result = self.agent.get_step_results()
         return step_result
+
+
+
+def execute_playbook_via_broker(
+    playbook_content: str,
+    playbook_path: str,
+    playbook_version: str,
+    input_payload: Optional[Dict[str, Any]] = None,
+    sync_to_postgres: bool = True,
+    merge: bool = False
+) -> Dict[str, Any]:
+    """
+    Execute a playbook by constructing a Worker and coordinating via Broker.
+    This function consolidates the former AgentService.execute_agent responsibilities
+    into the broker module to keep orchestration logic in one place.
+
+    Returns:
+        A result dict including status, message, execution_id, and step results.
+    """
+    logger.debug("=== BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Function entry ===")
+    logger.debug(
+        f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Parameters - playbook_path={playbook_path}, playbook_version={playbook_version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}"
+    )
+
+    temp_file_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
+            temp_file.write(playbook_content.encode("utf-8"))
+            temp_file_path = temp_file.name
+        logger.debug(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Temp playbook file created at {temp_file_path}")
+
+        pgdb_conn = None
+        if sync_to_postgres:
+            try:
+                from noetl.common import get_pgdb_connection
+                pgdb_conn = get_pgdb_connection()
+            except Exception as e:
+                logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to get pg connection string, proceeding without DB: {e}")
+                pgdb_conn = None
+
+        logger.debug(
+            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Initializing Worker with temp_file_path={temp_file_path}, pgdb={pgdb_conn}"
+        )
+        agent = Worker(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
+        logger.debug(
+            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Worker initialized with execution_id={agent.execution_id}"
+        )
+
+        workload = agent.playbook.get("workload", {})
+        logger.debug(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Loaded workload from playbook: {workload}")
+
+        if input_payload:
+            if merge:
+                logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Merge mode: deep merging input payload with workload.")
+                merged_workload = deep_merge(workload, input_payload)
+                for key, value in merged_workload.items():
+                    agent.update_context(key, value)
+                agent.update_context("workload", merged_workload)
+                agent.store_workload(merged_workload)
+            else:
+                logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Override mode: replacing workload keys with input payload.")
+                merged_workload = workload.copy()
+                for key, value in input_payload.items():
+                    merged_workload[key] = value
+                for key, value in merged_workload.items():
+                    agent.update_context(key, value)
+                agent.update_context("workload", merged_workload)
+                agent.store_workload(merged_workload)
+        else:
+            logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: No input payload provided. Default workload from playbooks is used.")
+            for key, value in workload.items():
+                agent.update_context(key, value)
+            agent.update_context("workload", workload)
+            agent.store_workload(workload)
+
+        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082")
+        logger.debug(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Using server_url={server_url}")
+        daemon = Broker(agent, server_url=server_url)
+
+        logger.debug("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Calling broker.run()")
+        results = daemon.run()
+        logger.debug(
+            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: broker.run() returned results for execution_id={agent.execution_id}"
+        )
+
+        export_path = None
+        result = {
+            "status": "success",
+            "message": f"Agent executed for playbooks '{playbook_path}' version '{playbook_version}'.",
+            "result": results,
+            "execution_id": agent.execution_id,
+            "export_path": export_path,
+        }
+
+        logger.debug(
+            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Returning result for execution_id={agent.execution_id}"
+        )
+        logger.debug("=== BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Function exit ===")
+        return result
+    except Exception as e:
+        logger.exception(
+            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}."
+        )
+        return {
+            "status": "error",
+            "message": f"Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}.",
+            "error": str(e),
+        }
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception:
+                pass

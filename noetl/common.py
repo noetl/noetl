@@ -19,10 +19,10 @@ logger = setup_logger(__name__, include_location=True)
 
 
 try:
-    from psycopg_pool import ConnectionPool
+    from psycopg_pool import ConnectionPool, AsyncConnectionPool
 except ImportError:
     ConnectionPool = None
-
+    AsyncConnectionPool = None
 
 #===================================
 #  time calendar
@@ -259,26 +259,46 @@ def get_pgdb_connection(
     return f"dbname={db_name} user={user} password={password} host={host} port={port} hostaddr='' gssencmode=disable options='-c search_path={schema}'"
 
 #===================================
-# postgres pool
+# postgres pool (sync and async)
 #===================================
+
 db_pool = None
+
+async_db_pool = None
+
 
 def initialize_db_pool():
     global db_pool
     if db_pool is None and ConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10)
+            db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10, open=False)
+            db_pool.open()
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
-            logger.error(f"FATAL: Failed to initialize connection pool: {e}")
-            sys.exit(1)
+            logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
+            db_pool = None
     return db_pool
+
+from contextlib import asynccontextmanager
+
+async def initialize_async_db_pool():
+    global async_db_pool
+    if async_db_pool is None and AsyncConnectionPool:
+        try:
+            connection_string = get_pgdb_connection()
+            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=1, max_size=10, open=False)
+            await async_db_pool.open()
+            logger.info("Async database connection pool initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize async connection pool: {e}. Falling back to direct async connection.")
+            async_db_pool = None
+    return async_db_pool
 
 @contextmanager
 def get_db_connection(optional=False):
     """
-    Get a database connection from the pool or create a new one.
+    Get a database connection from the sync pool or create a new one.
     
     Args:
         optional (bool): If True, return None instead of raising an exception when the connection fails.
@@ -294,12 +314,8 @@ def get_db_connection(optional=False):
             finally:
                 pool.putconn(conn)
         except Exception as pool_error:
-            logger.error(f"FATAL: Connection pool error: {pool_error}")
-            # Fail fast: do not fallback to direct connection when pool is configured
-            raise
+            logger.warning(f"Connection pool error: {pool_error}. Falling back to direct connection.")
 
-    # If no pool implementation is available at all (psycopg_pool not installed),
-    # allow direct connections as the only mode (not a fallback).
     conn = None
     try:
         conn = psycopg.connect(get_pgdb_connection())
@@ -314,3 +330,36 @@ def get_db_connection(optional=False):
     finally:
         if conn:
             conn.close()
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def get_async_db_connection(optional: bool = False):
+    """
+    Get an async database connection from the async pool or create a direct async connection.
+
+    Args:
+        optional (bool): If True, yields None instead of raising an exception when connection fails.
+    """
+    pool = await initialize_async_db_pool()
+    if pool:
+        async with pool.connection() as conn:
+            try:
+                yield conn
+                return
+            except Exception:
+                raise
+    conn = None
+    try:
+        conn = await psycopg.AsyncConnection.connect(get_pgdb_connection())
+        try:
+            yield conn
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.error(f"Async connection failed: {e}")
+        if optional:
+            logger.warning("Database connection is optional, continuing without it.")
+            yield None
+        else:
+            raise

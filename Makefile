@@ -22,20 +22,26 @@ K8S_POSTGRES_DIR ?= $(K8S_DIR)/postgres
 .PHONY: help
 help:
 	@echo "Commands:"
-	@echo "  make build           Build containers"
-	@echo "  make rebuild         Rebuild containers"
-	@echo "  make up              Start containers"
-	@echo "  make down            Stop containers"
-	@echo "  make restart         Restart services"
-	@echo "  make logs            View logs"
-	@echo "  make clean           Clean up"
+	@echo "  make build                 Build containers"
+	@echo "  make rebuild               Rebuild containers"
+	@echo "  make up                    Start containers"
+	@echo "  make down                  Stop containers"
+	@echo "  make restart               Restart services"
+	@echo "  make logs                  View logs"
+	@echo "  make clean                 Clean up"
+	@echo ""
+	@echo "Local Runtime (env + logs):"
+	@echo "  make server-start          Start NoETL server using .env.server or .env (logs/logs/server.log)"
+	@echo "  make server-stop           Stop NoETL server"
+	@echo "  make worker-start          Start NoETL worker using .env.worker or .env (logs/worker.log)"
+	@echo "  make worker-stop           Stop NoETL worker"
 	@echo ""
 	@echo "Development Commands:"
-	@echo "  make install-uv      Install uv package manager"
-	@echo "  make create-venv     Create virtual environment"
-	@echo "  make install-dev     Install development dependencies"
-	@echo "  make install         Install package"
-	@echo "  make run             Run the server"
+	@echo "  make install-uv            Install uv package manager"
+	@echo "  make create-venv           Create virtual environment"
+	@echo "  make install-dev           Install development dependencies"
+	@echo "  make install               Install package"
+	@echo "  make run                   Run the server"
 	@echo ""
 	@echo "Test Commands:"
 	@echo "  make test-setup      Set up test environment (create required directories)"
@@ -173,6 +179,40 @@ ui:
 	set -a; [ -f .env ] && . .env; set +a; \
 	cd ui-src && npm install && VITE_API_BASE_URL=$$VITE_API_BASE_URL npm run dev
 
+
+.PHONY: server-start server-stop worker-start worker-stop
+server-start:
+	@mkdir -p logs
+	@/bin/bash -lc " \
+		set -a; \
+		if [ -f .env.server ]; then . .env.server; elif [ -f .env ]; then . .env; fi; \
+		set +a; \
+		nohup noetl server start > logs/server.log 2>&1 & \
+		bgpid=\$$!; \
+		echo \$$bgpid > logs/server.pid; \
+		echo \"NoETL server started: PID=\$$bgpid | logs at logs/server.log\" \
+	"
+server-stop:
+	-@noetl server stop -f || true
+
+worker-start:
+	@mkdir -p logs
+	@/bin/bash -lc ' \
+		set -a; \
+		if [ -f .env.worker ]; then . .env.worker; \
+		elif [ -f .env ]; then . .env; fi; \
+		set +a; \
+		nohup noetl worker start > logs/worker.log 2>&1 & \
+		sleep 1; \
+		if [ -f $$HOME/.noetl/noetl_worker.pid ]; then \
+			cat $$HOME/.noetl/noetl_worker.pid > logs/worker.pid; \
+			echo "NoETL worker started: PID=$$(cat logs/worker.pid) | logs at logs/worker.log"; \
+		else \
+			echo "Worker failed to start — check logs/worker.log"; \
+		fi'
+
+worker-stop:
+	-@noetl worker stop -f || true
 
 # === Postgres only on Kubernetes ===
 .PHONY: k8s-postgres-apply k8s-postgres-delete
