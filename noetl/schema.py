@@ -352,6 +352,31 @@ class DatabaseSchema:
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
                 """)
+                # Schedule registry for time-based playbook execution
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.schedule (
+                        schedule_id BIGSERIAL PRIMARY KEY,
+                        playbook_path TEXT NOT NULL,
+                        playbook_version TEXT,
+                        cron TEXT,                 -- standard 5-field (or 6) cron expression OR NULL if using interval
+                        interval_seconds INTEGER,  -- alternative to cron; if set > 0 used when cron is NULL
+                        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                        timezone TEXT DEFAULT 'UTC',
+                        next_run_at TIMESTAMPTZ,   -- cached next run timestamp
+                        last_run_at TIMESTAMPTZ,
+                        last_status TEXT,
+                        input_payload JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        meta JSONB
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON {self.noetl_schema}.schedule (next_run_at) WHERE enabled = TRUE;
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON {self.noetl_schema}.schedule (playbook_path);
+                """)
                 cursor.execute(f"""
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON {self.noetl_schema}.runtime (component_type, name);
                 """)
@@ -363,6 +388,102 @@ class DatabaseSchema:
                 """)
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON {self.noetl_schema}.runtime ((runtime->>'type'));
+                """)
+                # ===== Identity & Collaboration Tables =====
+                
+                # 1.	Snowflake IDs for all tables → globally unique.
+                # 2.	Profile table can be human or bot.
+                # 3.	Session table tracks active connections.
+                # 4.	Label hierarchy supports recursive namespaces/folders.
+                # 5.	Chats live in labels, messages live in chats.
+                # 6.	Members manage chat participants with roles (owner/admin/member).
+                # 7.	Attachments can be linked to either chats or labels.
+                
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.role (
+                        id BIGINT PRIMARY KEY,
+                        name TEXT UNIQUE NOT NULL,
+                        description TEXT
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.profile (
+                        id BIGINT PRIMARY KEY,
+                        username TEXT UNIQUE NOT NULL,
+                        email TEXT UNIQUE,
+                        password_hash TEXT,
+                        role_id BIGINT REFERENCES {self.noetl_schema}.role(id),
+                        type TEXT NOT NULL CHECK (type IN ('user','bot')),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.session (
+                        id BIGINT PRIMARY KEY,
+                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        session_type TEXT NOT NULL CHECK (session_type IN ('user','bot','ai')),
+                        connected_at TIMESTAMPTZ DEFAULT now(),
+                        disconnected_at TIMESTAMPTZ,
+                        metadata JSONB
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.label (
+                        id BIGINT PRIMARY KEY,
+                        parent_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        name TEXT NOT NULL,
+                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
+                        id BIGINT PRIMARY KEY,
+                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        name TEXT NOT NULL,
+                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.member (
+                        id BIGINT PRIMARY KEY,
+                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
+                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id) ON DELETE CASCADE,
+                        role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
+                        joined_at TIMESTAMPTZ DEFAULT now(),
+                        UNIQUE(chat_id, profile_id)
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.message (
+                        id BIGINT PRIMARY KEY,
+                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
+                        sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
+                        sender_id BIGINT,
+                        role TEXT,
+                        content TEXT NOT NULL,
+                        metadata JSONB,
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.attachment (
+                        id BIGINT PRIMARY KEY,
+                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
+                        filename TEXT NOT NULL,
+                        filepath TEXT NOT NULL,
+                        uploaded_by BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
+                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
+                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
                 """)
                 if not getattr(self.conn, "autocommit", False):
                     self.conn.commit()
@@ -742,6 +863,142 @@ class DatabaseSchema:
                 await cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON {self.noetl_schema}.runtime ((runtime->>'type'));
                 """)
+
+                # ===== Schedule table (async) =====
+                logger.info("Creating schedule table (async).")
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.schedule (
+                        schedule_id BIGSERIAL PRIMARY KEY,
+                        playbook_path TEXT NOT NULL,
+                        playbook_version TEXT,
+                        cron TEXT,
+                        interval_seconds INTEGER,
+                        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                        timezone TEXT DEFAULT 'UTC',
+                        next_run_at TIMESTAMPTZ,
+                        last_run_at TIMESTAMPTZ,
+                        last_status TEXT,
+                        input_payload JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        meta JSONB
+                    )
+                """)
+                await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON {self.noetl_schema}.schedule (next_run_at) WHERE enabled = TRUE;")
+                await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON {self.noetl_schema}.schedule (playbook_path);")
+
+                # ===== Identity & Collaboration tables (async) =====
+                logger.info("Creating identity & collaboration tables (async).")
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.role (
+                        id BIGINT PRIMARY KEY,
+                        name TEXT UNIQUE NOT NULL,
+                        description TEXT
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.profile (
+                        id BIGINT PRIMARY KEY,
+                        username TEXT UNIQUE NOT NULL,
+                        email TEXT UNIQUE,
+                        password_hash TEXT,
+                        role_id BIGINT REFERENCES {self.noetl_schema}.role(id),
+                        type TEXT NOT NULL CHECK (type IN ('user','bot')),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.session (
+                        id BIGINT PRIMARY KEY,
+                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        session_type TEXT NOT NULL CHECK (session_type IN ('user','bot','ai')),
+                        connected_at TIMESTAMPTZ DEFAULT now(),
+                        disconnected_at TIMESTAMPTZ,
+                        metadata JSONB
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.label (
+                        id BIGINT PRIMARY KEY,
+                        parent_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        name TEXT NOT NULL,
+                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
+                        id BIGINT PRIMARY KEY,
+                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        name TEXT NOT NULL,
+                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.member (
+                        id BIGINT PRIMARY KEY,
+                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
+                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id) ON DELETE CASCADE,
+                        role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
+                        joined_at TIMESTAMPTZ DEFAULT now(),
+                        UNIQUE(chat_id, profile_id)
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.message (
+                        id BIGINT PRIMARY KEY,
+                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
+                        sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
+                        sender_id BIGINT,
+                        role TEXT,
+                        content TEXT NOT NULL,
+                        metadata JSONB,
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.attachment (
+                        id BIGINT PRIMARY KEY,
+                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
+                        filename TEXT NOT NULL,
+                        filepath TEXT NOT NULL,
+                        uploaded_by BIGINT REFERENCES {self.noetl_schema}.profile(id),
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                await cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
+                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
+                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                """)
+
+                # Snowflake-like ID function (best-effort) and defaults
+                await cursor.execute(f"""
+                    CREATE OR REPLACE FUNCTION {self.noetl_schema}.snowflake_id() RETURNS BIGINT AS $$
+                    DECLARE
+                        our_epoch BIGINT := 1704067200000; -- 2024-01-01 UTC in ms
+                        seq_id BIGINT;
+                        now_ms BIGINT;
+                        shard_id INT := 1; -- single shard default
+                    BEGIN
+                        SELECT nextval('{self.noetl_schema}.snowflake_seq') % 1024 INTO seq_id;
+                        now_ms := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+                        RETURN ((now_ms - our_epoch) << 23) |
+                               ((shard_id & 31) << 18) |
+                               (seq_id & 262143);
+                    END;
+                    $$ LANGUAGE plpgsql;
+                """)
+                await cursor.execute(f"CREATE SEQUENCE IF NOT EXISTS {self.noetl_schema}.snowflake_seq;")
+                for tbl in ['role','profile','session','label','chat','member','message','attachment']:
+                    try:
+                        await cursor.execute(f"ALTER TABLE {self.noetl_schema}." + tbl + " ALTER COLUMN id SET DEFAULT {self.noetl_schema}.snowflake_id();")
+                    except Exception:
+                        pass
 
                 try:
                     try:

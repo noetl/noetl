@@ -19,7 +19,6 @@ from noetl.worker import router as worker_router
 from noetl.common import DateTimeEncoder
 from noetl.logger import setup_logger
 from noetl.schema import DatabaseSchema
-from noetl.worker import Worker
 from noetl.config import get_settings
 
 logger = setup_logger(__name__, include_location=True)
@@ -944,61 +943,3 @@ def run_cli_mode():
             time.sleep(3600) 
     except KeyboardInterrupt:
         typer.echo("CLI mode terminated by user")
-
-@cli_app.command("worker")
-def run_worker(
-    playbook_path: str = typer.Argument(..., help="Path or name of the playbook to execute as a worker"),
-    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook to execute."),
-    mock_mode: bool = typer.Option(False, "--mock", help="Run in mock mode without executing real operations."),
-    debug: bool = typer.Option(False, "--debug", help="Enable debug logging mode."),
-    pgdb: str = typer.Option(None, "--pgdb", help="Postgres connection string. If not provided, uses environment variables.")
-):
-    """
-    Run a worker process to execute a playbook.
-
-    This command starts a worker process that executes the specified playbook.
-    The worker runs independently from the server and can be used for background processing.
-
-    Examples:
-        noetl worker /path/to/playbook.yaml
-        noetl worker playbook_name --version 0.1.0
-        noetl worker playbook_name --mock
-    """
-    _ = get_settings()
-
-    log_level = "debug" if debug else "info"
-    logging.basicConfig(
-        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
-        datefmt='%Y-%m-%dT%H:%M:%S',
-        level=logging.DEBUG if debug else logging.INFO
-    )
-
-    logger.info(f"Starting NoETL worker for playbook: {playbook_path}")
-
-    try:
-        logger.info("Initializing NoETL system metadata.")
-        db_schema = DatabaseSchema(auto_setup=True)
-        logger.info("NoETL database schema initialized.")
-
-        if version and not os.path.exists(playbook_path) and not playbook_path.endswith(('.yaml', '.yml', '.json')):
-            logger.info(f"Fetching playbook '{playbook_path}' version '{version}' from catalog")
-            from noetl.server import get_catalog_service
-            catalog_service = get_catalog_service()
-            entry = catalog_service.fetch_entry(playbook_path, version)
-            if not entry:
-                logger.error(f"Playbook '{playbook_path}' version '{version}' not found in catalog")
-                raise typer.Exit(code=1)
-
-            with tempfile.NamedTemporaryFile(suffix='.yaml', delete=False) as temp_file:
-                temp_file.write(entry['content'].encode('utf-8'))
-                temp_path = temp_file.name
-
-            playbook_path = temp_path
-            logger.info(f"Using temporary playbook file: {playbook_path}")
-
-        worker = Worker(playbook_path=playbook_path, mock_mode=mock_mode, pgdb=pgdb)
-        worker.run()
-        logger.info("Worker execution completed successfully")
-    except Exception as e:
-        logger.error(f"Error running worker: {e}", exc_info=True)
-        raise typer.Exit(code=1)

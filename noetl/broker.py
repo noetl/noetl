@@ -10,7 +10,6 @@ from noetl.action import execute_task, report_event
 from noetl.render import render_template
 from noetl.common import deep_merge, get_bool
 from noetl.logger import setup_logger, log_error
-from noetl.worker import Worker
 logger = setup_logger(__name__, include_location=True)
 
 class Broker:
@@ -24,7 +23,11 @@ class Broker:
             server_url: The URL of the server to report events
         """
         self.agent = agent
-        self.server_url = server_url or os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
+        # Normalize server URL to point to API base (ensure trailing /api)
+        base_url = server_url or os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
+        if base_url and not base_url.rstrip('/').endswith('/api'):
+            base_url = base_url.rstrip('/') + '/api'
+        self.server_url = base_url
         self.event_reporting_enabled = True
         self.validate_server_url()
 
@@ -121,49 +124,32 @@ class Broker:
                     'error': error_msg
                 }
 
-            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
-                temp_file.write(entry.get("content").encode('utf-8'))
-                temp_file_path = temp_file.name
-
             try:
-                pgdb_conn = self.agent.pgdb
-                child_agent = Worker(temp_file_path, mock_mode=self.agent.mock_mode, pgdb=pgdb_conn)
-                workload = child_agent.playbook.get('workload', {})
-                if input_payload:
-                    if merge:
-                        logger.info(f"Merge mode: merging input payload with workload for playbooks '{path}'")
-                        merged_workload = deep_merge(workload, input_payload)
-                        for key, value in merged_workload.items():
-                            child_agent.update_context(key, value)
-                        child_agent.update_context('workload', merged_workload)
-                        child_agent.store_workload(merged_workload)
-                    else:
-                        logger.info(f"Override mode: replacing workload keys with input payload for playbooks '{path}'")
-                        merged_workload = workload.copy()
-                        for key, value in input_payload.items():
-                            merged_workload[key] = value
-                        for key, value in merged_workload.items():
-                            child_agent.update_context(key, value)
-                        child_agent.update_context('workload', merged_workload)
-                        child_agent.store_workload(merged_workload)
-                else:
-                    logger.info(f"No input payload provided for playbooks '{path}'. Using default workload.")
-                    for key, value in workload.items():
-                        child_agent.update_context(key, value)
-                    child_agent.update_context('workload', workload)
-                    child_agent.store_workload(workload)
-
-                child_broker = Broker(child_agent, server_url=self.server_url)
-                results = child_broker.run()
-
-                return {
-                    'status': 'success',
-                    'data': results,
-                    'execution_id': child_agent.execution_id
+                api_url = f"{self.server_url}/api/agent/execute"
+                payload = {
+                    "path": path,
+                    "version": version,
+                    "input_payload": input_payload or {},
+                    "sync_to_postgres": True,
+                    "merge": bool(merge),
                 }
-            finally:
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.post(api_url, json=payload)
+                    resp.raise_for_status()
+                    result = resp.json()
+                return {
+                    'status': result.get('status', 'success'),
+                    'data': result.get('result'),
+                    'execution_id': result.get('execution_id')
+                }
+            except httpx.HTTPError as he:
+                error_msg = f"HTTP error executing playbook '{path}': {he}"
+                logger.error(error_msg)
+                return { 'status': 'error', 'error': error_msg }
+            except Exception as e:
+                error_msg = f"Error delegating playbook '{path}' execution: {e}"
+                logger.error(error_msg, exc_info=True)
+                return { 'status': 'error', 'error': error_msg }
 
         except Exception as e:
             error_msg = f"Error executing playbooks '{path}': {str(e)}"
@@ -1543,105 +1529,90 @@ def execute_playbook_via_broker(
     merge: bool = False
 ) -> Dict[str, Any]:
     """
-    Execute a playbook by constructing a Worker and coordinating via Broker.
-    This function consolidates the former AgentService.execute_agent responsibilities
-    into the broker module to keep orchestration logic in one place.
-
-    Returns:
-        A result dict including status, message, execution_id, and step results.
+    Event-sourced kickoff of a playbook execution without directly using Worker.
+    - Generates an execution_id.
+    - Prepares merged workload context (playbook workload +/- input_payload).
+    - Emits an execution_start event to the server API.
+    - Returns immediately with the execution_id; further step evaluation is
+      handled by the event-driven broker path.
     """
     logger.debug("=== BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Function entry ===")
     logger.debug(
         f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Parameters - playbook_path={playbook_path}, playbook_version={playbook_version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}"
     )
 
-    temp_file_path = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as temp_file:
-            temp_file.write(playbook_content.encode("utf-8"))
-            temp_file_path = temp_file.name
-        logger.debug(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Temp playbook file created at {temp_file_path}")
-
-        pgdb_conn = None
-        if sync_to_postgres:
+        # Create execution ID (prefer snowflake if available)
+        try:
+            from noetl.common import get_snowflake_id_str as _snow_id  # type: ignore
+            execution_id = _snow_id()
+        except Exception:
             try:
-                from noetl.common import get_pgdb_connection
-                pgdb_conn = get_pgdb_connection()
-            except Exception as e:
-                logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to get pg connection string, proceeding without DB: {e}")
-                pgdb_conn = None
+                from noetl.common import get_snowflake_id as _snow
+                execution_id = str(_snow())
+            except Exception:
+                execution_id = str(uuid.uuid4())
 
-        logger.debug(
-            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Initializing Worker with temp_file_path={temp_file_path}, pgdb={pgdb_conn}"
-        )
-        agent = Worker(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
-        logger.debug(
-            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Worker initialized with execution_id={agent.execution_id}"
-        )
-
-        workload = agent.playbook.get("workload", {})
-        logger.debug(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Loaded workload from playbook: {workload}")
+        # Load workload from playbook content (best-effort)
+        try:
+            import yaml
+            pb = yaml.safe_load(playbook_content) or {}
+            base_workload = pb.get('workload', {}) if isinstance(pb, dict) else {}
+        except Exception:
+            base_workload = {}
 
         if input_payload:
             if merge:
-                logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Merge mode: deep merging input payload with workload.")
-                merged_workload = deep_merge(workload, input_payload)
-                for key, value in merged_workload.items():
-                    agent.update_context(key, value)
-                agent.update_context("workload", merged_workload)
-                agent.store_workload(merged_workload)
+                merged_workload = deep_merge(base_workload, input_payload)
             else:
-                logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Override mode: replacing workload keys with input payload.")
-                merged_workload = workload.copy()
-                for key, value in input_payload.items():
-                    merged_workload[key] = value
-                for key, value in merged_workload.items():
-                    agent.update_context(key, value)
-                agent.update_context("workload", merged_workload)
-                agent.store_workload(merged_workload)
+                merged_workload = {**base_workload, **input_payload}
         else:
-            logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: No input payload provided. Default workload from playbooks is used.")
-            for key, value in workload.items():
-                agent.update_context(key, value)
-            agent.update_context("workload", workload)
-            agent.store_workload(workload)
+            merged_workload = base_workload
 
-        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082")
+        # Normalize server URL to API base
+        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+        if not server_url.endswith('/api'):
+            server_url = server_url + '/api'
         logger.debug(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Using server_url={server_url}")
-        daemon = Broker(agent, server_url=server_url)
 
-        logger.debug("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Calling broker.run()")
-        results = daemon.run()
-        logger.debug(
-            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: broker.run() returned results for execution_id={agent.execution_id}"
-        )
+        # Emit execution_start event to server; include context that helps later evaluation
+        try:
+            ctx = {
+                "path": playbook_path,
+                "version": playbook_version,
+                "workload": merged_workload,
+            }
+            report_event({
+                'event_type': 'execution_start',
+                'execution_id': execution_id,
+                'status': 'in_progress',
+                'timestamp': datetime.datetime.now().isoformat(),
+                'node_type': 'playbook',
+                'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
+                'context': ctx,
+                'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
+            }, server_url)
+        except Exception as e_evt:
+            logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to emit execution_start event: {e_evt}")
 
-        export_path = None
         result = {
             "status": "success",
-            "message": f"Agent executed for playbooks '{playbook_path}' version '{playbook_version}'.",
-            "result": results,
-            "execution_id": agent.execution_id,
-            "export_path": export_path,
+            "message": f"Execution accepted for playbooks '{playbook_path}' version '{playbook_version}'.",
+            "result": {"status": "queued"},
+            "execution_id": execution_id,
+            "export_path": None,
         }
-
         logger.debug(
-            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Returning result for execution_id={agent.execution_id}"
+            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Returning accepted result for execution_id={execution_id}"
         )
         logger.debug("=== BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Function exit ===")
         return result
     except Exception as e:
         logger.exception(
-            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}."
+            f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Error preparing execution for playbooks '{playbook_path}' version '{playbook_version}': {e}."
         )
         return {
             "status": "error",
             "message": f"Error executing agent for playbooks '{playbook_path}' version '{playbook_version}': {e}.",
             "error": str(e),
         }
-    finally:
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception:
-                pass

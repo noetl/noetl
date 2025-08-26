@@ -12,7 +12,7 @@ data:
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
       CREATE SCHEMA IF NOT EXISTS $POSTGRES_SCHEMA;
       CREATE SCHEMA IF NOT EXISTS noetl;
-      CREATE EXTENSION IF NOT EXISTS plpython3u;
+      -- CREATE EXTENSION IF NOT EXISTS plpython3u;
     EOSQL
 
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -f /schema_ddl.sql
@@ -168,6 +168,126 @@ data:
     CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
     CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
     CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
+
+    -- Schedule table
+    CREATE TABLE IF NOT EXISTS noetl.schedule (
+        schedule_id BIGSERIAL PRIMARY KEY,
+        playbook_path TEXT NOT NULL,
+        playbook_version TEXT,
+        cron TEXT,
+        interval_seconds INTEGER,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        timezone TEXT DEFAULT 'UTC',
+        next_run_at TIMESTAMPTZ,
+        last_run_at TIMESTAMPTZ,
+        last_status TEXT,
+        input_payload JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        meta JSONB
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON noetl.schedule (next_run_at) WHERE enabled = TRUE;
+    CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON noetl.schedule (playbook_path);
+
+    -- Identity & collaboration tables
+    CREATE TABLE IF NOT EXISTS noetl.role (
+        id BIGINT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT
+    );
+    CREATE TABLE IF NOT EXISTS noetl.profile (
+        id BIGINT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        role_id BIGINT REFERENCES noetl.role(id),
+        type TEXT NOT NULL CHECK (type IN ('user','bot')),
+        created_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS noetl.session (
+        id BIGINT PRIMARY KEY,
+        profile_id BIGINT REFERENCES noetl.profile(id),
+        session_type TEXT NOT NULL CHECK (session_type IN ('user','bot','ai')),
+        connected_at TIMESTAMPTZ DEFAULT now(),
+        disconnected_at TIMESTAMPTZ,
+        metadata JSONB
+    );
+    CREATE TABLE IF NOT EXISTS noetl.label (
+        id BIGINT PRIMARY KEY,
+        parent_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        owner_id BIGINT REFERENCES noetl.profile(id),
+        created_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS noetl.chat (
+        id BIGINT PRIMARY KEY,
+        label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        owner_id BIGINT REFERENCES noetl.profile(id),
+        created_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS noetl.member (
+        id BIGINT PRIMARY KEY,
+        chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
+        profile_id BIGINT REFERENCES noetl.profile(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
+        joined_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(chat_id, profile_id)
+    );
+    CREATE TABLE IF NOT EXISTS noetl.message (
+        id BIGINT PRIMARY KEY,
+        chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
+        sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
+        sender_id BIGINT,
+        role TEXT,
+        content TEXT NOT NULL,
+        metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS noetl.attachment (
+        id BIGINT PRIMARY KEY,
+        label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+        chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
+        filename TEXT NOT NULL,
+        filepath TEXT NOT NULL,
+        uploaded_by BIGINT REFERENCES noetl.profile(id),
+        created_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_label_parent ON noetl.label(parent_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON noetl.label(parent_id, name);
+    CREATE INDEX IF NOT EXISTS idx_chat_label ON noetl.chat(label_id);
+    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON noetl.message(chat_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON noetl.attachment(chat_id, created_at);
+
+    -- Snowflake-like id generation helpers
+    CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
+    CREATE OR REPLACE FUNCTION noetl.snowflake_id() RETURNS BIGINT AS $$
+    DECLARE
+        our_epoch BIGINT := 1704067200000;
+        seq_id BIGINT;
+        now_ms BIGINT;
+        shard_id INT := 1;
+    BEGIN
+        SELECT nextval('noetl.snowflake_seq') % 1024 INTO seq_id;
+        now_ms := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+        RETURN ((now_ms - our_epoch) << 23) |
+               ((shard_id & 31) << 18) |
+               (seq_id & 262143);
+    END;
+    $$ LANGUAGE plpgsql;
+    ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.label ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.chat ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.member ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.message ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.attachment ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+
+    -- Seed data example (id auto via function)
+    INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'admin', 'Administrator') ON CONFLICT (name) DO NOTHING;
+    INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'user', 'Standard user') ON CONFLICT (name) DO NOTHING;
+    INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'bot', 'Automation bot') ON CONFLICT (name) DO NOTHING;
 
   postgresql.conf: |
     # PostgreSQL configuration file

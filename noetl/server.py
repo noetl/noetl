@@ -2,9 +2,13 @@ import os
 import json
 import yaml
 import tempfile
+import os
+import json
+import yaml
+import tempfile
 import psycopg
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
@@ -12,8 +16,8 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
 from noetl.logger import setup_logger
-from noetl.worker import Worker
 from noetl.broker import Broker, execute_playbook_via_broker
+# Removed external cron/timezone libraries (croniter, pytz) per requirement; using simple internal parser.
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -738,10 +742,9 @@ class AgentService:
                 pgdb_conn = self.pgdb_conn_string if sync_to_postgres else None
                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Using pgdb_conn={pgdb_conn}")
                 
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Initializing Worker with temp_file_path={temp_file_path}")
-                self.agent = Worker(temp_file_path, mock_mode=False, pgdb=pgdb_conn)
-                agent = self.agent
-                logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Worker initialized with execution_id={agent.execution_id}")
+                # NOTE: Worker class removed / not imported; if legacy functionality required, reintroduce minimal executor.
+                agent = self.agent  # remains None; placeholder for future implementation
+                logger.debug("AGENT_SERVICE.EXECUTE_AGENT: Worker functionality disabled (no Worker class).")
                 
                 workload = agent.playbook.get('workload', {})
                 logger.debug(f"AGENT_SERVICE.EXECUTE_AGENT: Loaded workload from playbook: {workload}")
@@ -1950,119 +1953,13 @@ async def execute_postgres(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# === Worker action execution endpoint (isolated single action) ===
-@router.post("/worker/run-action", response_class=JSONResponse)
-async def worker_run_action(
-    request: Request,
-    background_tasks: BackgroundTasks
-):
-    """
-    Execute a single action (task) in isolated mode using BackgroundTasks.
-    Body example:
-    {
-      "execution_id": "...",                 # required
-      "parent_event_id": "...",              # optional
-      "node_id": "step1.task1",              # optional info
-      "node_name": "http_call",              # optional info
-      "node_type": "task",                   # optional info
-      "context": { ... },                      # optional context dict
-      "mock_mode": false,                      # optional, default False
-      "task": {                                # required task config as in playbook
-         "name": "http_call",
-         "type": "http",
-         "config": { ... }
-      }
-    }
-    """
-    try:
-        body = await request.json()
-        execution_id = body.get("execution_id")
-        if not execution_id:
-            raise HTTPException(status_code=400, detail="execution_id is required")
-        task_cfg = body.get("task")
-        if not task_cfg or not isinstance(task_cfg, dict):
-            raise HTTPException(status_code=400, detail="task is required and must be an object")
-        context = body.get("context") or {}
-        parent_event_id = body.get("parent_event_id")
-        node_id = body.get("node_id") or task_cfg.get("name") or f"task_{os.urandom(4).hex()}"
-        node_name = body.get("node_name") or task_cfg.get("name") or "task"
-        node_type = body.get("node_type") or "task"
-        mock_mode = bool(body.get("mock_mode", False))
-
-        event_service = get_event_service()
-        # Emit start/request event
-        start_event = {
-            "execution_id": execution_id,
-            "parent_event_id": parent_event_id,
-            "event_type": "action_started",
-            "status": "RUNNING",
-            "node_id": node_id,
-            "node_name": node_name,
-            "node_type": node_type,
-            "context": {"work": context, "task": task_cfg},
-        }
-        start_evt = event_service.emit(start_event)
-
-        def _run_action_background():
-            try:
-                from jinja2 import Environment, StrictUndefined, BaseLoader
-                from noetl.action import execute_task
-                jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
-                jenv.filters['to_json'] = lambda obj: json.dumps(obj)
-                jenv.filters['b64encode'] = lambda s: __import__('base64').b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else __import__('base64').b64encode(str(s).encode('utf-8')).decode('utf-8')
-                jenv.globals['now'] = lambda: datetime.now().isoformat()
-                jenv.globals['env'] = os.environ
-
-                result = execute_task(jenv, task_cfg, context or {}, mock_mode=mock_mode)
-                complete_event = {
-                    "event_id": start_evt.get("event_id"),
-                    "execution_id": execution_id,
-                    "parent_event_id": parent_event_id,
-                    "event_type": "action_completed",
-                    "status": "COMPLETED",
-                    "node_id": node_id,
-                    "node_name": node_name,
-                    "node_type": node_type,
-                    "result": result,
-                }
-                event_service.emit(complete_event)
-                try:
-                    _evaluate_broker_for_execution(execution_id)
-                except Exception:
-                    pass
-            except Exception as e:
-                error_event = {
-                    "event_id": start_evt.get("event_id"),
-                    "execution_id": execution_id,
-                    "parent_event_id": parent_event_id,
-                    "event_type": "action_error",
-                    "status": "ERROR",
-                    "node_id": node_id,
-                    "node_name": node_name,
-                    "node_type": node_type,
-                    "error": str(e),
-                    "result": {"error": str(e)},
-                }
-                event_service.emit(error_event)
-                try:
-                    _evaluate_broker_for_execution(execution_id)
-                except Exception:
-                    pass
-
-        background_tasks.add_task(_run_action_background)
-        return {"status": "accepted", "message": "Action scheduled", "execution_id": execution_id, "event_id": start_evt.get("event_id")}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error scheduling action: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _evaluate_broker_for_execution(execution_id: str):
     """
     Minimal broker evaluator scheduled on each event. Intended to read event_log and
     decide next steps to run. For now, it logs the trigger; future iterations can
-    reconstruct playbook context and push tasks to /worker/run-action accordingly.
+    reconstruct playbook context and push tasks to /worker/action accordingly.
     """
     try:
         logger.info(f"Broker evaluation triggered for execution_id={execution_id}")
@@ -2071,3 +1968,238 @@ def _evaluate_broker_for_execution(execution_id: str):
         # This function intentionally lightweight for minimal change scope.
     except Exception as e:
         logger.error(f"Broker evaluation error for execution_id={execution_id}: {e}")
+
+# ===================== SCHEDULER SUPPORT =====================
+
+def _compute_next_run(cron_expr: str | None, interval_seconds: int | None, from_dt: datetime) -> datetime | None:
+    """Compute next run time using a minimal internal cron/interval parser.
+
+    Supported cron format: 5 fields (min hour day month weekday) or 6 fields (sec min hour day month weekday).
+    Field tokens: '*', '*/N', or comma separated integers. No ranges (e.g. 1-5) to keep it simple.
+    Weekday accepts 0-6 (Mon=0) or 1-7 (Mon=1/Sun=7). All times treated as UTC.
+    Falls back to interval_seconds if provided when cron parsing fails.
+    Returns None if nothing can be computed.
+    """
+    def parse_int_list(token: str, min_v: int, max_v: int, field: str) -> List[int]:
+        values: List[int] = []
+        for part in token.split(','):
+            p = part.strip()
+            if p == '*':
+                values.extend(range(min_v, max_v + 1))
+            elif p.startswith('*/'):
+                try:
+                    step = int(p[2:])
+                    if step <= 0:
+                        raise ValueError
+                    values.extend(range(min_v, max_v + 1, step))
+                except Exception:
+                    raise ValueError(f"Invalid step in {field}: {p}")
+            else:
+                try:
+                    iv = int(p)
+                except Exception:
+                    raise ValueError(f"Invalid token in {field}: {p}")
+                if iv < min_v or iv > max_v:
+                    raise ValueError(f"{field} value out of range: {iv}")
+                values.append(iv)
+        return sorted(set(values))
+
+    try:
+        if cron_expr:
+            parts = cron_expr.split()
+            if len(parts) == 5:
+                second_values = [0]
+                minute_s, hour_s, day_s, month_s, weekday_s = parts
+            elif len(parts) == 6:
+                second_s, minute_s, hour_s, day_s, month_s, weekday_s = parts
+                second_values = parse_int_list(second_s, 0, 59, 'second')
+            else:
+                raise ValueError("cron expression must have 5 or 6 fields")
+
+            minute_values = parse_int_list(minute_s, 0, 59, 'minute')
+            hour_values = parse_int_list(hour_s, 0, 23, 'hour')
+            day_values = parse_int_list(day_s, 1, 31, 'day')
+            month_values = parse_int_list(month_s, 1, 12, 'month')
+            raw_weekdays = parse_int_list(weekday_s, 0, 7, 'weekday')
+            # Normalize weekday: allow 1-7 or 0-6 input, treat Monday=0
+            weekday_values = sorted({((d - 1) % 7) if d in (1,2,3,4,5,6,7) else d for d in raw_weekdays})
+
+            candidate = from_dt + timedelta(seconds=1)
+            # Iterate up to a safe cap
+            for _ in range(50000):
+                if (candidate.second in second_values and
+                    candidate.minute in minute_values and
+                    candidate.hour in hour_values and
+                    candidate.day in day_values and
+                    candidate.month in month_values and
+                    candidate.weekday() in weekday_values):
+                    return candidate
+                candidate += timedelta(seconds=1)
+            logger.warning(f"Cron scan iteration cap exceeded for expr '{cron_expr}' from {from_dt}")
+            return None
+        if interval_seconds and interval_seconds > 0:
+            return from_dt + timedelta(seconds=int(interval_seconds))
+    except Exception as e:
+        logger.warning(f"Failed to compute next run for cron='{cron_expr}' interval={interval_seconds}: {e}")
+    return None
+
+@router.post("/schedule", response_class=JSONResponse)
+async def create_schedule(request: Request):
+    """Create a schedule row for a playbook.
+    Body: { playbook_path, playbook_version?, cron?, interval_seconds?, enabled?, timezone?, input_payload?, meta? }
+    One of cron or interval_seconds must be provided.
+    """
+    try:
+        body = await request.json()
+        pb_path = body.get('playbook_path')
+        if not pb_path:
+            raise HTTPException(status_code=400, detail="playbook_path required")
+        cron_expr = body.get('cron')
+        interval_seconds = body.get('interval_seconds')
+        if not cron_expr and not interval_seconds:
+            raise HTTPException(status_code=400, detail="cron or interval_seconds required")
+        tzname = body.get('timezone') or 'UTC'
+        enabled = bool(body.get('enabled', True))
+        payload = body.get('input_payload') or {}
+        meta = body.get('meta') or {}
+        version = body.get('playbook_version')
+        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        next_run = None
+        if enabled:
+            next_run = _compute_next_run(cron_expr, interval_seconds, now)
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO schedule (playbook_path, playbook_version, cron, interval_seconds, enabled, timezone, next_run_at, input_payload, meta)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)
+                        RETURNING schedule_id, next_run_at""",
+                    (pb_path, version, cron_expr, interval_seconds, enabled, tzname, next_run, json.dumps(payload), json.dumps(meta))
+                )
+                row = cur.fetchone()
+                conn.commit()
+        return {"status": "ok", "schedule_id": row[0], "next_run_at": row[1]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error creating schedule")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/schedule", response_class=JSONResponse)
+async def list_schedules(playbook_path: str | None = None, enabled: bool | None = None):
+    try:
+        filters = []
+        params: list[Any] = []
+        if playbook_path:
+            filters.append("playbook_path = %s")
+            params.append(playbook_path)
+        if enabled is not None:
+            filters.append("enabled = %s")
+            params.append(enabled)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ''
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT schedule_id, playbook_path, playbook_version, cron, interval_seconds, enabled, timezone, next_run_at, last_run_at, last_status, input_payload, meta FROM schedule {where} ORDER BY schedule_id", params)
+                rows = cur.fetchall()
+        out = []
+        for r in rows:
+            out.append({
+                "schedule_id": r[0],
+                "playbook_path": r[1],
+                "playbook_version": r[2],
+                "cron": r[3],
+                "interval_seconds": r[4],
+                "enabled": r[5],
+                "timezone": r[6],
+                "next_run_at": r[7].isoformat() if r[7] else None,
+                "last_run_at": r[8].isoformat() if r[8] else None,
+                "last_status": r[9],
+                "input_payload": json.loads(r[10]) if r[10] else {},
+                "meta": json.loads(r[11]) if r[11] else {}
+            })
+        return out
+    except Exception as e:
+        logger.exception("Error listing schedules")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/schedule/{schedule_id}/pause", response_class=JSONResponse)
+async def pause_schedule(schedule_id: int):
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE schedule SET enabled = FALSE, updated_at = now() WHERE schedule_id = %s", (schedule_id,))
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=404, detail="schedule not found")
+                conn.commit()
+        return {"status": "ok", "schedule_id": schedule_id, "enabled": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Pause schedule error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/schedule/{schedule_id}/resume", response_class=JSONResponse)
+async def resume_schedule(schedule_id: int):
+    try:
+        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT cron, interval_seconds FROM schedule WHERE schedule_id = %s", (schedule_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="schedule not found")
+                next_run = _compute_next_run(row[0], row[1], now)
+                cur.execute("UPDATE schedule SET enabled = TRUE, next_run_at = %s, updated_at = now() WHERE schedule_id = %s", (next_run, schedule_id))
+                conn.commit()
+        return {"status": "ok", "schedule_id": schedule_id, "enabled": True, "next_run_at": next_run}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Resume schedule error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/schedule/{schedule_id}", response_class=JSONResponse)
+async def delete_schedule(schedule_id: int):
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM schedule WHERE schedule_id = %s", (schedule_id,))
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=404, detail="schedule not found")
+                conn.commit()
+        return {"status": "ok", "schedule_id": schedule_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Delete schedule error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def poll_and_trigger_schedules():
+    """Called periodically (e.g., every minute) by a scheduler action. Picks due schedules and enqueues executions."""
+    now = datetime.utcnow().replace(tzinfo=timezone.utc)
+    triggered: list[int] = []
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT schedule_id, playbook_path, COALESCE(playbook_version,''), cron, interval_seconds, timezone, input_payload FROM schedule WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= %s FOR UPDATE SKIP LOCKED", (now,))
+                rows = cur.fetchall()
+                for r in rows:
+                    sid, path, version, cron_expr, interval_seconds, tzname, pl_raw = r
+                    payload = json.loads(pl_raw) if pl_raw else {}
+                    # fetch playbook latest version if not specified
+                    playbook_version = version or asyncio.run(get_catalog_service().get_latest_version(path)) if ':' not in version else version
+                    # call execute
+                    try:
+                        # synchronous kickoff using existing helper
+                        entry = asyncio.run(get_catalog_service().fetch_entry(path, playbook_version))
+                        if entry:
+                            execute_playbook_via_broker(entry.get('content'), path, playbook_version, payload, True, False)
+                    except Exception as e_exec:
+                        logger.warning(f"Schedule {sid} execution error: {e_exec}")
+                    # compute next_run
+                    next_run = _compute_next_run(cron_expr, interval_seconds, now)
+                    cur.execute("UPDATE schedule SET last_run_at = %s, last_status = %s, next_run_at = %s, updated_at = now() WHERE schedule_id = %s", (now, 'triggered', next_run, sid))
+                    triggered.append(sid)
+                conn.commit()
+    except Exception as e:
+        logger.exception(f"Schedule polling error: {e}")
+    return {"triggered": triggered, "timestamp": now.isoformat()}

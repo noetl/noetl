@@ -8,7 +8,7 @@ VENV = .venv
 PYTHON = $(VENV)/bin/python
 UV = $(HOME)/.local/bin/uv
 KUBECTL ?= kubectl
-NAMESPACE ?= default
+NAMESPACE ?= postgres
 K8S_NOETL_DIR ?= $(K8S_DIR)/noetl
 K8S_POSTGRES_DIR ?= $(K8S_DIR)/postgres
 

@@ -1139,6 +1139,260 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, task_
 def execute_task(task_config: Dict, task_name: str, context: Dict, jinja_env: Environment,
                  secret_manager=None, log_event_callback=None) -> Dict:
     """
+    Execute a task type with template rendering performed inside the worker/action layer.
+    """
+    logger.debug("=== ACTION.EXECUTE_TASK: Function entry ===")
+    logger.debug(f"ACTION.EXECUTE_TASK: Parameters - task_name={task_name}, task_config={task_config}")
+
+    if not task_config:
+        task_id = str(uuid.uuid4())
+        error_msg = f"Task not found: {task_name}"
+        logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")
+
+        try:
+            log_error(
+                error=Exception(error_msg),
+                error_type="task_execution",
+                template_string=f"Task: {task_name}",
+                context_data=context,
+                input_data=None,
+                step_name=task_name
+            )
+        except Exception as e:
+            logger.error(f"ACTION.EXECUTE_TASK: Failed to log error to database: {e}")
+
+        if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_TASK: Writing task_error event log for missing task")
+            log_event_callback(
+                'task_error', task_id, task_name, 'unknown',
+                'error', 0, context, None,
+                {'error': error_msg}, None
+            )
+
+        result = {
+            'id': task_id,
+            'status': 'error',
+            'error': error_msg
+        }
+        logger.debug(f"ACTION.EXECUTE_TASK: Returning error result for missing task: {result}")
+        logger.debug("=== ACTION.EXECUTE_TASK: Function exit (task not found) ===")
+        return result
+
+    task_type = task_config.get('type', 'http')
+    logger.debug(f"ACTION.EXECUTE_TASK: Task type={task_type}")
+
+    task_id = str(uuid.uuid4())
+    start_time = datetime.datetime.now()
+    task_with = {}
+
+    logger.debug(f"ACTION.EXECUTE_TASK: Generated task_id={task_id}")
+    logger.debug(f"ACTION.EXECUTE_TASK: Start time={start_time.isoformat()}")
+
+    if 'with' in task_config:
+        logger.debug(f"ACTION.EXECUTE_TASK: Rendering 'with' parameters: {task_config.get('with')}")
+        task_with = render_template(jinja_env, task_config.get('with'), context)
+        logger.debug(f"ACTION.EXECUTE_TASK: Rendered task_with: {task_with}")
+        context.update(task_with)
+
+    event_id = None
+    if log_event_callback:
+        logger.debug(f"ACTION.EXECUTE_TASK: Writing task_execute event log")
+        event_id = log_event_callback(
+            'task_execute', task_id, task_name, f'task.{task_type}',
+            'in_progress', 0, context, None,
+            {'task_type': task_type, 'with_params': task_with}, None
+        )
+        logger.debug(f"ACTION.EXECUTE_TASK: Task execute event_id={event_id}")
+
+    logger.debug(f"ACTION.EXECUTE_TASK: Dispatching to task type handler: {task_type}")
+
+    if task_type == 'http':
+        logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_http_task")
+        result = execute_http_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'python':
+        logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_python_task")
+        result = execute_python_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'duckdb':
+        logger.debug(f"ACTION.EXECUTE_TASK: Calling execute_duckdb_task")
+        result = execute_duckdb_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'postgres':
+        result = execute_postgres_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'secrets':
+        if not secret_manager:
+            error_msg = "SecretManager is required for secrets tasks."
+            
+            try:
+                log_error(
+                    error=Exception(error_msg),
+                    error_type="task_execution",
+                    template_string=f"Task: {task_name}, Type: {task_type}",
+                    context_data=context,
+                    input_data=task_with,
+                    step_name=task_name
+                )
+            except Exception as e:
+                logger.error(f"ACTION.EXECUTE_TASK: Failed to log error to database: {e}")
+
+            if log_event_callback:
+                log_event_callback(
+                    'task_error', task_id, task_name, f'task.{task_type}',
+                    'error', 0, context, None,
+                    {'error': error_msg, 'with_params': task_with}, event_id
+                )
+
+            return {
+                'id': task_id,
+                'status': 'error',
+                'error': error_msg
+            }
+
+        result = execute_secrets_task(task_config, context, secret_manager, task_with, log_event_callback)
+    elif task_type == 'scheduler':
+        # trigger schedule poller (lightweight)
+        try:
+            from noetl.server import poll_and_trigger_schedules  # local import to avoid circular issues
+            poll_result = poll_and_trigger_schedules()
+            result = {
+                'id': task_id,
+                'status': 'success',
+                'data': poll_result
+            }
+        except Exception as e:
+            result = {
+                'id': task_id,
+                'status': 'error',
+                'error': str(e)
+            }
+    else:
+        error_msg = f"Unsupported task type: {task_type}"
+        logger.error(f"ACTION.EXECUTE_TASK: {error_msg}")
+        
+        try:
+            log_error(
+                error=Exception(error_msg),
+                error_type="task_execution",
+                template_string=f"Task: {task_name}, Type: {task_type}",
+                context_data=context,
+                input_data=task_with,
+                step_name=task_name
+            )
+        except Exception as e:
+            logger.error(f"ACTION.EXECUTE_TASK: Failed to log error to database: {e}")
+
+        if log_event_callback:
+            logger.debug(f"ACTION.EXECUTE_TASK: Writing task_error event log for unsupported task type")
+            log_event_callback(
+                'task_error', task_id, task_name, f'task.{task_type}',
+                'error', 0, context, None,
+                {'error': error_msg, 'with_params': task_with}, event_id
+            )
+
+        result = {
+            'id': task_id,
+            'status': 'error',
+            'error': error_msg
+        }
+
+    if 'return' in task_config and result['status'] == 'success':
+        transformed_result = render_template(jinja_env, task_config['return'], {
+            **context,
+            'result': result['data'],
+            'status': result['status']
+        })
+
+        result['data'] = transformed_result
+
+    end_time = datetime.datetime.now()
+    duration = (end_time - start_time).total_seconds()
+
+    if log_event_callback:
+        log_event_callback(
+            'task_complete', task_id, task_name, f'task.{task_type}',
+            result['status'], duration, context, result.get('data'),
+            {'task_type': task_type, 'with_params': task_with}, event_id
+        )
+
+    return result
+
+
+def execute_task_resolved(task_config: Dict, task_name: str, context: Dict, jinja_env: Environment,
+                          secret_manager=None, log_event_callback=None) -> Dict:
+    """
+    Execute a task assuming the payload (including 'with' parameters and config) is already rendered
+    by the Broker. This avoids any additional template rendering of inputs in the worker layer.
+    The optional 'return' transformation is still applied after execution.
+    """
+    logger.debug("=== ACTION.EXECUTE_TASK_RESOLVED: Function entry ===")
+    logger.debug(f"ACTION.EXECUTE_TASK_RESOLVED: Parameters - task_name={task_name}, task_config={task_config}")
+
+    if not task_config:
+        task_id = str(uuid.uuid4())
+        error_msg = f"Task not found: {task_name}"
+        if log_event_callback:
+            log_event_callback('task_error', task_id, task_name, 'unknown', 'error', 0, context, None, {'error': error_msg}, None)
+        return {'id': task_id, 'status': 'error', 'error': error_msg}
+
+    task_type = task_config.get('type', 'http')
+    task_id = str(uuid.uuid4())
+    start_time = datetime.datetime.now()
+    task_with = task_config.get('with', {}) or {}
+
+    # Merge provided 'with' directly into context (already rendered)
+    try:
+        if isinstance(task_with, dict):
+            context.update(task_with)
+    except Exception:
+        pass
+
+    event_id = None
+    if log_event_callback:
+        event_id = log_event_callback(
+            'task_execute', task_id, task_name, f'task.{task_type}',
+            'in_progress', 0, context, None,
+            {'task_type': task_type, 'with_params': task_with, 'resolved': True}, None
+        )
+
+    if task_type == 'http':
+        result = execute_http_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'python':
+        result = execute_python_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'duckdb':
+        result = execute_duckdb_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'postgres':
+        result = execute_postgres_task(task_config, context, jinja_env, task_with, log_event_callback)
+    elif task_type == 'secrets':
+        if not secret_manager:
+            error_msg = "SecretManager is required for secrets tasks."
+            if log_event_callback:
+                log_event_callback('task_error', task_id, task_name, f'task.{task_type}', 'error', 0, context, None, {'error': error_msg}, event_id)
+            return {'id': task_id, 'status': 'error', 'error': error_msg}
+        result = execute_secrets_task(task_config, context, secret_manager, task_with, log_event_callback)
+    else:
+        error_msg = f"Unsupported task type: {task_type}"
+        if log_event_callback:
+            log_event_callback('task_error', task_id, task_name, f'task.{task_type}', 'error', 0, context, None, {'error': error_msg}, event_id)
+        return {'id': task_id, 'status': 'error', 'error': error_msg}
+
+    if 'return' in task_config and result['status'] == 'success':
+        transformed_result = render_template(jinja_env, task_config['return'], {
+            **context,
+            'result': result['data'],
+            'status': result['status']
+        })
+        result['data'] = transformed_result
+
+    end_time = datetime.datetime.now()
+    duration = (end_time - start_time).total_seconds()
+
+    if log_event_callback:
+        log_event_callback(
+            'task_complete', task_id, task_name, f'task.{task_type}',
+            result['status'], duration, context, result.get('data'),
+            {'task_type': task_type, 'with_params': task_with, 'resolved': True}, event_id
+        )
+
+    return result
+    """
     Execute a task type.
 
     Args:
