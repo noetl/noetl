@@ -30,14 +30,11 @@ def _load_env_file(path: str) -> None:
                 key, value = line.split("=", 1)
                 key = key.strip()
                 value = value.strip()
-                # Strip matching quotes
                 if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
                     value = value[1:-1]
-                # Do not override existing envs
                 if key not in os.environ:
                     os.environ[key] = value
     except Exception:
-        # Silent fallback: env loading is best-effort
         pass
 
 def load_env_if_present() -> None:
@@ -134,6 +131,9 @@ class Settings(BaseModel):
 
     # Drop schema flag (required; admin will drop schema when true)
     noetl_drop_schema: bool = Field(..., alias="NOETL_DROP_SCHEMA")
+
+    # Schema validation / ensure flag (renamed from NOETL_SCHEMA_ENSURE)
+    schema_validate: bool = Field(..., alias="NOETL_SCHEMA_VALIDATE")
 
     # Server runtime (required; no defaults)
     server_runtime: str = Field(..., alias="NOETL_SERVER")            # "uvicorn" | "gunicorn" | "auto"
@@ -244,6 +244,13 @@ def get_settings() -> Settings:
         validate_mandatory_env_vars()
 
         try:
+            # Backward compatibility: map deprecated NOETL_SCHEMA_ENSURE -> NOETL_SCHEMA_VALIDATE if new not set
+            if 'NOETL_SCHEMA_VALIDATE' not in os.environ and 'NOETL_SCHEMA_ENSURE' in os.environ:
+                os.environ['NOETL_SCHEMA_VALIDATE'] = os.environ['NOETL_SCHEMA_ENSURE']
+                print("DEPRECATED: NOETL_SCHEMA_ENSURE detected -> set NOETL_SCHEMA_VALIDATE (will be removed soon).")
+            if 'NOETL_SCHEMA_VALIDATE' not in os.environ:
+                raise RuntimeError("Missing required environment variable NOETL_SCHEMA_VALIDATE (true/false)")
+
             _settings = Settings(
                 # Admin DB
                 POSTGRES_USER=os.environ['POSTGRES_USER'],
@@ -265,7 +272,8 @@ def get_settings() -> Settings:
                 NOETL_SERVER_WORKERS=int(os.environ['NOETL_SERVER_WORKERS']),
                 NOETL_SERVER_RELOAD=get_bool(os.environ['NOETL_SERVER_RELOAD']),
                 # Drop schema flag
-                NOETL_DROP_SCHEMA=get_bool(os.environ['NOETL_DROP_SCHEMA'])
+                NOETL_DROP_SCHEMA=get_bool(os.environ['NOETL_DROP_SCHEMA']),
+                NOETL_SCHEMA_VALIDATE=get_bool(os.environ['NOETL_SCHEMA_VALIDATE'])
             )
         except Exception as e:
             print(f"FATAL: Failed to initialize settings: {e}", file=sys.stderr)

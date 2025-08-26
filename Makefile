@@ -63,6 +63,9 @@ help:
 	@echo "  make k8s-postgres-apply       Apply ONLY Postgres manifests (NAMESPACE=ns)"
 	@echo "  make k8s-postgres-delete      Delete ONLY Postgres manifests (NAMESPACE=ns)"
 	@echo "  make k8s-postgres-recreate    Recreate ONLY Postgres (delete + apply) in namespace"
+	@echo "  make docker-build-postgres    Build postgres-noetl:latest Docker image locally"
+	@echo "  make k8s-load-postgres-image  Load postgres-noetl:latest into kind cluster ($(KIND_CLUSTER))"
+	@echo "  make k8s-postgres-deploy      Build + load image into kind + apply Postgres manifests"
 	@echo "  make postgres-reset-schema    Recreates noetl schema only in running postgres database instance"
 
 docker-login:
@@ -188,19 +191,36 @@ ui:
 
 
 .PHONY: server-start server-stop worker-start worker-stop
+
 server-start:
 	@mkdir -p logs
-	@/bin/bash -lc " \
+	@/bin/bash -lc '\
 		set -a; \
 		if [ -f .env.server ]; then . .env.server; elif [ -f .env ]; then . .env; fi; \
+		# Require NOETL_SCHEMA_VALIDATE (true/false) \
+		if [ -z "$${NOETL_SCHEMA_VALIDATE}" ]; then \
+			echo "ERROR: NOETL_SCHEMA_VALIDATE must be set (true/false) in your .env[.server]"; \
+			exit 1; \
+		fi; \
+		case "$${NOETL_SCHEMA_VALIDATE}" in true|false) ;; \
+		  *) echo "ERROR: NOETL_SCHEMA_VALIDATE must be 'true' or 'false'"; exit 1;; \
+		esac; \
 		set +a; \
 		nohup noetl server start > logs/server.log 2>&1 & \
-		bgpid=\$$!; \
-		echo \$$bgpid > logs/server.pid; \
-		echo \"NoETL server started: PID=\$$bgpid | logs at logs/server.log\" \
-	"
+		bgpid=$$!; \
+		echo $$bgpid > logs/server.pid; \
+		echo "NoETL server started: PID=$$bgpid | logs at logs/server.log" \
+	'
+	@sleep 1
+	@if [ -f logs/server.pid ]; then \
+		echo "NoETL server started: PID=$$(cat logs/server.pid) | logs at logs/server.log"; \
+	else \
+		echo "NoETL server start issued; check logs/server.log"; \
+	fi
+
 server-stop:
 	-@noetl server stop -f || true
+
 
 worker-start:
 	@mkdir -p logs
@@ -277,6 +297,23 @@ k8s-postgres-recreate: k8s-postgres-delete k8s-postgres-apply
 
 k8s-reset: k8s-kind-recreate k8s-postgres-apply
 	@echo "Kind cluster '$(KIND_CLUSTER)' recreated and Postgres applied in namespace $(NAMESPACE)."
+
+# Build the local Postgres image used by the k8s deployment
+.PHONY: docker-build-postgres
+docker-build-postgres:
+	@echo "Building local Docker image postgres-noetl:latest ..."
+	docker build -t postgres-noetl:latest -f docker/postgres/Dockerfile .
+
+# Load the local image into the kind cluster so it is pullable by nodes
+.PHONY: k8s-load-postgres-image
+k8s-load-postgres-image: k8s-kind-create
+	@echo "Loading postgres-noetl:latest into kind cluster '$(KIND_CLUSTER)' ..."
+	@$(KIND) load docker-image postgres-noetl:latest --name "$(KIND_CLUSTER)"
+
+# End-to-end: build + load image + apply manifests
+.PHONY: k8s-postgres-deploy
+k8s-postgres-deploy: docker-build-postgres k8s-load-postgres-image k8s-postgres-apply
+	@echo "Postgres deployed to kind cluster '$(KIND_CLUSTER)' in namespace $(NAMESPACE)."
 
 k8s-postgres-delete:
 	@echo "Deleting ONLY Postgres manifests from namespace $(NAMESPACE)..."

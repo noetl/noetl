@@ -42,7 +42,6 @@ def create_worker_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: auto-register worker pool
         try:
             base = os.environ.get("NOETL_WORKER_BASE_URL")
             if not base:
@@ -53,9 +52,7 @@ def create_worker_app() -> FastAPI:
             register_worker_pool_from_env()
         except Exception as e:
             logger.warning(f"Worker auto-register skipped: {e}")
-        # Yield control to app
         yield
-        # Shutdown: deregister worker pool
         try:
             from noetl.worker import deregister_worker_pool_from_env
             deregister_worker_pool_from_env()
@@ -270,7 +267,7 @@ def start_server():
     logger.info(f"Starting NoETL API server at http://{settings.host}:{settings.port} (UI {ui_status}, Debug {debug_status})")
 
 
-    logger.info("Initializing NoETL system metadata.")
+    logger.info("Initializing NoETL system metadata (schema validate=%s)." % settings.schema_validate)
     try:
         db_schema = DatabaseSchema(auto_setup=True)
 
@@ -309,17 +306,49 @@ def start_server():
         if server_type == "gunicorn":
             _run_with_gunicorn(settings.host, settings.port, workers, reload, log_level)
         else:
-            _run_with_uvicorn(settings.host, settings.port, workers, reload, log_level)
-    finally:
+            import subprocess, sys
+            cmd = [
+                sys.executable, "-m", "uvicorn",
+                "noetl.main:create_app",
+                "--factory",
+                "--host", str(settings.host),
+                "--port", str(settings.port),
+                "--log-level", log_level
+            ]
+            if reload:
+                cmd.append("--reload")
+            if workers and int(workers) > 1:
+                cmd.extend(["--workers", str(workers)])
+            logger.info(f"Spawning uvicorn subprocess: {' '.join(cmd)}")
+            child_env = os.environ.copy()
+            required_keys = [
+                'POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB','POSTGRES_HOST','POSTGRES_PORT',
+                'NOETL_USER','NOETL_PASSWORD','NOETL_SCHEMA','NOETL_HOST','NOETL_PORT',
+                'NOETL_ENABLE_UI','NOETL_DEBUG','NOETL_SERVER','NOETL_SERVER_WORKERS','NOETL_SERVER_RELOAD','NOETL_DROP_SCHEMA','NOETL_SCHEMA_VALIDATE'
+            ]
+            for k in required_keys:
+                if k not in child_env and hasattr(settings, k.lower() if k.startswith('NOETL_') or k.startswith('POSTGRES_') else k):
+                    child_env[k] = str(getattr(settings, k.lower()))
+            proc = subprocess.Popen(cmd, stdout=open('logs/server.out','a'), stderr=open('logs/server.err','a'), env=child_env)
+            with open(settings.pid_file_path, 'w') as f:
+                f.write(str(proc.pid))
+            logger.info(f"Spawned server process PID {proc.pid}")
+    except Exception:
         if os.path.exists(settings.pid_file_path):
             os.remove(settings.pid_file_path)
-            logger.info(f"Removed PID file {settings.pid_file_path}")
+        raise
 
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
-    uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+    if workers and workers > 1:
+        uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+    else:
+        uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 def _run_worker_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
-    uvicorn.run("noetl.clictl:create_worker_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+    if workers and workers > 1:
+        uvicorn.run("noetl.clictl:create_worker_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+    else:
+        uvicorn.run("noetl.clictl:create_worker_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     try:
@@ -834,7 +863,6 @@ def execute_playbook(
                 typer.echo(f"Error parsing payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        # Require host/port to be provided explicitly for client command
         if host is None or port is None:
             typer.echo("Error: --host and --port are required for this client command")
             raise typer.Exit(code=1)

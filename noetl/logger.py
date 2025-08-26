@@ -1,13 +1,7 @@
-# import os
-# import asyncio
-# import re
 import sys
 import json
 import logging
 from typing import Dict, TYPE_CHECKING
-# import psycopg
-# from psycopg.rows import dict_row
-# from contextlib import contextmanager
 import traceback
 
 if TYPE_CHECKING:
@@ -29,7 +23,10 @@ async def get_db_schema() -> 'DatabaseSchema':
     global _db_schema
     if _db_schema is None:
         from noetl.schema import DatabaseSchema
+        from noetl.config import get_settings
+        settings = get_settings()
         _db_schema = DatabaseSchema(auto_setup=True)
+        logging.getLogger(__name__).info(f"Initialized global DatabaseSchema (schema validate={settings.schema_validate})")
         await _db_schema.initialize_async()
     return _db_schema
 
