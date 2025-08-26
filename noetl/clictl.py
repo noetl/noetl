@@ -263,6 +263,11 @@ def start_server():
         logger.info("NoETL database schema initialized.")
     except Exception as e:
         logger.error(f"FATAL: Error initializing NoETL system metadata: {e}", exc_info=True)
+        if os.path.exists(settings.pid_file_path):
+            os.remove(settings.pid_file_path)
+        makefile_pid_file = "logs/server.pid"
+        if os.path.exists(makefile_pid_file):
+            os.remove(makefile_pid_file)
         raise typer.Exit(code=1)
 
     server_runtime = settings.server_runtime
