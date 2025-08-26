@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Card,
@@ -36,6 +36,9 @@ const { TabPane } = Tabs;
 const { Option } = Select;
 const { RangePicker } = DatePicker;
 
+// JSON stringify cache to avoid repeated heavy stringify on same object refs
+const jsonStringCache = new WeakMap<object, string>();
+
 const ExecutionDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -56,6 +59,8 @@ const ExecutionDetail: React.FC = () => {
   const [nodeFilter, setNodeFilter] = useState<string>("");
   const [searchText, setSearchText] = useState<string>("");
   const [dateRange, setDateRange] = useState<[any, any] | null>(null);
+  // Debounced search state
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   // Expanded fields state for JSON rendering
   const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
@@ -90,53 +95,62 @@ const ExecutionDetail: React.FC = () => {
     fetchExecution();
   }, [id]);
 
-  // Filter events based on current filters
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(searchText), 250);
+    return () => clearTimeout(handle);
+  }, [searchText]);
+
+  // Filter events based on current filters (optimized single pass)
   const applyEventFilters = useCallback(() => {
-    let filtered = [...events];
-
-    // Filter by tab (main event types)
-    if (activeTab !== "all") {
-      filtered = filtered.filter((event) => event.event_type.toLowerCase() === activeTab.toLowerCase());
+    if (!events || events.length === 0) {
+      setFilteredEvents([]);
+      return;
     }
 
-    // Filter by event types (multiple selection)
-    if (eventTypeFilter.length > 0) {
-      filtered = filtered.filter((event) => eventTypeFilter.includes(event.event_type));
+    const hasTabFilter = activeTab !== "all";
+    const wantsEventTypes = eventTypeFilter.length > 0;
+    const wantsStatuses = statusFilter.length > 0;
+    const wantsNode = !!nodeFilter;
+    const wantsSearch = !!debouncedSearch;
+    const wantsDateRange = !!(dateRange && dateRange[0] && dateRange[1]);
+
+    // Precompute for O(1) membership
+    const eventTypeSet = wantsEventTypes ? new Set(eventTypeFilter) : null;
+    const statusSet = wantsStatuses ? new Set(statusFilter) : null;
+    const loweredNode = wantsNode ? nodeFilter.toLowerCase() : null;
+    const loweredSearch = wantsSearch ? debouncedSearch.toLowerCase() : null;
+    const startMs = wantsDateRange ? dateRange![0].toDate().getTime() : 0;
+    const endMs = wantsDateRange ? dateRange![1].toDate().getTime() : 0;
+    const loweredActiveTab = hasTabFilter ? activeTab.toLowerCase() : null;
+
+    const results: any[] = [];
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      const etLower = e.event_type?.toLowerCase() || "";
+      // Tab filter
+      if (loweredActiveTab && etLower !== loweredActiveTab) continue;
+      // Event type multi-select
+      if (eventTypeSet && !eventTypeSet.has(e.event_type)) continue;
+      // Status multi-select
+      if (statusSet && !statusSet.has(e.status)) continue;
+      // Node filter
+      if (loweredNode && !e.node_name?.toLowerCase().includes(loweredNode)) continue;
+      // Date range filter
+      if (wantsDateRange) {
+        const ts = new Date(e.timestamp).getTime();
+        if (ts < startMs || ts > endMs) continue;
+      }
+      // Search text (checks several fields lowercased once each)
+      if (loweredSearch) {
+        const nn = e.node_name?.toLowerCase() || "";
+        const st = e.status?.toLowerCase() || "";
+        if (!(etLower.includes(loweredSearch) || nn.includes(loweredSearch) || st.includes(loweredSearch))) continue;
+      }
+      results.push(e);
     }
 
-    // Filter by status (multiple selection)
-    if (statusFilter.length > 0) {
-      filtered = filtered.filter((event) => statusFilter.includes(event.status));
-    }
-
-    // Filter by node name
-    if (nodeFilter) {
-      filtered = filtered.filter((event) =>
-        event.node_name.toLowerCase().includes(nodeFilter.toLowerCase())
-      );
-    }
-
-    // Filter by search text
-    if (searchText) {
-      filtered = filtered.filter(
-        (event) =>
-          event.event_type.toLowerCase().includes(searchText.toLowerCase()) ||
-          event.node_name.toLowerCase().includes(searchText.toLowerCase()) ||
-          event.status.toLowerCase().includes(searchText.toLowerCase())
-      );
-    }
-
-    // Filter by date range
-    if (dateRange && dateRange[0] && dateRange[1]) {
-      const [startDate, endDate] = dateRange;
-      filtered = filtered.filter((event) => {
-        const eventDate = new Date(event.timestamp);
-        return eventDate >= startDate.toDate() && eventDate <= endDate.toDate();
-      });
-    }
-
-    setFilteredEvents(filtered);
-  }, [events, activeTab, eventTypeFilter, statusFilter, nodeFilter, searchText, dateRange]);
+    setFilteredEvents(results);
+  }, [events, activeTab, eventTypeFilter, statusFilter, nodeFilter, debouncedSearch, dateRange]);
 
   // Apply filters whenever filter criteria change
   useEffect(() => {
@@ -179,6 +193,13 @@ const ExecutionDetail: React.FC = () => {
     if (value === undefined || value === null) return "-";
     try {
       if (typeof value === "string") return value;
+      if (typeof value === "object") {
+        const cached = jsonStringCache.get(value);
+        if (cached) return cached;
+        const str = JSON.stringify(value, null, 2);
+        jsonStringCache.set(value, str);
+        return str;
+      }
       return JSON.stringify(value, null, 2);
     } catch {
       return String(value);
@@ -223,10 +244,17 @@ const ExecutionDetail: React.FC = () => {
     );
   };
 
-  // Get unique values for filter dropdowns
-  const uniqueEventTypes: string[] = Array.from(new Set(events.map((event: any) => event.event_type)));
-  const uniqueStatuses: string[] = Array.from(new Set(events.map((event: any) => event.status)));
-  const uniqueNodes: string[] = Array.from(new Set(events.map((event: any) => event.node_name)));
+  // Get unique values for filter dropdowns (memoized)
+  const uniqueEventTypes: string[] = useMemo(() => Array.from(new Set(events.map((event: any) => event.event_type))), [events]);
+  const uniqueStatuses: string[] = useMemo(() => Array.from(new Set(events.map((event: any) => event.status))), [events]);
+  const uniqueNodes: string[] = useMemo(() => Array.from(new Set(events.map((event: any) => event.node_name))), [events]);
+  const tabCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const e of events) {
+      counts[e.event_type] = (counts[e.event_type] || 0) + 1;
+    }
+    return counts;
+  }, [events]);
 
   if (loading) {
     return <Spin className="execution-detail-loading" />;
@@ -389,12 +417,12 @@ const ExecutionDetail: React.FC = () => {
             size="small"
           >
             <TabPane tab="All Events" key="all" />
-            <TabPane tab={`Start (${events.filter(e => e.event_type === "START").length})`} key="start" />
-            <TabPane tab={`Tasks (${events.filter(e => e.event_type === "TASK").length})`} key="task" />
-            <TabPane tab={`HTTP (${events.filter(e => e.event_type === "HTTP").length})`} key="http" />
-            <TabPane tab={`Logs (${events.filter(e => e.event_type === "LOG").length})`} key="log" />
-            <TabPane tab={`Errors (${events.filter(e => e.event_type === "ERROR").length})`} key="error" />
-            <TabPane tab={`Complete (${events.filter(e => e.event_type === "COMPLETE").length})`} key="complete" />
+            <TabPane tab={`Start (${tabCounts.START || 0})`} key="start" />
+            <TabPane tab={`Tasks (${tabCounts.TASK || 0})`} key="task" />
+            <TabPane tab={`HTTP (${tabCounts.HTTP || 0})`} key="http" />
+            <TabPane tab={`Logs (${tabCounts.LOG || 0})`} key="log" />
+            <TabPane tab={`Errors (${tabCounts.ERROR || 0})`} key="error" />
+            <TabPane tab={`Complete (${tabCounts.COMPLETE || 0})`} key="complete" />
           </Tabs>
 
           {/* Additional Filters */}
