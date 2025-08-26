@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from noetl.server import router as server_router
-from noetl.worker import router as worker_router
+from noetl.worker import router as worker_router, ScalableQueueWorkerPool
 from noetl.common import DateTimeEncoder
 from noetl.logger import setup_logger
 from noetl.schema import DatabaseSchema
@@ -139,52 +139,36 @@ cli_app.add_typer(worker_app, name=cli_appprefix)
 
 
 @worker_app.command("start")
-def start_worker_service():
-    """
-    Start the NoETL worker service (separate process exposing only worker endpoints).
-    Uses NOETL_WORKER_HOST/NOETL_WORKER_PORT if provided; otherwise falls back to server host/port+1.
-    """
-    settings = get_settings()
+def start_worker_service(
+    max_workers: int = typer.Option(None, "--max-workers", "-m", help="Maximum number of worker threads")
+):
+    """Start the queue worker pool that polls the server queue API."""
 
-    log_level = "debug" if settings.debug else "info"
-    logging.basicConfig(
-        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
-        datefmt='%Y-%m-%dT%H:%M:%S',
-        level=logging.DEBUG if settings.debug else logging.INFO
-    )
+    # ensure settings loaded for environment variables
+    get_settings()
 
-    host = os.environ.get("NOETL_WORKER_HOST", settings.host)
-    try:
-        default_worker_port = str(int(settings.port) + 1)
-    except Exception:
-        default_worker_port = str(settings.port)
-    port = int(os.environ.get("NOETL_WORKER_PORT", default_worker_port))
-
-    server_runtime = settings.server_runtime
-    workers = int(os.environ.get("NOETL_WORKER_WORKERS", str(settings.server_workers)))
-    reload = os.environ.get("NOETL_WORKER_RELOAD", str(settings.server_reload)).lower() in ("true","1","yes","on")
-
-    pid_dir = settings.pid_file_dir
+    pid_dir = os.path.expanduser("~/.noetl")
     os.makedirs(pid_dir, exist_ok=True)
     worker_pid_path = os.path.join(pid_dir, "noetl_worker.pid")
-    with open(worker_pid_path, 'w') as f:
+    with open(worker_pid_path, "w") as f:
         f.write(str(os.getpid()))
     logger.info(f"Worker PID {os.getpid()} saved to {worker_pid_path}")
 
-    try:
-        if server_runtime == "auto":
-            try:
-                import gunicorn  # type: ignore
-                runtime = "gunicorn"
-            except ImportError:
-                runtime = "uvicorn"
-        else:
-            runtime = server_runtime
+    async def _run() -> None:
+        pool = ScalableQueueWorkerPool(max_workers=max_workers)
+        loop = asyncio.get_running_loop()
 
-        if runtime == "gunicorn":
-            _run_worker_with_gunicorn(host, port, workers, reload, log_level)
-        else:
-            _run_worker_with_uvicorn(host, port, workers, reload, log_level)
+        def _signal_handler(sig: int) -> None:  # pragma: no cover - signal handling
+            logger.info(f"Worker pool received signal {sig}; shutting down")
+            asyncio.create_task(pool.stop())
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, lambda s=sig: _signal_handler(s))
+
+        await pool.run_forever()
+
+    try:
+        asyncio.run(_run())
     finally:
         if os.path.exists(worker_pid_path):
             os.remove(worker_pid_path)
@@ -196,7 +180,7 @@ def stop_worker_service(
     force: bool = typer.Option(False, "--force", "-f", help="Force stop the worker without confirmation")
 ):
     """
-    Stop the running NoETL worker service.
+    Stop the running NoETL worker.
     This command should not require full environment configuration.
     """
     worker_pid_path = os.path.expanduser("~/.noetl/noetl_worker.pid")
