@@ -207,6 +207,20 @@ async def list_queue(status: str = None, execution_id: str = None, worker_id: st
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/queue/size", response_class=JSONResponse)
+async def queue_size(status: str = "queued"):
+    """Return the number of jobs in the queue for a given status."""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM noetl.queue WHERE status = %s", (status,))
+                row = cur.fetchone()
+        return {"status": "ok", "count": row[0] if row else 0}
+    except Exception as e:
+        logger.exception(f"Error fetching queue size: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/queue/enqueue")
 async def enqueue_job(request: Request):
     body = await request.json()
