@@ -66,6 +66,10 @@ help:
 	@echo "  make docker-build-postgres    Build postgres-noetl:latest Docker image locally"
 	@echo "  make k8s-load-postgres-image  Load postgres-noetl:latest into kind cluster ($(KIND_CLUSTER))"
 	@echo "  make k8s-postgres-deploy      Build + load image into kind + apply Postgres manifests"
+	@echo "  make k8s-postgres-port-forward     Set up port forwarding from localhost:30543 to Postgres (interactive)"
+	@echo "  make k8s-postgres-port-forward-bg  Set up background port forwarding from localhost:30543 to Postgres"
+	@echo "  make k8s-postgres-port-forward-stop Stop background port forwarding"
+	@echo "  make k8s-dev-setup               Complete development setup: deploy Postgres + start port forwarding"
 	@echo "  make postgres-reset-schema    Recreates noetl schema only in running postgres database instance"
 
 docker-login:
@@ -330,6 +334,48 @@ k8s-load-postgres-image: k8s-kind-create
 .PHONY: k8s-postgres-deploy
 k8s-postgres-deploy: docker-build-postgres k8s-load-postgres-image k8s-postgres-apply
 	@echo "Postgres deployed to kind cluster '$(KIND_CLUSTER)' in namespace $(NAMESPACE)."
+
+# === Port Forwarding ===
+.PHONY: k8s-postgres-port-forward k8s-postgres-port-forward-bg
+
+k8s-postgres-port-forward:
+	@echo "Setting up port forwarding from localhost:30543 to Postgres in namespace $(NAMESPACE)..."
+	@echo "Press Ctrl+C to stop port forwarding"
+	@$(KUBECTL) port-forward -n $(NAMESPACE) svc/postgres 30543:5432
+
+k8s-postgres-port-forward-bg:
+	@echo "Setting up background port forwarding from localhost:30543 to Postgres in namespace $(NAMESPACE)..."
+	@if pgrep -f "kubectl port-forward -n $(NAMESPACE) svc/postgres 30543:5432" >/dev/null; then \
+		echo "Port forwarding already running"; \
+	else \
+		nohup $(KUBECTL) port-forward -n $(NAMESPACE) svc/postgres 30543:5432 >/dev/null 2>&1 & \
+		echo $$! > .postgres-port-forward.pid; \
+		echo "Port forwarding started (PID: $$(cat .postgres-port-forward.pid))"; \
+		echo "Run 'make k8s-postgres-port-forward-stop' to stop"; \
+	fi
+
+.PHONY: k8s-postgres-port-forward-stop
+k8s-postgres-port-forward-stop:
+	@if [ -f .postgres-port-forward.pid ]; then \
+		pid=$$(cat .postgres-port-forward.pid); \
+		if ps -p $$pid >/dev/null 2>&1; then \
+			kill $$pid && echo "Port forwarding stopped (PID: $$pid)"; \
+		else \
+			echo "Port forwarding process not running"; \
+		fi; \
+		rm -f .postgres-port-forward.pid; \
+	else \
+		echo "No port forwarding PID file found"; \
+	fi
+
+# === Convenience targets ===
+.PHONY: k8s-dev-setup
+k8s-dev-setup: k8s-postgres-deploy k8s-postgres-port-forward-bg
+	@echo "Kubernetes development environment is ready!"
+	@echo "  - Postgres is running in namespace $(NAMESPACE)"
+	@echo "  - Port forwarding is active: localhost:30543 -> Postgres:5432"
+	@echo "  - You can now run 'make server-start' to start the NoETL server"
+	@echo "  - Run 'make k8s-postgres-port-forward-stop' to stop port forwarding"
 
 k8s-postgres-delete:
 	@echo "Deleting ONLY Postgres manifests from namespace $(NAMESPACE)..."
