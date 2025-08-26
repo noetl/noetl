@@ -196,8 +196,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   playbookName,
   content,
 }) => {
-  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
@@ -212,6 +212,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+
     [setEdges],
   );
 
@@ -599,6 +600,98 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       console.error("Error parsing playbook content:", error);
       return [];
     }
+  };
+
+  const createFlowFromTasks = (tasks: TaskNode[]): { nodes: Node[], edges: Edge[] } => {
+    const flowNodes: Node[] = [];
+    const flowEdges: Edge[] = [];
+    
+    // Create nodes
+    tasks.forEach((task, index) => {
+      const nodeType = nodeTypes[task.type as keyof typeof nodeTypes] || nodeTypes.default;
+      
+      // Position nodes in a grid layout
+      const x = (index % 3) * 300 + 100;
+      const y = Math.floor(index / 3) * 150 + 100;
+      
+      flowNodes.push({
+        id: task.id,
+        type: 'default',
+        position: { x, y },
+        data: {
+          label: (
+            <div style={{ 
+              padding: '12px 16px',
+              borderRadius: '8px',
+              background: 'white',
+              border: `2px solid ${nodeType.color}`,
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+              minWidth: '160px',
+              textAlign: 'center'
+            }}>
+              <div style={{ 
+                fontSize: '20px', 
+                marginBottom: '4px' 
+              }}>
+                {nodeType.icon}
+              </div>
+              <div style={{ 
+                fontWeight: 'bold', 
+                fontSize: '14px',
+                color: '#262626',
+                marginBottom: '4px'
+              }}>
+                {task.name}
+              </div>
+              <div style={{ 
+                fontSize: '12px', 
+                color: nodeType.color,
+                textTransform: 'uppercase',
+                fontWeight: '500'
+              }}>
+                {task.type}
+              </div>
+            </div>
+          )
+        },
+        style: {
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          width: 'auto',
+          height: 'auto'
+        }
+      });
+    });
+
+    // Create edges based on dependencies
+    tasks.forEach((task, index) => {
+      if (task.dependencies && task.dependencies.length > 0) {
+        task.dependencies.forEach(dep => {
+          const sourceTask = tasks.find(t => t.name === dep);
+          if (sourceTask) {
+            flowEdges.push({
+              id: `edge-${sourceTask.id}-${task.id}`,
+              source: sourceTask.id,
+              target: task.id,
+              animated: true,
+              style: { stroke: '#1890ff', strokeWidth: 2, strokeDasharray: '0' }
+            });
+          }
+        });
+      } else if (index > 0) {
+        // If no explicit dependencies, connect to previous task
+        flowEdges.push({
+          id: `edge-${tasks[index - 1].id}-${task.id}`,
+          source: tasks[index - 1].id,
+          target: task.id,
+          animated: true,
+          style: { stroke: '#1890ff', strokeWidth: 2, strokeDasharray: '0' }
+        });
+      }
+    });
+
+    return { nodes: flowNodes, edges: flowEdges };
   };
 
   const loadPlaybookFlow = async () => {
