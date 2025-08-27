@@ -1,10 +1,11 @@
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+import json
+import os
 from noetl.common import (
     deep_merge,
     get_pgdb_connection,
-    get_db_connection,
     get_async_db_connection,
     get_snowflake_id_str,
     get_snowflake_id,
@@ -13,7 +14,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
+from noetl.common import deep_merge, get_pgdb_connection
+from noetl.api.catalog import get_catalog_service
 from noetl.logger import setup_logger
 import asyncio
 
@@ -28,7 +30,7 @@ async def get_execution_data(
 ):
     try:
         event_service = get_event_service()
-        event = event_service.get_event(execution_id)
+        event = await event_service.get_event(execution_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -53,7 +55,7 @@ async def create_event(
     try:
         body = await request.json()
         event_service = get_event_service()
-        result = event_service.emit(body)
+        result = await event_service.emit(body)
         try:
             execution_id = result.get("execution_id") or body.get("execution_id")
             if execution_id:
@@ -83,7 +85,7 @@ async def get_events_by_execution(
     """
     try:
         event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
+        events = await event_service.get_events_by_execution_id(execution_id)
         if not events:
             raise HTTPException(
                 status_code=404,
@@ -110,7 +112,7 @@ async def get_event_by_id(
     """
     try:
         event_service = get_event_service()
-        event = event_service.get_event_by_id(event_id)
+        event = await event_service.get_event_by_id(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -138,7 +140,7 @@ async def get_event(
     """
     try:
         event_service = get_event_service()
-        event = event_service.get_event(event_id)
+        event = await event_service.get_event(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -168,7 +170,7 @@ async def get_event_by_query(
 
     try:
         event_service = get_event_service()
-        event = event_service.get_event(event_id)
+        event = await event_service.get_event(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -191,7 +193,7 @@ async def get_executions():
     """Get all executions"""
     try:
         event_service = get_event_service()
-        executions = event_service.get_all_executions()
+        executions = await event_service.get_all_executions()
         return executions
     except Exception as e:
         logger.error(f"Error getting executions: {e}")
@@ -202,7 +204,7 @@ async def get_executions():
 async def get_execution(execution_id: str):
     try:
         event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
+        events = await event_service.get_events_by_execution_id(execution_id)
 
         if not events:
             raise HTTPException(
@@ -297,7 +299,7 @@ class EventService:
         # fallback
         return 'pending'
 
-    def get_all_executions(self) -> List[Dict[str, Any]]:
+    async def get_all_executions(self) -> List[Dict[str, Any]]:
         """
         Get all executions from the event_log table.
 
@@ -305,9 +307,9 @@ class EventService:
             A list of execution data dictionaries
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         WITH latest_events AS (
                             SELECT 
                                 execution_id,
@@ -329,7 +331,7 @@ class EventService:
                         ORDER BY e.timestamp DESC
                     """)
 
-                    rows = cursor.fetchall()
+                    rows = await cursor.fetchall()
                     executions = []
 
                     for row in rows:
@@ -346,18 +348,18 @@ class EventService:
                         end_time = None
                         duration = None
 
-                        cursor.execute("""
+                        await cursor.execute("""
                             SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
                         """, (execution_id,))
-                        min_time_row = cursor.fetchone()
+                        min_time_row = await cursor.fetchone()
                         if min_time_row and min_time_row[0]:
                             start_time = min_time_row[0].isoformat()
 
                         if status in ['completed', 'failed']:
-                            cursor.execute("""
+                            await cursor.execute("""
                                 SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
                             """, (execution_id,))
-                            max_time_row = cursor.fetchone()
+                            max_time_row = await cursor.fetchone()
                             if max_time_row and max_time_row[0]:
                                 end_time = max_time_row[0].isoformat()
 
@@ -369,10 +371,10 @@ class EventService:
                         progress = 100 if status in ['completed', 'failed'] else 0
                         if status == 'running':
                             # Count total events & those considered finished (completed/failed)
-                            cursor.execute("""
+                            await cursor.execute("""
                                 SELECT status FROM event_log WHERE execution_id = %s
                             """, (execution_id,))
-                            event_statuses = [self._normalize_status(r[0]) for r in cursor.fetchall()]
+                            event_statuses = [self._normalize_status(r[0]) for r in await cursor.fetchall()]
                             total_steps = len(event_statuses)
                             completed_steps = sum(1 for s in event_statuses if s in {'completed', 'failed'})
                             if total_steps > 0:
@@ -399,7 +401,7 @@ class EventService:
             logger.exception(f"Error getting all executions: {e}")
             return []
 
-    def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id
@@ -417,66 +419,67 @@ class EventService:
             output_result = json.dumps(event_data.get("result", {}))
             metadata_str = json.dumps(metadata)
 
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT COUNT(*) FROM event_log 
-                        WHERE execution_id = %s AND event_id = %s
-                    """, (execution_id, event_id))
+            async with get_async_db_connection() as conn:
+                  async with conn.cursor() as cursor:
+                      await cursor.execute("""
+                          SELECT COUNT(*) FROM event_log
+                          WHERE execution_id = %s AND event_id = %s
+                      """, (execution_id, event_id))
 
-                    exists = cursor.fetchone()[0] > 0
+                      row = await cursor.fetchone()
+                      exists = row[0] > 0 if row else False
 
-                    if exists:
-                        cursor.execute("""
-                            UPDATE event_log SET
-                                event_type = %s,
-                                status = %s,
-                                duration = %s,
-                                input_context = %s,
-                                output_result = %s,
-                                metadata = %s,
-                                error = %s,
-                                timestamp = CURRENT_TIMESTAMP
-                            WHERE execution_id = %s AND event_id = %s
-                        """, (
-                            event_type,
-                            status,
-                            duration,
-                            input_context,
-                            output_result,
-                            metadata_str,
-                            error,
-                            execution_id,
-                            event_id
-                        ))
-                    else:
-                        cursor.execute("""
-                            INSERT INTO event_log (
-                                execution_id, event_id, parent_event_id, timestamp, event_type,
-                                node_id, node_name, node_type, status, duration,
-                                input_context, output_result, metadata, error
-                            ) VALUES (
-                                %s, %s, %s, CURRENT_TIMESTAMP, %s,
-                                %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s
-                            )
-                        """, (
-                            execution_id,
-                            event_id,
-                            parent_event_id,
-                            event_type,
-                            node_id,
-                            node_name,
-                            node_type,
-                            status,
-                            duration,
-                            input_context,
-                            output_result,
-                            metadata_str,
-                            error
-                        ))
+                      if exists:
+                          await cursor.execute("""
+                              UPDATE event_log SET
+                                  event_type = %s,
+                                  status = %s,
+                                  duration = %s,
+                                  input_context = %s,
+                                  output_result = %s,
+                                  metadata = %s,
+                                  error = %s,
+                                  timestamp = CURRENT_TIMESTAMP
+                              WHERE execution_id = %s AND event_id = %s
+                          """, (
+                              event_type,
+                              status,
+                              duration,
+                              input_context,
+                              output_result,
+                              metadata_str,
+                              error,
+                              execution_id,
+                              event_id
+                          ))
+                      else:
+                          await cursor.execute("""
+                              INSERT INTO event_log (
+                                  execution_id, event_id, parent_event_id, timestamp, event_type,
+                                  node_id, node_name, node_type, status, duration,
+                                  input_context, output_result, metadata, error
+                              ) VALUES (
+                                  %s, %s, %s, CURRENT_TIMESTAMP, %s,
+                                  %s, %s, %s, %s, %s,
+                                  %s, %s, %s, %s
+                              )
+                          """, (
+                              execution_id,
+                              event_id,
+                              parent_event_id,
+                              event_type,
+                              node_id,
+                              node_name,
+                              node_type,
+                              status,
+                              duration,
+                              input_context,
+                              output_result,
+                              metadata_str,
+                              error
+                          ))
 
-                    conn.commit()
+                      await conn.commit()
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
             return event_data
@@ -488,7 +491,7 @@ class EventService:
                 detail=f"Error emitting event: {e}"
             )
 
-    def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
+    async def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
         """
         Get all events for a specific execution.
 
@@ -499,9 +502,9 @@ class EventService:
             A dictionary containing events or None if not found
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         SELECT 
                             event_id, 
                             event_type, 
@@ -520,7 +523,7 @@ class EventService:
                         ORDER BY timestamp
                     """, (execution_id,))
 
-                    rows = cursor.fetchall()
+                    rows = await cursor.fetchall()
                     if rows:
                         events = []
                         for row in rows:
@@ -561,7 +564,7 @@ class EventService:
             logger.exception(f"Error getting events by execution_id: {e}")
             return None
 
-    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+    async def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a single event by its ID.
 
@@ -572,9 +575,9 @@ class EventService:
             A dictionary containing the event or None if not found
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         SELECT 
                             event_id, 
                             event_type, 
@@ -593,7 +596,7 @@ class EventService:
                         WHERE event_id = %s
                     """, (event_id,))
 
-                    row = cursor.fetchone()
+                    row = await cursor.fetchone()
                     if row:
                         event_data = {
                             "event_id": row[0],
@@ -627,7 +630,7 @@ class EventService:
             logger.exception(f"Error getting event by ID: {e}")
             return None
 
-    def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
+    async def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
         """
         Get events by execution_id or event_id (legacy method for backward compatibility).
 
@@ -638,32 +641,33 @@ class EventService:
             A dictionary containing events or None if not found
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         SELECT COUNT(*) FROM event_log WHERE execution_id = %s
                     """, (id_param,))
-                    count = cursor.fetchone()[0]
+                    row = await cursor.fetchone()
+                    count = row[0] if row else 0
 
                     if count > 0:
-                        events = self.get_events_by_execution_id(id_param)
+                        events = await self.get_events_by_execution_id(id_param)
                         if events:
                             return events
 
-                event = self.get_event_by_id(id_param)
+                event = await self.get_event_by_id(id_param)
                 if event:
                     return event
 
-                with get_db_connection() as conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute("""
-                            SELECT DISTINCT execution_id FROM event_log 
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute("""
+                            SELECT DISTINCT execution_id FROM event_log
                             WHERE event_id = %s
                         """, (id_param,))
-                        execution_ids = [row[0] for row in cursor.fetchall()]
+                        execution_ids = [row[0] for row in await cursor.fetchall()]
 
                         if execution_ids:
-                            events = self.get_events_by_execution_id(execution_ids[0])
+                            events = await self.get_events_by_execution_id(execution_ids[0])
                             if events:
                                 return events
 
@@ -690,8 +694,8 @@ def _evaluate_broker_for_execution(execution_id: str):
 
 async def evaluate_broker_for_execution(
     execution_id: str,
-    get_db_connection,
-    get_catalog_service,
+    get_async_db_connection=get_async_db_connection,
+    get_catalog_service=get_catalog_service,
     AsyncClientClass=None,
 ):
     """Lightweight async evaluator used for tests.
@@ -705,9 +709,9 @@ async def evaluate_broker_for_execution(
         workload = {}
 
         # Read earliest event for execution to extract context
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
                     """
                     SELECT input_context, metadata FROM event_log
                     WHERE execution_id = %s
@@ -716,7 +720,7 @@ async def evaluate_broker_for_execution(
                     """,
                     (execution_id,)
                 )
-                row = cur.fetchone()
+                row = await cur.fetchone()
                 if row:
                     input_context = json.loads(row[0]) if row[0] else {}
                     metadata = json.loads(row[1]) if row[1] else {}
@@ -753,10 +757,10 @@ async def evaluate_broker_for_execution(
 
         # Determine next step index by counting completed events
         completed = 0
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT status FROM event_log WHERE execution_id = %s ORDER BY timestamp", (execution_id,))
-                rows = cur.fetchall()
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT status FROM event_log WHERE execution_id = %s ORDER BY timestamp", (execution_id,))
+                rows = await cur.fetchall()
                 for r in rows:
                     s = (r[0] or '').lower()
                     if 'completed' in s or 'success' in s:
@@ -783,10 +787,10 @@ async def evaluate_broker_for_execution(
 
         # Pick a worker base_url from runtime table (first ready)
         worker_base = None
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT base_url FROM runtime WHERE component_type = 'worker_pool' AND status = 'ready' ORDER BY updated_at LIMIT 1")
-                r = cur.fetchone()
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT base_url FROM runtime WHERE component_type = 'worker_pool' AND status = 'ready' ORDER BY updated_at LIMIT 1")
+                r = await cur.fetchone()
                 if r:
                     worker_base = r[0]
 

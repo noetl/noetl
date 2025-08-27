@@ -10,7 +10,6 @@ from psycopg.types.json import Json
 from noetl.common import (
     deep_merge,
     get_pgdb_connection,
-    get_db_connection,
     get_async_db_connection,
     get_snowflake_id_str,
     get_snowflake_id,
@@ -19,7 +18,7 @@ from noetl.common import (
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
+from noetl.common import deep_merge, get_pgdb_connection
 from noetl.logger import setup_logger
 
 
@@ -54,7 +53,7 @@ async def register_resource(
             )
 
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, resource_type)
+        result = await catalog_service.register_resource(content, resource_type)
         return result
 
     except Exception as e:
@@ -71,7 +70,7 @@ async def list_resources(
 ):
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries(resource_type)
+        entries = await catalog_service.list_entries(resource_type)
         return {"entries": entries}
 
     except Exception as e:
@@ -93,7 +92,7 @@ async def get_catalog_playbooks():
     """Get all playbooks"""
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries('Playbook')
+        entries = await catalog_service.list_entries('Playbook')
 
         playbooks = []
         for entry in entries:
@@ -155,7 +154,7 @@ tasks:
 """
 
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource(content, "playbooks")
 
         playbook = {
             "id": result.get("resource_path", ""),
@@ -215,7 +214,7 @@ async def get_catalog_playbook_content(playbook_id: str = Query(...)):
         latest_version = await catalog_service.get_latest_version(playbook_id)
         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
 
-        entry = catalog_service.fetch_entry(playbook_id, latest_version)
+        entry = await catalog_service.fetch_entry(playbook_id, latest_version)
 
         if not entry:
             raise HTTPException(
@@ -274,7 +273,7 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 detail="Content is required."
             )
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource(content, "playbooks")
 
         return {
             "status": "success",
@@ -298,20 +297,21 @@ async def get_catalog_widgets():
         draft_count = 0
 
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
                         "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
                     )
-                    playbook_count = cursor.fetchone()[0]
+                    row = await cursor.fetchone()
+                    playbook_count = row[0] if row else 0
 
-                    cursor.execute(
+                    await cursor.execute(
                         """
  SELECT meta FROM catalog
  WHERE resource_type = 'widget'
                         """
                     )
-                    results = cursor.fetchall()
+                    results = await cursor.fetchall()
 
                     for row in results:
                         meta_str = row[0]
@@ -383,7 +383,7 @@ class CatalogService:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
                         "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
-                        (resource_path,)
+                        (resource_path,),
                     )
                     row = await cursor.fetchone()
                     count = int(row[0]) if row else 0
@@ -392,7 +392,7 @@ class CatalogService:
 
                     await cursor.execute(
                         "SELECT resource_version FROM catalog WHERE resource_path = %s",
-                        (resource_path,)
+                        (resource_path,),
                     )
                     versions = [r[0] for r in (await cursor.fetchall() or [])]
                     if not versions:
@@ -411,11 +411,11 @@ class CatalogService:
         except Exception:
             return "0.1.0"
 
-    def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
+    async def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
         try:
-            with get_db_connection(self.pgdb_conn_string) as conn:
-                with conn.cursor(row_factory=dict_row) as cursor:
-                    cursor.execute(
+            async with get_async_db_connection(self.pgdb_conn_string) as conn:
+                async with conn.cursor(row_factory=dict_row) as cursor:
+                    await cursor.execute(
                         """
                         SELECT resource_path, resource_type, resource_version, content, payload, meta
                         FROM catalog
@@ -423,10 +423,10 @@ class CatalogService:
                         """,
                         (path, version)
                     )
-                    result = cursor.fetchone()
+                    result = await cursor.fetchone()
                     if not result and '/' in path:
                         filename = path.split('/')[-1]
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta
                             FROM catalog
@@ -434,7 +434,7 @@ class CatalogService:
                             """,
                             (filename, version)
                         )
-                        result = cursor.fetchone()
+                        result = await cursor.fetchone()
                     if result:
                         return dict(result)
                     return None
@@ -452,17 +452,17 @@ class CatalogService:
         except Exception:
             return f"{version}.1"
 
-    def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
+    async def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         try:
             resource_data = yaml.safe_load(content)
             resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
             # Determine latest version synchronously from DB
             latest = None
             try:
-                with get_db_connection(self.pgdb_conn_string) as _conn:
-                    with _conn.cursor() as _cur:
-                        _cur.execute("SELECT resource_version FROM catalog WHERE resource_path = %s", (resource_path,))
-                        _versions = [r[0] for r in (_cur.fetchall() or [])]
+                async with get_async_db_connection(self.pgdb_conn_string) as _conn:
+                    async with _conn.cursor() as _cur:
+                        await _cur.execute("SELECT resource_version FROM catalog WHERE resource_path = %s", (resource_path,))
+                        _versions = [r[0] for r in (await _cur.fetchall() or [])]
                         if _versions:
                             def _version_key(v: str):
                                 p = (v or "0").split('.')
@@ -477,17 +477,17 @@ class CatalogService:
             latest = latest or "0.1.0"
             resource_version = latest if latest == '0.1.0' else self.increment_version(latest)
 
-            with get_db_connection(self.pgdb_conn_string) as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING", (resource_type,))
+            async with get_async_db_connection(self.pgdb_conn_string) as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING", (resource_type,))
 
                     attempt = 0
                     while attempt < 5:
-                        cursor.execute(
+                        await cursor.execute(
                             "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
                             (resource_path, resource_version)
                         )
-                        row = cursor.fetchone()
+                        row = await cursor.fetchone()
                         if not row or int(row[0]) == 0:
                             break
                         resource_version = self.increment_version(resource_version)
@@ -495,7 +495,7 @@ class CatalogService:
                     if attempt >= 5:
                         raise RuntimeError("Failed to find unique version")
 
-                    cursor.execute(
+                    await cursor.execute(
                         """
                         INSERT INTO catalog
                         (resource_path, resource_type, resource_version, content, payload, meta)
@@ -511,7 +511,7 @@ class CatalogService:
                         )
                     )
                     try:
-                        conn.commit()
+                        await conn.commit()
                     except Exception:
                         pass
 
@@ -525,12 +525,12 @@ class CatalogService:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
-            with get_db_connection(self.pgdb_conn_string) as conn:
-                with conn.cursor(row_factory=dict_row) as cursor:
+            async with get_async_db_connection(self.pgdb_conn_string) as conn:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     if resource_type:
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog WHERE resource_type = %s ORDER BY timestamp DESC
@@ -538,13 +538,13 @@ class CatalogService:
                             (resource_type,)
                         )
                     else:
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog ORDER BY timestamp DESC
                             """
                         )
-                    rows = cursor.fetchall() or []
+                    rows = await cursor.fetchall() or []
                     return [dict(r) for r in rows]
         except Exception:
             return []
@@ -570,7 +570,7 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
     latest_version = await catalog_service.get_latest_version(path_to_lookup)
     logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
 
-    entry = catalog_service.fetch_entry(path_to_lookup, latest_version)
+    entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
     if not entry:
         raise HTTPException(
             status_code=404,
