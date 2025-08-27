@@ -4,6 +4,7 @@ import yaml
 import tempfile
 import psycopg
 import base64
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
@@ -254,6 +255,18 @@ class CatalogService:
             logger.exception(f"Error listing catalog entries: {e}")
             return []
 
+    async def get_latest_version_async(self, resource_path: str) -> str:
+        return await asyncio.to_thread(self.get_latest_version, resource_path)
+
+    async def fetch_entry_async(self, path: str, version: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self.fetch_entry, path, version)
+
+    async def register_resource_async(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
+        return await asyncio.to_thread(self.register_resource, content, resource_type)
+
+    async def list_entries_async(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self.list_entries, resource_type)
+
 
 def get_catalog_service() -> CatalogService:
     return CatalogService()
@@ -272,10 +285,10 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
             logger.info(f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
 
     catalog_service = get_catalog_service()
-    latest_version = catalog_service.get_latest_version(path_to_lookup)
+    latest_version = await catalog_service.get_latest_version_async(path_to_lookup)
     logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
 
-    entry = catalog_service.fetch_entry(path_to_lookup, latest_version)
+    entry = await catalog_service.fetch_entry_async(path_to_lookup, latest_version)
     if not entry:
         raise HTTPException(
             status_code=404,
@@ -679,6 +692,21 @@ class EventService:
             logger.exception(f"Error in get_event: {e}")
             return None
 
+    async def get_all_executions_async(self) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self.get_all_executions)
+
+    async def emit_async(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.emit, event_data)
+
+    async def get_events_by_execution_id_async(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self.get_events_by_execution_id, execution_id)
+
+    async def get_event_by_id_async(self, event_id: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self.get_event_by_id, event_id)
+
+    async def get_event_async(self, id_param: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self.get_event, id_param)
+
 def get_event_service() -> EventService:
     return EventService()
 
@@ -851,7 +879,7 @@ async def register_resource(
             )
 
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, resource_type)
+        result = await catalog_service.register_resource_async(content, resource_type)
         return result
 
     except Exception as e:
@@ -868,7 +896,7 @@ async def list_resources(
 ):
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries(resource_type)
+        entries = await catalog_service.list_entries_async(resource_type)
         return {"entries": entries}
 
     except Exception as e:
@@ -888,7 +916,7 @@ async def get_events_by_execution(
     """
     try:
         event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
+        events = await event_service.get_events_by_execution_id_async(execution_id)
         if not events:
             raise HTTPException(
                 status_code=404,
@@ -915,7 +943,7 @@ async def get_event_by_id(
     """
     try:
         event_service = get_event_service()
-        event = event_service.get_event_by_id(event_id)
+        event = await event_service.get_event_by_id_async(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -943,7 +971,7 @@ async def get_event(
     """
     try:
         event_service = get_event_service()
-        event = event_service.get_event(event_id)
+        event = await event_service.get_event_async(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -973,7 +1001,7 @@ async def get_event_by_query(
 
     try:
         event_service = get_event_service()
-        event = event_service.get_event(event_id)
+        event = await event_service.get_event_async(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -997,7 +1025,7 @@ async def get_execution_data(
 ):
     try:
         event_service = get_event_service()
-        event = event_service.get_event(execution_id)
+        event = await event_service.get_event_async(execution_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -1021,7 +1049,7 @@ async def create_event(
     try:
         body = await request.json()
         event_service = get_event_service()
-        result = event_service.emit(body)
+        result = await event_service.emit_async(body)
         return result
     except Exception as e:
         logger.exception(f"Error creating event: {e}.")
@@ -1067,11 +1095,11 @@ async def execute_agent(
         logger.debug(f"EXECUTE_AGENT: Getting catalog service")
         catalog_service = get_catalog_service()
         if not version:
-            version = catalog_service.get_latest_version(path)
+            version = await catalog_service.get_latest_version_async(path)
             logger.debug(f"EXECUTE_AGENT: Version not specified, using latest version: {version}")
 
         logger.debug(f"EXECUTE_AGENT: Fetching entry for path={path}, version={version}")
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry_async(path, version)
         if not entry:
             logger.error(f"EXECUTE_AGENT: Playbook '{path}' with version '{version}' not found")
             raise HTTPException(
@@ -1134,10 +1162,10 @@ async def execute_agent_async(
         catalog_service = get_catalog_service()
 
         if not version:
-            version = catalog_service.get_latest_version(path)
+            version = await catalog_service.get_latest_version_async(path)
             logger.info(f"Version not specified, using latest version: {version}")
 
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry_async(path, version)
         if not entry:
             raise HTTPException(
                 status_code=404,
@@ -1157,7 +1185,7 @@ async def execute_agent_async(
             "node_name": path
         }
 
-        initial_event = event_service.emit(initial_event_data)
+        initial_event = await event_service.emit_async(initial_event_data)
 
         def execute_agent_task():
             try:
@@ -1214,7 +1242,7 @@ async def execute_agent_async(
                         "node_name": path
                     }
 
-                    event_service.emit(update_event)
+                    asyncio.run(event_service.emit_async(update_event))
                     logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
 
                 finally:
@@ -1241,7 +1269,7 @@ async def execute_agent_async(
                     "node_name": path
                 }
 
-                event_service.emit(error_event)
+                asyncio.run(event_service.emit_async(error_event))
                 logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
 
         background_tasks.add_task(execute_agent_task)
@@ -1294,7 +1322,7 @@ async def get_catalog_playbooks():
     """Get all playbooks"""
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries('Playbook')
+        entries = await catalog_service.list_entries_async('Playbook')
 
         playbooks = []
         for entry in entries:
@@ -1355,7 +1383,7 @@ tasks:
 """
         
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource_async(content, "playbooks")
         
         playbook = {
             "id": result.get("resource_path", ""),
@@ -1457,10 +1485,10 @@ async def get_catalog_playbook_content(playbook_id: str = Query(...)):
             logger.info(f"Fixed playbook_id: '{playbook_id}'")
         
         catalog_service = get_catalog_service()
-        latest_version = catalog_service.get_latest_version(playbook_id)
+        latest_version = await catalog_service.get_latest_version_async(playbook_id)
         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
-        
-        entry = catalog_service.fetch_entry(playbook_id, latest_version)
+
+        entry = await catalog_service.fetch_entry_async(playbook_id, latest_version)
         
         if not entry:
             raise HTTPException(
@@ -1517,7 +1545,7 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 detail="Content is required."
             )
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource_async(content, "playbooks")
         
         return {
             "status": "success",
@@ -1540,35 +1568,39 @@ async def get_catalog_widgets():
         draft_count = 0
         
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
-                    )
-                    playbook_count = cursor.fetchone()[0]
-                    
-                    cursor.execute(
-                        """
-                        SELECT meta FROM catalog 
-                        WHERE resource_type = 'widget'
-                        """
-                    )
-                    results = cursor.fetchall()
-                    
-                    for row in results:
-                        meta_str = row[0]
-                        if meta_str:
-                            try:
-                                meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
-                                status = meta.get('status', 'active')
-                                if status == 'active':
-                                    active_count += 1
-                                elif status == 'draft':
-                                    draft_count += 1
-                            except (json.JSONDecodeError, TypeError):
-                                active_count += 1
-                        else:
+            def _load_stats():
+                with get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
+                        )
+                        count = cursor.fetchone()[0]
+
+                        cursor.execute(
+                            """
+                            SELECT meta FROM catalog
+                            WHERE resource_type = 'widget'
+                            """
+                        )
+                        results = cursor.fetchall()
+                return count, results
+
+            playbook_count, results = await asyncio.to_thread(_load_stats)
+
+            for row in results:
+                meta_str = row[0]
+                if meta_str:
+                    try:
+                        meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+                        status = meta.get('status', 'active')
+                        if status == 'active':
                             active_count += 1
+                        elif status == 'draft':
+                            draft_count += 1
+                    except (json.JSONDecodeError, TypeError):
+                        active_count += 1
+                else:
+                    active_count += 1
         except Exception as db_error:
             logger.warning(f"Error getting catalog stats from database: {db_error}")
             playbook_count = 0
@@ -1620,7 +1652,7 @@ async def get_executions():
     """Get all executions"""
     try:
         event_service = get_event_service()
-        executions = event_service.get_all_executions()
+        executions = await event_service.get_all_executions_async()
         return executions
     except Exception as e:
         logger.error(f"Error getting executions: {e}")
@@ -1630,7 +1662,7 @@ async def get_executions():
 async def get_execution(execution_id: str):
     try:
         event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
+        events = await event_service.get_events_by_execution_id_async(execution_id)
         
         if not events:
             raise HTTPException(
@@ -1718,7 +1750,7 @@ async def get_resource(
 ):
     try:
         catalog_service = get_catalog_service()
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry_async(path, version)
         if not entry:
             raise HTTPException(
                 status_code=404,
@@ -1805,59 +1837,64 @@ async def execute_postgres(
         if decoded_query:
             query = decoded_query
         
-        conn = None
-        try:
-            if connection_string:
-                logger.debug(f"EXECUTE_POSTGRES: Using custom connection string")
-                conn = psycopg.connect(connection_string)
-            else:
-                logger.debug(f"EXECUTE_POSTGRES: Using default connection from pool")
-                return_conn = get_db_connection()
-                conn = return_conn.__enter__()
-            
-            with conn.cursor(row_factory=dict_row) as cursor:
-                if query:
-                    logger.debug(f"EXECUTE_POSTGRES: Executing query: {query}")
-                    if parameters:
-                        cursor.execute(query, parameters)
-                    else:
-                        cursor.execute(query)
+        def _execute():
+            conn = None
+            try:
+                if connection_string:
+                    logger.debug("EXECUTE_POSTGRES: Using custom connection string")
+                    conn = psycopg.connect(connection_string)
                 else:
-                    logger.debug(f"EXECUTE_POSTGRES: Calling procedure: {procedure}")
-                    if parameters:
-                        placeholders = ", ".join(["%s"] * len(parameters))
-                        call_sql = f"CALL {procedure}({placeholders})"
-                        cursor.execute(call_sql, parameters)
+                    logger.debug("EXECUTE_POSTGRES: Using default connection from pool")
+                    return_conn = get_db_connection()
+                    conn = return_conn.__enter__()
+
+                with conn.cursor(row_factory=dict_row) as cursor:
+                    if query:
+                        logger.debug(f"EXECUTE_POSTGRES: Executing query: {query}")
+                        if parameters:
+                            cursor.execute(query, parameters)
+                        else:
+                            cursor.execute(query)
                     else:
-                        call_sql = f"CALL {procedure}()"
-                        cursor.execute(call_sql)
-                
-                try:
-                    results = cursor.fetchall()
-                    logger.debug(f"EXECUTE_POSTGRES: Fetched {len(results)} rows")
-                except psycopg.ProgrammingError:
-                    results = []
-                    logger.debug("EXECUTE_POSTGRES: No results to fetch")
-                
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                
-                response_data = {
-                    "success": True,
-                    "rows_affected": cursor.rowcount if cursor.rowcount >= 0 else 0,
-                    "columns": columns,
-                    "results": results
-                }
-                
-                logger.debug(f"EXECUTE_POSTGRES: Returning response with {len(results)} results")
-                logger.debug("=== EXECUTE_POSTGRES: Function exit ===")
-                return response_data
-        finally:
-            if connection_string and conn:
-                logger.debug("EXECUTE_POSTGRES: Closing custom connection")
-                conn.close()
-            elif conn and not connection_string:
-                logger.debug("EXECUTE_POSTGRES: Returning connection to pool")
-                return_conn.__exit__(None, None, None)
+                        logger.debug(f"EXECUTE_POSTGRES: Calling procedure: {procedure}")
+                        if parameters:
+                            placeholders = ", ".join(["%s"] * len(parameters))
+                            call_sql = f"CALL {procedure}({placeholders})"
+                            cursor.execute(call_sql, parameters)
+                        else:
+                            call_sql = f"CALL {procedure}()"
+                            cursor.execute(call_sql)
+
+                    try:
+                        results = cursor.fetchall()
+                        logger.debug(f"EXECUTE_POSTGRES: Fetched {len(results)} rows")
+                    except psycopg.ProgrammingError:
+                        results = []
+                        logger.debug("EXECUTE_POSTGRES: No results to fetch")
+
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+
+                    response_data = {
+                        "success": True,
+                        "rows_affected": cursor.rowcount if cursor.rowcount >= 0 else 0,
+                        "columns": columns,
+                        "results": results,
+                    }
+
+                    logger.debug(
+                        f"EXECUTE_POSTGRES: Returning response with {len(results)} results"
+                    )
+                    logger.debug("=== EXECUTE_POSTGRES: Function exit ===")
+                    return response_data
+            finally:
+                if connection_string and conn:
+                    logger.debug("EXECUTE_POSTGRES: Closing custom connection")
+                    conn.close()
+                elif conn and not connection_string:
+                    logger.debug("EXECUTE_POSTGRES: Returning connection to pool")
+                    return_conn.__exit__(None, None, None)
+
+        return await asyncio.to_thread(_execute)
     
     except HTTPException:
         raise
