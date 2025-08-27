@@ -209,16 +209,17 @@ server-start:
 	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be set (true/false) in your .env[.server]"; \
 	  exit 1; \
 	fi; \
-	if [[ "$${NOETL_SCHEMA_VALIDATE}" != "true" && "$${NOETL_SCHEMA_VALIDATE}" != "false" ]]; then \
+	if [ "$${NOETL_SCHEMA_VALIDATE}" != "true" ] && [ "$${NOETL_SCHEMA_VALIDATE}" != "false" ]; then \
 	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be 'true' or 'false'"; \
 	  exit 1; \
 	fi; \
+	@mkdir -p ~/.noetl; \
 	if command -v setsid >/dev/null 2>&1; then \
-	  setsid nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > logs/server.pid; \
+	  setsid nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
 	else \
-	  nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > logs/server.pid; \
+	  nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
 	fi; \
-	sleep 3; \
+	@sleep 3; \
 	if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \
 	  echo "NoETL server started: PID=$$(cat ~/.noetl/noetl_server.pid) | Port: $(NOETL_PORT) | logs at logs/server.log"; \
 	else \

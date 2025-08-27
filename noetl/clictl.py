@@ -27,7 +27,6 @@ logger = setup_logger(__name__, include_location=True)
 cli_app = typer.Typer()
 
 def create_app() -> FastAPI:
-    # Clear any cached settings to ensure fresh environment loading
     from noetl.config import _settings
     import noetl.config
     noetl.config._settings = None
@@ -45,7 +44,6 @@ def create_app() -> FastAPI:
 
 
 def create_worker_app() -> FastAPI:
-    """Create a FastAPI app exposing the worker endpoints."""
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
@@ -90,7 +88,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         try:
             from noetl.common import get_db_connection, get_snowflake_id
             
-            # Get server URL - use environment or construct from host/port
             server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
             if not server_url:
                 host = os.environ.get("NOETL_HOST", "localhost").strip()
@@ -105,7 +102,6 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             if labels:
                 labels = [s.strip() for s in labels.split(',') if s.strip()]
             
-            # Get hostname with fallback
             hostname = os.environ.get("HOSTNAME") or socket.gethostname()
             
             import datetime as _dt
@@ -203,13 +199,11 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Register server on startup
         try:
             register_server_directly()
         except Exception as e:
             logger.warning(f"Server registration failed during startup: {e}")
         yield
-        # Deregister server on shutdown
         try:
             deregister_server_directly()
         except Exception as e:
@@ -281,20 +275,16 @@ def start_worker_service(
 ):
     """Start the queue worker pool that polls the server queue API."""
 
-    # Clear any cached settings to ensure fresh environment loading
     from noetl.config import _settings
     import noetl.config
     noetl.config._settings = None
     noetl.config._ENV_LOADED = False
     
-    # ensure settings loaded for environment variables
     get_settings(reload=True)
 
-    # Set default worker runtime for registration if not already set
     if not os.environ.get("NOETL_WORKER_POOL_RUNTIME"):
         os.environ["NOETL_WORKER_POOL_RUNTIME"] = "cpu"
 
-    # Get worker name for unique PID file
     worker_name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{os.environ.get('NOETL_WORKER_POOL_RUNTIME', 'cpu')}"
     worker_name = worker_name.replace("-", "_")  # Replace hyphens with underscores for filename
     
@@ -341,7 +331,6 @@ def stop_worker_service(
         worker_name = worker_name.replace("-", "_")
         worker_pid_path = os.path.join(pid_dir, f"noetl_worker_{worker_name}.pid")
     else:
-        # List all worker PID files
         worker_files = [f for f in os.listdir(pid_dir) if f.startswith("noetl_worker_") and f.endswith(".pid")]
         if not worker_files:
             typer.echo("No running NoETL worker services found.")
@@ -390,7 +379,6 @@ def stop_worker_service(
             typer.echo(f"Stopping NoETL worker with PID {pid}...")
             os.kill(pid, signal.SIGTERM)
 
-            # Give more time for graceful shutdown and deregistration
             for _ in range(20):  # Increased from 10 to 20
                 try:
                     os.kill(pid, 0)
@@ -424,13 +412,11 @@ def start_server():
     """
     global _enable_ui
 
-    # Clear any cached settings to ensure fresh environment loading
     from noetl.config import _settings
     import noetl.config
     noetl.config._settings = None
     noetl.config._ENV_LOADED = False
     
-    # Reload settings to pick up any environment variable changes
     settings = get_settings(reload=True)
 
     _enable_ui = settings.enable_ui
@@ -461,9 +447,9 @@ def start_server():
         logger.error(f"FATAL: Error initializing NoETL system metadata: {e}", exc_info=True)
         if os.path.exists(settings.pid_file_path):
             os.remove(settings.pid_file_path)
-        makefile_pid_file = "logs/server.pid"
-        if os.path.exists(makefile_pid_file):
-            os.remove(makefile_pid_file)
+        legacy_makefile_pid_file = "logs/server.pid"
+        if os.path.exists(legacy_makefile_pid_file):
+            os.remove(legacy_makefile_pid_file)
         raise typer.Exit(code=1)
 
     server_runtime = settings.server_runtime
