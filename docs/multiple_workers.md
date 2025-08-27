@@ -40,15 +40,16 @@ The following environment files are ready to use:
 ### Quick Start Scripts
 
 Use the provided scripts for easy management:
-- Start all three workers at once
-```bash
-./bin/start_multiple_workers.sh
-```
 
-- Stop all workers
 ```bash
+# Start all three workers at once and prevents duplicates
+./bin/start_multiple_workers.sh
+
+# Force restart all workers (stops existing, then starts new)
+./bin/start_multiple_workers.sh --force
+
+# Stop all workers
 ./bin/stop_multiple_workers.sh
-```
 
 ### Manual Start (Alternative)
 
@@ -224,12 +225,40 @@ Consider implementing log rotation for long-running worker instances.
 ### 5. Health Monitoring
 Regularly check worker status and restart failed workers as needed.
 
+## Duplicate Prevention
+
+The startup script includes built-in duplicate prevention:
+
+### Automatic Detection
+- **PID File Check**: Verifies if worker PID files exist
+- **Process Validation**: Confirms if processes are actually running
+- **Stale Cleanup**: Removes PID files for dead processes
+
+### Safe Startup Behavior
+```bash
+# Safe start (skips if already running)
+./bin/start_multiple_workers.sh
+```
+
+### Force Restart
+```bash
+# Force restart (stops existing workers first)
+./bin/start_multiple_workers.sh --force
+```
+
+### Orphaned Process Cleanup
+The script automatically detects and cleans up orphaned worker processes that don't have corresponding PID files.
+
 ## Troubleshooting
 
 ### Orphaned Worker Processes
 If you have worker processes running without corresponding PID files:
 
+**Automatic Cleanup**: The startup script automatically detects and cleans up orphaned processes.
+
+**Manual Cleanup** (if needed):
 ```bash
+# The startup script handles this automatically, but if needed manually:
 pkill -9 -f "noetl worker start"
 rm -f ~/.noetl/noetl_worker_*.pid
 ```

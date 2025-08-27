@@ -32,9 +32,9 @@ deregister_worker() {
     fi
 }
 
-echo "Step 1: Stopping workers with PID files..."
+echo " Step 1: Stopping workers with PID files..."
 if ls ~/.noetl/noetl_worker_*.pid 1> /dev/null 2>&1; then
-    echo "Found workers with PID files:"
+    echo "  Found workers with PID files:"
     ls -la ~/.noetl/noetl_worker_*.pid | while read line; do
         pid_file=$(echo $line | awk '{print $9}')
         if [ -f "$pid_file" ]; then
@@ -45,7 +45,7 @@ if ls ~/.noetl/noetl_worker_*.pid 1> /dev/null 2>&1; then
     done
     echo ""
 
-    echo "Stopping workers with PID files..."
+    echo "  Stopping workers with PID files..."
     for pid_file in ~/.noetl/noetl_worker_*.pid; do
         if [ -f "$pid_file" ]; then
             worker_name=$(basename "$pid_file" | sed 's/noetl_worker_//' | sed 's/.pid//')
@@ -64,31 +64,31 @@ if ls ~/.noetl/noetl_worker_*.pid 1> /dev/null 2>&1; then
         fi
     done
 else
-    echo "No workers with PID files found."
+    echo "  No workers with PID files found."
 fi
 
 echo ""
 echo " Step 2: Cleaning up orphaned worker processes..."
 worker_processes=$(ps aux | grep "noetl worker start" | grep -v grep | awk '{print $2}')
 if [ -n "$worker_processes" ]; then
-    echo "Found orphaned worker processes:"
+    echo "  Found orphaned worker processes:"
     ps aux | grep "noetl worker start" | grep -v grep | while read line; do
         pid=$(echo $line | awk '{print $2}')
         echo "  - PID: $pid (orphaned)"
     done
     echo ""
 
-    echo "Force killing orphaned processes..."
+    echo "  Force killing orphaned processes..."
     for pid in $worker_processes; do
         echo "  Force killing orphaned worker PID $pid..."
         kill -9 "$pid" 2>/dev/null || true
     done
 else
-    echo "No orphaned worker processes found."
+    echo "  No orphaned worker processes found."
 fi
 
 echo ""
-echo " Step 3: Ensuring all workers are marked offline in database..."
+echo " Step 3: Verifying all workers are marked offline in database..."
 deregister_worker "worker-cpu-01"
 deregister_worker "worker-cpu-02"
 deregister_worker "worker-gpu-01"
@@ -100,7 +100,7 @@ pkill -f "noetl worker stop" 2>/dev/null || true
 rm -f ~/.noetl/noetl_worker_*.pid
 
 echo ""
-echo " Worker stop process completed!"
+echo " Worker stop process completed."
 echo ""
 echo " Verification:"
 echo "   ls ~/.noetl/noetl_worker_*.pid  # Should show no files"
