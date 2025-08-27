@@ -217,13 +217,6 @@ async def deregister_runtime_component(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/worker/pool/register", response_class=JSONResponse)
-async def register_worker_pool(request: Request):
-    body = await request.json()
-    logger.info(f"register_worker_pool: {body}")
-    return JSONResponse(content={"status": "registered", "payload": body})
-
-
 @router.post("/worker/pool/heartbeat", response_class=JSONResponse)
 async def heartbeat_worker_pool(request: Request):
     body = await request.json()
@@ -253,11 +246,6 @@ async def heartbeat_broker(request: Request):
 @router.get("/brokers", response_class=JSONResponse)
 async def list_brokers(request: Request, status: Optional[str] = None):
     return JSONResponse(content={"items": [], "status": status})
-
-
-@router.delete("/worker/pool/deregister", response_class=JSONResponse)
-async def deregister_worker_pool(request: Request):
-    return JSONResponse(content={"status": "deregistered"})
 
 
 @router.delete("/broker/deregister", response_class=JSONResponse)

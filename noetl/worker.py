@@ -174,33 +174,42 @@ def register_worker_pool_from_env() -> None:
 
 def deregister_worker_pool_from_env() -> None:
     """Attempt to deregister worker pool using stored name (best-effort)."""
+    logger.info("Worker deregistration starting...")
     try:
         name: Optional[str] = None
         if os.path.exists('/tmp/noetl_worker_pool_name'):
             try:
                 with open('/tmp/noetl_worker_pool_name', 'r') as f:
                     name = f.read().strip()
+                logger.info(f"Found worker name from file: {name}")
             except Exception:
                 name = None
         if not name:
             name = os.environ.get('NOETL_WORKER_POOL_NAME')
+            if name:
+                logger.info(f"Using worker name from env: {name}")
         if not name:
+            logger.warning("No worker name found for deregistration")
             return
         server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
         if not server_url.endswith('/api'):
             server_url = server_url + '/api'
+        logger.info(f"Attempting to deregister worker {name} via {server_url}")
+        logger.info("About to make deregister HTTP call...")
         try:
             with httpx.Client(timeout=5.0) as client:
-                client.delete(f"{server_url}/worker/pool/deregister", json={"name": name})
+                resp = client.delete(f"{server_url}/worker/pool/deregister", json={"name": name})
+                logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
             try:
                 os.remove('/tmp/noetl_worker_pool_name')
+                logger.info("Removed worker name file")
             except Exception:
                 pass
             logger.info(f"Deregistered worker pool: {name}")
         except Exception as e:
-            logger.debug(f"Worker deregister attempt failed: {e}")
-    except Exception:
-        pass
+            logger.error(f"Worker deregister HTTP error: {e}")
+    except Exception as e:
+        logger.error(f"Worker deregister general error: {e}")
 
 
 def _on_worker_terminate(signum, frame):
@@ -210,14 +219,16 @@ def _on_worker_terminate(signum, frame):
         backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
         for attempt in range(1, retries + 1):
             try:
+                logger.info(f"Worker deregister attempt {attempt}")
                 deregister_worker_pool_from_env()
                 logger.info(f"Worker: deregister succeeded (attempt {attempt})")
                 break
             except Exception as e:
-                logger.debug(f"Worker: deregister attempt {attempt} failed: {e}")
+                logger.error(f"Worker: deregister attempt {attempt} failed: {e}")
             if attempt < retries:
                 time.sleep(backoff_base * (2 ** (attempt - 1)))
     finally:
+        logger.info("Worker termination signal handler completed")
         pass
 
 try:

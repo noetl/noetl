@@ -231,7 +231,7 @@ server-stop:
 	@if [ -f ~/.noetl/noetl_server.pid ]; then \
 	  pid=$$(cat ~/.noetl/noetl_server.pid); \
 	  kill -TERM $$pid 2>/dev/null || true; \
-	  sleep 0.5; \
+	  sleep 3; \
 	  if ps -p $$pid >/dev/null 2>&1; then kill -KILL $$pid 2>/dev/null || true; fi; \
 	  rm -f ~/.noetl/noetl_server.pid; \
 	  rm -f logs/server.pid; \

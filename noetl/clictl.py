@@ -148,6 +148,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
     def deregister_server_directly() -> None:
         """Deregister this server instance directly from the database."""
+        logger.info("Server deregistration starting...")
         try:
             from noetl.common import get_db_connection
             
@@ -156,13 +157,18 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 try:
                     with open('/tmp/noetl_server_name', 'r') as f:
                         name = f.read().strip()
+                    logger.info(f"Found server name from file: {name}")
                 except Exception:
                     name = None
             if not name:
                 name = os.environ.get('NOETL_SERVER_NAME')
+                if name:
+                    logger.info(f"Using server name from env: {name}")
             if not name:
+                logger.warning("No server name found for deregistration")
                 return
                 
+            logger.info(f"Attempting to deregister server {name} from database")
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
@@ -174,15 +180,17 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                         (name,)
                     )
                     conn.commit()
+                    logger.info(f"Server {name} marked as offline in database")
             
             logger.info(f"Server deregistered directly: {name}")
             try:
                 os.remove('/tmp/noetl_server_name')
+                logger.info("Removed server name file")
             except Exception:
                 pass
                 
         except Exception as e:
-            logger.debug(f"Direct server deregistration failed: {e}")
+            logger.error(f"Direct server deregistration failed: {e}")
     
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -329,7 +337,8 @@ def stop_worker_service(
             typer.echo(f"Stopping NoETL worker with PID {pid}...")
             os.kill(pid, signal.SIGTERM)
 
-            for _ in range(10):
+            # Give more time for graceful shutdown and deregistration
+            for _ in range(20):  # Increased from 10 to 20
                 try:
                     os.kill(pid, 0)
                     time.sleep(0.5)
