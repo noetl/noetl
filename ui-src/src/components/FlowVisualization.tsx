@@ -45,6 +45,7 @@ interface FlowVisualizationProps {
   playbookId: string;
   playbookName: string;
   content?: string; // Optional content to use instead of fetching from API
+  embedded?: boolean; // when true render inline instead of Modal
 }
 
 interface TaskNode {
@@ -130,7 +131,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
           }}
           size="small"
           className="flow-node-type-select nodrag"
-          dropdownClassName="flow-node-type-dropdown"
+          classNames={{ popup: { root: "flow-node-type-dropdown" } }}
           placeholder="Select type"
           showSearch={false}
         >
@@ -195,11 +196,15 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   playbookId,
   playbookName,
   content,
+  embedded,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+
+  // antd message with context (avoid static API)
+  const [messageApi, contextHolder] = message.useMessage();
 
   // Editing state
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
@@ -323,7 +328,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const handleDeleteTask = useCallback((taskId: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     setHasChanges(true);
-    message.success("Component deleted");
+    messageApi.success("Component deleted");
   }, []);
 
   // Handle adding new task
@@ -339,7 +344,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
     setTasks((prev) => [...prev, newTask]);
     setHasChanges(true);
-    message.success("New component added");
+    messageApi.success("New component added");
   }, [tasks]);
 
   // Re-enable automatic flow recreation for major changes
@@ -362,14 +367,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       // await apiService.savePlaybookWorkflow(playbookId, tasks);
 
       setHasChanges(false);
-      message.success("Workflow saved successfully!");
+      messageApi.success("Workflow saved successfully!");
     } catch (error) {
       console.error("Error saving workflow:", error);
-      message.error("Failed to save workflow");
+      messageApi.error("Failed to save workflow");
     } finally {
       setLoading(false);
     }
-  }, [tasks, playbookId]);
+  }, [tasks, playbookId, messageApi]);
 
   const parsePlaybookContent = (content: string): TaskNode[] => {
     try {
@@ -634,7 +639,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           console.log(
             "No tasks parsed from actual content - falling back to demo",
           );
-          message.warning(
+          messageApi.warning(
             "No workflow steps found in this playbook. Showing demo flow.",
           );
 
@@ -732,13 +737,13 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
           setNodes(flowNodes);
           setEdges(flowEdges);
-          message.success(
+          messageApi.success(
             `Successfully parsed ${parsedTasks.length} workflow steps from ${playbookName}!`,
           );
         }
       } else {
         console.log("No content received from API");
-        message.warning(`No content found for playbook: ${playbookName}`);
+        messageApi.warning(`No content found for playbook: ${playbookName}`);
 
         // Show empty state or basic demo
         const demoTasks: EditableTaskNode[] = [
@@ -757,7 +762,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       }
     } catch (error) {
       console.error("Error in loadPlaybookFlow:", error);
-      message.error(
+      messageApi.error(
         `Failed to load playbook flow for ${playbookName}: ` +
         (error as Error).message,
       );
@@ -788,87 +793,70 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   useEffect(() => {
-    if (visible && (playbookId || content)) {
+    if ((visible || embedded) && (playbookId || content)) {
       loadPlaybookFlow();
     }
-  }, [visible, playbookId, content]);
+  }, [visible, embedded, playbookId, content]);
 
   const handleFullscreen = () => {
     setFullscreen(!fullscreen);
   };
 
-  return (
+  // Extract inner markup so we can render it either in a Modal or inline
+  const flowInner = (
     <>
-      <Modal
-        title={
-          <div className="flow-modal-title">
-            <span className="flow-modal-title-icon">🔄</span>
-            <span>Flow Editor - {playbookName}</span>
-            {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
-          </div>
-        }
-        open={visible}
-        onCancel={onClose}
-        footer={null}
-        closable={false}
-        width={fullscreen ? "95vw" : "80vw"}
-        className={fullscreen ? "flow-modal-fullscreen" : "flow-modal-windowed"}
-        bodyStyle={fullscreen ?
-          { height: "85vh", padding: 0, overflow: "hidden" } :
-          { height: "70vh", padding: 0, overflow: "hidden" }
-        }
-      >
-        {/* Toolbar */}
-        <div className="flow-toolbar-container">
-          <Space>
+      {/* Toolbar */}
+      <div className="flow-toolbar-container">
+        <Space>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={handleAddTask}
+            size="small"
+          >
+            Add Component
+          </Button>
+          {hasChanges && (
             <Button
               type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleAddTask}
+              icon={<SaveOutlined />}
+              onClick={handleSaveWorkflow}
+              loading={loading}
               size="small"
             >
-              Add Component
+              Save Workflow
             </Button>
-            {hasChanges && (
-              <Button
-                type="primary"
-                icon={<SaveOutlined />}
-                onClick={handleSaveWorkflow}
-                loading={loading}
-                size="small"
-              >
-                Save Workflow
-              </Button>
-            )}
-          </Space>
+          )}
+        </Space>
 
-          <Space>
-            <Button
-              type="text"
-              icon={<FullscreenOutlined />}
-              onClick={handleFullscreen}
-              title="Toggle Fullscreen"
-              className="flow-toolbar-button"
-              size="small"
-            />
-            <Button
-              type="text"
-              icon={<CloseOutlined />}
-              onClick={onClose}
-              title="Close"
-              className="flow-toolbar-button"
-              size="small"
-            />
-          </Space>
-        </div>
+        <Space>
+          <Button
+            type="text"
+            icon={<FullscreenOutlined />}
+            onClick={handleFullscreen}
+            title="Toggle Fullscreen"
+            className="flow-toolbar-button"
+            size="small"
+          />
+          <Button
+            type="text"
+            icon={<CloseOutlined />}
+            onClick={onClose}
+            title="Close"
+            className="flow-toolbar-button"
+            size="small"
+          />
+        </Space>
+      </div>
 
-        <div className="flow-content-container">
-          {loading ? (
-            <div className="flow-loading-container">
-              <Spin size="large" />
-              <div className="flow-loading-text">Loading playbook flow...</div>
-            </div>
-          ) : (
+      <div className="flow-content-container">
+        {loading ? (
+          <div className="flow-loading-container">
+            <Spin size="large" />
+            <div className="flow-loading-text">Loading playbook flow...</div>
+          </div>
+        ) : (
+          <div className="react-flow-wrapper">
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -909,8 +897,58 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 color="#f0f0f0"
               />
             </ReactFlow>
-          )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+
+  // Render inline when embedded flag is set, otherwise use Modal
+  if (embedded) {
+    return (
+      <div
+        className={fullscreen ? "flow-modal-fullscreen flow-embedded" : "flow-modal-windowed flow-embedded"}
+        style={{
+          width: fullscreen ? "95vw" : "80vw",
+          height: fullscreen ? "85vh" : "70vh",
+          margin: "24px auto",
+        }}
+      >
+        {contextHolder}
+        <div className="flow-modal-title" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span className="flow-modal-title-icon">🔄</span>
+          <span>Flow Editor - {playbookName}</span>
+          {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
         </div>
+        {flowInner}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {contextHolder}
+      <Modal
+        title={
+          <div className="flow-modal-title">
+            <span className="flow-modal-title-icon">🔄</span>
+            <span>Flow Editor - {playbookName}</span>
+            {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
+          </div>
+        }
+        open={visible}
+        onCancel={onClose}
+        footer={null}
+        closable={false}
+        width={fullscreen ? "95vw" : "80vw"}
+        className={fullscreen ? "flow-modal-fullscreen" : "flow-modal-windowed"}
+        styles={
+          fullscreen
+            ? { body: { height: "85vh", padding: 0, overflow: "hidden" } }
+            : { body: { height: "70vh", padding: 0, overflow: "hidden" } }
+        }
+      >
+        {flowInner}
       </Modal>
     </>
   );

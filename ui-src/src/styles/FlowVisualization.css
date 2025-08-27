@@ -272,20 +272,17 @@
     width: 100%;
     height: 100%;
     position: relative;
-    padding-top: 60px;
+    /* allow the React Flow wrapper to absolutely fill this area */
 }
 
-.flow-loading-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+.react-flow-wrapper {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
     height: 100%;
-    flex-direction: column;
-    gap: 16px;
-}
-
-.flow-loading-text {
-    color: #8c8c8c;
 }
 
 /* ==========================================================================
