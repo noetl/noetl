@@ -3,6 +3,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 import json
 from noetl.logger import setup_logger
+from noetl.common import get_async_db_connection, get_snowflake_id
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
@@ -31,7 +32,6 @@ async def register_worker_pool(request: Request):
 
         import datetime as _dt
         try:
-            from noetl.common import get_snowflake_id
             rid = get_snowflake_id()
         except Exception:
             rid = int(_dt.datetime.now().timestamp() * 1000)
@@ -46,10 +46,9 @@ async def register_worker_pool(request: Request):
         labels_json = json.dumps(labels) if labels is not None else None
         runtime_json = json.dumps(payload_runtime)
 
-        from noetl.common import get_db_connection
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
                     f"""
                     INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
                     VALUES (%s, %s, 'worker_pool', %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
@@ -66,8 +65,11 @@ async def register_worker_pool(request: Request):
                     """,
                     (rid, name, base_url, status, labels_json, capacity, runtime_json)
                 )
-                row = cursor.fetchone()
-                conn.commit()
+                row = await cursor.fetchone()
+                try:
+                    await conn.commit()
+                except Exception:
+                    pass
         return {"status": "ok", "name": name, "runtime": runtime, "runtime_id": row[0] if row else rid}
     except HTTPException:
         raise
@@ -86,10 +88,9 @@ async def deregister_worker_pool(request: Request):
         name = (body.get("name") or "").strip()
         if not name:
             raise HTTPException(status_code=400, detail="name is required")
-        from noetl.common import get_db_connection
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
                     """
                     UPDATE runtime
                     SET status = 'offline', updated_at = now()
@@ -97,7 +98,10 @@ async def deregister_worker_pool(request: Request):
                     """,
                     (name,)
                 )
-                conn.commit()
+                try:
+                    await conn.commit()
+                except Exception:
+                    pass
         return {"status": "ok", "name": name}
     except HTTPException:
         raise
