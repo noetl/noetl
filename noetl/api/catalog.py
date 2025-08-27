@@ -62,7 +62,7 @@ async def register_resource(
             )
 
         catalog_service = get_catalog_service()
-        result = await catalog_service.register_resource(content, resource_type)
+        result = catalog_service.register_resource(content, resource_type)
         return result
 
     except Exception as e:
@@ -79,7 +79,7 @@ async def list_resources(
 ):
     try:
         catalog_service = get_catalog_service()
-        entries = await catalog_service.list_entries(resource_type)
+        entries = catalog_service.list_entries(resource_type)
         return {"entries": entries}
 
     except Exception as e:
@@ -101,7 +101,7 @@ async def get_catalog_playbooks():
     """Get all playbooks"""
     try:
         catalog_service = get_catalog_service()
-        entries = await catalog_service.list_entries('Playbook')
+        entries = catalog_service.list_entries('Playbook')
 
         playbooks = []
         for entry in entries:
@@ -163,7 +163,7 @@ tasks:
 """
 
         catalog_service = get_catalog_service()
-        result = await catalog_service.register_resource(content, "playbooks")
+        result = catalog_service.register_resource(content, "playbooks")
 
         playbook = {
             "id": result.get("resource_path", ""),
@@ -223,7 +223,7 @@ async def get_catalog_playbook_content(playbook_id: str = Query(...)):
         latest_version = await catalog_service.get_latest_version(playbook_id)
         logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
 
-        entry = await catalog_service.fetch_entry(playbook_id, latest_version)
+        entry = catalog_service.fetch_entry(playbook_id, latest_version)
 
         if not entry:
             raise HTTPException(
@@ -282,7 +282,7 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 detail="Content is required."
             )
         catalog_service = get_catalog_service()
-        result = await catalog_service.register_resource(content, "playbooks")
+        result = catalog_service.register_resource(content, "playbooks")
 
         return {
             "status": "success",
@@ -578,7 +578,7 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
     latest_version = await catalog_service.get_latest_version(path_to_lookup)
     logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
 
-    entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
+    entry = catalog_service.fetch_entry(path_to_lookup, latest_version)
     if not entry:
         raise HTTPException(
             status_code=404,

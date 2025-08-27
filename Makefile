@@ -35,6 +35,7 @@ help:
 	@echo "Local Runtime (env + logs):"
 	@echo "  make server-start          Start NoETL server using .env.server or .env (logs/logs/server.log)"
 	@echo "  make server-stop           Stop NoETL server"
+	@echo "  make server-status         Check NoETL server status and port"
 	@echo "  make worker-start          Start NoETL worker using .env.worker or .env (logs/worker.log)"
 	@echo "  make worker-stop           Stop NoETL worker"
 	@echo ""
@@ -217,9 +218,9 @@ server-start:
 	else \
 	  nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > logs/server.pid; \
 	fi; \
-	sleep 1; \
-	if ps -p $$(cat logs/server.pid) >/dev/null 2>&1; then \
-	  echo "NoETL server started: PID=$$(cat logs/server.pid) | logs at logs/server.log"; \
+	sleep 3; \
+	if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \
+	  echo "NoETL server started: PID=$$(cat ~/.noetl/noetl_server.pid) | Port: $(NOETL_PORT) | logs at logs/server.log"; \
 	else \
 	  echo "Server failed to stay up. Last 50 log lines:"; \
 	  tail -n 50 logs/server.log || true; \
@@ -227,15 +228,32 @@ server-start:
 	fi
 
 server-stop:
-	@if [ -f logs/server.pid ]; then \
-	  pid=$$(cat logs/server.pid); \
+	@if [ -f ~/.noetl/noetl_server.pid ]; then \
+	  pid=$$(cat ~/.noetl/noetl_server.pid); \
 	  kill -TERM $$pid 2>/dev/null || true; \
 	  sleep 0.5; \
 	  if ps -p $$pid >/dev/null 2>&1; then kill -KILL $$pid 2>/dev/null || true; fi; \
+	  rm -f ~/.noetl/noetl_server.pid; \
 	  rm -f logs/server.pid; \
 	  echo "NoETL server stop: PID=$$pid"; \
 	else \
 	  noetl server stop -f || true; \
+	fi
+
+server-status:
+	@if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \
+	  pid=$$(cat ~/.noetl/noetl_server.pid); \
+	  port=$$(ps aux | grep $$pid | grep -o 'port [0-9]*' | awk '{print $$2}' || echo "8082"); \
+	  echo "NoETL server is RUNNING:"; \
+	  echo "  - PID: $$pid"; \
+	  echo "  - Port: $$port"; \
+	  echo "  - URL: http://localhost:$$port"; \
+	  echo "  - Logs: logs/server.log"; \
+	else \
+	  echo "NoETL server is NOT running"; \
+	  if [ -f logs/server.log ]; then \
+	    echo "Check logs: logs/server.log"; \
+	  fi; \
 	fi
 
 
