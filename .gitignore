@@ -14,6 +14,7 @@ clusterManagement/out
 clusterManagement/clients
 build/
 dist/
+logs/
 *.egg-info/
 .env.prod
 .env.local
