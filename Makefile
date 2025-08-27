@@ -213,13 +213,13 @@ server-start:
 	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be 'true' or 'false'"; \
 	  exit 1; \
 	fi; \
-	@mkdir -p ~/.noetl; \
+	mkdir -p ~/.noetl; \
 	if command -v setsid >/dev/null 2>&1; then \
 	  setsid nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
 	else \
 	  nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
 	fi; \
-	@sleep 3; \
+	sleep 3; \
 	if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \
 	  echo "NoETL server started: PID=$$(cat ~/.noetl/noetl_server.pid) | Port: $(NOETL_PORT) | logs at logs/server.log"; \
 	else \

@@ -5,17 +5,9 @@ import json
 import logging
 import base64
 import requests
-import tempfile
 import signal
 import time
 import asyncio
-import socket
-from typing import Optional
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from noetl.server import router as server_router
 from noetl.worker import ScalableQueueWorkerPool
 from noetl.common import DateTimeEncoder
 from noetl.logger import setup_logger
@@ -26,241 +18,7 @@ logger = setup_logger(__name__, include_location=True)
 
 cli_app = typer.Typer()
 
-def create_app() -> FastAPI:
-    from noetl.config import _settings
-    import noetl.config
-    noetl.config._settings = None
-    noetl.config._ENV_LOADED = False
-    
-    settings = get_settings(reload=True)
-
-    logging.basicConfig(
-        format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
-        datefmt='%Y-%m-%dT%H:%M:%S',
-        level=logging.INFO
-    )
-
-    return _create_app(settings.enable_ui)
-
-
-def create_worker_app() -> FastAPI:
-    from contextlib import asynccontextmanager
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        try:
-            base = os.environ.get("NOETL_WORKER_BASE_URL")
-            if not base:
-                host = os.environ.get("NOETL_WORKER_HOST", os.environ.get("NOETL_HOST", "localhost"))
-                port = os.environ.get("NOETL_WORKER_PORT", str(int(os.environ.get("NOETL_PORT", "8082")) + 1))
-                os.environ["NOETL_WORKER_BASE_URL"] = f"http://{host}:{port}/api"
-            from noetl.worker import register_worker_pool_from_env
-            register_worker_pool_from_env()
-        except Exception as e:
-            logger.warning(f"Worker auto-register skipped: {e}")
-        yield
-        try:
-            from noetl.worker import deregister_worker_pool_from_env
-            deregister_worker_pool_from_env()
-        except Exception:
-            pass
-
-    app = FastAPI(title="NoETL Worker", description="NoETL Worker service", version=get_settings().app_version, lifespan=lifespan)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    @app.get("/health", include_in_schema=False)
-    async def health():
-        return {"status": "ok", "component": "worker"}
-
-    return app
-
-def _create_app(enable_ui: bool = True) -> FastAPI:
-    from contextlib import asynccontextmanager
-    
-    def register_server_directly() -> None:
-        """Register this server instance directly in the database (no HTTP request)."""
-        try:
-            from noetl.common import get_db_connection, get_snowflake_id
-            
-            server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-            if not server_url:
-                host = os.environ.get("NOETL_HOST", "localhost").strip()
-                port = os.environ.get("NOETL_PORT", "8082").strip()
-                server_url = f"http://{host}:{port}"
-            
-            if not server_url.endswith('/api'):
-                server_url = server_url + '/api'
-                
-            name = os.environ.get("NOETL_SERVER_NAME") or f"server-{socket.gethostname()}"
-            labels = os.environ.get("NOETL_SERVER_LABELS")
-            if labels:
-                labels = [s.strip() for s in labels.split(',') if s.strip()]
-            
-            hostname = os.environ.get("HOSTNAME") or socket.gethostname()
-            
-            import datetime as _dt
-            try:
-                rid = get_snowflake_id()
-            except Exception:
-                rid = int(_dt.datetime.now().timestamp() * 1000)
-
-            payload_runtime = {
-                "type": "server",
-                "pid": os.getpid(),
-                "hostname": hostname,
-            }
-
-            labels_json = json.dumps(labels) if labels is not None else None
-            runtime_json = json.dumps(payload_runtime)
-
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        f"""
-                        INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
-                        VALUES (%s, %s, 'server_api', %s, 'ready', %s, NULL, %s, now(), now(), now())
-                        ON CONFLICT (component_type, name)
-                        DO UPDATE SET
-                            base_url = EXCLUDED.base_url,
-                            status = EXCLUDED.status,
-                            labels = EXCLUDED.labels,
-                            runtime = EXCLUDED.runtime,
-                            last_heartbeat = now(),
-                            updated_at = now()
-                        """,
-                        (rid, name, server_url, labels_json, runtime_json)
-                    )
-                    conn.commit()
-            
-            logger.info(f"Server registered directly: {name} -> {server_url}")
-            try:
-                with open('/tmp/noetl_server_name', 'w') as f:
-                    f.write(name)
-            except Exception:
-                pass
-                
-        except Exception as e:
-            logger.exception(f"Direct server registration failed: {e}")
-
-    def deregister_server_directly() -> None:
-        """Deregister this server instance directly from the database."""
-        logger.info("Server deregistration starting...")
-        try:
-            from noetl.common import get_db_connection
-            
-            name: Optional[str] = None
-            if os.path.exists('/tmp/noetl_server_name'):
-                try:
-                    with open('/tmp/noetl_server_name', 'r') as f:
-                        name = f.read().strip()
-                    logger.info(f"Found server name from file: {name}")
-                except Exception:
-                    name = None
-            if not name:
-                name = os.environ.get('NOETL_SERVER_NAME')
-                if name:
-                    logger.info(f"Using server name from env: {name}")
-            if not name:
-                logger.warning("No server name found for deregistration")
-                return
-                
-            logger.info(f"Attempting to deregister server {name} from database")
-            try:
-                with get_db_connection() as conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute(
-                            """
-                            UPDATE runtime
-                            SET status = 'offline', updated_at = now()
-                            WHERE component_type = 'server_api' AND name = %s
-                            """,
-                            (name,)
-                        )
-                        conn.commit()
-                        logger.info(f"Server {name} marked as offline in database")
-            except Exception as db_e:
-                logger.error(f"Database error during server deregistration: {db_e}")
-            
-            logger.info(f"Server deregistered directly: {name}")
-            try:
-                os.remove('/tmp/noetl_server_name')
-                logger.info("Removed server name file")
-            except Exception:
-                pass
-                
-        except Exception as e:
-            logger.error(f"Direct server deregistration failed: {e}")
-    
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        try:
-            register_server_directly()
-        except Exception as e:
-            logger.warning(f"Server registration failed during startup: {e}")
-        yield
-        try:
-            deregister_server_directly()
-        except Exception as e:
-            logger.debug(f"Server deregistration failed during shutdown: {e}")
-
-    settings = get_settings()
-
-    app = FastAPI(
-        title="NoETL API",
-        description="NoETL API server",
-        version=settings.app_version,
-        lifespan=lifespan
-    )
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-
-    ui_build_path = settings.ui_build_path
-
-    app.include_router(server_router, prefix="/api")
-
-    @app.get("/health", include_in_schema=False)
-    async def health():
-        return {"status": "ok"}
-
-    if enable_ui and ui_build_path.exists():
-        @app.get("/favicon.ico", include_in_schema=False)
-        async def favicon():
-            favicon_file = settings.favicon_file
-            if favicon_file.exists():
-                return FileResponse(favicon_file)
-            return FileResponse(ui_build_path / "index.html")
-
-        app.mount("/assets", StaticFiles(directory=ui_build_path / "assets"), name="assets")
-
-        @app.get("/{catchall:path}", include_in_schema=False)
-        async def spa_catchall(catchall: str):
-            return FileResponse(ui_build_path / "index.html")
-
-        @app.get("/", include_in_schema=False)
-        async def root():
-            return FileResponse(ui_build_path / "index.html")
-    else:
-        @app.get("/", include_in_schema=False)
-        async def root_no_ui():
-            return {"message": "NoETL API is running, but UI is not available"}
-
-    return app
-
-
-
+# from noetl.server import create_app
 server_app = typer.Typer()
 cli_app.add_typer(server_app, name="server")
 
@@ -299,7 +57,7 @@ def start_worker_service(
         pool = ScalableQueueWorkerPool(max_workers=max_workers)
         loop = asyncio.get_running_loop()
 
-        def _signal_handler(sig: int) -> None:  # pragma: no cover - signal handling
+        def _signal_handler(sig: int) -> None:
             logger.info(f"Worker pool received signal {sig}; shutting down")
             asyncio.create_task(pool.stop())
 
@@ -480,7 +238,7 @@ def start_server():
             import subprocess, sys
             cmd = [
                 sys.executable, "-m", "uvicorn",
-                "noetl.clictl:create_app",
+                "noetl.server:create_app",
                 "--factory",
                 "--host", str(settings.host),
                 "--port", str(settings.port),
@@ -511,15 +269,10 @@ def start_server():
 
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     if workers and workers > 1:
-        uvicorn.run("noetl.clictl:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+        uvicorn.run("noetl.server:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
     else:
-        uvicorn.run("noetl.clictl:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
+        uvicorn.run("noetl.server:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
-def _run_worker_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
-    if workers and workers > 1:
-        uvicorn.run("noetl.clictl:create_worker_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
-    else:
-        uvicorn.run("noetl.clictl:create_worker_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     try:
@@ -528,7 +281,7 @@ def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_lev
 
         cmd = [
             sys.executable, "-m", "gunicorn",
-            "noetl.main:create_app()",
+            "noetl.server:create_app()",
             "--bind", f"{host}:{port}",
             "--workers", str(workers),
             "--worker-class", "uvicorn.workers.UvicornWorker",
@@ -550,61 +303,6 @@ def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_lev
         logger.info("Falling back to Uvicorn...")
         _run_with_uvicorn(host, port, workers, reload, log_level)
 
-def _run_worker_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
-    try:
-        import subprocess
-        import sys
-
-        cmd = [
-            sys.executable, "-m", "gunicorn",
-            "noetl.clictl:create_worker_app()",
-            "--bind", f"{host}:{port}",
-            "--workers", str(workers),
-            "--worker-class", "uvicorn.workers.UvicornWorker",
-            "--log-level", log_level
-        ]
-
-        if reload:
-            cmd.extend(["--reload"])
-
-        logger.info(f"Starting Gunicorn worker with command: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
-
-    except ImportError:
-        logger.error("Gunicorn is not installed. Please install it with: pip install gunicorn")
-        logger.info("Falling back to Uvicorn (worker)...")
-        _run_worker_with_uvicorn(host, port, workers, reload, log_level)
-    except Exception as e:
-        logger.error(f"Error running Gunicorn (worker): {e}")
-        logger.info("Falling back to Uvicorn (worker)...")
-        _run_worker_with_uvicorn(host, port, workers, reload, log_level)
-    try:
-        import subprocess
-        import sys
-
-        cmd = [
-            sys.executable, "-m", "gunicorn",
-            "noetl.main:create_app()",
-            "--bind", f"{host}:{port}",
-            "--workers", str(workers),
-            "--worker-class", "uvicorn.workers.UvicornWorker",
-            "--log-level", log_level
-        ]
-
-        if reload:
-            cmd.extend(["--reload"])
-
-        logger.info(f"Starting Gunicorn with command: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
-
-    except ImportError:
-        logger.error("Gunicorn is not installed. Please install it with: pip install gunicorn")
-        logger.info("Falling back to Uvicorn...")
-        _run_with_uvicorn(host, port, workers, reload, log_level)
-    except Exception as e:
-        logger.error(f"Error running Gunicorn: {e}")
-        logger.info("Falling back to Uvicorn...")
-        _run_with_uvicorn(host, port, workers, reload, log_level)
 @server_app.command("stop")
 def stop_server(
     force: bool = typer.Option(False, "--force", "-f", help="Force stop the server without confirmation")

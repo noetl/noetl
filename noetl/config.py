@@ -79,6 +79,8 @@ def validate_mandatory_env_vars():
         'NOETL_USER', 'NOETL_PASSWORD', 'NOETL_SCHEMA',
         # Runtime config
         'NOETL_HOST', 'NOETL_PORT', 'NOETL_ENABLE_UI', 'NOETL_DEBUG',
+        # Server identity
+        'NOETL_SERVER_URL', 'NOETL_SERVER_NAME',
         # Server runtime
         'NOETL_SERVER', 'NOETL_SERVER_WORKERS', 'NOETL_SERVER_RELOAD',
         # Drop schema control
@@ -152,13 +154,17 @@ class Settings(BaseModel):
     # Schema validation / ensure flag (renamed from NOETL_SCHEMA_ENSURE)
     schema_validate: bool = Field(..., alias="NOETL_SCHEMA_VALIDATE")
 
+    # Server identity and base URL (required)
+    server_url: str = Field(..., alias="NOETL_SERVER_URL")
+    server_name: str = Field(..., alias="NOETL_SERVER_NAME")
+
     # Server runtime (required; no defaults)
     server_runtime: str = Field(..., alias="NOETL_SERVER")            # "uvicorn" | "gunicorn" | "auto"
     server_workers: int = Field(..., alias="NOETL_SERVER_WORKERS")    # >= 1
     server_reload: bool = Field(..., alias="NOETL_SERVER_RELOAD")     # true/false
 
     @field_validator('postgres_user', 'postgres_password', 'postgres_db', 'postgres_host',
-                     'postgres_port', 'noetl_user', 'noetl_password', 'noetl_schema', 'host', 'server_runtime', mode='before')
+                     'postgres_port', 'noetl_user', 'noetl_password', 'noetl_schema', 'host', 'server_runtime', 'server_url', 'server_name', mode='before')
     def validate_not_empty_str(cls, v):
         if not isinstance(v, str) or not v.strip():
             raise ValueError("Value cannot be empty or whitespace only")
@@ -286,6 +292,9 @@ def get_settings(reload: bool = False) -> Settings:
                 NOETL_PORT=int(os.environ['NOETL_PORT']),
                 NOETL_ENABLE_UI=get_bool(os.environ['NOETL_ENABLE_UI']),
                 NOETL_DEBUG=get_bool(os.environ['NOETL_DEBUG']),
+                # Server identity
+                NOETL_SERVER_URL=os.environ['NOETL_SERVER_URL'],
+                NOETL_SERVER_NAME=os.environ['NOETL_SERVER_NAME'],
                 # Server runtime config
                 NOETL_SERVER=os.environ['NOETL_SERVER'],
                 NOETL_SERVER_WORKERS=int(os.environ['NOETL_SERVER_WORKERS']),

@@ -70,7 +70,7 @@ notebook = [
 ]
 
 [project.scripts]
-noetl = "noetl.clictl:cli_app"
+noetl = "noetl.main:main"
 
 [project.urls]
 Homepage = "https://noetl.io"
