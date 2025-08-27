@@ -6,7 +6,7 @@ import tempfile
 import httpx
 import traceback
 from typing import Dict, List, Any, Tuple, Optional
-from noetl.action import execute_task, report_event
+from noetl.job import report_event
 from noetl.render import render_template
 from noetl.common import deep_merge, get_bool
 from noetl.logger import setup_logger, log_error
@@ -155,6 +155,79 @@ class Broker:
             error_msg = f"Error executing playbooks '{path}': {str(e)}"
             logger.error(error_msg, exc_info=True)
             return {
+                'status': 'error',
+                'error': error_msg
+            }
+
+    def delegate_task_execution(self, task_config: Dict[str, Any], task_name: str, context: Dict[str, Any], 
+                               jinja_env, secret_manager, log_event_callback=None) -> Dict[str, Any]:
+        """
+        Delegate task execution to a worker via HTTP API.
+        
+        Args:
+            task_config: The task configuration
+            task_name: The name of the task
+            context: The execution context
+            jinja_env: The Jinja2 environment
+            secret_manager: The secret manager
+            log_event_callback: Optional callback for logging events
+            
+        Returns:
+            A dictionary of the task result
+            
+        Raises:
+            RuntimeError: If NOETL_WORKER_BASE_URL is not configured
+        """
+        logger.debug("=== BROKER.DELEGATE_TASK_EXECUTION: Function entry ===")
+        logger.debug(f"BROKER.DELEGATE_TASK_EXECUTION: Parameters - task_config={task_config}, task_name={task_name}")
+        
+        # Check if we have a worker URL to delegate to
+        worker_base_url = os.environ.get('NOETL_WORKER_BASE_URL')
+        
+        if not worker_base_url:
+            error_msg = f"No worker pool configured. Set NOETL_WORKER_BASE_URL to delegate task '{task_name}' execution."
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        logger.debug(f"BROKER.DELEGATE_TASK_EXECUTION: Delegating to worker at {worker_base_url}")
+        
+        try:
+            # Prepare the request payload for the worker
+            payload = {
+                "execution_id": getattr(self.agent, 'execution_id', 'unknown'),
+                "parent_event_id": None,  # Could be passed in if needed
+                "node_id": f"step.{task_name}",
+                "node_name": task_name,
+                "node_type": "task",
+                "context": context,
+                "mock_mode": False,
+                "task": task_config
+            }
+            
+            worker_api_url = f"{worker_base_url}/worker/action"
+            logger.debug(f"BROKER.DELEGATE_TASK_EXECUTION: Calling worker API at {worker_api_url}")
+            
+            with httpx.Client(timeout=300.0) as client:  # 5 minute timeout for task execution
+                resp = client.post(worker_api_url, json=payload)
+                resp.raise_for_status()
+                result = resp.json()
+                
+            logger.debug(f"BROKER.DELEGATE_TASK_EXECUTION: Worker returned result={result}")
+            return result
+            
+        except httpx.HTTPError as he:
+            error_msg = f"HTTP error delegating task '{task_name}' to worker: {he}"
+            logger.error(error_msg)
+            return {
+                'id': str(uuid.uuid4()),
+                'status': 'error', 
+                'error': error_msg
+            }
+        except Exception as e:
+            error_msg = f"Error delegating task '{task_name}' to worker: {e}"
+            logger.error(error_msg, exc_info=True)
+            return {
+                'id': str(uuid.uuid4()),
                 'status': 'error',
                 'error': error_msg
             }
@@ -475,23 +548,32 @@ class Broker:
                     execution_task_config = {}
                     logger.debug(f"BROKER.EXECUTE_STEP: Using empty execution_task_config")
 
-                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with execution_task_config={execution_task_config}, task_name={task_name}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Delegating task execution with execution_task_config={execution_task_config}, task_name={task_name}")
                 merged_context = {**step_context}
                 if 'with' in execution_task_config:
                     task_with = render_template(self.agent.jinja_env, execution_task_config.get('with', {}), step_context, strict_keys=False)
                     merged_context.update(task_with)
                     logger.debug(f"BROKER.EXECUTE_STEP: Created merged_context by combining step_context and rendered task_with: {task_with}")
                 
-                result = execute_task(
-                    execution_task_config,
-                    task_name,
-                    merged_context,
-                    self.agent.jinja_env,
-                    self.agent.secret_manager,
-                    self.write_event_log if self.has_log_event() else None
-                )
-                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
-                logger.info(f"BROKER.EXECUTE_STEP: EXECUTED workbook task: {task_name} with status: {result.get('status', 'unknown')}")
+                try:
+                    result = self.delegate_task_execution(
+                        execution_task_config,
+                        task_name,
+                        merged_context,
+                        self.agent.jinja_env,
+                        self.agent.secret_manager,
+                        self.write_event_log if self.has_log_event() else None
+                    )
+                    logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+                    logger.info(f"BROKER.EXECUTE_STEP: EXECUTED workbook task: {task_name} with status: {result.get('status', 'unknown')}")
+                except RuntimeError as re:
+                    error_msg = str(re)
+                    logger.error(f"BROKER.EXECUTE_STEP: {error_msg}")
+                    result = {
+                        'id': str(uuid.uuid4()),
+                        'status': 'error',
+                        'error': error_msg
+                    }
                 
             elif call_type == 'Playbook':
                 logger.debug(f"BROKER.EXECUTE_STEP: Executing playbooks task")
@@ -556,17 +638,26 @@ class Broker:
                 task_name_to_use = task_name or f"step_{call_type}_task"
                 logger.debug(f"BROKER.EXECUTE_STEP: Using task_name: {task_name_to_use}")
                 
-                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with task_config={task_config}, task_name={task_name_to_use}")
-                result = execute_task(
-                    task_config,
-                    task_name_to_use,
-                    task_context,
-                    self.agent.jinja_env,
-                    self.agent.secret_manager,
-                    self.write_event_log if self.has_log_event() else None
-                )
-                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
-                logger.info(f"BROKER.EXECUTE_STEP: EXECUTED {call_type} task: {task_name_to_use} with status: {result.get('status', 'unknown')}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Delegating task execution with task_config={task_config}, task_name={task_name_to_use}")
+                try:
+                    result = self.delegate_task_execution(
+                        task_config,
+                        task_name_to_use,
+                        task_context,
+                        self.agent.jinja_env,
+                        self.agent.secret_manager,
+                        self.write_event_log if self.has_log_event() else None
+                    )
+                    logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+                    logger.info(f"BROKER.EXECUTE_STEP: EXECUTED {call_type} task: {task_name_to_use} with status: {result.get('status', 'unknown')}")
+                except RuntimeError as re:
+                    error_msg = str(re)
+                    logger.error(f"BROKER.EXECUTE_STEP: {error_msg}")
+                    result = {
+                        'id': str(uuid.uuid4()),
+                        'status': 'error',
+                        'error': error_msg
+                    }
                 
             else:
                 error_msg = f"Unsupported call type: {call_type}"

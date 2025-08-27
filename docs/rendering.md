@@ -2,7 +2,7 @@
 
 Jinja template evaluation in the codebase happens at these main stages:
 
-## 1. When executing tasks `noetl/action.py`:
+## 1. When executing tasks `noetl/job/`:
 
 In execute_task and its helpers `execute_http_task`, `execute_python_task`, `execute_duckdb_task`, `execute_postgres_task`, fields like endpoint, params, payload, headers, command, and `with` are rendered using `render_template` right before use.
 

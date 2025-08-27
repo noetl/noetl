@@ -44,10 +44,7 @@ except Exception:  # pragma: no cover
             self.detail = detail
 
 from noetl.logger import setup_logger
-try:  # pragma: no cover - optional dependencies
-    from noetl.action import execute_task, execute_task_resolved, report_event
-except Exception:  # pragma: no cover
-    execute_task = execute_task_resolved = report_event = None  # type: ignore
+from noetl.job import execute_task, execute_task_resolved, report_event
 
 logger = setup_logger(__name__, include_location=True)
 
