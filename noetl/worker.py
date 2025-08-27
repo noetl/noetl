@@ -5,43 +5,11 @@ import signal
 import datetime
 import uuid
 import asyncio
+import httpx
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
-try:  # pragma: no cover - optional dependency
-    import requests
-except Exception:  # pragma: no cover
-    requests = None  # type: ignore
-try:  # pragma: no cover - optional dependency
-    from jinja2 import Environment, StrictUndefined, BaseLoader
-except Exception:  # pragma: no cover
-    Environment = StrictUndefined = BaseLoader = None  # type: ignore
-try:  # pragma: no cover - optional dependency
-    from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
-except Exception:  # pragma: no cover
-    class APIRouter:  # type: ignore
-        def get(self, *args, **kwargs):
-            def decorator(func):
-                return func
-            return decorator
-
-        def post(self, *args, **kwargs):
-            def decorator(func):
-                return func
-            return decorator
-
-    class Request:  # type: ignore
-        pass
-
-    class BackgroundTasks:  # type: ignore
-        def add_task(self, func, *args, **kwargs):
-            func(*args, **kwargs)
-
-    class HTTPException(Exception):  # type: ignore
-        def __init__(self, status_code: int, detail: str):
-            super().__init__(detail)
-            self.status_code = status_code
-            self.detail = detail
+from jinja2 import Environment, StrictUndefined, BaseLoader
 
 from noetl.logger import setup_logger
 from noetl.job import execute_task, execute_task_resolved, report_event
@@ -83,17 +51,17 @@ def register_worker_pool_from_env() -> None:
         }
         url = f"{server_url}/api/worker/pool/register"
         try:
-            import requests
-            resp = requests.post(url, json=payload, timeout=5.0)
-            if resp.status_code == 200:
-                logger.info(f"Worker pool registered: {name} ({runtime}) -> {base_url}")
-                try:
-                    with open('/tmp/noetl_worker_pool_name', 'w') as f:
-                        f.write(name)
-                except Exception:
-                    pass
-            else:
-                logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    logger.info(f"Worker pool registered: {name} ({runtime}) -> {base_url}")
+                    try:
+                        with open('/tmp/noetl_worker_pool_name', 'w') as f:
+                            f.write(name)
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
         except Exception as e:
             logger.warning(f"Worker pool register exception: {e}")
     except Exception:
@@ -116,8 +84,8 @@ def deregister_worker_pool_from_env() -> None:
             return
         server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
         try:
-            import requests
-            requests.delete(f"{server_url}/api/worker/pool/deregister", json={"name": name}, timeout=5.0)
+            with httpx.Client(timeout=5.0) as client:
+                client.delete(f"{server_url}/api/worker/pool/deregister", json={"name": name})
             try:
                 os.remove('/tmp/noetl_worker_pool_name')
             except Exception:
@@ -152,123 +120,14 @@ try:
 except Exception:
     pass
 
-# ===== Worker pool API router =====
-
-router = APIRouter()
-
 
 def _get_server_url() -> str:
     return os.environ.get("NOETL_SERVER_URL", "http://localhost:8082/api")
 
 
-@router.get("/health", include_in_schema=False)
-async def worker_health():
-    return {"status": "ok", "component": "worker"}
-
-
-@router.post("/worker/action")
-async def worker_run_action(request: Request, background_tasks: BackgroundTasks):
-    """
-    Execute a single action (task) in isolated mode using BackgroundTasks.
-    Expected body:
-    {
-      "execution_id": "...",                 # required
-      "parent_event_id": "...",              # optional
-      "node_id": "step1.task1",              # optional info
-      "node_name": "http_call",              # optional info
-      "node_type": "task",                   # optional info
-      "context": { ... },                      # optional context dict
-      "mock_mode": false,                      # optional, default False
-      "task": {                                # required task config as in playbook
-         "name": "http_call",
-         "type": "http",
-         "config": { ... }
-      }
-    }
-    """
-    try:
-        body: Dict[str, Any] = await request.json()
-        execution_id = body.get("execution_id")
-        if not execution_id:
-            raise HTTPException(status_code=400, detail="execution_id is required")
-        task_cfg = body.get("task")
-        if not task_cfg or not isinstance(task_cfg, dict):
-            raise HTTPException(status_code=400, detail="task is required and must be an object")
-        context = body.get("context") or {}
-        parent_event_id = body.get("parent_event_id")
-        node_id = body.get("node_id") or task_cfg.get("name") or f"task_{os.urandom(4).hex()}"
-        node_name = body.get("node_name") or task_cfg.get("name") or "task"
-        node_type = body.get("node_type") or "task"
-        mock_mode = bool(body.get("mock_mode", False))
-
-        server_url = _get_server_url()
-
-        start_event = {
-            "execution_id": execution_id,
-            "parent_event_id": parent_event_id,
-            "event_type": "action_started",
-            "status": "RUNNING",
-            "node_id": node_id,
-            "node_name": node_name,
-            "node_type": node_type,
-            "context": {"work": context, "task": task_cfg},
-            "timestamp": datetime.datetime.now().isoformat(),
-        }
-        start_evt = report_event(start_event, server_url)
-
-        def _run_action_background():
-            try:
-                jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
-                jenv.filters['to_json'] = lambda obj: json.dumps(obj)
-                jenv.filters['b64encode'] = lambda s: __import__('base64').b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else __import__('base64').b64encode(str(s).encode('utf-8')).decode('utf-8')
-                jenv.globals['now'] = lambda: datetime.datetime.now().isoformat()
-                jenv.globals['env'] = os.environ
-
-                if bool(body.get("resolved", False)):
-                    result = execute_task_resolved(task_config=task_cfg, task_name=(task_cfg.get("name") or node_name), context=context or {}, jinja_env=jenv)  # type: ignore
-                else:
-                    result = execute_task(jenv, task_cfg, context or {}, mock_mode=mock_mode)  # type: ignore
-                complete_event = {
-                    "event_id": (start_evt or {}).get("event_id"),
-                    "execution_id": execution_id,
-                    "parent_event_id": parent_event_id,
-                    "event_type": "action_completed",
-                    "status": "COMPLETED",
-                    "node_id": node_id,
-                    "node_name": node_name,
-                    "node_type": node_type,
-                    "result": result,
-                    "timestamp": datetime.datetime.now().isoformat(),
-                }
-                report_event(complete_event, server_url)
-            except Exception as e:
-                error_event = {
-                    "event_id": (start_evt or {}).get("event_id"),
-                    "execution_id": execution_id,
-                    "parent_event_id": parent_event_id,
-                    "event_type": "action_error",
-                    "status": "ERROR",
-                    "node_id": node_id,
-                    "node_name": node_name,
-                    "node_type": node_type,
-                    "error": str(e),
-                    "result": {"error": str(e)},
-                    "timestamp": datetime.datetime.now().isoformat(),
-                }
-                report_event(error_event, server_url)
-
-        background_tasks.add_task(_run_action_background)
-        return {"status": "accepted", "message": "Action scheduled", "execution_id": execution_id, "event_id": (start_evt or {}).get("event_id")}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Worker error scheduling action: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-#! ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 # Queue worker pool implementation
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 
 
 class QueueWorker:
@@ -300,43 +159,35 @@ class QueueWorker:
         except Exception:  # pragma: no cover - best effort
             logger.debug("Worker registration failed", exc_info=True)
 
-    def _lease_job_sync(self, lease_seconds: int = 60) -> Optional[Dict[str, Any]]:
-        if requests is None:  # pragma: no cover - dependency missing
-            raise RuntimeError("requests library is required to lease jobs")
-        resp = requests.post(
-            f"{self.server_url}/queue/lease",
-            json={"worker_id": self.worker_id, "lease_seconds": lease_seconds},
-            timeout=5,
-        )
-        data = resp.json()
-        if data.get("status") == "ok":
-            return data.get("job")
-        return None
-
     async def _lease_job(self, lease_seconds: int = 60) -> Optional[Dict[str, Any]]:
-        return await asyncio.to_thread(self._lease_job_sync, lease_seconds)
-
-    def _complete_job_sync(self, job_id: int) -> None:
-        if requests is None:  # pragma: no cover - dependency missing
-            return
         try:
-            requests.post(f"{self.server_url}/queue/{job_id}/complete", timeout=5)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    f"{self.server_url}/queue/lease",
+                    json={"worker_id": self.worker_id, "lease_seconds": lease_seconds},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("status") == "ok":
+                    return data.get("job")
+                return None
+        except Exception:
+            logger.debug("Failed to lease job", exc_info=True)
+            return None
+
+    async def _complete_job(self, job_id: int) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{self.server_url}/queue/{job_id}/complete")
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to complete job %s", job_id, exc_info=True)
 
-    async def _complete_job(self, job_id: int) -> None:
-        await asyncio.to_thread(self._complete_job_sync, job_id)
-
-    def _fail_job_sync(self, job_id: int) -> None:
-        if requests is None:  # pragma: no cover - dependency missing
-            return
+    async def _fail_job(self, job_id: int) -> None:
         try:
-            requests.post(f"{self.server_url}/queue/{job_id}/fail", json={}, timeout=5)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{self.server_url}/queue/{job_id}/fail", json={})
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to mark job %s failed", job_id, exc_info=True)
-
-    async def _fail_job(self, job_id: int) -> None:
-        await asyncio.to_thread(self._fail_job_sync, job_id)
 
     # ------------------------------------------------------------------
     # Job execution
@@ -477,16 +328,12 @@ class ScalableQueueWorkerPool:
 
     # --------------------------------------------------------------
     async def _queue_size(self) -> int:
-        if requests is None:  # pragma: no cover - dependency missing
-            logger.debug("requests library not available; assuming empty queue")
-            return 0
         try:
-            def _get_size():
-                resp = requests.get(f"{self.server_url}/queue/size", timeout=5)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self.server_url}/queue/size")
+                resp.raise_for_status()
                 data = resp.json()
                 return int(data.get("queued") or data.get("count") or 0)
-
-            return await asyncio.to_thread(_get_size)
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed fetching queue size", exc_info=True)
             return 0
