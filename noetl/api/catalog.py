@@ -15,15 +15,7 @@ from noetl.common import (
     get_snowflake_id_str,
     get_snowflake_id,
 )
-# from noetl.server.services import (
-#     CatalogService,
-#     get_catalog_service_dependency,
-#     get_playbook_entry_from_catalog,
-# )
 
-# def get_catalog_service_dependency() -> CatalogService:
-#     return CatalogService()
-#
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
