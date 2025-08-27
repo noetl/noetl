@@ -112,6 +112,111 @@ async def deregister_worker_pool(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/runtime/register", response_class=JSONResponse)
+async def register_runtime_component(request: Request):
+    """
+    Register a runtime component (server, worker_pool, broker, etc.) in the runtime registry.
+    Body:
+      { name, component_type, runtime?, base_url, status?, capacity?, labels?, pid?, hostname?, meta? }
+    """
+    try:
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        component_type = (body.get("component_type") or "server_api").strip()
+        runtime = (body.get("runtime") or "").strip().lower()
+        base_url = (body.get("base_url") or "").strip()
+        status = (body.get("status") or "ready").strip().lower()
+        capacity = body.get("capacity")
+        labels = body.get("labels")
+        pid = body.get("pid")
+        hostname = body.get("hostname")
+        meta = body.get("meta") or {}
+        
+        if not name or not component_type or not base_url:
+            raise HTTPException(status_code=400, detail="name, component_type, and base_url are required")
+
+        import datetime as _dt
+        try:
+            rid = get_snowflake_id()
+        except Exception:
+            rid = int(_dt.datetime.now().timestamp() * 1000)
+
+        payload_runtime = {
+            "type": runtime,
+            "pid": pid,
+            "hostname": hostname,
+            **({} if not isinstance(meta, dict) else meta),
+        }
+
+        labels_json = json.dumps(labels) if labels is not None else None
+        runtime_json = json.dumps(payload_runtime)
+
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    f"""
+                    INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
+                    ON CONFLICT (component_type, name)
+                    DO UPDATE SET
+                        base_url = EXCLUDED.base_url,
+                        status = EXCLUDED.status,
+                        labels = EXCLUDED.labels,
+                        capacity = EXCLUDED.capacity,
+                        runtime = EXCLUDED.runtime,
+                        last_heartbeat = now(),
+                        updated_at = now()
+                    RETURNING runtime_id
+                    """,
+                    (rid, name, component_type, base_url, status, labels_json, capacity, runtime_json)
+                )
+                row = await cursor.fetchone()
+                try:
+                    await conn.commit()
+                except Exception:
+                    pass
+        return {"status": "ok", "name": name, "component_type": component_type, "runtime_id": row[0] if row else rid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error registering runtime component: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/runtime/deregister", response_class=JSONResponse)
+async def deregister_runtime_component(request: Request):
+    """
+    Deregister a runtime component by name and component_type (marks as offline).
+    Body: { name, component_type }
+    """
+    try:
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        component_type = (body.get("component_type") or "server_api").strip()
+        if not name or not component_type:
+            raise HTTPException(status_code=400, detail="name and component_type are required")
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    UPDATE runtime
+                    SET status = 'offline', updated_at = now()
+                    WHERE component_type = %s AND name = %s
+                    """,
+                    (component_type, name)
+                )
+                try:
+                    await conn.commit()
+                except Exception:
+                    pass
+        return {"status": "ok", "name": name, "component_type": component_type}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deregistering runtime component: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/worker/pool/register", response_class=JSONResponse)
 async def register_worker_pool(request: Request):
     body = await request.json()

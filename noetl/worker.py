@@ -6,6 +6,7 @@ import datetime
 import uuid
 import asyncio
 import httpx
+import socket
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,22 +18,119 @@ from noetl.job import execute_task, execute_task_resolved, report_event
 logger = setup_logger(__name__, include_location=True)
 
 
+def register_server_from_env() -> None:
+    """Register this server instance with the server registry using environment variables.
+    Required envs to trigger:
+      - NOETL_SERVER_URL: server URL (will be auto-detected if not set)
+    Optional:
+      - NOETL_SERVER_NAME
+      - NOETL_HOST (default localhost)
+      - NOETL_PORT (default 8082)
+      - NOETL_SERVER_LABELS (CSV)
+    """
+    try:
+        server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
+        if not server_url:
+            host = os.environ.get("NOETL_HOST", "localhost").strip()
+            port = os.environ.get("NOETL_PORT", "8082").strip()
+            server_url = f"http://{host}:{port}"
+        
+        if not server_url.endswith('/api'):
+            server_url = server_url + '/api'
+            
+        name = os.environ.get("NOETL_SERVER_NAME") or f"server-{socket.gethostname()}"
+        labels = os.environ.get("NOETL_SERVER_LABELS")
+        if labels:
+            labels = [s.strip() for s in labels.split(',') if s.strip()]
+        
+        # Get hostname with fallback
+        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+        
+        payload = {
+            "name": name,
+            "component_type": "server_api",
+            "runtime": "server",
+            "base_url": server_url,
+            "status": "ready",
+            "capacity": None,
+            "labels": labels,
+            "pid": os.getpid(),
+            "hostname": hostname,
+        }
+        
+        url = f"{server_url}/runtime/register"
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    logger.info(f"Server registered: {name} -> {server_url}")
+                    try:
+                        with open('/tmp/noetl_server_name', 'w') as f:
+                            f.write(name)
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Server register failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Server register exception: {e}")
+    except Exception:
+        logger.exception("Unexpected error during server registration")
+
+
+def deregister_server_from_env() -> None:
+    """Attempt to deregister server using stored name (best-effort)."""
+    try:
+        name: Optional[str] = None
+        if os.path.exists('/tmp/noetl_server_name'):
+            try:
+                with open('/tmp/noetl_server_name', 'r') as f:
+                    name = f.read().strip()
+            except Exception:
+                name = None
+        if not name:
+            name = os.environ.get('NOETL_SERVER_NAME')
+        if not name:
+            return
+            
+        server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
+        if not server_url:
+            host = os.environ.get("NOETL_HOST", "localhost").strip()
+            port = os.environ.get("NOETL_PORT", "8082").strip()
+            server_url = f"http://{host}:{port}"
+            
+        if not server_url.endswith('/api'):
+            server_url = server_url + '/api'
+            
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                client.delete(f"{server_url}/runtime/deregister", json={"name": name, "component_type": "server_api"})
+            try:
+                os.remove('/tmp/noetl_server_name')
+            except Exception:
+                pass
+            logger.info(f"Deregistered server: {name}")
+        except Exception as e:
+            logger.debug(f"Server deregister attempt failed: {e}")
+    except Exception:
+        pass
+
+
 def register_worker_pool_from_env() -> None:
     """Register this worker pool with the server registry using environment variables.
     Required envs to trigger:
       - NOETL_WORKER_POOL_RUNTIME: cpu|gpu|qpu
-      - NOETL_WORKER_BASE_URL: base URL where this worker exposes /api
     Optional:
       - NOETL_WORKER_POOL_NAME
       - NOETL_SERVER_URL (default http://localhost:8082)
       - NOETL_WORKER_CAPACITY
       - NOETL_WORKER_LABELS (CSV)
+      - NOETL_WORKER_BASE_URL (defaults to dummy value for queue-based workers)
     """
     try:
         runtime = os.environ.get("NOETL_WORKER_POOL_RUNTIME", "").strip().lower()
-        base_url = os.environ.get("NOETL_WORKER_BASE_URL", "").strip()
-        if not runtime or not base_url:
+        if not runtime:
             return
+        base_url = os.environ.get("NOETL_WORKER_BASE_URL", "http://queue-worker").strip()
         name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
         server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
         if not server_url.endswith('/api'):
@@ -41,6 +139,10 @@ def register_worker_pool_from_env() -> None:
         labels = os.environ.get("NOETL_WORKER_LABELS")
         if labels:
             labels = [s.strip() for s in labels.split(',') if s.strip()]
+        
+        # Get hostname with fallback to socket.gethostname()
+        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+        
         payload = {
             "name": name,
             "runtime": runtime,
@@ -49,7 +151,7 @@ def register_worker_pool_from_env() -> None:
             "capacity": int(capacity) if capacity and str(capacity).isdigit() else None,
             "labels": labels,
             "pid": os.getpid(),
-            "hostname": os.environ.get("HOSTNAME"),
+            "hostname": hostname,
         }
         url = f"{server_url}/worker/pool/register"
         try:

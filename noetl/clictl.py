@@ -9,6 +9,8 @@ import tempfile
 import signal
 import time
 import asyncio
+import socket
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -75,12 +77,134 @@ def create_worker_app() -> FastAPI:
     return app
 
 def _create_app(enable_ui: bool = True) -> FastAPI:
+    from contextlib import asynccontextmanager
+    
+    def register_server_directly() -> None:
+        """Register this server instance directly in the database (no HTTP request)."""
+        try:
+            from noetl.common import get_db_connection, get_snowflake_id
+            
+            # Get server URL - use environment or construct from host/port
+            server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
+            if not server_url:
+                host = os.environ.get("NOETL_HOST", "localhost").strip()
+                port = os.environ.get("NOETL_PORT", "8082").strip()
+                server_url = f"http://{host}:{port}"
+            
+            if not server_url.endswith('/api'):
+                server_url = server_url + '/api'
+                
+            name = os.environ.get("NOETL_SERVER_NAME") or f"server-{socket.gethostname()}"
+            labels = os.environ.get("NOETL_SERVER_LABELS")
+            if labels:
+                labels = [s.strip() for s in labels.split(',') if s.strip()]
+            
+            # Get hostname with fallback
+            hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+            
+            import datetime as _dt
+            try:
+                rid = get_snowflake_id()
+            except Exception:
+                rid = int(_dt.datetime.now().timestamp() * 1000)
+
+            payload_runtime = {
+                "type": "server",
+                "pid": os.getpid(),
+                "hostname": hostname,
+            }
+
+            labels_json = json.dumps(labels) if labels is not None else None
+            runtime_json = json.dumps(payload_runtime)
+
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                        VALUES (%s, %s, 'server_api', %s, 'ready', %s, NULL, %s, now(), now(), now())
+                        ON CONFLICT (component_type, name)
+                        DO UPDATE SET
+                            base_url = EXCLUDED.base_url,
+                            status = EXCLUDED.status,
+                            labels = EXCLUDED.labels,
+                            runtime = EXCLUDED.runtime,
+                            last_heartbeat = now(),
+                            updated_at = now()
+                        """,
+                        (rid, name, server_url, labels_json, runtime_json)
+                    )
+                    conn.commit()
+            
+            logger.info(f"Server registered directly: {name} -> {server_url}")
+            try:
+                with open('/tmp/noetl_server_name', 'w') as f:
+                    f.write(name)
+            except Exception:
+                pass
+                
+        except Exception as e:
+            logger.exception(f"Direct server registration failed: {e}")
+
+    def deregister_server_directly() -> None:
+        """Deregister this server instance directly from the database."""
+        try:
+            from noetl.common import get_db_connection
+            
+            name: Optional[str] = None
+            if os.path.exists('/tmp/noetl_server_name'):
+                try:
+                    with open('/tmp/noetl_server_name', 'r') as f:
+                        name = f.read().strip()
+                except Exception:
+                    name = None
+            if not name:
+                name = os.environ.get('NOETL_SERVER_NAME')
+            if not name:
+                return
+                
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE runtime
+                        SET status = 'offline', updated_at = now()
+                        WHERE component_type = 'server_api' AND name = %s
+                        """,
+                        (name,)
+                    )
+                    conn.commit()
+            
+            logger.info(f"Server deregistered directly: {name}")
+            try:
+                os.remove('/tmp/noetl_server_name')
+            except Exception:
+                pass
+                
+        except Exception as e:
+            logger.debug(f"Direct server deregistration failed: {e}")
+    
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Register server on startup
+        try:
+            register_server_directly()
+        except Exception as e:
+            logger.warning(f"Server registration failed during startup: {e}")
+        yield
+        # Deregister server on shutdown
+        try:
+            deregister_server_directly()
+        except Exception as e:
+            logger.debug(f"Server deregistration failed during shutdown: {e}")
+
     settings = get_settings()
 
     app = FastAPI(
         title="NoETL API",
         description="NoETL API server",
-        version=settings.app_version
+        version=settings.app_version,
+        lifespan=lifespan
     )
 
     app.add_middleware(
@@ -142,6 +266,10 @@ def start_worker_service(
 
     # ensure settings loaded for environment variables
     get_settings()
+
+    # Set default worker runtime for registration if not already set
+    if not os.environ.get("NOETL_WORKER_POOL_RUNTIME"):
+        os.environ["NOETL_WORKER_POOL_RUNTIME"] = "cpu"
 
     pid_dir = os.path.expanduser("~/.noetl")
     os.makedirs(pid_dir, exist_ok=True)
