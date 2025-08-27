@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from noetl.server import router as server_router
-from noetl.worker import router as worker_router, ScalableQueueWorkerPool
+from noetl.worker import ScalableQueueWorkerPool
 from noetl.common import DateTimeEncoder
 from noetl.logger import setup_logger
 from noetl.schema import DatabaseSchema
@@ -67,7 +67,6 @@ def create_worker_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(worker_router, prefix="/api", tags=["Worker"])
 
     @app.get("/health", include_in_schema=False)
     async def health():
