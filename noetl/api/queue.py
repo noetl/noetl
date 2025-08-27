@@ -69,7 +69,7 @@ async def lease_job(request: Request):
                     """
                     WITH cte AS (
                       SELECT id FROM noetl.queue
-                      WHERE status='queued' AND available_at <= now()
+                      WHERE status='queued' AND (available_at IS NULL OR available_at <= now())
                       ORDER BY priority DESC, id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
@@ -109,7 +109,7 @@ async def complete_job(job_id: int):
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL, updated_at = now() WHERE id = %s RETURNING id", (job_id,))
+                await cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id", (job_id,))
                 row = await cur.fetchone()
                 await conn.commit()
         if not row:

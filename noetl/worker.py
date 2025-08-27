@@ -345,11 +345,69 @@ class QueueWorker:
     # Job execution
     # ------------------------------------------------------------------
     def _execute_job_sync(self, job: Dict[str, Any]) -> None:
-        action_cfg = job.get("action")
+        action_cfg_raw = job.get("action")
         context = job.get("input_context") or {}
+        execution_id = job.get("execution_id")
+        node_id = job.get("node_id") or f"job_{job.get('id')}"
+
+        # Parse action config if it's a JSON string
+        if isinstance(action_cfg_raw, str):
+            try:
+                action_cfg = json.loads(action_cfg_raw)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse action config for job {job.get('id')}: {action_cfg_raw}")
+                return
+        else:
+            action_cfg = action_cfg_raw
+
         if isinstance(action_cfg, dict):
-            task_name = action_cfg.get("name") or job.get("node_id") or "task"
-            execute_task(action_cfg, task_name, context, self._jinja)
+            task_name = action_cfg.get("name") or node_id
+
+            # Emit action_started event
+            start_event = {
+                "execution_id": execution_id,
+                "event_type": "action_started",
+                "status": "RUNNING",
+                "node_id": node_id,
+                "node_name": task_name,
+                "node_type": "task",
+                "context": {"work": context, "task": action_cfg},
+                "timestamp": datetime.datetime.now().isoformat(),
+            }
+            report_event(start_event, self.server_url)
+
+            try:
+                # Execute the task
+                result = execute_task(action_cfg, task_name, context, self._jinja)
+
+                # Emit action_completed event
+                complete_event = {
+                    "execution_id": execution_id,
+                    "event_type": "action_completed",
+                    "status": "COMPLETED",
+                    "node_id": node_id,
+                    "node_name": task_name,
+                    "node_type": "task",
+                    "result": result,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                }
+                report_event(complete_event, self.server_url)
+
+            except Exception as e:
+                # Emit action_error event
+                error_event = {
+                    "execution_id": execution_id,
+                    "event_type": "action_error",
+                    "status": "ERROR",
+                    "node_id": node_id,
+                    "node_name": task_name,
+                    "node_type": "task",
+                    "error": str(e),
+                    "result": {"error": str(e)},
+                    "timestamp": datetime.datetime.now().isoformat(),
+                }
+                report_event(error_event, self.server_url)
+                raise  # Re-raise to let the worker handle job failure
         else:
             logger.warning("Job %s has no actionable configuration", job.get("id"))
 

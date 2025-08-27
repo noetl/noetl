@@ -390,24 +390,24 @@ class DatabaseSchema:
                     CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON {self.noetl_schema}.runtime ((runtime->>'type'));
                 """)
                 # Queue table (work dispatch)
-                queue_sql = """
-                    CREATE TABLE IF NOT EXISTS {schema}.queue (
+                queue_sql = f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.queue (
                         id BIGSERIAL PRIMARY KEY,
                         created_at TIMESTAMPTZ DEFAULT now(),
                         available_at TIMESTAMPTZ DEFAULT now(),
                         lease_until TIMESTAMPTZ,
                         last_heartbeat TIMESTAMPTZ,
                         status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','leased','done','failed','dead')),
-                        execution_id UUID NOT NULL,
+                        execution_id VARCHAR NOT NULL,
                         node_id TEXT NOT NULL,
                         action TEXT NOT NULL,
-                        input_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        input_context JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         priority INT NOT NULL DEFAULT 0,
                         attempts INT NOT NULL DEFAULT 0,
                         max_attempts INT NOT NULL DEFAULT 5,
                         worker_id TEXT
                     )
-                """.format(schema=self.noetl_schema)
+                """
                 cursor.execute(queue_sql)
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_status_available ON {self.noetl_schema}.queue (status, available_at, priority DESC, id)
@@ -918,6 +918,40 @@ class DatabaseSchema:
                 """)
                 await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON {self.noetl_schema}.schedule (next_run_at) WHERE enabled = TRUE;")
                 await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON {self.noetl_schema}.schedule (playbook_path);")
+
+                # ===== Queue table (work dispatch) =====
+                logger.info("Creating queue table (async).")
+                queue_sql = f"""
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.queue (
+                        id BIGSERIAL PRIMARY KEY,
+                        created_at TIMESTAMPTZ DEFAULT now(),
+                        available_at TIMESTAMPTZ DEFAULT now(),
+                        lease_until TIMESTAMPTZ,
+                        last_heartbeat TIMESTAMPTZ,
+                        status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','leased','done','failed','dead')),
+                        execution_id VARCHAR NOT NULL,
+                        node_id TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        input_context JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                        priority INT NOT NULL DEFAULT 0,
+                        attempts INT NOT NULL DEFAULT 0,
+                        max_attempts INT NOT NULL DEFAULT 5,
+                        worker_id TEXT
+                    )
+                """
+                await cursor.execute(queue_sql)
+                await cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_status_available ON {self.noetl_schema}.queue (status, available_at, priority DESC, id)
+                """)
+                await cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_exec ON {self.noetl_schema}.queue (execution_id)
+                """)
+                await cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_worker ON {self.noetl_schema}.queue (worker_id)
+                """)
+                await cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_queue_lease_until ON {self.noetl_schema}.queue (lease_until)
+                """)
 
                 # ===== Identity & Collaboration tables (async) =====
                 logger.info("Creating identity & collaboration tables (async).")

@@ -703,12 +703,14 @@ async def evaluate_broker_for_execution(
     This function intentionally accepts its dependencies so tests can inject
     fakes without importing the main server module (which may be large).
     """
+    logger.info(f"=== EVALUATE_BROKER_FOR_EXECUTION: Starting evaluation for execution_id={execution_id} ===")
     try:
         playbook_path = None
         playbook_version = None
         workload = {}
 
         # Read earliest event for execution to extract context
+        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Reading event data for execution_id={execution_id}")
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -728,10 +730,14 @@ async def evaluate_broker_for_execution(
                     playbook_version = input_context.get('version') or metadata.get('resource_version')
                     workload = input_context.get('workload') or {}
 
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Extracted playbook_path={playbook_path}, playbook_version={playbook_version}")
+
         if not playbook_path:
+            logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No playbook_path found for execution_id={execution_id}")
             return
 
         # Fetch playbook content
+        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Fetching playbook content for {playbook_path} v{playbook_version}")
         catalog = get_catalog_service()
         # catalog.fetch_entry may be async
         entry = None
@@ -740,19 +746,27 @@ async def evaluate_broker_for_execution(
         else:
             entry = catalog.fetch_entry(playbook_path, playbook_version or '')
 
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Fetched entry: {entry is not None}")
         if not entry:
+            logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No entry found for playbook {playbook_path}")
             return
 
         # Parse playbook
+        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Parsing playbook content")
         try:
             import yaml
 
             pb = yaml.safe_load(entry.get('content') or '') or {}
-            steps = pb.get('steps') or pb.get('tasks') or []
-        except Exception:
+            # Handle different playbook structures
+            workflow = pb.get('workflow', [])
+            steps = pb.get('steps') or pb.get('tasks') or workflow
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Found {len(steps)} steps in playbook (workflow: {len(workflow)}, steps: {len(pb.get('steps', []))})")
+        except Exception as e:
+            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Error parsing playbook: {e}")
             steps = []
 
         if not steps:
+            logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No steps found in playbook")
             return
 
         # Determine next step index by counting completed events
@@ -767,10 +781,13 @@ async def evaluate_broker_for_execution(
                         completed += 1
 
         next_idx = completed
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Completed steps: {completed}, Next step index: {next_idx}, Total steps: {len(steps)}")
         if next_idx >= len(steps):
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: All steps completed for execution {execution_id}")
             return
 
         next_step = steps[next_idx]
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Next step: {next_step}")
 
         # Normalize to task config
         if isinstance(next_step, dict):
@@ -780,10 +797,31 @@ async def evaluate_broker_for_execution(
                 task_cfg = next_step['task']
             elif 'action' in next_step:
                 task_cfg = {'type': next_step.get('action'), 'config': next_step.get('config', {})}
+            elif 'step' in next_step:
+                # Handle workflow format with 'step' entries
+                step_name = next_step.get('step')
+                if step_name == 'start':
+                    # Start step is just a control step, create a simple task
+                    task_cfg = {'type': 'python', 'name': 'start', 'code': 'pass'}
+                elif step_name == 'end':
+                    # End step is just a control step
+                    task_cfg = {'type': 'python', 'name': 'end', 'code': 'pass'}
+                elif 'type' in next_step and next_step['type'] == 'workbook':
+                    # Handle workbook steps
+                    task_cfg = {
+                        'type': next_step.get('type', 'workbook'),
+                        'name': next_step.get('name', step_name),
+                        'with': next_step.get('with', {})
+                    }
+                else:
+                    # For other control steps, create a simple task
+                    task_cfg = {'type': 'python', 'name': step_name, 'code': 'pass'}
             else:
                 task_cfg = next_step
         else:
             return
+
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Created task config: {task_cfg}")
 
         # Pick a worker base_url from runtime table (first ready)
         worker_base = None
@@ -794,37 +832,41 @@ async def evaluate_broker_for_execution(
                 if r:
                     worker_base = r[0]
 
-        if not worker_base:
-            return
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Found worker_base: {worker_base}")
 
-        # Dispatch to worker using injected AsyncClientClass (or httpx.AsyncClient if available)
-        client_cls = AsyncClientClass
-        if client_cls is None:
-            try:
-                import httpx as _httpx
+        # For queue-based execution, we don't need a specific worker to be registered
+        # Any worker can pick up jobs from the queue
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueuing job for execution {execution_id}, step {next_idx+1}")
+        try:
+            # Enqueue job for worker instead of direct HTTP call
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            execution_id,
+                            f"{execution_id}-step-{next_idx+1}",
+                            json.dumps(task_cfg),
+                            json.dumps(workload),
+                            0,  # priority
+                            5,  # max_attempts
+                            None,  # available_at (now)
+                        )
+                    )
+                    job_row = await cur.fetchone()
+                    await conn.commit()
 
-                client_cls = _httpx.AsyncClient
-            except Exception:
-                client_cls = None
+            logger.info(f"Enqueued job {job_row[0] if job_row else 'unknown'} for execution {execution_id}, step {next_idx+1}")
+        except Exception as e:
+            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Error enqueuing job: {e}")
+            import traceback
+            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Traceback: {traceback.format_exc()}")
 
-        payload = {
-            'execution_id': execution_id,
-            'parent_event_id': None,
-            'node_id': f"{execution_id}-step-{next_idx+1}",
-            'node_name': next_step.get('name') if isinstance(next_step, dict) else f'step{next_idx+1}',
-            'node_type': 'task',
-            'context': workload,
-            'mock_mode': False,
-            'task': task_cfg,
-        }
-
-        if client_cls is None:
-            # no async client available; nothing to do in test harness
-            return
-
-        async with client_cls(timeout=10.0) as client:
-            url = worker_base.rstrip('/') + '/worker/action'
-            await client.post(url, json=payload)
+        return
 
     except Exception:
         # swallow errors in test helper

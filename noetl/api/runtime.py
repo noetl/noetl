@@ -4,6 +4,8 @@ from fastapi.responses import JSONResponse
 import json
 from noetl.logger import setup_logger
 from noetl.common import get_async_db_connection, get_snowflake_id
+from noetl.broker import execute_playbook_via_broker
+from noetl.api.catalog import get_playbook_entry_from_catalog
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
@@ -156,3 +158,58 @@ async def deregister_worker_pool(request: Request):
 @router.delete("/broker/deregister", response_class=JSONResponse)
 async def deregister_broker(request: Request):
     return JSONResponse(content={"status": "deregistered"})
+
+
+@router.post("/executions/run", response_class=JSONResponse)
+async def execute_playbook(request: Request):
+    """
+    Execute a playbook via the broker system.
+    Body:
+      { playbook_id: str, parameters?: dict, merge?: bool }
+    """
+    try:
+        body = await request.json()
+        playbook_id = body.get("playbook_id")
+        parameters = body.get("parameters", {})
+        merge = body.get("merge", False)
+
+        if not playbook_id:
+            raise HTTPException(
+                status_code=400,
+                detail="playbook_id is required."
+            )
+
+        logger.debug(f"EXECUTE_PLAYBOOK: Received request to execute playbook_id={playbook_id} with parameters={parameters}")
+
+        # Fetch playbook entry from catalog
+        entry = await get_playbook_entry_from_catalog(playbook_id)
+        playbook_content = entry.get("content", "")
+
+        # Execute playbook via broker
+        result = execute_playbook_via_broker(
+            playbook_content=playbook_content,
+            playbook_path=playbook_id,
+            playbook_version=entry.get("resource_version", "latest"),
+            input_payload=parameters,
+            sync_to_postgres=True,
+            merge=merge
+        )
+
+        execution = {
+            "id": result.get("execution_id", ""),
+            "playbook_id": playbook_id,
+            "playbook_name": playbook_id.split("/")[-1],
+            "status": "running",
+            "start_time": result.get("timestamp", ""),
+            "progress": 0,
+            "result": result
+        }
+
+        logger.debug(f"EXECUTE_PLAYBOOK: Returning execution={execution}")
+        return execution
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error executing playbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
