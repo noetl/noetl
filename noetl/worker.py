@@ -283,8 +283,9 @@ def deregister_worker_pool_from_env() -> None:
 
 
 def _on_worker_terminate(signum, frame):
-    logger.info(f"Worker pool process received signal {signum}, attempting graceful deregister")
+    logger.info(f"Worker pool process received signal {signum}")
     try:
+        # Always try to deregister on exit
         retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
         backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
         for attempt in range(1, retries + 1):
@@ -434,7 +435,12 @@ class QueueWorker:
                 report_event(complete_event, self.server_url)
 
             except Exception as e:
-                # Emit action_error event
+                # Emit action_error event with traceback
+                try:
+                    import traceback as _tb
+                    tb_text = _tb.format_exc()
+                except Exception:
+                    tb_text = str(e)
                 error_event = {
                     "execution_id": execution_id,
                     "event_type": "action_error",
@@ -442,8 +448,9 @@ class QueueWorker:
                     "node_id": node_id,
                     "node_name": task_name,
                     "node_type": "task",
-                    "error": str(e),
-                    "result": {"error": str(e)},
+                    "error": f"{type(e).__name__}: {str(e)}",
+                    "traceback": tb_text,
+                    "result": {"error": str(e), "traceback": tb_text},
                     "timestamp": datetime.datetime.now().isoformat(),
                 }
                 report_event(error_event, self.server_url)

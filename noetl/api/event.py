@@ -415,8 +415,11 @@ class EventService:
             duration = event_data.get("duration", 0.0)
             metadata = event_data.get("meta", {})
             error = event_data.get("error")
-            input_context = json.dumps(event_data.get("context", {}))
-            output_result = json.dumps(event_data.get("result", {}))
+            traceback_text = event_data.get("traceback")
+            input_context_dict = event_data.get("context", {})
+            output_result_dict = event_data.get("result", {})
+            input_context = json.dumps(input_context_dict)
+            output_result = json.dumps(output_result_dict)
             metadata_str = json.dumps(metadata)
 
             async with get_async_db_connection() as conn:
@@ -478,6 +481,34 @@ class EventService:
                               metadata_str,
                               error
                           ))
+
+                      # Also persist error into error_log when applicable
+                      try:
+                          status_l = (str(status) if status is not None else '').lower()
+                          evt_l = (str(event_type) if event_type is not None else '').lower()
+                          is_error = ("error" in status_l) or ("failed" in status_l) or ("error" in evt_l) or (error is not None)
+                          if is_error:
+                              from noetl.schema import DatabaseSchema
+                              ds = DatabaseSchema(auto_setup=False)
+                              # Use best-effort fields for error_log
+                              err_type = event_type or 'action_error'
+                              err_msg = str(error) if error is not None else 'Unknown error'
+                              ds.log_error(
+                                  error_type=err_type,
+                                  error_message=err_msg,
+                                  execution_id=execution_id,
+                                  step_id=node_id,
+                                  step_name=node_name,
+                                  template_string=None,
+                                  context_data=input_context_dict,
+                                  stack_trace=traceback_text,
+                                  input_data=input_context_dict,
+                                  output_data=output_result_dict,
+                                  severity='error'
+                              )
+                      except Exception:
+                          # Do not fail event persistence if error_log write fails
+                          pass
 
                       await conn.commit()
 
@@ -769,7 +800,7 @@ async def evaluate_broker_for_execution(
             logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No steps found in playbook")
             return
 
-        # Determine next step index by counting completed events
+        # Determine next step index by counting completed events and fail-fast if any error
         completed = 0
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
@@ -777,6 +808,9 @@ async def evaluate_broker_for_execution(
                 rows = await cur.fetchall()
                 for r in rows:
                     s = (r[0] or '').lower()
+                    if ('failed' in s) or ('error' in s):
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Detected error status '{s}' for execution {execution_id}; stopping further scheduling")
+                        return
                     if 'completed' in s or 'success' in s:
                         completed += 1
 
