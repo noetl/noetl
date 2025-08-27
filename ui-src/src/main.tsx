@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import type React from "react";
 import { createRoot } from "react-dom/client";
 import {
-  BrowserRouter as Router,
+  createBrowserRouter,
+  RouterProvider,
   Routes,
   Route,
   useNavigate,
@@ -151,8 +152,20 @@ const App: React.FC = () => {
 
 // Mount the app
 const root = createRoot(document.getElementById("root") as HTMLElement);
-root.render(
-  <Router>
-    <App />
-  </Router>,
+const router = createBrowserRouter(
+  [
+    {
+      path: "/*",
+      element: <App />,
+    },
+  ],
+  // Opt-in to v7 behaviors to avoid future flag warnings. Cast to any to satisfy TS.
+  ({
+    future: {
+      v7_startTransition: true,
+      v7_relativeSplatPath: true,
+    },
+  } as any),
 );
+
+root.render(<RouterProvider router={router} />);
