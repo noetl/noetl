@@ -421,18 +421,41 @@ class QueueWorker:
                 # Execute the task
                 result = execute_task(action_cfg, task_name, context, self._jinja)
 
-                # Emit action_completed event
-                complete_event = {
-                    "execution_id": execution_id,
-                    "event_type": "action_completed",
-                    "status": "COMPLETED",
-                    "node_id": node_id,
-                    "node_name": task_name,
-                    "node_type": "task",
-                    "result": result,
-                    "timestamp": datetime.datetime.now().isoformat(),
-                }
-                report_event(complete_event, self.server_url)
+                # Decide event type based on result status
+                res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
+                if isinstance(res_status, str) and res_status.lower() == 'error':
+                    # Emit action_error and raise to fail the job
+                    err_msg = (result or {}).get('error') if isinstance(result, dict) else 'Unknown error'
+                    tb_text = ''
+                    if isinstance(result, dict):
+                        tb_text = result.get('traceback') or ''
+                    error_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_error",
+                        "status": "ERROR",
+                        "node_id": node_id,
+                        "node_name": task_name,
+                        "node_type": "task",
+                        "error": err_msg,
+                        "traceback": tb_text,
+                        "result": result,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    report_event(error_event, self.server_url)
+                    raise RuntimeError(err_msg or "Task returned error status")
+                else:
+                    # Emit action_completed event
+                    complete_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_completed",
+                        "status": "COMPLETED",
+                        "node_id": node_id,
+                        "node_name": task_name,
+                        "node_type": "task",
+                        "result": result,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    report_event(complete_event, self.server_url)
 
             except Exception as e:
                 # Emit action_error event with traceback

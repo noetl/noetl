@@ -22,6 +22,90 @@ import asyncio
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
+@router.post("/context/render", response_class=JSONResponse)
+async def render_context(request: Request):
+    """
+    Render a Jinja2 template/object against the server-side execution context.
+    Body:
+      { execution_id: str, template: any, extra_context?: dict, strict?: bool }
+    Context composed from DB:
+      - work: workload (from earliest event input_context.workload, if present)
+      - results: map of node_name -> output_result for all prior events in execution
+    """
+    try:
+        body = await request.json()
+        execution_id = body.get("execution_id")
+        template = body.get("template")
+        extra_context = body.get("extra_context") or {}
+        strict = bool(body.get("strict", True))
+        if not execution_id:
+            raise HTTPException(status_code=400, detail="execution_id is required")
+        if "template" not in body:
+            raise HTTPException(status_code=400, detail="template is required")
+
+        # Build context from event_log
+        workload = {}
+        results: Dict[str, Any] = {}
+        async with get_async_db_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                # earliest event for workload
+                await cur.execute(
+                    """
+                    SELECT input_context FROM event_log
+                    WHERE execution_id = %s
+                    ORDER BY timestamp ASC
+                    LIMIT 1
+                    """,
+                    (execution_id,)
+                )
+                row = await cur.fetchone()
+                if row and row.get("input_context"):
+                    try:
+                        ctx_first = json.loads(row["input_context"]) if isinstance(row["input_context"], str) else row["input_context"]
+                        workload = (ctx_first or {}).get("workload") or {}
+                    except Exception:
+                        workload = {}
+
+                # collect results by node_name from all events
+                await cur.execute(
+                    """
+                    SELECT node_name, output_result
+                    FROM event_log
+                    WHERE execution_id = %s
+                    ORDER BY timestamp
+                    """,
+                    (execution_id,)
+                )
+                rows = await cur.fetchall()
+                for r in rows:
+                    node_name = r.get("node_name")
+                    out = r.get("output_result")
+                    if node_name and out:
+                        try:
+                            results[node_name] = json.loads(out) if isinstance(out, str) else out
+                        except Exception:
+                            results[node_name] = out
+
+        # Compose context
+        base_ctx: Dict[str, Any] = {"work": workload, "results": results}
+        # Provide common aliases
+        base_ctx["context"] = base_ctx["work"]
+        # Merge extra_context
+        if isinstance(extra_context, dict):
+            base_ctx.update(extra_context)
+
+        from jinja2 import Environment, StrictUndefined, BaseLoader
+        from noetl.render import render_template
+        env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+        rendered = render_template(env, template, base_ctx, rules=None, strict_keys=strict)
+
+        return {"status": "ok", "rendered": rendered, "context_keys": list(base_ctx.keys())}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error rendering context: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/execution/data/{execution_id}", response_class=JSONResponse)
 async def get_execution_data(

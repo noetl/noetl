@@ -299,6 +299,28 @@ async def execute_playbook(request: Request):
             merge=merge
         )
 
+        # Persist workload record for this execution (server-side tracking)
+        try:
+            exec_id = result.get("execution_id")
+            if exec_id:
+                from noetl.common import get_async_db_connection
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            INSERT INTO workload (execution_id, data)
+                            VALUES (%s, %s)
+                            ON CONFLICT (execution_id) DO UPDATE SET data = EXCLUDED.data
+                            """,
+                            (exec_id, json.dumps(parameters or {}))
+                        )
+                        try:
+                            await conn.commit()
+                        except Exception:
+                            pass
+        except Exception as _we:
+            logger.warning(f"Failed to upsert workload for execution: { _we }")
+
         execution = {
             "id": result.get("execution_id", ""),
             "playbook_id": playbook_id,
