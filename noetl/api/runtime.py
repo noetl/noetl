@@ -85,13 +85,19 @@ async def deregister_worker_pool(request: Request):
     Deregister a worker pool by name (marks as offline).
     Body: { name }
     """
+    logger.info("Worker deregister endpoint called")
     try:
         body = await request.json()
         name = (body.get("name") or "").strip()
+        logger.info(f"Deregistering worker pool: {name}")
         if not name:
             raise HTTPException(status_code=400, detail="name is required")
+
+        logger.info(f"Opening database connection for worker deregistration")
         async with get_async_db_connection() as conn:
+            logger.info(f"Database connection opened successfully")
             async with conn.cursor() as cursor:
+                logger.info(f"Executing UPDATE query for worker: {name}")
                 await cursor.execute(
                     """
                     UPDATE runtime
@@ -100,10 +106,15 @@ async def deregister_worker_pool(request: Request):
                     """,
                     (name,)
                 )
+                logger.info(f"Query executed, about to commit transaction")
                 try:
                     await conn.commit()
-                except Exception:
-                    pass
+                    logger.info(f"Worker {name} marked as offline in database")
+                except Exception as e:
+                    logger.error(f"Database commit failed: {e}")
+                    raise
+
+        logger.info(f"Worker deregistration completed for: {name}")
         return {"status": "ok", "name": name}
     except HTTPException:
         raise

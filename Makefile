@@ -37,7 +37,7 @@ help:
 	@echo "  make server-stop           Stop NoETL server"
 	@echo "  make server-status         Check NoETL server status and port"
 	@echo "  make worker-start          Start NoETL worker using .env.worker or .env (logs/worker.log)"
-	@echo "  make worker-stop           Stop NoETL worker"
+	@echo "  make worker-stop           Stop NoETL workers (supports multiple instances)"
 	@echo ""
 	@echo "Development Commands:"
 	@echo "  make install-uv            Install uv package manager"
@@ -267,17 +267,21 @@ worker-start:
 		if [ -f .env.worker ]; then . .env.worker; \
 		elif [ -f .env ]; then . .env; fi; \
 		set +a; \
-		nohup noetl worker start > logs/worker.log 2>&1 & \
+		worker_name=$${NOETL_WORKER_POOL_NAME:-worker-$${NOETL_WORKER_POOL_RUNTIME:-cpu}}; \
+		worker_name=$${worker_name//-/_}; \
+		log_file=logs/worker_$${worker_name}.log; \
+		nohup noetl worker start > $$log_file 2>&1 & \
 		sleep 1; \
-		if [ -f $$HOME/.noetl/noetl_worker.pid ]; then \
-			cat $$HOME/.noetl/noetl_worker.pid > logs/worker.pid; \
-			echo "NoETL worker started: PID=$$(cat logs/worker.pid) | logs at logs/worker.log"; \
+		pid_file=$$HOME/.noetl/noetl_worker_$${worker_name}.pid; \
+		if [ -f $$pid_file ]; then \
+			echo "NoETL worker started: PID=$$(cat $$pid_file) | logs at $$log_file"; \
 		else \
-			echo "Worker failed to start — check logs/worker.log"; \
+			echo "Worker failed to start — check $$log_file"; \
 		fi'
 
 worker-stop:
-	-@noetl worker stop -f || true
+	@echo "Stopping NoETL workers..."
+	-@noetl worker stop || true
 
 # === kind Kubernetes cluster management ===
 .PHONY: k8s-kind-create k8s-kind-delete k8s-kind-recreate k8s-context

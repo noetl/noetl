@@ -8,12 +8,13 @@ from noetl.common import get_bool
 
 _ENV_LOADED = False
 
-def _load_env_file(path: str) -> None:
+def _load_env_file(path: str, allow_override: bool = False) -> None:
     """
-    Minimal .env loader: loads KEY=VALUE pairs into os.environ if not already set.
+    Minimal .env loader: loads KEY=VALUE pairs into os.environ.
     - Ignores empty lines and lines starting with '#'
     - Supports values wrapped in single or double quotes
-    - Does not override existing environment variables
+    - By default, does not override existing environment variables
+    - Set allow_override=True to override existing variables
     """
     try:
         if not path or not os.path.exists(path):
@@ -32,23 +33,39 @@ def _load_env_file(path: str) -> None:
                 value = value.strip()
                 if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
                     value = value[1:-1]
-                if key not in os.environ:
+                if allow_override or key not in os.environ:
                     os.environ[key] = value
     except Exception:
         pass
 
-def load_env_if_present() -> None:
+def load_env_if_present(force_reload: bool = False) -> None:
     """
-    Load environment variables from a specified .env file once (best-effort).
-    Only loads when NOETL_ENV_FILE is provided; otherwise relies on the current process environment.
+    Load environment variables from .env files in order of precedence:
+    1. .env.local (highest priority, not committed)
+    2. .env.{ENVIRONMENT} (environment-specific)
+    3. .env.common (common variables)
+    4. .env (default)
+    Only loads when NOETL_ENV_FILE is provided or when loading defaults.
     """
     global _ENV_LOADED
-    if _ENV_LOADED:
+    if _ENV_LOADED and not force_reload:
         return
+    
     custom = os.environ.get("NOETL_ENV_FILE")
     if custom:
-        _load_env_file(custom)
-    _ENV_LOADED = True
+        _load_env_file(custom, allow_override=False)
+    else:
+        # Load default .env files in order of precedence
+        env_files = ['.env.local', '.env.common', '.env']
+        environment = os.environ.get('ENVIRONMENT', '').strip()
+        if environment:
+            env_files.insert(1, f'.env.{environment}')
+        
+        for env_file in env_files:
+            _load_env_file(env_file, allow_override=False)
+    
+    if not force_reload:
+        _ENV_LOADED = True
 
 def validate_mandatory_env_vars():
     """
@@ -233,13 +250,15 @@ class Settings(BaseModel):
 
 _settings: Optional[Settings] = None
 
-def get_settings() -> Settings:
+def get_settings(reload: bool = False) -> Settings:
     """
     Get application settings. Validates environment variables on first call.
+    Set reload=True to force reloading from current environment.
     """
     global _settings
-    if _settings is None:
-        load_env_if_present()
+    if _settings is None or reload:
+        # Always reload environment files to pick up any changes
+        load_env_if_present(force_reload=True)
 
         validate_mandatory_env_vars()
 

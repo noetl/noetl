@@ -27,7 +27,13 @@ logger = setup_logger(__name__, include_location=True)
 cli_app = typer.Typer()
 
 def create_app() -> FastAPI:
-    settings = get_settings()
+    # Clear any cached settings to ensure fresh environment loading
+    from noetl.config import _settings
+    import noetl.config
+    noetl.config._settings = None
+    noetl.config._ENV_LOADED = False
+    
+    settings = get_settings(reload=True)
 
     logging.basicConfig(
         format='[%(levelname)s] %(asctime)s,%(msecs)03d (%(name)s:%(funcName)s:%(lineno)d) - %(message)s',
@@ -169,18 +175,21 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 return
                 
             logger.info(f"Attempting to deregister server {name} from database")
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        UPDATE runtime
-                        SET status = 'offline', updated_at = now()
-                        WHERE component_type = 'server_api' AND name = %s
-                        """,
-                        (name,)
-                    )
-                    conn.commit()
-                    logger.info(f"Server {name} marked as offline in database")
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            UPDATE runtime
+                            SET status = 'offline', updated_at = now()
+                            WHERE component_type = 'server_api' AND name = %s
+                            """,
+                            (name,)
+                        )
+                        conn.commit()
+                        logger.info(f"Server {name} marked as offline in database")
+            except Exception as db_e:
+                logger.error(f"Database error during server deregistration: {db_e}")
             
             logger.info(f"Server deregistered directly: {name}")
             try:
@@ -272,16 +281,26 @@ def start_worker_service(
 ):
     """Start the queue worker pool that polls the server queue API."""
 
+    # Clear any cached settings to ensure fresh environment loading
+    from noetl.config import _settings
+    import noetl.config
+    noetl.config._settings = None
+    noetl.config._ENV_LOADED = False
+    
     # ensure settings loaded for environment variables
-    get_settings()
+    get_settings(reload=True)
 
     # Set default worker runtime for registration if not already set
     if not os.environ.get("NOETL_WORKER_POOL_RUNTIME"):
         os.environ["NOETL_WORKER_POOL_RUNTIME"] = "cpu"
 
+    # Get worker name for unique PID file
+    worker_name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{os.environ.get('NOETL_WORKER_POOL_RUNTIME', 'cpu')}"
+    worker_name = worker_name.replace("-", "_")  # Replace hyphens with underscores for filename
+    
     pid_dir = os.path.expanduser("~/.noetl")
     os.makedirs(pid_dir, exist_ok=True)
-    worker_pid_path = os.path.join(pid_dir, "noetl_worker.pid")
+    worker_pid_path = os.path.join(pid_dir, f"noetl_worker_{worker_name}.pid")
     with open(worker_pid_path, "w") as f:
         f.write(str(os.getpid()))
     logger.info(f"Worker PID {os.getpid()} saved to {worker_pid_path}")
@@ -309,16 +328,49 @@ def start_worker_service(
 
 @worker_app.command("stop")
 def stop_worker_service(
+    worker_name: str = typer.Option(None, "--name", "-n", help="Name of the worker to stop (if not specified, lists all workers)"),
     force: bool = typer.Option(False, "--force", "-f", help="Force stop the worker without confirmation")
 ):
     """
     Stop the running NoETL worker.
     This command should not require full environment configuration.
     """
-    worker_pid_path = os.path.expanduser("~/.noetl/noetl_worker.pid")
+    pid_dir = os.path.expanduser("~/.noetl")
+    
+    if worker_name:
+        worker_name = worker_name.replace("-", "_")
+        worker_pid_path = os.path.join(pid_dir, f"noetl_worker_{worker_name}.pid")
+    else:
+        # List all worker PID files
+        worker_files = [f for f in os.listdir(pid_dir) if f.startswith("noetl_worker_") and f.endswith(".pid")]
+        if not worker_files:
+            typer.echo("No running NoETL worker services found.")
+            return
+        
+        typer.echo("Running workers:")
+        for i, f in enumerate(worker_files):
+            worker_name = f.replace("noetl_worker_", "").replace(".pid", "")
+            try:
+                with open(os.path.join(pid_dir, f), 'r') as pf:
+                    pid = pf.read().strip()
+                typer.echo(f"  {i+1}. {worker_name} (PID: {pid})")
+            except:
+                typer.echo(f"  {i+1}. {worker_name} (PID file corrupted)")
+        
+        if len(worker_files) == 1:
+            choice = 1
+        else:
+            choice = typer.prompt("Enter the number of the worker to stop", type=int)
+        
+        if choice < 1 or choice > len(worker_files):
+            typer.echo("Invalid choice.")
+            return
+        
+        worker_pid_path = os.path.join(pid_dir, worker_files[choice-1])
 
     if not os.path.exists(worker_pid_path):
-        typer.echo("No running NoETL worker service found.")
+        worker_name = worker_name or worker_pid_path.split("_")[-1].replace(".pid", "")
+        typer.echo(f"No running NoETL worker '{worker_name}' found.")
         return
 
     try:
@@ -329,7 +381,8 @@ def stop_worker_service(
             os.kill(pid, 0)
 
             if not force:
-                confirm = typer.confirm(f"Stop NoETL worker with PID {pid}?")
+                worker_name = worker_name or worker_pid_path.split("_")[-1].replace(".pid", "")
+                confirm = typer.confirm(f"Stop NoETL worker '{worker_name}' with PID {pid}?")
                 if not confirm:
                     typer.echo("Operation cancelled.")
                     return
@@ -371,7 +424,14 @@ def start_server():
     """
     global _enable_ui
 
-    settings = get_settings()
+    # Clear any cached settings to ensure fresh environment loading
+    from noetl.config import _settings
+    import noetl.config
+    noetl.config._settings = None
+    noetl.config._ENV_LOADED = False
+    
+    # Reload settings to pick up any environment variable changes
+    settings = get_settings(reload=True)
 
     _enable_ui = settings.enable_ui
 
@@ -434,7 +494,7 @@ def start_server():
             import subprocess, sys
             cmd = [
                 sys.executable, "-m", "uvicorn",
-                "noetl.main:create_app",
+                "noetl.clictl:create_app",
                 "--factory",
                 "--host", str(settings.host),
                 "--port", str(settings.port),
@@ -465,9 +525,9 @@ def start_server():
 
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     if workers and workers > 1:
-        uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+        uvicorn.run("noetl.clictl:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
     else:
-        uvicorn.run("noetl.main:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
+        uvicorn.run("noetl.clictl:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
 
 def _run_worker_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     if workers and workers > 1:

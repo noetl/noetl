@@ -283,15 +283,37 @@ def get_pgdb_connection(
     password: str = None,
     host: str = None,
     port: str = None,
-    schema: str = None
+    schema: str = None,
+    use_admin: bool = False
 ) -> str:
-    db_name = db_name or os.environ.get('POSTGRES_DB')
-    user = user or os.environ.get('POSTGRES_USER')
-    password = password or os.environ.get('POSTGRES_PASSWORD')
+    """
+    Get PostgreSQL database connection string.
+    
+    Args:
+        use_admin: If True, use POSTGRES_* credentials for admin operations.
+                   If False, use NOETL_* credentials for application operations.
+    """
+    if use_admin:
+        db_name = db_name or os.environ.get('POSTGRES_DB')
+        user = user or os.environ.get('POSTGRES_USER')
+        password = password or os.environ.get('POSTGRES_PASSWORD')
+    else:
+        db_name = db_name or os.environ.get('POSTGRES_DB')
+        user = user or os.environ.get('NOETL_USER')
+        password = password or os.environ.get('NOETL_PASSWORD')
+    
     host = host or os.environ.get('POSTGRES_HOST')
     port = port or os.environ.get('POSTGRES_PORT')
     schema = schema or os.environ.get('NOETL_SCHEMA')
-    logger.debug(f"Database connection parameters: db={db_name}, user={user}, host={host}, port={port}, schema={schema}")
+    
+    # Debug logging
+    logger.debug(f"Database connection parameters: db={db_name}, user={user}, host={host}, port={port}, schema={schema}, use_admin={use_admin}")
+    
+    if not user or not password:
+        logger.warning(f"Missing database credentials! user={user}, password={'*' * len(password) if password else None}")
+        logger.warning(f"Available env vars: NOETL_USER={os.environ.get('NOETL_USER')}, NOETL_PASSWORD={'*' * len(os.environ.get('NOETL_PASSWORD', '')) if os.environ.get('NOETL_PASSWORD') else None}")
+        logger.warning(f"POSTGRES_USER={os.environ.get('POSTGRES_USER')}, POSTGRES_PASSWORD={'*' * len(os.environ.get('POSTGRES_PASSWORD', '')) if os.environ.get('POSTGRES_PASSWORD') else None}")
+    
     return f"dbname={db_name} user={user} password={password} host={host} port={port} hostaddr='' gssencmode=disable options='-c search_path={schema}'"
 
 #===================================

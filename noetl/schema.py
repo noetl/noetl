@@ -352,6 +352,11 @@ class DatabaseSchema:
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
                 """)
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime OWNER TO {self.noetl_user}")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
                 # Schedule registry for time-based playbook execution
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.schedule (
@@ -409,6 +414,11 @@ class DatabaseSchema:
                     )
                 """
                 cursor.execute(queue_sql)
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.queue OWNER TO {self.noetl_user}")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_status_available ON {self.noetl_schema}.queue (status, available_at, priority DESC, id)
                 """)
@@ -880,7 +890,7 @@ class DatabaseSchema:
                     )
                 """)
                 try:
-                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT")
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime OWNER TO {self.noetl_user}")
                 except Exception:
                     pass
                 await cursor.execute(f"""
@@ -940,6 +950,10 @@ class DatabaseSchema:
                     )
                 """
                 await cursor.execute(queue_sql)
+                try:
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.queue OWNER TO {self.noetl_user}")
+                except Exception:
+                    pass
                 await cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_status_available ON {self.noetl_schema}.queue (status, available_at, priority DESC, id)
                 """)
