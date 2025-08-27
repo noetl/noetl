@@ -1,7 +1,7 @@
 from typing import Any, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from noetl.common import get_db_connection
+from noetl.common import get_async_db_connection
 
 router = APIRouter()
 
@@ -15,25 +15,25 @@ async def execute_postgres(request: Request, query: str | None = None, query_bas
     if not query and not procedure:
         return JSONResponse(content={"error": "query or procedure is required"}, status_code=400)
     try:
-        with get_db_connection(connection_string) as conn:
-            with conn.cursor() as cursor:
+        async with get_async_db_connection(connection_string) as conn:
+            async with conn.cursor() as cursor:
                 if query:
-                    cursor.execute(query)
+                    await cursor.execute(query)
                     try:
-                        result = cursor.fetchall()
+                        result = await cursor.fetchall()
                     except Exception:
                         result = None
                 elif procedure:
                     if isinstance(parameters, (list, tuple)):
-                        cursor.execute(procedure, parameters)
+                        await cursor.execute(procedure, parameters)
                     else:
-                        cursor.execute(procedure)
+                        await cursor.execute(procedure)
                     try:
-                        result = cursor.fetchall()
+                        result = await cursor.fetchall()
                     except Exception:
                         result = None
                 try:
-                    conn.commit()
+                    await conn.commit()
                 except Exception:
                     pass
         return JSONResponse(content={"status": "ok", "result": result})
