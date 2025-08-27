@@ -225,9 +225,34 @@ def start_server():
 
     os.makedirs(settings.pid_file_dir, exist_ok=True)
 
-    with open(settings.pid_file_path, 'w') as f:
-        f.write(str(os.getpid()))
-    logger.info(f"Server PID {os.getpid()} saved to {settings.pid_file_path}")
+    if os.path.exists(settings.pid_file_path):
+        try:
+            with open(settings.pid_file_path, 'r') as pf:
+                existing_pid = int(pf.read().strip())
+            try:
+                os.kill(existing_pid, 0)
+                logger.info(f"Server already running with PID {existing_pid} (PID file: {settings.pid_file_path}). Aborting start.")
+                raise typer.Exit(code=0)
+            except OSError:
+                logger.info("Found stale PID file. Removing it before start.")
+                os.remove(settings.pid_file_path)
+        except Exception:
+            try:
+                os.remove(settings.pid_file_path)
+            except Exception:
+                pass
+
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        host = str(settings.host)
+        port = int(settings.port)
+        try:
+            if s.connect_ex((host, port)) == 0:
+                logger.error(f"Port {host}:{port} is already in use. Aborting start.")
+                raise typer.Exit(code=1)
+        except socket.gaierror:
+            pass
 
     try:
         workers = int(settings.server_workers)
@@ -264,7 +289,10 @@ def start_server():
             logger.info(f"Spawned server process PID {proc.pid}")
     except Exception:
         if os.path.exists(settings.pid_file_path):
-            os.remove(settings.pid_file_path)
+            try:
+                os.remove(settings.pid_file_path)
+            except Exception:
+                pass
         raise
 
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
@@ -310,54 +338,90 @@ def stop_server(
     """
     Stop the running NoETL server.
     This command should not require full environment configuration.
+    Strategy:
+    1) Try PID file if present; stop that process.
+    2) If not present or stale, try to detect any process listening on NOETL_PORT (from env or default 8082) and stop it.
     """
     pid_file_path = os.path.expanduser("~/.noetl/noetl_server.pid")
 
-    if not os.path.exists(pid_file_path):
+    def _kill_pid(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        if not force:
+            confirm = typer.confirm(f"Stop NoETL server with PID {pid}?")
+            if not confirm:
+                typer.echo("Operation cancelled.")
+                return False
+        typer.echo(f"Stopping NoETL server with PID {pid}...")
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return False
+        for _ in range(20):
+            try:
+                os.kill(pid, 0)
+                time.sleep(0.5)
+            except OSError:
+                break
+        else:
+            if force or typer.confirm("Server didn't stop gracefully. Force kill?"):
+                typer.echo(f"Force killing NoETL server with PID {pid}...")
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        return True
+
+    # 1) Try PID file path first
+    if os.path.exists(pid_file_path):
+        try:
+            with open(pid_file_path, 'r') as f:
+                pid = int(f.read().strip())
+            if _kill_pid(pid):
+                if os.path.exists(pid_file_path):
+                    os.remove(pid_file_path)
+                typer.echo("NoETL server stopped successfully.")
+                return
+        except Exception:
+            # If PID file unreadable, fall through to port-based stop
+            pass
+        # Stale PID file; remove it before trying port-based stop
+        try:
+            if os.path.exists(pid_file_path):
+                os.remove(pid_file_path)
+        except Exception:
+            pass
+
+    # 2) Fallback: detect listening process on configured port and stop it
+    host = os.environ.get("NOETL_HOST", "localhost")
+    try:
+        port = int(os.environ.get("NOETL_PORT", 8082))
+    except Exception:
+        port = 8082
+
+    # Best-effort: parse lsof output (macOS/linux) to get PID listening on port
+    try:
+        import subprocess, shlex
+        cmd = f"lsof -t -i TCP:{port} -sTCP:LISTEN"
+        proc = subprocess.run(shlex.split(cmd), capture_output=True, text=True)
+        pids = [int(x) for x in proc.stdout.strip().split() if x.strip().isdigit()]
+    except Exception:
+        pids = []
+
+    if not pids:
         typer.echo("No running NoETL server found.")
         return
 
-    try:
-        with open(pid_file_path, 'r') as f:
-            pid = int(f.read().strip())
-
-        try:
-            os.kill(pid, 0)
-
-            if not force:
-                confirm = typer.confirm(f"Stop NoETL server with PID {pid}?")
-                if not confirm:
-                    typer.echo("Operation cancelled.")
-                    return
-
-            typer.echo(f"Stopping NoETL server with PID {pid}...")
-
-            os.kill(pid, signal.SIGTERM)
-
-            for _ in range(10):
-                try:
-                    os.kill(pid, 0)
-                    time.sleep(0.5)
-                except OSError:
-                    break
-            else:
-                if force or typer.confirm("Server didn't stop gracefully. Force kill?"):
-                    typer.echo(f"Force killing NoETL server with PID {pid}...")
-                    os.kill(pid, signal.SIGKILL)
-
-            if os.path.exists(pid_file_path):
-                os.remove(pid_file_path)
-
-            typer.echo("NoETL server stopped successfully.")
-
-        except OSError:
-            typer.echo(f"No process found with PID {pid}. The server may have been stopped already.")
-            if os.path.exists(pid_file_path):
-                os.remove(pid_file_path)
-
-    except Exception as e:
-        typer.echo(f"Error stopping NoETL server: {e}")
-        raise typer.Exit(code=1)
+    stopped_any = False
+    for pid in pids:
+        if _kill_pid(pid):
+            stopped_any = True
+    if stopped_any:
+        typer.echo("NoETL server stopped successfully (port-based fallback).")
+    else:
+        typer.echo("No running NoETL server found.")
 
 @cli_app.command("server", hidden=True)
 def run_server():
