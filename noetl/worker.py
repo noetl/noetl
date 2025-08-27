@@ -35,6 +35,8 @@ def register_worker_pool_from_env() -> None:
             return
         name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
         server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+        if not server_url.endswith('/api'):
+            server_url = server_url + '/api'
         capacity = os.environ.get("NOETL_WORKER_CAPACITY")
         labels = os.environ.get("NOETL_WORKER_LABELS")
         if labels:
@@ -49,7 +51,7 @@ def register_worker_pool_from_env() -> None:
             "pid": os.getpid(),
             "hostname": os.environ.get("HOSTNAME"),
         }
-        url = f"{server_url}/api/worker/pool/register"
+        url = f"{server_url}/worker/pool/register"
         try:
             with httpx.Client(timeout=5.0) as client:
                 resp = client.post(url, json=payload)
@@ -83,9 +85,11 @@ def deregister_worker_pool_from_env() -> None:
         if not name:
             return
         server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+        if not server_url.endswith('/api'):
+            server_url = server_url + '/api'
         try:
             with httpx.Client(timeout=5.0) as client:
-                client.delete(f"{server_url}/api/worker/pool/deregister", json={"name": name})
+                client.delete(f"{server_url}/worker/pool/deregister", json={"name": name})
             try:
                 os.remove('/tmp/noetl_worker_pool_name')
             except Exception:
@@ -122,7 +126,10 @@ except Exception:
 
 
 def _get_server_url() -> str:
-    return os.environ.get("NOETL_SERVER_URL", "http://localhost:8082/api")
+    server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+    if not server_url.endswith('/api'):
+        server_url = server_url + '/api'
+    return server_url
 
 
 # ------------------------------------------------------------------
@@ -141,8 +148,10 @@ class QueueWorker:
         process_pool: Optional[ProcessPoolExecutor] = None,
     ) -> None:
         self.server_url = (
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082/api")
+            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082")
         ).rstrip("/")
+        if not self.server_url.endswith('/api'):
+            self.server_url = self.server_url + '/api'
         self.worker_id = worker_id or os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
@@ -314,8 +323,10 @@ class ScalableQueueWorkerPool:
         max_processes: Optional[int] = None,
     ) -> None:
         self.server_url = (
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082/api")
+            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082")
         ).rstrip("/")
+        if not self.server_url.endswith('/api'):
+            self.server_url = self.server_url + '/api'
         self.max_workers = max_workers or int(os.getenv("NOETL_MAX_WORKERS", "8"))
         self.check_interval = check_interval
         self.worker_poll_interval = worker_poll_interval

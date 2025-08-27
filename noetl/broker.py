@@ -125,7 +125,7 @@ class Broker:
                 }
 
             try:
-                api_url = f"{self.server_url}/api/agent/execute"
+                api_url = f"{self.server_url}/agent/execute"
                 payload = {
                     "path": path,
                     "version": version,

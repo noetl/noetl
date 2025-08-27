@@ -28,7 +28,11 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
     """
     try:
         import httpx
-        url = f"{server_url}/api/events"
+        # Handle server_url that may already include /api
+        if server_url.endswith('/api'):
+            url = f"{server_url}/events"
+        else:
+            url = f"{server_url}/api/events"
         logger.debug(f"Reporting event to {url}: {event_data.get('event_type', 'unknown')}")
         
         with httpx.Client(timeout=10.0) as client:
