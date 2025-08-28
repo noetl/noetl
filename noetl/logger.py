@@ -23,11 +23,9 @@ async def get_db_schema() -> 'DatabaseSchema':
     global _db_schema
     if _db_schema is None:
         from noetl.schema import DatabaseSchema
-        from noetl.config import get_settings
-        settings = get_settings()
-        _db_schema = DatabaseSchema(auto_setup=True)
-        logging.getLogger(__name__).info(f"Initialized global DatabaseSchema (schema validate={settings.schema_validate})")
-        await _db_schema.initialize_async()
+        # Avoid schema migrations/DDL during error logging to prevent deadlocks
+        _db_schema = DatabaseSchema(auto_setup=False)
+        logging.getLogger(__name__).info("Initialized global DatabaseSchema for logger (auto_setup=False)")
     return _db_schema
 
 import asyncio

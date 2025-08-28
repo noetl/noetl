@@ -1660,31 +1660,58 @@ def execute_playbook_via_broker(
         else:
             merged_workload = base_workload
 
-        # Normalize server URL to API base
-        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
-        if not server_url.endswith('/api'):
-            server_url = server_url + '/api'
-        logger.debug(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Using server_url={server_url}")
-
-        # Emit execution_start event to server; include context that helps later evaluation
+        # Emit execution_start directly via EventService to avoid HTTP loop/timeout
         try:
             ctx = {
                 "path": playbook_path,
                 "version": playbook_version,
                 "workload": merged_workload,
             }
-            report_event({
-                'event_type': 'execution_start',
-                'execution_id': execution_id,
-                'status': 'in_progress',
-                'timestamp': datetime.datetime.now().isoformat(),
-                'node_type': 'playbook',
-                'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
-                'context': ctx,
-                'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
-            }, server_url)
+            try:
+                from noetl.api.event import get_event_service
+                es = get_event_service()
+                import asyncio as _asyncio
+                if _asyncio.get_event_loop().is_running():
+                    # within async server context
+                    _asyncio.create_task(es.emit({
+                        'event_type': 'execution_start',
+                        'execution_id': execution_id,
+                        'status': 'in_progress',
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'node_type': 'playbook',
+                        'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
+                        'context': ctx,
+                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
+                    }))
+                else:
+                    # best-effort synchronous run
+                    _asyncio.run(es.emit({
+                        'event_type': 'execution_start',
+                        'execution_id': execution_id,
+                        'status': 'in_progress',
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'node_type': 'playbook',
+                        'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
+                        'context': ctx,
+                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
+                    }))
+            except Exception:
+                # Fallback to HTTP if direct emit fails
+                server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+                if not server_url.endswith('/api'):
+                    server_url = server_url + '/api'
+                report_event({
+                    'event_type': 'execution_start',
+                    'execution_id': execution_id,
+                    'status': 'in_progress',
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'node_type': 'playbook',
+                    'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
+                    'context': ctx,
+                    'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
+                }, server_url)
         except Exception as e_evt:
-            logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to emit execution_start event: {e_evt}")
+            logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to persist execution_start event: {e_evt}")
 
         result = {
             "status": "success",
@@ -1693,6 +1720,16 @@ def execute_playbook_via_broker(
             "execution_id": execution_id,
             "export_path": None,
         }
+        # Kick off broker evaluation for this execution id
+        try:
+            from noetl.api.event import evaluate_broker_for_execution
+            import asyncio as _asyncio
+            if _asyncio.get_event_loop().is_running():
+                _asyncio.create_task(evaluate_broker_for_execution(execution_id))
+            else:
+                _asyncio.run(evaluate_broker_for_execution(execution_id))
+        except Exception as _ev:
+            logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to start broker evaluation: {_ev}")
         logger.debug(
             f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Returning accepted result for execution_id={execution_id}"
         )

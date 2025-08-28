@@ -43,12 +43,10 @@ async def render_context(request: Request):
         if "template" not in body:
             raise HTTPException(status_code=400, detail="template is required")
 
-        # Build context from event_log
         workload = {}
         results: Dict[str, Any] = {}
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                # earliest event for workload
                 await cur.execute(
                     """
                     SELECT input_context FROM event_log
@@ -66,7 +64,6 @@ async def render_context(request: Request):
                     except Exception:
                         workload = {}
 
-                # collect results by node_name from all events
                 await cur.execute(
                     """
                     SELECT node_name, output_result
@@ -86,11 +83,13 @@ async def render_context(request: Request):
                         except Exception:
                             results[node_name] = out
 
-        # Compose context
-        base_ctx: Dict[str, Any] = {"work": workload, "results": results}
-        # Provide common aliases
+        base_ctx: Dict[str, Any] = {"work": workload, "workload": workload, "results": results}
         base_ctx["context"] = base_ctx["work"]
-        # Merge extra_context
+        if isinstance(workload, dict):
+            try:
+                base_ctx.update(workload)
+            except Exception:
+                pass
         if isinstance(extra_context, dict):
             base_ctx.update(extra_context)
 
@@ -143,11 +142,9 @@ async def create_event(
         try:
             execution_id = result.get("execution_id") or body.get("execution_id")
             if execution_id:
-                # schedule async evaluator without blocking the request
                 try:
                     asyncio.create_task(evaluate_broker_for_execution(execution_id))
                 except Exception:
-                    # fallback to background task for environments without running loop
                     background_tasks.add_task(lambda eid=execution_id: _evaluate_broker_for_execution(eid))
         except Exception:
             pass
@@ -380,7 +377,6 @@ class EventService:
             return 'running'
         if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
             return 'pending'
-        # fallback
         return 'pending'
 
     async def get_all_executions(self) -> List[Dict[str, Any]]:
@@ -518,6 +514,12 @@ class EventService:
                       row = await cursor.fetchone()
                       exists = row[0] > 0 if row else False
 
+                      loop_id_val = event_data.get('loop_id')
+                      loop_name_val = event_data.get('loop_name')
+                      iterator_val = event_data.get('iterator')
+                      current_index_val = event_data.get('current_index')
+                      current_item_val = json.dumps(event_data.get('current_item')) if event_data.get('current_item') is not None else None
+
                       if exists:
                           await cursor.execute("""
                               UPDATE event_log SET
@@ -529,6 +531,11 @@ class EventService:
                                   metadata = %s,
                                   error = %s,
                                   trace_component = %s::jsonb,
+                                  loop_id = %s,
+                                  loop_name = %s,
+                                  iterator = %s,
+                                  current_index = %s,
+                                  current_item = %s,
                                   timestamp = CURRENT_TIMESTAMP
                               WHERE execution_id = %s AND event_id = %s
                           """, (
@@ -540,6 +547,11 @@ class EventService:
                               metadata_str,
                               error,
                               trace_component_str,
+                              loop_id_val,
+                              loop_name_val,
+                              iterator_val,
+                              current_index_val,
+                              current_item_val,
                               execution_id,
                               event_id
                           ))
@@ -548,12 +560,14 @@ class EventService:
                               INSERT INTO event_log (
                                   execution_id, event_id, parent_event_id, timestamp, event_type,
                                   node_id, node_name, node_type, status, duration,
-                                  input_context, output_result, metadata, error, trace_component
+                                  input_context, output_result, metadata, error, trace_component,
+                                  loop_id, loop_name, iterator, current_index, current_item
                               ) VALUES (
                                   %s, %s, %s, CURRENT_TIMESTAMP, %s,
                                   %s, %s, %s, %s, %s,
                                   %s, %s, %s, %s,
-                                  %s
+                                  %s,
+                                  %s, %s, %s, %s, %s
                               )
                           """, (
                               execution_id,
@@ -569,10 +583,14 @@ class EventService:
                               output_result,
                               metadata_str,
                               error,
-                              trace_component_str
+                              trace_component_str,
+                              loop_id_val,
+                              loop_name_val,
+                              iterator_val,
+                              current_index_val,
+                              current_item_val
                           ))
 
-                      # Also persist error into error_log when applicable
                       try:
                           status_l = (str(status) if status is not None else '').lower()
                           evt_l = (str(event_type) if event_type is not None else '').lower()
@@ -580,10 +598,8 @@ class EventService:
                           if is_error:
                               from noetl.schema import DatabaseSchema
                               ds = DatabaseSchema(auto_setup=False)
-                              # Use best-effort fields for error_log
                               err_type = event_type or 'action_error'
                               err_msg = str(error) if error is not None else 'Unknown error'
-                              await ds.initialize_async()
                               await ds.log_error_async(
                                   error_type=err_type,
                                   error_message=err_msg,
@@ -598,12 +614,41 @@ class EventService:
                                   severity='error'
                               )
                       except Exception:
-                          # Do not fail event persistence if error_log write fails
+                          pass
+
+                      try:
+                          if str(event_type).lower() in {"execution_start", "execution_started", "start"}:
+                              try:
+                                  await cursor.execute(
+                                      """
+                                      INSERT INTO workload (execution_id, data)
+                                      VALUES (%s, %s)
+                                      ON CONFLICT (execution_id) DO UPDATE SET data = EXCLUDED.data
+                                      """,
+                                      (execution_id, input_context)
+                                  )
+                              except Exception:
+                                  pass
+                      except Exception:
                           pass
 
                       await conn.commit()
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
+
+            try:
+                evt_l = (str(event_type) if event_type is not None else '').lower()
+                if evt_l in {"execution_start", "action_completed", "action_error"}:
+                    try:
+                        if asyncio.get_event_loop().is_running():
+                            asyncio.create_task(evaluate_broker_for_execution(execution_id))
+                        else:
+                            await evaluate_broker_for_execution(execution_id)
+                    except RuntimeError:
+                        await evaluate_broker_for_execution(execution_id)
+            except Exception:
+                logger.debug("Failed to schedule broker evaluation from emit", exc_info=True)
+
             return event_data
 
         except Exception as e:
@@ -820,21 +865,24 @@ async def evaluate_broker_for_execution(
     get_catalog_service=get_catalog_service,
     AsyncClientClass=None,
 ):
-    """Lightweight async evaluator used for tests.
+    """Server-side broker evaluator.
 
-    This function intentionally accepts its dependencies so tests can inject
-    fakes without importing the main server module (which may be large).
+    - Builds execution context (workload + results) from event_log
+    - Parses playbook and advances to the next actionable step
+    - Evaluates step-level pass/when using server-side rendering
+    - Emits skip-complete events for skipped steps
+    - Enqueues the first actionable step to the queue for workers
     """
-    logger.info(f"=== EVALUATE_BROKER_FOR_EXECUTION: Starting evaluation for execution_id={execution_id} ===")
+    logger.info(f"=== EVALUATE_BROKER_FOR_EXECUTION: Starting for execution_id={execution_id} ===")
     try:
         playbook_path = None
         playbook_version = None
         workload = {}
+        results_ctx: Dict[str, Any] = {}
 
-        # Read earliest event for execution to extract context
-        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Reading event data for execution_id={execution_id}")
+        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Reading execution context for {execution_id}")
         async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     SELECT input_context, metadata FROM event_log
@@ -846,153 +894,860 @@ async def evaluate_broker_for_execution(
                 )
                 row = await cur.fetchone()
                 if row:
-                    input_context = json.loads(row[0]) if row[0] else {}
-                    metadata = json.loads(row[1]) if row[1] else {}
+                    try:
+                        input_context = json.loads(row["input_context"]) if row.get("input_context") else {}
+                    except Exception:
+                        input_context = row.get("input_context") or {}
+                    try:
+                        metadata = json.loads(row["metadata"]) if row.get("metadata") else {}
+                    except Exception:
+                        metadata = row.get("metadata") or {}
                     playbook_path = input_context.get('path') or metadata.get('playbook_path') or metadata.get('resource_path')
                     playbook_version = input_context.get('version') or metadata.get('resource_version')
                     workload = input_context.get('workload') or {}
 
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Extracted playbook_path={playbook_path}, playbook_version={playbook_version}")
+                await cur.execute(
+                    """
+                    SELECT node_name, output_result
+                    FROM event_log
+                    WHERE execution_id = %s AND output_result IS NOT NULL
+                    ORDER BY timestamp
+                    """,
+                    (execution_id,)
+                )
+                rows = await cur.fetchall()
+                for r in rows:
+                    node_name = r.get("node_name")
+                    out = r.get("output_result")
+                    if not node_name:
+                        continue
+                    try:
+                        results_ctx[node_name] = json.loads(out) if isinstance(out, str) else out
+                    except Exception:
+                        results_ctx[node_name] = out
 
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Playbook path={playbook_path}, version={playbook_version}")
         if not playbook_path:
             logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No playbook_path found for execution_id={execution_id}")
             return
 
-        # Fetch playbook content
-        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Fetching playbook content for {playbook_path} v{playbook_version}")
         catalog = get_catalog_service()
-        # catalog.fetch_entry may be async
         entry = None
         if asyncio.iscoroutinefunction(getattr(catalog, 'fetch_entry', None)):
             entry = await catalog.fetch_entry(playbook_path, playbook_version or '')
         else:
             entry = catalog.fetch_entry(playbook_path, playbook_version or '')
-
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Fetched entry: {entry is not None}")
         if not entry:
             logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No entry found for playbook {playbook_path}")
             return
 
-        # Parse playbook
-        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Parsing playbook content")
         try:
             import yaml
-
             pb = yaml.safe_load(entry.get('content') or '') or {}
-            # Handle different playbook structures
             workflow = pb.get('workflow', [])
             steps = pb.get('steps') or pb.get('tasks') or workflow
-            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Found {len(steps)} steps in playbook (workflow: {len(workflow)}, steps: {len(pb.get('steps', []))})")
+            tasks_def_list = pb.get('workbook') or pb.get('tasks') or []
+            tasks_def_map: Dict[str, Any] = {}
+            if isinstance(tasks_def_list, list):
+                for _t in tasks_def_list:
+                    if isinstance(_t, dict):
+                        _nm = _t.get('name') or _t.get('task')
+                        if _nm:
+                            tasks_def_map[str(_nm)] = _t
         except Exception as e:
             logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Error parsing playbook: {e}")
             steps = []
-
         if not steps:
-            logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No steps found in playbook")
+            logger.warning("EVALUATE_BROKER_FOR_EXECUTION: No steps found in playbook")
             return
 
-        # Determine next step index by counting completed events and fail-fast if any error
-        completed = 0
+        try:
+            tasks_def_list = pb.get('workbook') or pb.get('tasks') or []
+            tasks_def_map = {}
+            if isinstance(tasks_def_list, list):
+                for t in tasks_def_list:
+                    if isinstance(t, dict):
+                        nm = t.get('name') or t.get('task')
+                        if nm:
+                            tasks_def_map[str(nm)] = t
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cur:
+                    for i, st in enumerate(steps):
+                        if not isinstance(st, dict):
+                            continue
+                        sname = st.get('step') or st.get('name') or st.get('task') or f"step-{i+1}"
+                        stype = st.get('type') or ('workbook' if 'task' in st else None)
+                        sdesc = st.get('desc') or st.get('description')
+                        sid = f"{execution_id}-step-{i+1}"
+                        try:
+                            await cur.execute(
+                                """
+                                INSERT INTO noetl.workflow (execution_id, step_id, step_name, step_type, description, raw_config)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                ON CONFLICT DO NOTHING
+                                """,
+                                (execution_id, sid, sname, stype, sdesc, json.dumps(st))
+                            )
+                        except Exception:
+                            pass
+
+                    for st in steps:
+                        if not isinstance(st, dict):
+                            continue
+                        from_name = st.get('step') or st.get('name') or st.get('task')
+                        nxt = st.get('next') or []
+                        if not from_name or not isinstance(nxt, list):
+                            continue
+                        for case in nxt:
+                            if not isinstance(case, dict):
+                                continue
+                            cond_text = None
+                            targets = None
+                            if 'when' in case:
+                                cond_text = case.get('when')
+                                targets = case.get('then')
+                            elif 'else' in case:
+                                cond_text = 'else'
+                                targets = case.get('else')
+                            if not isinstance(targets, list):
+                                continue
+                            for tgt in targets:
+                                to_name = None
+                                with_params = None
+                                if isinstance(tgt, dict):
+                                    to_name = tgt.get('step') or tgt.get('name') or tgt.get('task')
+                                    with_params = tgt.get('with')
+                                else:
+                                    to_name = str(tgt)
+                                if not to_name:
+                                    continue
+                                try:
+                                    await cur.execute(
+                                        """
+                                        INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                                        VALUES (%s, %s, %s, %s, %s)
+                                        ON CONFLICT DO NOTHING
+                                        """,
+                                        (execution_id, from_name, to_name, cond_text or '', json.dumps(with_params) if with_params is not None else None)
+                                    )
+                                except Exception:
+                                    pass
+
+                    if isinstance(tasks_def_list, list):
+                        for wi, wt in enumerate(tasks_def_list, start=1):
+                            if not isinstance(wt, dict):
+                                continue
+                            tname = wt.get('name') or wt.get('task') or f"task-{wi}"
+                            ttype = (wt.get('type') or '').lower() or 'workbook'
+                            tid = f"{execution_id}-wtask-{wi}"
+                            try:
+                                await cur.execute(
+                                    """
+                                    INSERT INTO noetl.workbook (execution_id, task_id, task_name, task_type, raw_config)
+                                    VALUES (%s, %s, %s, %s, %s)
+                                    ON CONFLICT DO NOTHING
+                                    """,
+                                    (execution_id, tid, tname, ttype, json.dumps(wt))
+                                )
+                            except Exception:
+                                pass
+                    try:
+                        await conn.commit()
+                    except Exception:
+                        pass
+        except Exception:
+            logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Materialization failed", exc_info=True)
+
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("SELECT status FROM event_log WHERE execution_id = %s ORDER BY timestamp", (execution_id,))
+                await cur.execute(
+                    "SELECT status FROM event_log WHERE execution_id = %s ORDER BY timestamp",
+                    (execution_id,)
+                )
                 rows = await cur.fetchall()
                 for r in rows:
                     s = (r[0] or '').lower()
                     if ('failed' in s) or ('error' in s):
-                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Detected error status '{s}' for execution {execution_id}; stopping further scheduling")
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Found error status '{s}' for {execution_id}; stop scheduling")
                         return
-                    if 'completed' in s or 'success' in s:
-                        completed += 1
 
-        next_idx = completed
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Completed steps: {completed}, Next step index: {next_idx}, Total steps: {len(steps)}")
-        if next_idx >= len(steps):
-            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: All steps completed for execution {execution_id}")
+        from jinja2 import Environment, StrictUndefined, BaseLoader
+        from noetl.render import render_template
+        jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+        base_ctx = {
+            "work": workload,
+            "workload": workload,
+            "results": results_ctx,
+            "context": workload,
+        }
+
+        step_index: Dict[str, int] = {}
+        for i, st in enumerate(steps):
+            if isinstance(st, dict):
+                _nm = st.get('step') or st.get('name') or st.get('task')
+                if _nm:
+                    step_index[str(_nm)] = i
+
+        idx: Optional[int] = None
+        chosen_target_name: Optional[str] = None
+        transition_cond_text: Optional[str] = None
+        transition_vars: Optional[Dict[str, Any]] = None
+        last_step_name: Optional[str] = None
+        async with get_async_db_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT node_name FROM event_log
+                    WHERE execution_id = %s AND lower(status) IN ('completed','success')
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    (execution_id,)
+                )
+                rr = await cur.fetchone()
+                if rr:
+                    last_step_name = rr.get('node_name')
+
+        if last_step_name and last_step_name in step_index:
+            prev_cfg = steps[step_index[last_step_name]]
+            nxt = prev_cfg.get('next') if isinstance(prev_cfg, dict) else None
+            if isinstance(nxt, list):
+                for case in nxt:
+                    if not isinstance(case, dict):
+                        continue
+                    if 'when' in case:
+                        cond_text = case.get('when')
+                        try:
+                            cond_val = render_template(jenv, cond_text, base_ctx, strict_keys=True)
+                        except Exception:
+                            cond_val = False
+                        if bool(cond_val):
+                            targets = case.get('then')
+                            if isinstance(targets, list) and targets:
+                                tgt = targets[0]
+                                if isinstance(tgt, dict):
+                                    chosen_target_name = tgt.get('step') or tgt.get('name') or tgt.get('task')
+                                    transition_vars = tgt.get('with')
+                                else:
+                                    chosen_target_name = str(tgt)
+                                transition_cond_text = str(cond_text)
+                                break
+                    elif 'else' in case:
+                        targets = case.get('else')
+                        if isinstance(targets, list) and targets:
+                            tgt = targets[0]
+                            if isinstance(tgt, dict):
+                                chosen_target_name = tgt.get('step') or tgt.get('name') or tgt.get('task')
+                                transition_vars = tgt.get('with')
+                            else:
+                                chosen_target_name = str(tgt)
+                            transition_cond_text = 'else'
+                            break
+        if chosen_target_name and chosen_target_name in step_index:
+            idx = step_index[chosen_target_name]
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Next step via transition: {chosen_target_name} (idx={idx})")
+        if idx is None:
+            completed = 0
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT status FROM event_log WHERE execution_id = %s ORDER BY timestamp", (execution_id,))
+                    rows = await cur.fetchall()
+                    for r in rows:
+                        s = (r[0] or '').lower()
+                        if 'completed' in s or 'success' in s:
+                            completed += 1
+            idx = completed
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Fallback next index={idx}")
+        if idx is None or idx >= len(steps):
+            logger.info("EVALUATE_BROKER_FOR_EXECUTION: No further steps to schedule")
             return
 
-        next_step = steps[next_idx]
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Next step: {next_step}")
+        from jinja2 import Environment, StrictUndefined, BaseLoader
+        from noetl.render import render_template
+        jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+        base_ctx = {
+            "work": workload,
+            "workload": workload,
+            "results": results_ctx,
+            "context": workload,
+        }
 
-        # Normalize to task config
+        event_service = get_event_service()
+        while idx < len(steps):
+            step = steps[idx]
+            if not isinstance(step, dict):
+                break
+
+            step_name = step.get('step') or step.get('task') or step.get('name') or f"step-{idx+1}"
+            skip_reason = None
+            if 'pass' in step:
+                try:
+                    pass_val = render_template(jenv, step.get('pass'), base_ctx, strict_keys=True)
+                except Exception:
+                    pass_val = step.get('pass')
+                if isinstance(pass_val, str):
+                    pv = pass_val.strip().lower()
+                    pass_bool = pv in {'1','true','yes','on'}
+                else:
+                    pass_bool = bool(pass_val)
+                if pass_bool:
+                    skip_reason = 'pass=true'
+
+            if skip_reason is None and 'when' in step:
+                try:
+                    when_val = render_template(jenv, step.get('when'), base_ctx, strict_keys=True)
+                except Exception:
+                    when_val = step.get('when')
+                when_bool = bool(when_val)
+                if isinstance(when_val, str):
+                    wv = when_val.strip().lower()
+                    if wv in {'', '0', 'false', 'no', 'off', 'none', 'null'}:
+                        when_bool = False
+                if not when_bool:
+                    skip_reason = 'when=false'
+
+            if skip_reason:
+                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Skipping step {idx+1} ({step_name}) due to {skip_reason}")
+                try:
+                    await event_service.emit({
+                        "execution_id": execution_id,
+                        "event_type": "action_completed",
+                        "status": "COMPLETED",
+                        "node_id": f"{execution_id}-step-{idx+1}",
+                        "node_name": step_name,
+                        "node_type": "task",
+                        "result": {"skipped": True, "reason": skip_reason},
+                        "context": {"workload": workload},
+                    })
+                except Exception:
+                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit skip event", exc_info=True)
+                idx += 1
+                continue
+            break
+
+        if idx >= len(steps):
+            logger.info("EVALUATE_BROKER_FOR_EXECUTION: All remaining steps were skipped")
+            return
+
+        next_step = steps[idx]
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Next actionable step index={idx}, def={next_step}")
+
+        if isinstance(next_step, dict):
+            _sname = next_step.get('step') or next_step.get('name')
+            _stype = (next_step.get('type') or '').lower()
+            if (_sname in {'start', 'end'} or (_stype == '' and not any(k in next_step for k in ('task','action','call','loop')))) and ('loop' not in next_step):
+                try:
+                    await get_event_service().emit({
+                        'execution_id': execution_id,
+                        'event_type': 'action_completed',
+                        'status': 'COMPLETED',
+                        'node_id': f'{execution_id}-step-{idx+1}',
+                        'node_name': _sname or f'step-{idx+1}',
+                        'node_type': 'task',
+                        'result': {'skipped': True, 'reason': 'control_step'},
+                        'context': {'workload': workload}
+                    })
+                except Exception:
+                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit control step completion", exc_info=True)
+                return
+
+        if isinstance(next_step, dict) and 'loop' in next_step:
+            loop_spec = next_step.get('loop') or {}
+            iterator = (loop_spec.get('iterator') or 'item').strip()
+            try:
+                items = render_template(jenv, loop_spec.get('in', []), base_ctx, strict_keys=False)
+                if isinstance(items, str):
+                    try:
+                        items = json.loads(items)
+                    except Exception:
+                        items = [items]
+            except Exception:
+                items = []
+            if not isinstance(items, list):
+                items = []
+            flt = loop_spec.get('filter')
+            def _passes(it):
+                if not flt:
+                    return True
+                try:
+                    fctx = dict(base_ctx)
+                    fctx[iterator] = it
+                    val = render_template(jenv, flt, fctx, strict_keys=False)
+                    if val is None:
+                        return True
+                    if isinstance(val, str) and val.strip() == "":
+                        return True
+                    return bool(val)
+                except Exception:
+                    return True
+            body_step = None
+            nxt = next_step.get('next') or []
+            if isinstance(nxt, list) and nxt:
+                t = nxt[0]
+                body_step = (t.get('step') or t.get('name') or t.get('task')) if isinstance(t, dict) else str(t)
+            body_task_cfg = None
+            if 'call' in next_step:
+                body_task_cfg = next_step['call']
+            elif 'action' in next_step:
+                body_task_cfg = {"type": next_step.get('action'), **({k: v for k, v in next_step.items() if k not in {'action'}})}
+            elif (next_step.get('type') or '').lower() == 'workbook':
+                tname = next_step.get('task') or next_step.get('name') or next_step.get('step')
+                base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
+                if isinstance(base_task, dict) and base_task:
+                    body_task_cfg = dict(base_task)
+                    sw = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
+                    bw = base_task.get('with', {}) if isinstance(base_task.get('with'), dict) else {}
+                    mw = {**bw, **sw}
+                    if mw:
+                        body_task_cfg['with'] = mw
+            if body_task_cfg is None:
+                body_task_cfg = {'type': 'python', 'name': body_step or (next_step.get('step') or 'loop_body'), 'code': 'def main(**kwargs):\n    return {}'}
+
+            scheduled_any = False
+            for idx_it, item in enumerate(items):
+                if not _passes(item):
+                    continue
+                iter_node_id = f"{execution_id}-step-{idx+1}-iter-{idx_it}"
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute("SELECT 1 FROM noetl.queue WHERE execution_id=%s AND node_id=%s LIMIT 1", (execution_id, iter_node_id))
+                            if await cur.fetchone():
+                                continue
+                except Exception:
+                    pass
+                iter_work = dict(workload) if isinstance(workload, dict) else {}
+                iter_work[iterator] = item
+                try:
+                    rendered_work = render_template(jenv, iter_work, base_ctx, strict_keys=False)
+                except Exception:
+                    rendered_work = iter_work
+                try:
+                    if isinstance(rendered_work, dict):
+                        rendered_work['_loop'] = {
+                            'loop_id': f"{execution_id}:{prev_cfg.get('step')}",
+                            'loop_name': prev_cfg.get('step') or prev_cfg.get('name'),
+                            'iterator': iterator,
+                            'current_index': idx_it,
+                            'current_item': item,
+                            'items_count': len(items)
+                        }
+                except Exception:
+                    pass
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                RETURNING id
+                                """,
+                                (execution_id, iter_node_id, json.dumps(body_task_cfg), json.dumps(rendered_work), 0, 5, None)
+                            )
+                            await conn.commit()
+                    scheduled_any = True
+                except Exception:
+                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to enqueue loop iteration (next_step)", exc_info=True)
+            if scheduled_any:
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                                VALUES (%s, %s, %s, %s, %s)
+                                ON CONFLICT DO NOTHING
+                                """,
+                                (execution_id, next_step.get('step') or next_step.get('name'), body_step, 'evaluated:direct', None)
+                            )
+                            await conn.commit()
+                except Exception:
+                    pass
+                return
+
+        if isinstance(next_step, dict) and 'end_loop' in next_step:
+            loop_name = next_step.get('end_loop')
+            end_step_name = next_step.get('step') or f"end_{loop_name}"
+            try:
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "SELECT 1 FROM noetl.event_log WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success') LIMIT 1",
+                            (execution_id, end_step_name)
+                        )
+                        done = await cur.fetchone()
+                        if done:
+                            return
+            except Exception:
+                pass
+
+            loop_cfg = None
+            for st in steps:
+                if isinstance(st, dict) and (st.get('step') == loop_name or st.get('name') == loop_name):
+                    loop_cfg = st; break
+            first_body = None
+            if isinstance(loop_cfg, dict):
+                nxt = loop_cfg.get('next') or []
+                if isinstance(nxt, list) and nxt:
+                    t = nxt[0]
+                    if isinstance(t, dict):
+                        first_body = t.get('step') or t.get('name') or t.get('task')
+                    else:
+                        first_body = str(t)
+            loop_results = []
+            try:
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        if first_body:
+                            await cur.execute(
+                                """
+                                SELECT node_id, output_result FROM noetl.event_log
+                                WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success')
+                                ORDER BY timestamp
+                                """,
+                                (execution_id, first_body)
+                            )
+                            rows = await cur.fetchall()
+                            for r in rows:
+                                data = r.get('output_result')
+                                try:
+                                    data = json.loads(data) if isinstance(data, str) else data
+                                except Exception:
+                                    pass
+                                loop_results.append({first_body: data})
+            except Exception:
+                pass
+
+            agg_result = {}
+            try:
+                result_map = next_step.get('result') or {}
+                agg_ctx = dict(base_ctx)
+                agg_ctx[f"{loop_name}_results"] = loop_results
+                agg_ctx["loop_results"] = loop_results
+                if isinstance(result_map, dict):
+                    for k, v in result_map.items():
+                        try:
+                            agg_result[k] = render_template(jenv, v, agg_ctx, strict_keys=False)
+                        except Exception:
+                            agg_result[k] = v
+            except Exception:
+                pass
+
+            try:
+                await get_event_service().emit({
+                    'execution_id': execution_id,
+                    'event_type': 'action_completed',
+                    'status': 'COMPLETED',
+                    'node_id': f'{execution_id}-step-{idx+1}',
+                    'node_name': end_step_name,
+                    'node_type': 'task',
+                    'result': agg_result or {'results': loop_results},
+                    'context': {'workload': workload},
+                })
+            except Exception:
+                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit end_loop aggregation", exc_info=True)
+            return
+
+        if last_step_name and isinstance(prev_cfg := steps[step_index[last_step_name]], dict) and 'loop' in prev_cfg:
+            loop_spec = prev_cfg.get('loop') or {}
+            iterator = (loop_spec.get('iterator') or 'item').strip()
+            items = []
+            try:
+                items = render_template(jenv, loop_spec.get('in', []), base_ctx, strict_keys=False)
+                if isinstance(items, str):
+                    try:
+                        items = json.loads(items)
+                    except Exception:
+                        items = [items]
+            except Exception:
+                items = []
+            if not isinstance(items, list):
+                items = []
+            filter_expr = loop_spec.get('filter')
+            def _passes(it):
+                if not filter_expr:
+                    return True
+                try:
+                    fctx = dict(base_ctx)
+                    fctx[iterator] = it
+                    val = render_template(jenv, filter_expr, fctx, strict_keys=False)
+                    return bool(val)
+                except Exception:
+                    return True
+            body_step_name = None
+            prev_nxt = prev_cfg.get('next') or []
+            if isinstance(prev_nxt, list) and prev_nxt:
+                t = prev_nxt[0]
+                body_step_name = (t.get('step') or t.get('name') or t.get('task')) if isinstance(t, dict) else str(t)
+            body_task_cfg = None
+            if isinstance(next_step, dict):
+                if 'call' in next_step:
+                    body_task_cfg = next_step['call']
+                elif 'action' in next_step:
+                    body_task_cfg = {"type": next_step.get('action'), **({k: v for k, v in next_step.items() if k not in {'action'}})}
+                elif 'step' in next_step:
+                    nm = next_step.get('step')
+                    if (next_step.get('type') or '').lower() == 'workbook':
+                        tname = next_step.get('task') or next_step.get('name') or nm
+                        base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
+                        if isinstance(base_task, dict) and base_task:
+                            body_task_cfg = dict(base_task)
+                            sw = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
+                            bw = base_task.get('with', {}) if isinstance(base_task.get('with'), dict) else {}
+                            mw = {**bw, **sw}
+                            if mw:
+                                body_task_cfg['with'] = mw
+                    else:
+                        body_task_cfg = {'type': 'python', 'name': nm, 'code': 'def main(**kwargs):\n    return {}'}
+                else:
+                    body_task_cfg = next_step
+            scheduled_any = False
+            for idx_it, item in enumerate(items):
+                if not _passes(item):
+                    continue
+                iter_node_id = f"{execution_id}-step-{idx+1}-iter-{idx_it}"
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute("SELECT 1 FROM noetl.queue WHERE execution_id=%s AND node_id=%s LIMIT 1", (execution_id, iter_node_id))
+                            if await cur.fetchone():
+                                continue
+                except Exception:
+                    pass
+                iter_work = dict(workload) if isinstance(workload, dict) else {}
+                iter_work[iterator] = item
+                try:
+                    rendered_work = render_template(jenv, iter_work, base_ctx, strict_keys=False)
+                except Exception:
+                    rendered_work = iter_work
+                try:
+                    if isinstance(rendered_work, dict):
+                        rendered_work['_loop'] = {
+                            'loop_id': f"{execution_id}:{next_step.get('step') or next_step.get('name')}",
+                            'loop_name': next_step.get('step') or next_step.get('name'),
+                            'iterator': iterator,
+                            'current_index': idx_it,
+                            'current_item': item,
+                            'items_count': len(items)
+                        }
+                except Exception:
+                    pass
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                RETURNING id
+                                """,
+                                (execution_id, iter_node_id, json.dumps(body_task_cfg), json.dumps(rendered_work), 0, 5, None)
+                            )
+                            await conn.commit()
+                    scheduled_any = True
+                except Exception:
+                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to enqueue loop iteration", exc_info=True)
+            if scheduled_any:
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                                VALUES (%s, %s, %s, %s, %s)
+                                ON CONFLICT DO NOTHING
+                                """,
+                                (execution_id, last_step_name, body_step_name or (next_step.get('step') if isinstance(next_step, dict) else None), 'evaluated:direct', None)
+                            )
+                            await conn.commit()
+                except Exception:
+                    pass
+                return
+
+        if isinstance(next_step, dict) and 'loop' in next_step:
+            try:
+                await get_event_service().emit({
+                    'execution_id': execution_id,
+                    'event_type': 'action_completed',
+                    'status': 'COMPLETED',
+                    'node_id': f'{execution_id}-step-{idx+1}',
+                    'node_name': next_step.get('step') or next_step.get('name') or f'step-{idx+1}',
+                    'node_type': 'task',
+                    'result': {'skipped': True, 'reason': 'empty_loop'},
+                    'context': {'workload': workload}
+                })
+            except Exception:
+                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit empty_loop completion", exc_info=True)
+            return
+
         if isinstance(next_step, dict):
             if 'call' in next_step:
                 task_cfg = next_step['call']
-            elif 'task' in next_step:
-                task_cfg = next_step['task']
             elif 'action' in next_step:
-                task_cfg = {'type': next_step.get('action'), 'config': next_step.get('config', {})}
+                task_cfg = {"type": next_step.get('action'), **({k: v for k, v in next_step.items() if k not in {'action'}})}
             elif 'step' in next_step:
-                # Handle workflow format with 'step' entries
                 step_name = next_step.get('step')
-                if step_name == 'start':
-                    # Start step is just a control step, create a simple task
-                    task_cfg = {'type': 'python', 'name': 'start', 'code': 'pass'}
-                elif step_name == 'end':
-                    # End step is just a control step
-                    task_cfg = {'type': 'python', 'name': 'end', 'code': 'pass'}
-                elif 'type' in next_step and next_step['type'] == 'workbook':
-                    # Handle workbook steps
-                    task_cfg = {
-                        'type': next_step.get('type', 'workbook'),
-                        'name': next_step.get('name', step_name),
-                        'with': next_step.get('with', {})
-                    }
+                if step_name in {'start', 'end'}:
+                    task_cfg = {'type': 'python', 'name': step_name, 'code': 'def main(**kwargs):\n    return {}'}
+                elif (next_step.get('type') or '').lower() == 'workbook':
+                    tname = next_step.get('task') or next_step.get('name') or step_name
+                    base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
+                    if not isinstance(base_task, dict) or not base_task:
+                        task_cfg = {'type': 'python', 'name': tname or step_name, 'code': 'def main(**kwargs):\n    return {}'}
+                    else:
+                        step_with = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
+                        merged_with = {}
+                        if isinstance(base_task.get('with'), dict):
+                            merged_with.update(base_task.get('with'))
+                        if isinstance(step_with, dict):
+                            merged_with.update(step_with)
+                        task_cfg = dict(base_task)
+                        task_cfg['name'] = tname or step_name
+                        if merged_with:
+                            try:
+                                mw = dict(merged_with)
+                                city_val = mw.get('city')
+                                if city_val is not None and not isinstance(city_val, (dict, list)):
+                                    if isinstance(city_val, str):
+                                        s = city_val.strip()
+                                        if s.startswith('{') and s.endswith('}'):
+                                            try:
+                                                import json as _json, ast as _ast
+                                                try:
+                                                    mw['city'] = _json.loads(s)
+                                                except Exception:
+                                                    mw['city'] = _ast.literal_eval(s)
+                                            except Exception:
+                                                pass
+                                        if not isinstance(mw.get('city'), dict):
+                                            w_cities = workload.get('cities') if isinstance(workload, dict) else None
+                                            if isinstance(w_cities, list) and w_cities:
+                                                first_city = w_cities[0]
+                                                if isinstance(first_city, dict):
+                                                    mw['city'] = first_city
+                                merged_with = mw
+                            except Exception:
+                                pass
+                            task_cfg['with'] = merged_with
                 else:
-                    # For other control steps, create a simple task
-                    task_cfg = {'type': 'python', 'name': step_name, 'code': 'pass'}
+                    task_cfg = {'type': 'python', 'name': step_name, 'code': 'def main(**kwargs):\n    return {}'}
             else:
                 task_cfg = next_step
         else:
             return
 
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Created task config: {task_cfg}")
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task config prepared: {task_cfg}")
 
-        # Pick a worker base_url from runtime table (first ready)
-        worker_base = None
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SELECT base_url FROM runtime WHERE component_type = 'worker_pool' AND status = 'ready' ORDER BY updated_at LIMIT 1")
-                r = await cur.fetchone()
-                if r:
-                    worker_base = r[0]
-
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Found worker_base: {worker_base}")
-
-        # For queue-based execution, we don't need a specific worker to be registered
-        # Any worker can pick up jobs from the queue
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueuing job for execution {execution_id}, step {next_idx+1}")
         try:
-            # Enqueue job for worker instead of direct HTTP call
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
-                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
-                        RETURNING id
-                        """,
-                        (
-                            execution_id,
-                            f"{execution_id}-step-{next_idx+1}",
-                            json.dumps(task_cfg),
-                            json.dumps(workload),
-                            0,  # priority
-                            5,  # max_attempts
-                            None,  # available_at (now)
+            try:
+                from uuid import uuid4
+                pre_ctx = dict(base_ctx)
+                pre_ctx['env'] = dict(os.environ)
+                pre_ctx['job'] = {'uuid': str(uuid4())}
+                rendered_workload = render_template(jenv, workload, pre_ctx, strict_keys=False)
+            except Exception:
+                rendered_workload = workload
+            node_id = f"{execution_id}-step-{idx+1}"
+            step_name_guard = None
+            if isinstance(next_step, dict):
+                step_name_guard = next_step.get('step') or next_step.get('name') or next_step.get('task')
+            try:
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "SELECT 1 FROM noetl.queue WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased') LIMIT 1",
+                            (execution_id, node_id)
                         )
-                    )
-                    job_row = await cur.fetchone()
-                    await conn.commit()
+                        q_row = await cur.fetchone()
+                        if q_row:
+                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Job already queued for {node_id}; skipping")
+                            return
+                        if step_name_guard:
+                            await cur.execute(
+                                """
+                                SELECT 1 FROM noetl.event_log 
+                                WHERE execution_id = %s AND node_name = %s AND lower(status) IN ('completed','success')
+                                LIMIT 1
+                                """,
+                                (execution_id, step_name_guard)
+                            )
+                            done = await cur.fetchone()
+                            if done:
+                                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Step {step_name_guard} already completed; skipping enqueue")
+                                return
+            except Exception:
+                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Guard check failed; proceeding", exc_info=True)
+            if 'transition_vars' in locals() and transition_vars:
+                try:
+                    rendered_vars = render_template(jenv, transition_vars, base_ctx, strict_keys=False)
+                    if isinstance(rendered_vars, dict) and isinstance(rendered_workload, dict):
+                        rendered_workload = {**rendered_workload, **rendered_vars}
+                except Exception:
+                    pass
 
-            logger.info(f"Enqueued job {job_row[0] if job_row else 'unknown'} for execution {execution_id}, step {next_idx+1}")
+            retries = 3
+            delay = 0.1
+            for attempt in range(1, retries + 1):
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                RETURNING id
+                                """,
+                                (
+                                    execution_id,
+                                    node_id,
+                                    json.dumps(task_cfg),
+                                    json.dumps(rendered_workload),
+                                    0,
+                                    5,
+                                    None,
+                                )
+                            )
+                            row = await cur.fetchone()
+                            try:
+                                if locals().get('last_step_name') and (locals().get('chosen_target_name') or step_name_guard):
+                                    to_name = (locals().get('chosen_target_name') or step_name_guard)
+                                    cond_val = 'evaluated:' + (locals().get('transition_cond_text') or 'direct')
+                                    await cur.execute(
+                                        """
+                                        INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                                        VALUES (%s, %s, %s, %s, %s)
+                                        ON CONFLICT DO NOTHING
+                                        """,
+                                        (
+                                            execution_id,
+                                            locals().get('last_step_name'),
+                                            to_name,
+                                            cond_val,
+                                            json.dumps(locals().get('transition_vars')) if locals().get('transition_vars') is not None else None
+                                        )
+                                    )
+                            except Exception:
+                                pass
+                            await conn.commit()
+                    break
+                except Exception as e:
+                    if 'deadlock detected' in str(e).lower() and attempt < retries:
+                        try:
+                            import asyncio as _a
+                            await _a.sleep(delay)
+                        except Exception:
+                            pass
+                        delay *= 2
+                        continue
+                    else:
+                        raise
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued job {row[0] if row else 'unknown'} for step {idx+1}")
         except Exception as e:
             logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Error enqueuing job: {e}")
-            import traceback
-            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Traceback: {traceback.format_exc()}")
-
+            import traceback as _tb
+            logger.error(_tb.format_exc())
         return
-
     except Exception:
-        # swallow errors in test helper
+        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Unhandled exception", exc_info=True)
         return

@@ -388,8 +388,10 @@ class QueueWorker:
     def _execute_job_sync(self, job: Dict[str, Any]) -> None:
         action_cfg_raw = job.get("action")
         raw_context = job.get("input_context") or {}
-        # Server-side rendering: call server to render input context; worker must not render locally
+        # Server-side rendering: call server to render input context and task config
+        # Worker must not render locally; prefer server-evaluated values
         context = raw_context
+        rendered_task = None
         try:
             payload = {
                 "execution_id": job.get("execution_id"),
@@ -409,11 +411,15 @@ class QueueWorker:
                 resp = client.post(f"{self.server_url}/context/render", json=payload)
                 if resp.status_code == 200:
                     rend = resp.json().get("rendered")
-                    if isinstance(rend, dict) and "work" in rend:
-                        context = rend.get("work") or raw_context
-                    else:
-                        # If server returned direct rendered object of work, accept it
-                        context = rend if isinstance(rend, dict) else raw_context
+                    # Expecting a dict { work: <ctx>, task: <resolved_task> }
+                    if isinstance(rend, dict):
+                        if "work" in rend:
+                            context = rend.get("work") or raw_context
+                        # Capture server-resolved task config when provided
+                        if "task" in rend:
+                            rendered_task = rend.get("task")
+                    elif isinstance(rend, dict):
+                        context = rend
                 else:
                     logger.warning(f"WORKER: server render failed {resp.status_code}: {resp.text}")
         except Exception:
@@ -422,26 +428,72 @@ class QueueWorker:
         execution_id = job.get("execution_id")
         node_id = job.get("node_id") or f"job_{job.get('id')}"
 
-        # Parse action config if it's a JSON string
-        if isinstance(action_cfg_raw, str):
-            try:
-                action_cfg = json.loads(action_cfg_raw)
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse action config for job {job.get('id')}: {action_cfg_raw}")
-                return
+        # If server returned a rendered task, use it; otherwise parse raw.
+        # Fallback: if rendered is not a dict, try parsing raw JSON.
+        action_cfg = None
+        if rendered_task is not None and isinstance(rendered_task, dict):
+            action_cfg = rendered_task
         else:
-            action_cfg = action_cfg_raw
+            # Parse action config if it's a JSON string
+            if isinstance(action_cfg_raw, str):
+                try:
+                    action_cfg = json.loads(action_cfg_raw)
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse action config for job {job.get('id')}: {action_cfg_raw}")
+                    return
+            elif isinstance(action_cfg_raw, dict):
+                action_cfg = action_cfg_raw
 
         if isinstance(action_cfg, dict):
             task_name = action_cfg.get("name") or node_id
 
             # Emit action_started event
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
+            # Safety: default unresolved templated 'with' values to sensible fallbacks
+            try:
+                if isinstance(action_cfg.get('with'), dict):
+                    safe_with = dict(action_cfg['with'])
+                    for k, v in list(safe_with.items()):
+                        if isinstance(v, str) and '{{' in v and '}}' in v:
+                            if k in ('alerts', 'items', 'districts'):
+                                safe_with[k] = '[]'
+                            elif k == 'city':
+                                # try to fall back to first city in context
+                                c = None
+                                try:
+                                    wl = context if isinstance(context, dict) else {}
+                                    cities = wl.get('cities') if isinstance(wl, dict) else None
+                                    if isinstance(cities, list) and cities and isinstance(cities[0], dict):
+                                        c = cities[0]
+                                except Exception:
+                                    c = None
+                                safe_with[k] = c or {"name": "Unknown"}
+                            elif k == 'district':
+                                safe_with[k] = {"name": "Unknown"}
+                    action_cfg['with'] = safe_with
+            except Exception:
+                pass
+
             try:
                 logger.debug(f"WORKER: evaluated input_context (server): {json.dumps(context, default=str)[:500]}")
             except Exception:
                 logger.debug("WORKER: evaluated input_context not JSON-serializable; using str()")
                 logger.debug(f"WORKER: evaluated input_context (str): {str(context)[:500]}")
+            loop_meta = None
+            try:
+                if isinstance(context, dict) and isinstance(context.get('_loop'), dict):
+                    lm = context.get('_loop')
+                    loop_meta = {
+                        'loop_id': lm.get('loop_id'),
+                        'loop_name': lm.get('loop_name'),
+                        'iterator': lm.get('iterator'),
+                        'current_index': lm.get('current_index'),
+                        'current_item': lm.get('current_item'),
+                        'items_count': lm.get('items_count'),
+                    }
+            except Exception:
+                loop_meta = None
+
             start_event = { 
                 "execution_id": execution_id,
                 "event_type": "action_started",
@@ -453,11 +505,16 @@ class QueueWorker:
                 "trace_component": {"worker_raw_context": raw_context},
                 "timestamp": datetime.datetime.now().isoformat(),
             }
+            if loop_meta:
+                start_event.update(loop_meta)
             report_event(start_event, self.server_url)
 
             try:
                 # Execute the task
-                result = execute_task(action_cfg, task_name, context, self._jinja)
+                task_with = action_cfg.get('with', {}) if isinstance(action_cfg, dict) else {}
+                if not isinstance(task_with, dict):
+                    task_with = {}
+                result = execute_task(action_cfg, task_name, context, self._jinja, task_with)
 
                 # Decide event type based on result status
                 res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
@@ -495,6 +552,8 @@ class QueueWorker:
                         "result": result,
                         "timestamp": datetime.datetime.now().isoformat(),
                     }
+                    if loop_meta:
+                        complete_event.update(loop_meta)
                     report_event(complete_event, self.server_url)
 
             except Exception as e:
@@ -517,10 +576,12 @@ class QueueWorker:
                         "result": {"error": str(e), "traceback": tb_text},
                         "timestamp": datetime.datetime.now().isoformat(),
                     }
+                    if loop_meta:
+                        error_event.update(loop_meta)
                     report_event(error_event, self.server_url)
                 raise  # Re-raise to let the worker handle job failure
         else:
-            logger.warning("Job %s has no actionable configuration", job.get("id"))
+            logger.warning("Job %s has no actionable configuration", str(job.get("id")))
 
     async def _execute_job(self, job: Dict[str, Any]) -> None:
         loop = asyncio.get_running_loop()

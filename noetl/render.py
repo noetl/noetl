@@ -163,7 +163,35 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 try:
                     return json.loads(rendered)
                 except json.JSONDecodeError:
+                    # Fallback to Python literal evaluation for non-JSON dict/list (single quotes)
+                    try:
+                        import ast
+                        lit = ast.literal_eval(rendered)
+                        return lit
+                    except Exception:
+                        pass
+
+            # Try to coerce simple scalars (bool/int/float) from strings
+            try:
+                import ast
+                if rendered.lower() in {"true","false"}:
+                    return rendered.lower() == "true"
+                if rendered.isdigit():
+                    return int(rendered)
+                # float-like
+                if any(ch in rendered for ch in ['.', 'e', 'E']) and rendered.replace('.','',1).replace('e','',1).replace('E','',1).lstrip('+-').replace('0','1').isdigit():
+                    return float(rendered)
+                # None/null-like
+                if rendered.strip().lower() in {"none","null"}:
+                    return None
+                # ast literal for tuples etc.
+                try:
+                    lit = ast.literal_eval(rendered)
+                    return lit
+                except Exception:
                     pass
+            except Exception:
+                pass
 
             if rendered.strip() == "":
                 return ""

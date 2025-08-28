@@ -38,7 +38,8 @@ def execute_python_task(
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Parameters - task_config={task_config}, task_with={task_with}")
 
     task_id = str(uuid.uuid4())
-    task_name = task_config.get('task', 'python_task')
+    # Prefer explicit 'name', then 'task'; fallback to generic
+    task_name = task_config.get('name') or task_config.get('task') or 'python_task'
     start_time = datetime.datetime.now()
 
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Generated task_id={task_id}")

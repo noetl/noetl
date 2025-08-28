@@ -109,11 +109,26 @@ async def complete_job(job_id: int):
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id", (job_id,))
+                await cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id", (job_id,))
                 row = await cur.fetchone()
                 await conn.commit()
         if not row:
             raise HTTPException(status_code=404, detail="job not found")
+        # schedule broker evaluation best-effort
+        try:
+            exec_id = row[1] if isinstance(row, tuple) else row.get("execution_id")
+            if exec_id:
+                import asyncio
+                from noetl.api.event import evaluate_broker_for_execution
+                try:
+                    if asyncio.get_event_loop().is_running():
+                        asyncio.create_task(evaluate_broker_for_execution(exec_id))
+                    else:
+                        await evaluate_broker_for_execution(exec_id)
+                except RuntimeError:
+                    await evaluate_broker_for_execution(exec_id)
+        except Exception:
+            logger.debug("Failed to schedule evaluation from complete_job", exc_info=True)
         return {"status": "ok", "id": job_id}
     except HTTPException:
         raise

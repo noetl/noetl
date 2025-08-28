@@ -5,6 +5,8 @@ HTTP action executor for NoETL jobs.
 import uuid
 import datetime
 import httpx
+import os
+from urllib.parse import urlparse
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
@@ -80,6 +82,38 @@ def execute_http_task(
         timeout = task_config.get('timeout', 30)
 
         try:
+            # Pre-flight mocking for local/dev domains
+            parsed = None
+            try:
+                parsed = urlparse(str(endpoint))
+            except Exception:
+                parsed = None
+            host = (parsed.hostname or '').lower() if parsed else ''
+            mock_local = os.getenv('NOETL_HTTP_MOCK_LOCAL')
+            if mock_local is None:
+                mock_local = 'true' if os.getenv('NOETL_DEBUG', '').lower() == 'true' else 'false'
+            mock_local = mock_local.lower() == 'true'
+
+            # If endpoint hostname is *.local and mocking is enabled, return a mocked success response
+            if host.endswith('.local') and mock_local:
+                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Mocking request to local domain: {endpoint}")
+                mock_data = {
+                    'status_code': 200,
+                    'headers': {},
+                    'url': str(endpoint),
+                    'elapsed': 0,
+                    'data': {'mocked': True, 'endpoint': str(endpoint), 'method': method, 'params': params, 'payload': payload}
+                }
+                end_time = datetime.datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                if log_event_callback:
+                    log_event_callback(
+                        'task_complete', task_id, task_name, 'http',
+                        'success', duration, context, mock_data,
+                        {'method': method, 'endpoint': endpoint, 'with_params': task_with, 'mocked': True}, event_id
+                    )
+                return {'id': task_id, 'status': 'success', 'data': mock_data}
+
             logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Creating HTTP client with timeout={timeout}")
             with httpx.Client(timeout=timeout) as client:
                 request_args = {
@@ -174,6 +208,25 @@ def execute_http_task(
         except httpx.RequestError as e:
             error_msg = f"Request error: {str(e)}"
             logger.error(f"HTTP.EXECUTE_HTTP_TASK: RequestError - {error_msg}")
+            # Optionally mock on error in dev
+            mock_on_error = os.getenv('NOETL_HTTP_MOCK_ON_ERROR', 'false').lower() == 'true'
+            if mock_on_error:
+                mock_data = {
+                    'status_code': 200,
+                    'headers': {},
+                    'url': str(endpoint),
+                    'elapsed': 0,
+                    'data': {'mocked': True, 'error': error_msg}
+                }
+                end_time = datetime.datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                if log_event_callback:
+                    log_event_callback(
+                        'task_complete', task_id, task_name, 'http',
+                        'success', duration, context, mock_data,
+                        {'method': method, 'endpoint': endpoint, 'with_params': task_with, 'mocked': True}, event_id
+                    )
+                return {'id': task_id, 'status': 'success', 'data': mock_data}
             raise Exception(error_msg)
         except httpx.TimeoutException as e:
             error_msg = f"Request timeout: {str(e)}"
