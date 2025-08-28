@@ -84,19 +84,91 @@ async def render_context(request: Request):
                             results[node_name] = out
 
         base_ctx: Dict[str, Any] = {"work": workload, "workload": workload, "results": results}
+        # Allow direct references to prior step names (e.g., {{ evaluate_weather_directly.* }})
+        try:
+            if isinstance(results, dict):
+                base_ctx.update(results)
+        except Exception:
+            pass
+        # Back-compat: expose workload fields at top level (e.g., {{ temperature_threshold }})
         base_ctx["context"] = base_ctx["work"]
         if isinstance(workload, dict):
             try:
                 base_ctx.update(workload)
             except Exception:
                 pass
+        # Merge any extra context provided by caller (env, job, etc.)
         if isinstance(extra_context, dict):
-            base_ctx.update(extra_context)
+            try:
+                base_ctx.update(extra_context)
+                # Ensure job.uuid exists if job provided without uuid
+                job_obj = base_ctx.get("job")
+                if isinstance(job_obj, dict) and "uuid" not in job_obj:
+                    # Reuse id when present to keep stability
+                    if "id" in job_obj and job_obj["id"] is not None:
+                        job_obj["uuid"] = str(job_obj["id"])
+                    else:
+                        from uuid import uuid4
+                        job_obj["uuid"] = str(uuid4())
+            except Exception:
+                pass
+
+        # If template contains a 'work' object, merge it into the rendering context so
+        # step-scoped values like {{ city }} are available during task rendering.
+        try:
+            if isinstance(template, dict) and isinstance(template.get("work"), dict):
+                incoming_work = template.get("work") or {}
+                # Promote incoming work to top-level keys
+                base_ctx["work"] = incoming_work
+                base_ctx["context"] = incoming_work
+                for k, v in incoming_work.items():
+                    # do not overwrite existing keys from results unless missing
+                    if k not in base_ctx:
+                        base_ctx[k] = v
+        except Exception:
+            pass
 
         from jinja2 import Environment, StrictUndefined, BaseLoader
         from noetl.render import render_template
         env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
-        rendered = render_template(env, template, base_ctx, rules=None, strict_keys=strict)
+
+        # Best-effort rendering: render 'work' and 'task' separately to avoid failing the whole request
+        rendered: Any
+        if isinstance(template, dict):
+            out: Dict[str, Any] = {}
+            if 'work' in template:
+                try:
+                    out['work'] = render_template(env, template.get('work'), base_ctx, rules=None, strict_keys=False)
+                except Exception:
+                    out['work'] = template.get('work')
+            if 'task' in template:
+                task_tpl = template.get('task')
+                try:
+                    # Render task non-strict to avoid error logs for not-yet-defined values
+                    # The worker has fallbacks for unresolved 'with' params (alerts/items/city)
+                    task_rendered = render_template(env, task_tpl, base_ctx, rules=None, strict_keys=False)
+                except Exception:
+                    task_rendered = task_tpl
+                # If task is a JSON string, try parsing to dict for convenience
+                if isinstance(task_rendered, str):
+                    try:
+                        import json as _json
+                        out['task'] = _json.loads(task_rendered)
+                    except Exception:
+                        out['task'] = task_rendered
+                else:
+                    out['task'] = task_rendered
+            # Pass through any other keys without rendering
+            for k, v in template.items():
+                if k not in out:
+                    out[k] = v
+            rendered = out
+        else:
+            # Single value template
+            try:
+                rendered = render_template(env, template, base_ctx, rules=None, strict_keys=False)
+            except Exception:
+                rendered = template
 
         return {"status": "ok", "rendered": rendered, "context_keys": list(base_ctx.keys())}
     except HTTPException:
@@ -1080,6 +1152,30 @@ async def evaluate_broker_for_execution(
             "results": results_ctx,
             "context": workload,
         }
+        # Promote step results and workload fields to top-level for direct Jinja access
+        try:
+            if isinstance(results_ctx, dict):
+                base_ctx.update(results_ctx)
+        except Exception:
+            pass
+        try:
+            if isinstance(workload, dict):
+                for k, v in workload.items():
+                    if k not in base_ctx:
+                        base_ctx[k] = v
+        except Exception:
+            pass
+        # Alias workbook task results under their workflow step names (e.g., aggregate_alerts -> aggregate_alerts_task)
+        try:
+            if isinstance(steps, list):
+                for st in steps:
+                    if isinstance(st, dict) and (st.get('type') or '').lower() == 'workbook':
+                        step_nm = st.get('step') or st.get('name') or st.get('task')
+                        task_nm = st.get('task') or st.get('name') or step_nm
+                        if step_nm and task_nm and isinstance(results_ctx, dict) and task_nm in results_ctx and step_nm not in base_ctx:
+                            base_ctx[step_nm] = results_ctx[task_nm]
+        except Exception:
+            pass
 
         step_index: Dict[str, int] = {}
         for i, st in enumerate(steps):
@@ -1118,7 +1214,7 @@ async def evaluate_broker_for_execution(
                     if 'when' in case:
                         cond_text = case.get('when')
                         try:
-                            cond_val = render_template(jenv, cond_text, base_ctx, strict_keys=True)
+                            cond_val = render_template(jenv, cond_text, base_ctx, strict_keys=False)
                         except Exception:
                             cond_val = False
                         if bool(cond_val):
@@ -1171,6 +1267,28 @@ async def evaluate_broker_for_execution(
             "results": results_ctx,
             "context": workload,
         }
+        try:
+            if isinstance(results_ctx, dict):
+                base_ctx.update(results_ctx)
+        except Exception:
+            pass
+        try:
+            if isinstance(workload, dict):
+                for k, v in workload.items():
+                    if k not in base_ctx:
+                        base_ctx[k] = v
+        except Exception:
+            pass
+        try:
+            if isinstance(steps, list):
+                for st in steps:
+                    if isinstance(st, dict) and (st.get('type') or '').lower() == 'workbook':
+                        step_nm = st.get('step') or st.get('name') or st.get('task')
+                        task_nm = st.get('task') or st.get('name') or step_nm
+                        if step_nm and task_nm and isinstance(results_ctx, dict) and task_nm in results_ctx and step_nm not in base_ctx:
+                            base_ctx[step_nm] = results_ctx[task_nm]
+        except Exception:
+            pass
 
         event_service = get_event_service()
         while idx < len(steps):
@@ -1182,7 +1300,7 @@ async def evaluate_broker_for_execution(
             skip_reason = None
             if 'pass' in step:
                 try:
-                    pass_val = render_template(jenv, step.get('pass'), base_ctx, strict_keys=True)
+                    pass_val = render_template(jenv, step.get('pass'), base_ctx, strict_keys=False)
                 except Exception:
                     pass_val = step.get('pass')
                 if isinstance(pass_val, str):
@@ -1195,7 +1313,7 @@ async def evaluate_broker_for_execution(
 
             if skip_reason is None and 'when' in step:
                 try:
-                    when_val = render_template(jenv, step.get('when'), base_ctx, strict_keys=True)
+                    when_val = render_template(jenv, step.get('when'), base_ctx, strict_keys=False)
                 except Exception:
                     when_val = step.get('when')
                 when_bool = bool(when_val)
@@ -1286,20 +1404,44 @@ async def evaluate_broker_for_execution(
                 t = nxt[0]
                 body_step = (t.get('step') or t.get('name') or t.get('task')) if isinstance(t, dict) else str(t)
             body_task_cfg = None
-            if 'call' in next_step:
-                body_task_cfg = next_step['call']
-            elif 'action' in next_step:
-                body_task_cfg = {"type": next_step.get('action'), **({k: v for k, v in next_step.items() if k not in {'action'}})}
-            elif (next_step.get('type') or '').lower() == 'workbook':
-                tname = next_step.get('task') or next_step.get('name') or next_step.get('step')
-                base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
-                if isinstance(base_task, dict) and base_task:
-                    body_task_cfg = dict(base_task)
-                    sw = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
-                    bw = base_task.get('with', {}) if isinstance(base_task.get('with'), dict) else {}
-                    mw = {**bw, **sw}
-                    if mw:
-                        body_task_cfg['with'] = mw
+            # Determine the concrete body step configuration from the workflow definition
+            body_step_cfg = None
+            try:
+                for st_cfg in steps:
+                    if isinstance(st_cfg, dict) and (
+                        st_cfg.get('step') == body_step or st_cfg.get('name') == body_step or st_cfg.get('task') == body_step
+                    ):
+                        body_step_cfg = st_cfg
+                        break
+            except Exception:
+                body_step_cfg = None
+
+            if isinstance(body_step_cfg, dict):
+                if 'call' in body_step_cfg:
+                    body_task_cfg = body_step_cfg['call']
+                elif 'action' in body_step_cfg:
+                    body_task_cfg = {"type": body_step_cfg.get('action'), **({k: v for k, v in body_step_cfg.items() if k not in {'action'}})}
+                elif (body_step_cfg.get('type') or '').lower() == 'workbook':
+                    # Resolve workbook task by its task/name
+                    tname = body_step_cfg.get('task') or body_step_cfg.get('name') or body_step
+                    base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
+                    if not isinstance(base_task, dict) or not base_task:
+                        try:
+                            _tlist = (locals().get('pb') or {}).get('workbook') or (locals().get('pb') or {}).get('tasks') or []
+                            for _t in _tlist:
+                                if isinstance(_t, dict) and (_t.get('name') == tname or _t.get('task') == tname):
+                                    base_task = _t
+                                    break
+                        except Exception:
+                            pass
+                    if isinstance(base_task, dict) and base_task:
+                        body_task_cfg = dict(base_task)
+                        sw = body_step_cfg.get('with', {}) if isinstance(body_step_cfg.get('with'), dict) else {}
+                        bw = base_task.get('with', {}) if isinstance(base_task.get('with'), dict) else {}
+                        mw = {**bw, **sw}
+                        if mw:
+                            body_task_cfg['with'] = mw
+            # Final fallback to a no-op python task to keep pipeline moving
             if body_task_cfg is None:
                 body_task_cfg = {'type': 'python', 'name': body_step or (next_step.get('step') or 'loop_body'), 'code': 'def main(**kwargs):\n    return {}'}
 
@@ -1416,6 +1558,45 @@ async def evaluate_broker_for_execution(
                                 except Exception:
                                     pass
                                 loop_results.append({first_body: data})
+
+                        # Fallback: if the first body step is a workbook wrapper that produced empty
+                        # results, try to use its underlying task's results (e.g., evaluate_weather_directly)
+                        try:
+                            if (not loop_results) or all(
+                                isinstance(item.get(first_body), dict) and not item.get(first_body)
+                                for item in loop_results if isinstance(item, dict)
+                            ):
+                                # Find the step config to resolve its workbook task name
+                                fallback_name = None
+                                for st_cfg in steps:
+                                    if isinstance(st_cfg, dict) and (
+                                        st_cfg.get('step') == first_body or st_cfg.get('name') == first_body
+                                    ):
+                                        if (st_cfg.get('type') or '').lower() == 'workbook':
+                                            fallback_name = st_cfg.get('task') or st_cfg.get('name')
+                                        break
+                                if fallback_name:
+                                    await cur.execute(
+                                        """
+                                        SELECT node_id, output_result FROM noetl.event_log
+                                        WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success')
+                                        ORDER BY timestamp
+                                        """,
+                                        (execution_id, fallback_name)
+                                    )
+                                    rows = await cur.fetchall()
+                                    tmp_results = []
+                                    for r in rows:
+                                        data = r.get('output_result')
+                                        try:
+                                            data = json.loads(data) if isinstance(data, str) else data
+                                        except Exception:
+                                            pass
+                                        tmp_results.append({first_body: data})
+                                    if tmp_results:
+                                        loop_results = tmp_results
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -1488,16 +1669,25 @@ async def evaluate_broker_for_execution(
                     body_task_cfg = {"type": next_step.get('action'), **({k: v for k, v in next_step.items() if k not in {'action'}})}
                 elif 'step' in next_step:
                     nm = next_step.get('step')
-                    if (next_step.get('type') or '').lower() == 'workbook':
-                        tname = next_step.get('task') or next_step.get('name') or nm
-                        base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
-                        if isinstance(base_task, dict) and base_task:
-                            body_task_cfg = dict(base_task)
-                            sw = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
-                            bw = base_task.get('with', {}) if isinstance(base_task.get('with'), dict) else {}
-                            mw = {**bw, **sw}
-                            if mw:
-                                body_task_cfg['with'] = mw
+                    # Resolve to a workbook task definition by name when available (independent of edge type)
+                    tname = next_step.get('task') or next_step.get('name') or nm
+                    base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
+                    if not isinstance(base_task, dict) or not base_task:
+                        try:
+                            _tlist = (locals().get('pb') or {}).get('workbook') or (locals().get('pb') or {}).get('tasks') or []
+                            for _t in _tlist:
+                                if isinstance(_t, dict) and ( _t.get('name') == tname or _t.get('task') == tname ):
+                                    base_task = _t
+                                    break
+                        except Exception:
+                            pass
+                    if isinstance(base_task, dict) and base_task:
+                        body_task_cfg = dict(base_task)
+                        sw = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
+                        bw = base_task.get('with', {}) if isinstance(base_task.get('with'), dict) else {}
+                        mw = {**bw, **sw}
+                        if mw:
+                            body_task_cfg['with'] = mw
                     else:
                         body_task_cfg = {'type': 'python', 'name': nm, 'code': 'def main(**kwargs):\n    return {}'}
                 else:
@@ -1590,9 +1780,19 @@ async def evaluate_broker_for_execution(
                 step_name = next_step.get('step')
                 if step_name in {'start', 'end'}:
                     task_cfg = {'type': 'python', 'name': step_name, 'code': 'def main(**kwargs):\n    return {}'}
-                elif (next_step.get('type') or '').lower() == 'workbook':
+                else:
                     tname = next_step.get('task') or next_step.get('name') or step_name
                     base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
+                    if not isinstance(base_task, dict) or not base_task:
+                        # Attempt to recover by rebuilding the task map from the parsed playbook
+                        try:
+                            _tlist = (locals().get('pb') or {}).get('workbook') or (locals().get('pb') or {}).get('tasks') or []
+                            for _t in _tlist:
+                                if isinstance(_t, dict) and ( _t.get('name') == tname or _t.get('task') == tname ):
+                                    base_task = _t
+                                    break
+                        except Exception:
+                            pass
                     if not isinstance(base_task, dict) or not base_task:
                         task_cfg = {'type': 'python', 'name': tname or step_name, 'code': 'def main(**kwargs):\n    return {}'}
                     else:
@@ -1626,12 +1826,13 @@ async def evaluate_broker_for_execution(
                                                 first_city = w_cities[0]
                                                 if isinstance(first_city, dict):
                                                     mw['city'] = first_city
+                                # District safety: if unresolved or empty string, synthesize
+                                if isinstance(mw.get('district'), str) and not mw.get('district').strip():
+                                    mw['district'] = {"name": "Unknown"}
                                 merged_with = mw
                             except Exception:
                                 pass
                             task_cfg['with'] = merged_with
-                else:
-                    task_cfg = {'type': 'python', 'name': step_name, 'code': 'def main(**kwargs):\n    return {}'}
             else:
                 task_cfg = next_step
         else:

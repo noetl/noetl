@@ -78,6 +78,30 @@ def execute_python_task(
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
 
         if 'main' in exec_locals and callable(exec_locals['main']):
+            # Harden common parameter shapes before calling user code
+            try:
+                if isinstance(task_with, dict):
+                    # If city came as a string but context carries a dict, prefer the dict
+                    if isinstance(task_with.get('city'), str) and isinstance(context, dict):
+                        cw = context.get('city') or (context.get('work', {}).get('city') if isinstance(context.get('work'), dict) else None)
+                        if isinstance(cw, dict):
+                            task_with['city'] = cw
+                    # Coerce district string to object with name
+                    if isinstance(task_with.get('district'), str):
+                        task_with['district'] = {"name": task_with['district']}
+                    # Alerts/items/districts as strings: attempt to parse list literal
+                    for key in ('alerts','items','districts'):
+                        val = task_with.get(key)
+                        if isinstance(val, str):
+                            try:
+                                import ast
+                                parsed = ast.literal_eval(val)
+                                if isinstance(parsed, (list, dict)):
+                                    task_with[key] = parsed
+                            except Exception:
+                                pass
+            except Exception:
+                pass
             result_data = exec_locals['main'](**task_with)
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

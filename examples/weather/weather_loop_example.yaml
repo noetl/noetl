@@ -418,7 +418,7 @@ workbook:
           duckdb_con.execute("LOAD postgres;")
 
           # Attach Postgres database using demo credentials instead of noetl
-          duckdb_con.execute("ATTACH 'dbname=demo_noetl user=demo password=demo host=database port=5432' AS postgres_db (TYPE postgres);")
+          duckdb_con.execute("ATTACH 'dbname=demo_noetl user=demo password=demo host=database port=30543' AS postgres_db (TYPE postgres);")
 
           # Postgres database alias name for queries
           pg_db = "postgres_db"

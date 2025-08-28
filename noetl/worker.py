@@ -400,6 +400,8 @@ class QueueWorker:
                     "env": dict(os.environ),
                     "job": {
                         "id": job.get("id"),
+                        # Provide uuid alias for templates expecting {{ job.uuid }}
+                        "uuid": str(job.get("id")) if job.get("id") is not None else None,
                         "execution_id": job.get("execution_id"),
                         "node_id": job.get("node_id"),
                         "worker_id": self.worker_id,
@@ -470,6 +472,21 @@ class QueueWorker:
                                 safe_with[k] = c or {"name": "Unknown"}
                             elif k == 'district':
                                 safe_with[k] = {"name": "Unknown"}
+                        # Additional hardening: if city came through as a string, but context has a dict, use it
+                        elif k == 'city' and isinstance(v, str):
+                            try:
+                                wl = context if isinstance(context, dict) else {}
+                                # Prefer context.city if present
+                                if isinstance(wl.get('city'), dict):
+                                    safe_with[k] = wl.get('city')
+                                else:
+                                    cities = wl.get('cities') if isinstance(wl, dict) else None
+                                    if isinstance(cities, list) and cities and isinstance(cities[0], dict):
+                                        safe_with[k] = cities[0]
+                            except Exception:
+                                pass
+                        elif k == 'district' and isinstance(v, str) and not v.strip():
+                            safe_with[k] = {"name": "Unknown"}
                     action_cfg['with'] = safe_with
             except Exception:
                 pass

@@ -155,7 +155,9 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                             return rendered
                     except Exception as fallback_error:
                         logger.error(f"Fallback rendering also failed: {fallback_error}")
-
+                
+                if strict_keys:
+                    raise
                 return template
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
@@ -209,13 +211,15 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 input_data={"template": template}
             )
             
+            if strict_keys:
+                raise
             return template
     elif isinstance(template, dict):
         if not template:
             return template
-        return {k: render_template(env, v, render_ctx, rules) for k, v in template.items()}
+        return {k: render_template(env, v, render_ctx, rules, strict_keys=strict_keys) for k, v in template.items()}
     elif isinstance(template, list):
-        return [render_template(env, item, render_ctx, rules) for item in template]
+        return [render_template(env, item, render_ctx, rules, strict_keys=strict_keys) for item in template]
 
     logger.debug(f"render_template: Returning template unchanged: {template}")
     return template
