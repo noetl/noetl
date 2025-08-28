@@ -498,6 +498,7 @@ class EventService:
             node_type = event_data.get("node_type", "event")
             duration = event_data.get("duration", 0.0)
             metadata = event_data.get("meta", {})
+            trace_component = event_data.get("trace_component")
             error = event_data.get("error")
             traceback_text = event_data.get("traceback")
             input_context_dict = event_data.get("context", {})
@@ -505,6 +506,7 @@ class EventService:
             input_context = json.dumps(input_context_dict)
             output_result = json.dumps(output_result_dict)
             metadata_str = json.dumps(metadata)
+            trace_component_str = json.dumps(trace_component) if trace_component is not None else None
 
             async with get_async_db_connection() as conn:
                   async with conn.cursor() as cursor:
@@ -526,6 +528,7 @@ class EventService:
                                   output_result = %s,
                                   metadata = %s,
                                   error = %s,
+                                  trace_component = %s::jsonb,
                                   timestamp = CURRENT_TIMESTAMP
                               WHERE execution_id = %s AND event_id = %s
                           """, (
@@ -536,6 +539,7 @@ class EventService:
                               output_result,
                               metadata_str,
                               error,
+                              trace_component_str,
                               execution_id,
                               event_id
                           ))
@@ -544,11 +548,12 @@ class EventService:
                               INSERT INTO event_log (
                                   execution_id, event_id, parent_event_id, timestamp, event_type,
                                   node_id, node_name, node_type, status, duration,
-                                  input_context, output_result, metadata, error
+                                  input_context, output_result, metadata, error, trace_component
                               ) VALUES (
                                   %s, %s, %s, CURRENT_TIMESTAMP, %s,
                                   %s, %s, %s, %s, %s,
-                                  %s, %s, %s, %s
+                                  %s, %s, %s, %s,
+                                  %s
                               )
                           """, (
                               execution_id,
@@ -563,7 +568,8 @@ class EventService:
                               input_context,
                               output_result,
                               metadata_str,
-                              error
+                              error,
+                              trace_component_str
                           ))
 
                       # Also persist error into error_log when applicable
@@ -577,7 +583,8 @@ class EventService:
                               # Use best-effort fields for error_log
                               err_type = event_type or 'action_error'
                               err_msg = str(error) if error is not None else 'Unknown error'
-                              ds.log_error(
+                              await ds.initialize_async()
+                              await ds.log_error_async(
                                   error_type=err_type,
                                   error_message=err_msg,
                                   execution_id=execution_id,

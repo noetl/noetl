@@ -30,7 +30,11 @@ async def get_db_schema() -> 'DatabaseSchema':
         await _db_schema.initialize_async()
     return _db_schema
 
-def log_error(
+import asyncio
+
+aSYNC_SENTINEL = object()
+
+async def log_error_async(
     error: Exception,
     error_type: str,
     template_string: str,
@@ -41,25 +45,16 @@ def log_error(
     step_name: str = None
 ) -> None:
     """
-    Log a template rendering error to the database.
-    Args:
-        error: The exception that occurred
-        error_type: The type of error (e.g., "template_rendering", "sql_template_rendering")
-        template_string: The template that failed to render
-        context_data: The context data used for rendering
-        input_data: Additional input data related to the error
-        execution_id: The ID of the execution where the error occurred
-        step_id: The ID of the step where the error occurred
-        step_name: The name of the step where the error occurred
+    Async: Log a template rendering error to the database.
     """
     try:
         logger.error(f"Error: {error_type} - {error}")
-        logger.error(f"Details: {template_string[:100]}...")
-        
+        if template_string is not None:
+            logger.error(f"Details: {str(template_string)[:100]}...")
         try:
-            db_schema = get_db_schema()
+            db_schema = await get_db_schema()
             stack_trace = ''.join(traceback.format_exc())
-            db_schema.log_error(
+            await db_schema.log_error_async(
                 error_type=error_type,
                 error_message=str(error),
                 execution_id=execution_id,
@@ -77,8 +72,50 @@ def log_error(
             logger.warning("This is expected during initialization or in test environments")
         except Exception as db_error:
             logger.error(f"Failed to log template error to database: {db_error}")
-    except Exception as log_error:
-        logger.error(f"Failed to log error: {log_error}")
+    except Exception as le:
+        logger.error(f"Failed to log error: {le}")
+
+# Backward-compatible sync wrapper that ensures DB I/O happens in async context
+def log_error(
+    error: Exception,
+    error_type: str,
+    template_string: str,
+    context_data: Dict,
+    input_data: Dict = None,
+    execution_id: str = None,
+    step_id: str = None,
+    step_name: str = None
+) -> None:
+    try:
+        loop = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            loop.create_task(log_error_async(
+                error=error,
+                error_type=error_type,
+                template_string=template_string,
+                context_data=context_data,
+                input_data=input_data,
+                execution_id=execution_id,
+                step_id=step_id,
+                step_name=step_name,
+            ))
+        else:
+            asyncio.run(log_error_async(
+                error=error,
+                error_type=error_type,
+                template_string=template_string,
+                context_data=context_data,
+                input_data=input_data,
+                execution_id=execution_id,
+                step_id=step_id,
+                step_name=step_name,
+            ))
+    except Exception as e:
+        logger.error(f"Failed to dispatch async error logging: {e}")
 
 
 

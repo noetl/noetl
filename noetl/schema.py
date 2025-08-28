@@ -1301,13 +1301,13 @@ class DatabaseSchema:
             output_data_json = json.dumps(make_serializable(output_data)) if output_data else None
             
             if not self.conn or self.conn.closed:
-                self.initialize_connection()
+                self.initialize_connection_sync()
                 
             with self.conn.cursor() as cursor:
                 try:
                     from noetl.common import get_snowflake_id
                 except Exception:
-                    get_snowflake_id = lambda: int(datetime.now().timestamp() * 1000)
+                    get_snowflake_id = lambda: int(datetime.datetime.now().timestamp() * 1000)
                 sf_id = get_snowflake_id()
                 cursor.execute(f"""
                     INSERT INTO {self.noetl_schema}.error_log (
@@ -1348,7 +1348,7 @@ class DatabaseSchema:
         """
         try:
             if not self.conn or self.conn.closed:
-                self.initialize_connection()
+                self.initialize_connection_sync()
                 
             with self.conn.cursor() as cursor:
                 cursor.execute(f"""
@@ -1393,7 +1393,7 @@ class DatabaseSchema:
         """
         try:
             if not self.conn or self.conn.closed:
-                self.initialize_connection()
+                self.initialize_connection_sync()
                 
             query = f"SELECT * FROM {self.noetl_schema}.error_log WHERE 1=1"
             params = []
@@ -1436,6 +1436,127 @@ class DatabaseSchema:
             logger.error(f"Failed to get errors from error_log table: {e}", exc_info=True)
             return []
     
+    async def log_error_async(self,
+                error_type: str,
+                error_message: str,
+                execution_id: str = None,
+                step_id: str = None,
+                step_name: str = None,
+                template_string: str = None,
+                context_data: Dict = None,
+                stack_trace: str = None,
+                input_data: Any = None,
+                output_data: Any = None,
+                severity: str = "error") -> Optional[int]:
+        try:
+            if stack_trace is None and error_type == "template_rendering":
+                stack_trace = ''.join(traceback.format_stack())
+
+            context_data_json = json.dumps(make_serializable(context_data)) if context_data else None
+            input_data_json = json.dumps(make_serializable(input_data)) if input_data else None
+            output_data_json = json.dumps(make_serializable(output_data)) if output_data else None
+
+            if not self.conn or getattr(self.conn, 'closed', False):
+                await self.initialize_connection()
+
+            async with self.conn.cursor() as cursor:
+                try:
+                    from noetl.common import get_snowflake_id
+                except Exception:
+                    get_snowflake_id = lambda: int(datetime.datetime.now().timestamp() * 1000)
+                sf_id = get_snowflake_id()
+                await cursor.execute(f"""
+                    INSERT INTO {self.noetl_schema}.error_log (
+                        error_id, error_type, error_message, execution_id, step_id, step_name,
+                        template_string, context_data, stack_trace, input_data, output_data, severity
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
+                    ) RETURNING error_id
+                """, (
+                    sf_id, error_type, error_message, execution_id, step_id, step_name,
+                    template_string, context_data_json, stack_trace, input_data_json, output_data_json, severity
+                ))
+                row = await cursor.fetchone()
+                await self.conn.commit()
+                error_id = row[0] if row else None
+                logger.info(f"Logged error to error_log table with error_id: {error_id}")
+                return error_id
+        except Exception as e:
+            logger.error(f"Failed to log error to error_log table (async): {e}", exc_info=True)
+            try:
+                if self.conn and not getattr(self.conn, 'autocommit', False):
+                    await self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    async def mark_error_resolved_async(self, error_id: int, resolution_notes: str = None) -> bool:
+        try:
+            if not self.conn or getattr(self.conn, 'closed', False):
+                await self.initialize_connection()
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(f"""
+                    UPDATE {self.noetl_schema}.error_log
+                    SET resolved = TRUE,
+                        resolution_notes = %s,
+                        resolution_timestamp = CURRENT_TIMESTAMP
+                    WHERE error_id = %s
+                """, (resolution_notes, error_id))
+                await self.conn.commit()
+                logger.info(f"Marked error with error_id {error_id} as resolved (async)")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to mark error as resolved (async): {e}", exc_info=True)
+            try:
+                if self.conn and not getattr(self.conn, 'autocommit', False):
+                    await self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    async def get_errors_async(self,
+                  error_type: str = None,
+                  execution_id: str = None,
+                  resolved: bool = None,
+                  limit: int = 100,
+                  offset: int = 0) -> List[Dict]:
+        try:
+            if not self.conn or getattr(self.conn, 'closed', False):
+                await self.initialize_connection()
+
+            query = f"SELECT * FROM {self.noetl_schema}.error_log WHERE 1=1"
+            params: list[Any] = []
+            if error_type:
+                query += " AND error_type = %s"
+                params.append(error_type)
+            if execution_id:
+                query += " AND execution_id = %s"
+                params.append(execution_id)
+            if resolved is not None:
+                query += " AND resolved = %s"
+                params.append(resolved)
+            query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            async with self.conn.cursor() as cursor:
+                await cursor.execute(query, params)
+                rows = await cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+                errors: List[Dict[str, Any]] = []
+                for row in rows:
+                    error_dict = dict(zip(columns, row))
+                    for field in ['context_data', 'input_data', 'output_data']:
+                        if error_dict.get(field) and isinstance(error_dict[field], str):
+                            try:
+                                error_dict[field] = json.loads(error_dict[field])
+                            except Exception:
+                                pass
+                    errors.append(error_dict)
+                return errors
+        except Exception as e:
+            logger.error(f"Failed to get errors from error_log table (async): {e}", exc_info=True)
+            return []
+
     async def close(self):
         if self.conn:
             try:

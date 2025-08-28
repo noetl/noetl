@@ -76,7 +76,7 @@ def execute_python_task(
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Python execution completed")
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
 
-        if 'main' in exec_locals:
+        if 'main' in exec_locals and callable(exec_locals['main']):
             result_data = exec_locals['main'](**task_with)
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

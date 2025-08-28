@@ -387,7 +387,38 @@ class QueueWorker:
     # ------------------------------------------------------------------
     def _execute_job_sync(self, job: Dict[str, Any]) -> None:
         action_cfg_raw = job.get("action")
-        context = job.get("input_context") or {}
+        raw_context = job.get("input_context") or {}
+        # Server-side rendering: call server to render input context; worker must not render locally
+        context = raw_context
+        try:
+            payload = {
+                "execution_id": job.get("execution_id"),
+                "template": {"work": raw_context, "task": action_cfg_raw},
+                "extra_context": {
+                    "env": dict(os.environ),
+                    "job": {
+                        "id": job.get("id"),
+                        "execution_id": job.get("execution_id"),
+                        "node_id": job.get("node_id"),
+                        "worker_id": self.worker_id,
+                    }
+                },
+                "strict": True
+            }
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(f"{self.server_url}/context/render", json=payload)
+                if resp.status_code == 200:
+                    rend = resp.json().get("rendered")
+                    if isinstance(rend, dict) and "work" in rend:
+                        context = rend.get("work") or raw_context
+                    else:
+                        # If server returned direct rendered object of work, accept it
+                        context = rend if isinstance(rend, dict) else raw_context
+                else:
+                    logger.warning(f"WORKER: server render failed {resp.status_code}: {resp.text}")
+        except Exception:
+            logger.debug("WORKER: server-side render exception; using raw context", exc_info=True)
+            context = raw_context
         execution_id = job.get("execution_id")
         node_id = job.get("node_id") or f"job_{job.get('id')}"
 
@@ -405,7 +436,13 @@ class QueueWorker:
             task_name = action_cfg.get("name") or node_id
 
             # Emit action_started event
-            start_event = {
+            logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
+            try:
+                logger.debug(f"WORKER: evaluated input_context (server): {json.dumps(context, default=str)[:500]}")
+            except Exception:
+                logger.debug("WORKER: evaluated input_context not JSON-serializable; using str()")
+                logger.debug(f"WORKER: evaluated input_context (str): {str(context)[:500]}")
+            start_event = { 
                 "execution_id": execution_id,
                 "event_type": "action_started",
                 "status": "RUNNING",
@@ -413,6 +450,7 @@ class QueueWorker:
                 "node_name": task_name,
                 "node_type": "task",
                 "context": {"work": context, "task": action_cfg},
+                "trace_component": {"worker_raw_context": raw_context},
                 "timestamp": datetime.datetime.now().isoformat(),
             }
             report_event(start_event, self.server_url)
@@ -423,6 +461,7 @@ class QueueWorker:
 
                 # Decide event type based on result status
                 res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
+                emitted_error = False
                 if isinstance(res_status, str) and res_status.lower() == 'error':
                     # Emit action_error and raise to fail the job
                     err_msg = (result or {}).get('error') if isinstance(result, dict) else 'Unknown error'
@@ -442,6 +481,7 @@ class QueueWorker:
                         "timestamp": datetime.datetime.now().isoformat(),
                     }
                     report_event(error_event, self.server_url)
+                    emitted_error = True
                     raise RuntimeError(err_msg or "Task returned error status")
                 else:
                     # Emit action_completed event
@@ -458,25 +498,26 @@ class QueueWorker:
                     report_event(complete_event, self.server_url)
 
             except Exception as e:
-                # Emit action_error event with traceback
+                # Emit action_error event with traceback (avoid duplicate if already emitted above)
                 try:
                     import traceback as _tb
                     tb_text = _tb.format_exc()
                 except Exception:
                     tb_text = str(e)
-                error_event = {
-                    "execution_id": execution_id,
-                    "event_type": "action_error",
-                    "status": "ERROR",
-                    "node_id": node_id,
-                    "node_name": task_name,
-                    "node_type": "task",
-                    "error": f"{type(e).__name__}: {str(e)}",
-                    "traceback": tb_text,
-                    "result": {"error": str(e), "traceback": tb_text},
-                    "timestamp": datetime.datetime.now().isoformat(),
-                }
-                report_event(error_event, self.server_url)
+                if not locals().get('emitted_error'):
+                    error_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_error",
+                        "status": "ERROR",
+                        "node_id": node_id,
+                        "node_name": task_name,
+                        "node_type": "task",
+                        "error": f"{type(e).__name__}: {str(e)}",
+                        "traceback": tb_text,
+                        "result": {"error": str(e), "traceback": tb_text},
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    report_event(error_event, self.server_url)
                 raise  # Re-raise to let the worker handle job failure
         else:
             logger.warning("Job %s has no actionable configuration", job.get("id"))

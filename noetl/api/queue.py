@@ -140,9 +140,9 @@ async def fail_job(job_id: int, request: Request):
                 max_attempts = row.get("max_attempts", 5)
 
                 if attempts >= max_attempts:
-                    await cur.execute("UPDATE noetl.queue SET status='dead', updated_at = now() WHERE id = %s RETURNING id", (job_id,))
+                    await cur.execute("UPDATE noetl.queue SET status='dead' WHERE id = %s RETURNING id", (job_id,))
                 else:
-                    await cur.execute("UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval, updated_at = now() WHERE id = %s RETURNING id", (str(retry_delay), job_id))
+                    await cur.execute("UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval WHERE id = %s RETURNING id", (str(retry_delay), job_id))
                 updated = await cur.fetchone()
                 await conn.commit()
         return {"status": "ok", "id": job_id}
@@ -222,31 +222,6 @@ async def queue_size(status: str = "queued"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/queue/enqueue")
-async def enqueue_job(request: Request):
-    body = await request.json()
-    execution_id = body.get("execution_id")
-    node_id = body.get("node_id")
-    action = body.get("action")
-    input_context = body.get("input_context", {})
-    priority = int(body.get("priority", 0))
-    max_attempts = int(body.get("max_attempts", 5))
-    available_at = body.get("available_at")
-    if not execution_id or not node_id or not action:
-        raise HTTPException(status_code=400, detail="execution_id, node_id, action required")
-    async with get_async_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
-                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
-                RETURNING id
-                """,
-                (execution_id, node_id, action, json.dumps(input_context), priority, max_attempts, available_at)
-            )
-            row = await cur.fetchone()
-            await conn.commit()
-    return {"job_id": row[0]}
 
 @router.post("/queue/reserve")
 async def reserve_job(request: Request):
@@ -286,31 +261,6 @@ async def reserve_job(request: Request):
         job["input_context"] = {}
     return {"job": job}
 
-@router.post("/queue/heartbeat")
-async def heartbeat_job(request: Request):
-    body = await request.json()
-    job_id = body.get("job_id")
-    worker_id = body.get("worker_id")
-    extend_seconds = body.get("extend_seconds")
-    if not job_id or not worker_id:
-        raise HTTPException(status_code=400, detail="job_id, worker_id required")
-    async with get_async_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT worker_id FROM noetl.queue WHERE id = %s", (job_id,))
-            row = await cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="job not found")
-            if row.get("worker_id") != worker_id:
-                raise HTTPException(status_code=409, detail="worker mismatch")
-            if extend_seconds:
-                await cur.execute(
-                    "UPDATE noetl.queue SET last_heartbeat=now(), lease_until = now() + (%s || ' seconds')::interval WHERE id = %s",
-                    (str(int(extend_seconds)), job_id)
-                )
-            else:
-                await cur.execute("UPDATE noetl.queue SET last_heartbeat=now() WHERE id = %s", (job_id,))
-            await conn.commit()
-    return {"ok": True}
 
 @router.post("/queue/ack")
 async def ack_job(request: Request):
