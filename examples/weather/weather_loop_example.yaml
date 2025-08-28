@@ -177,45 +177,36 @@ workflow:  # Workflow steps and transitions
     with:
       alerts: "{{ alerts }}"
     next:
-      - step: log_aggregate_result
+      - step: store_aggregate_result
         with:
-          summary: "{{ aggregate_alerts.summary }}"
+          summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
       - when: "{{ aggregate_alerts.global_alert }}"
         then:
           - step: global_alert_step
             with:
-              summary: "{{ aggregate_alerts.summary }}"
+              summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
       - else:
           - step: end
 
-  - step: log_aggregate_result
-    desc: "Log the aggregated alert summary"
-    type: workbook
-    name: log_aggregate_result_task
-    with:
-      summary: "{{ aggregate_alerts.summary }}"
-    next:
-      - step: store_aggregate_result
-        with:
-          summary: "{{ aggregate_alerts.summary }}"
+  # Log step removed; storage happens directly after aggregation
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
     type: workbook
     name: global_alert_task
     with:
-      summary: "{{ aggregate_alerts.summary }}"
+      summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
     next:
       - step: store_aggregate_result
         with:
           summary: "{{ aggregate_alerts.summary }}"
 
   - step: store_aggregate_result
-    desc: "Store the aggregated alert summary in DuckDB/Postgres"
+    desc: "Store the aggregated alert summary in Postgres (public schema)"
     type: workbook
-    name: store_aggregate_result_task_postgres_pipeline
+    name: store_aggregate_result_pg
     with:
-      summary: "{{ aggregate_alerts.summary }}"
+      summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
     next:
       - step: end
 
@@ -332,7 +323,7 @@ workbook:
   - name: alert_task
     type: http
     method: POST
-    endpoint: "http://alert-service.local/alerts"
+    endpoint: "https://postman-echo.com/post"
     payload:
       city: "{{ city }}"
       temperature: "{{ temperature }}"
@@ -341,15 +332,24 @@ workbook:
   - name: log_task
     type: http
     method: POST
-    endpoint: "http://log-service.local/logs"
+    endpoint: "https://httpbin.org/post"
     payload:
       city: "{{ city }}"
       message: "No alert needed."
 
   - name: get_city_districts
-    type: http
-    method: GET
-    endpoint: "http://geo-service.local/cities/{{ city }}/districts"
+    type: python
+    with:
+      city: "{{ city }}"
+    code: |
+      def main(city):
+          # Generate sample districts deterministically for testing
+          name = city.get('name') if isinstance(city, dict) else str(city)
+          return [
+              {"name": f"{name} Center"},
+              {"name": f"{name} North"},
+              {"name": f"{name} South"}
+          ]
 
   - name: process_district
     type: python
@@ -368,7 +368,7 @@ workbook:
   - name: aggregate_alerts_task
     type: python
     with:
-      alerts: "{{ alerts }}"
+      alerts: "{{ alerts if (alerts is defined and alerts) else (city_loop_results | map(attribute='fetch_and_evaluate') | list) }}"
     code: |
       def main(alerts):
           import ast
@@ -386,7 +386,7 @@ workbook:
   - name: global_alert_task
     type: http
     method: POST
-    endpoint: "http://alert-service.local/global-alerts"
+    endpoint: "https://postman-echo.com/post"
     payload:
       summary: "{{ summary }}"
       message: "Global weather alert triggered."
@@ -400,64 +400,24 @@ workbook:
           print(f"Aggregated weather alert summary: {summary}")
           return {"logged": True, "summary": summary}
 
-  - name: store_aggregate_result_task_postgres_pipeline
-    type: python
+  - name: store_aggregate_result_pg
+    type: postgres
     with:
-      summary: "{{ summary }}"
-    code: |
-      def main(summary):
-          import duckdb
-          import json
-          import time
-          import os
-          # Connect to a isolated DuckDB database for the Postgres pipeline
-          duckdb_con = duckdb.connect('data/noetldb/postgres_pipeline.duckdb')
+      db_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+      db_port: "{{ env.POSTGRES_PORT | default('30543') }}"
+      db_user: "{{ env.POSTGRES_USER | default('demo') }}"
+      db_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+      db_name: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+    command: |
+      -- Create target table in public schema
+      CREATE TABLE IF NOT EXISTS public.weather_alert_summary (
+        id BIGSERIAL PRIMARY KEY,
+        alert_cities TEXT,
+        alert_count INTEGER,
+        execution_id TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
 
-          # Install Postgres extension
-          duckdb_con.execute("INSTALL postgres;")
-          duckdb_con.execute("LOAD postgres;")
-
-          # Attach Postgres database using demo credentials instead of noetl
-          duckdb_con.execute("ATTACH 'dbname=demo_noetl user=demo password=demo host=database port=30543' AS postgres_db (TYPE postgres);")
-
-          # Postgres database alias name for queries
-          pg_db = "postgres_db"
-
-          # Store the data in the DuckDB database
-          duckdb_con.execute("""
-              CREATE TABLE IF NOT EXISTS weather_alert_summary (
-                  id BIGINT,
-                  alert_cities TEXT,
-                  alert_count INTEGER,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-              )
-          """)
-
-          # Insert the summary into DuckDB
-          alert_cities = json.dumps(summary.get('alert_cities', []))
-          alert_count = summary.get('count', 0)
-          row_id = int(time.time() * 1000)
-          duckdb_con.execute(
-              "INSERT INTO weather_alert_summary (id, alert_cities, alert_count) VALUES (?, ?, ?)",
-              (row_id, alert_cities, alert_count)
-          )
-
-          # Create weather_alert_summary table in Postgres
-          duckdb_con.execute(f"""
-              CREATE TABLE IF NOT EXISTS {pg_db}.weather_alert_summary (
-                  id BIGINT PRIMARY KEY,
-                  alert_cities TEXT,
-                  alert_count INTEGER,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-              )
-          """)
-
-          # Insert the data into Postgres using DuckDB's Postgres extension
-          duckdb_con.execute(f"""
-              INSERT INTO {pg_db}.weather_alert_summary (id, alert_cities, alert_count)
-              VALUES ({row_id}, '{alert_cities}', {alert_count})
-          """)
-
-          duckdb_con.close()
-
-          return {'status': 'stored_in_postgres', 'summary': summary}
+      -- Insert the aggregate summary
+      INSERT INTO public.weather_alert_summary (alert_cities, alert_count, execution_id)
+      VALUES ('{{ summary.alert_cities | join(",") if summary and (summary.alert_cities is defined) else '' }}', {{ summary.count if summary and (summary.count is defined) else 0 }}, '{{ job.uuid if job is defined else '' }}');

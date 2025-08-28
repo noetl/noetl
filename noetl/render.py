@@ -131,15 +131,20 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 logger.debug(f"render_template: Successfully rendered: {rendered}")
             except Exception as e:
                 error_msg = f"Template rendering error: {e}, template: {template}"
-                logger.error(error_msg)
-                
-                log_error(
-                    error=e,
-                    error_type="template_rendering",
-                    template_string=template,
-                    context_data=render_ctx,
-                    input_data={"template": template}
-                )
+                # Reduce noise: don't persist undefined-variable errors when not strict
+                msg = str(e)
+                if not strict_keys and ("is undefined" in msg or "UndefinedError" in msg):
+                    logger.debug(error_msg)
+                else:
+                    logger.error(error_msg)
+                    # Persist to DB for strict failures or non-undefined errors
+                    log_error(
+                        error=e,
+                        error_type="template_rendering",
+                        template_string=template,
+                        context_data=render_ctx,
+                        input_data={"template": template}
+                    )
                 
                 if "'dict object' has no attribute 'data'" in str(e) or "'dict object' has no attribute 'result'" in str(e):
                     try:

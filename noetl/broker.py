@@ -23,8 +23,10 @@ class Broker:
             server_url: The URL of the server to report events
         """
         self.agent = agent
-        # Normalize server URL to point to API base (ensure trailing /api)
+        # Normalize server URL: ensure scheme and '/api' suffix
         base_url = server_url or os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
+        if base_url and not (base_url.startswith('http://') or base_url.startswith('https://')):
+            base_url = 'http://' + base_url
         if base_url and not base_url.rstrip('/').endswith('/api'):
             base_url = base_url.rstrip('/') + '/api'
         self.server_url = base_url

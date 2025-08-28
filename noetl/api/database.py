@@ -2,6 +2,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from noetl.common import get_async_db_connection
+from psycopg.rows import dict_row
 
 router = APIRouter()
 
@@ -39,3 +40,27 @@ async def execute_postgres(request: Request, query: str | None = None, query_bas
         return JSONResponse(content={"status": "ok", "result": result})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@router.get("/postgres/weather_alert_summary/{execution_id}/last", response_class=JSONResponse)
+async def get_last_weather_alert_summary(request: Request, execution_id: str):
+    """
+    Return the last inserted row from public.weather_alert_summary for a given execution_id.
+    """
+    try:
+        async with get_async_db_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT id, alert_cities, alert_count, execution_id, created_at
+                    FROM public.weather_alert_summary
+                    WHERE execution_id = %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (execution_id,)
+                )
+                row = await cur.fetchone()
+                return JSONResponse(content={"status": "ok", "row": row})
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "error": str(e)}, status_code=500)

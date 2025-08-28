@@ -60,7 +60,7 @@ async def render_context(request: Request):
                 if row and row.get("input_context"):
                     try:
                         ctx_first = json.loads(row["input_context"]) if isinstance(row["input_context"], str) else row["input_context"]
-                        workload = (ctx_first or {}).get("workload") or {}
+                        workload = ctx_first or {}
                     except Exception:
                         workload = {}
 
@@ -83,11 +83,79 @@ async def render_context(request: Request):
                         except Exception:
                             results[node_name] = out
 
+        # Fetch playbook to get step aliases
+        playbook_path = None
+        playbook_version = None
+        steps = []
+        # The event_log table doesn't have playbook_path/version columns; derive from
+        # the earliest event's input_context/metadata like evaluate_broker_for_execution
+        async with get_async_db_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT input_context, metadata FROM event_log
+                    WHERE execution_id = %s
+                    ORDER BY timestamp ASC
+                    LIMIT 1
+                    """,
+                    (execution_id,)
+                )
+                row = await cur.fetchone()
+                if row:
+                    try:
+                        input_context = json.loads(row["input_context"]) if row.get("input_context") else {}
+                    except Exception:
+                        input_context = row.get("input_context") or {}
+                    try:
+                        metadata = json.loads(row["metadata"]) if row.get("metadata") else {}
+                    except Exception:
+                        metadata = row.get("metadata") or {}
+                    playbook_path = (input_context.get('path') or
+                                     (metadata.get('playbook_path') if isinstance(metadata, dict) else None) or
+                                     (metadata.get('resource_path') if isinstance(metadata, dict) else None))
+                    playbook_version = (input_context.get('version') or
+                                        (metadata.get('resource_version') if isinstance(metadata, dict) else None))
+
+        if playbook_path:
+            try:
+                catalog = get_catalog_service()
+                entry = await catalog.fetch_entry(playbook_path, playbook_version or '')
+                if entry:
+                    import yaml
+                    pb = yaml.safe_load(entry.get('content') or '') or {}
+                    workflow = pb.get('workflow', [])
+                    steps = pb.get('steps') or pb.get('tasks') or workflow
+            except Exception:
+                pass
+
         base_ctx: Dict[str, Any] = {"work": workload, "workload": workload, "results": results}
         # Allow direct references to prior step names (e.g., {{ evaluate_weather_directly.* }})
         try:
             if isinstance(results, dict):
                 base_ctx.update(results)
+                # Flatten common result wrappers to expose fields directly (e.g., evaluate_weather_directly.max_temp)
+                for _k, _v in list(results.items()):
+                    try:
+                        if isinstance(_v, dict) and 'data' in _v:
+                            base_ctx[_k] = _v.get('data')
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        # Alias workbook task results under their workflow step names (e.g., aggregate_alerts -> aggregate_alerts_task)
+        try:
+            if isinstance(steps, list):
+                for st in steps:
+                    if isinstance(st, dict) and (st.get('type') or '').lower() == 'workbook':
+                        step_nm = st.get('step') or st.get('name') or st.get('task')
+                        task_nm = st.get('task') or st.get('name') or step_nm
+                        if step_nm and task_nm and isinstance(results, dict) and task_nm in results and step_nm not in base_ctx:
+                            val = results[task_nm]
+                            # Flatten common wrapper {'status':..,'data':...} to expose fields directly
+                            if isinstance(val, dict) and 'data' in val:
+                                base_ctx[step_nm] = val.get('data')
+                            else:
+                                base_ctx[step_nm] = val
         except Exception:
             pass
         # Back-compat: expose workload fields at top level (e.g., {{ temperature_threshold }})
@@ -112,6 +180,13 @@ async def render_context(request: Request):
                         job_obj["uuid"] = str(uuid4())
             except Exception:
                 pass
+        # Provide a best-effort job uuid when none supplied
+        try:
+            if "job" not in base_ctx:
+                from uuid import uuid4
+                base_ctx["job"] = {"uuid": str(uuid4())}
+        except Exception:
+            pass
 
         # If template contains a 'work' object, merge it into the rendering context so
         # step-scoped values like {{ city }} are available during task rendering.
@@ -201,6 +276,74 @@ async def get_execution_data(
             status_code=500,
             detail=f"Error fetching execution data: {e}."
         )
+
+@router.get("/events/summary/{execution_id}", response_class=JSONResponse)
+async def get_execution_summary(request: Request, execution_id: str):
+    """
+    Summarize execution events by type and provide quick success/error/skipped counts.
+    """
+    try:
+        counts = {}
+        errors = []
+        skipped = 0
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT event_type, COUNT(*)
+                    FROM noetl.event_log
+                    WHERE execution_id = %s
+                    GROUP BY event_type
+                    """,
+                    (execution_id,)
+                )
+                rows = await cur.fetchall()
+                for et, c in rows:
+                    counts[str(et)] = int(c)
+
+            # Count skipped from action_completed payloads
+            async with conn.cursor() as cur2:
+                await cur2.execute(
+                    """
+                    SELECT output_result FROM noetl.event_log
+                    WHERE execution_id = %s AND event_type = 'action_completed'
+                    """,
+                    (execution_id,)
+                )
+                rows2 = await cur2.fetchall()
+                for (out,) in rows2:
+                    try:
+                        data = json.loads(out) if isinstance(out, str) else out
+                        if isinstance(data, dict) and data.get('skipped') is True:
+                            skipped += 1
+                    except Exception:
+                        pass
+
+            # Last 3 errors
+            async with get_async_db_connection() as conn2:
+                async with conn2.cursor(row_factory=dict_row) as cur3:
+                    await cur3.execute(
+                        """
+                        SELECT node_name, error, timestamp
+                        FROM noetl.event_log
+                        WHERE execution_id = %s AND event_type = 'action_error'
+                        ORDER BY timestamp DESC
+                        LIMIT 3
+                        """,
+                        (execution_id,)
+                    )
+                    errors = await cur3.fetchall() or []
+
+        summary = {
+            "execution_id": execution_id,
+            "counts": counts,
+            "skipped": skipped,
+            "errors": errors,
+        }
+        return JSONResponse(content={"status": "ok", "summary": summary})
+    except Exception as e:
+        logger.exception(f"Error summarizing execution: {e}.")
+        return JSONResponse(content={"status": "error", "error": str(e)}, status_code=500)
 
 @router.post("/events", response_class=JSONResponse)
 async def create_event(
@@ -1156,6 +1299,22 @@ async def evaluate_broker_for_execution(
         try:
             if isinstance(results_ctx, dict):
                 base_ctx.update(results_ctx)
+                # Flatten common wrappers (id/status/data) to expose fields directly
+                for _k, _v in list(results_ctx.items()):
+                    try:
+                        if isinstance(_v, dict) and 'data' in _v:
+                            base_ctx[_k] = _v.get('data')
+                    except Exception:
+                        pass
+                # Promote keys from control-step results (e.g., end_loop aggregations like alerts)
+                try:
+                    for _k, _v in list(results_ctx.items()):
+                        if isinstance(_v, dict):
+                            for _ck, _cv in _v.items():
+                                if _ck not in base_ctx:
+                                    base_ctx[_ck] = _cv
+                except Exception:
+                    pass
         except Exception:
             pass
         try:
@@ -1173,7 +1332,11 @@ async def evaluate_broker_for_execution(
                         step_nm = st.get('step') or st.get('name') or st.get('task')
                         task_nm = st.get('task') or st.get('name') or step_nm
                         if step_nm and task_nm and isinstance(results_ctx, dict) and task_nm in results_ctx and step_nm not in base_ctx:
-                            base_ctx[step_nm] = results_ctx[task_nm]
+                            val = results_ctx[task_nm]
+                            if isinstance(val, dict) and 'data' in val:
+                                base_ctx[step_nm] = val.get('data')
+                            else:
+                                base_ctx[step_nm] = val
         except Exception:
             pass
 

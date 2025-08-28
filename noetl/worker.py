@@ -18,6 +18,21 @@ from noetl.job import execute_task, execute_task_resolved, report_event
 logger = setup_logger(__name__, include_location=True)
 
 
+def _normalize_server_url(url: Optional[str], ensure_api: bool = True) -> str:
+    """Ensure server URL has http(s) scheme and optional '/api' suffix."""
+    try:
+        base = (url or "").strip()
+        if not base:
+            base = "http://localhost:8082"
+        if not (base.startswith("http://") or base.startswith("https://")):
+            base = "http://" + base
+        base = base.rstrip('/')
+        if ensure_api and not base.endswith('/api'):
+            base = base + '/api'
+        return base
+    except Exception:
+        return "http://localhost:8082/api" if ensure_api else "http://localhost:8082"
+
 def register_server_from_env() -> None:
     """Register this server instance with the server registry using environment variables.
     Required envs to trigger:
@@ -34,9 +49,7 @@ def register_server_from_env() -> None:
             host = os.environ.get("NOETL_HOST", "localhost").strip()
             port = os.environ.get("NOETL_PORT", "8082").strip()
             server_url = f"http://{host}:{port}"
-        
-        if not server_url.endswith('/api'):
-            server_url = server_url + '/api'
+        server_url = _normalize_server_url(server_url, ensure_api=True)
             
         name = os.environ.get("NOETL_SERVER_NAME") or f"server-{socket.gethostname()}"
         labels = os.environ.get("NOETL_SERVER_LABELS")
@@ -209,9 +222,7 @@ def deregister_worker_pool_from_env() -> None:
         if not name:
             logger.warning("No worker name found for deregistration")
             return
-        server_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
-        if not server_url.endswith('/api'):
-            server_url = server_url + '/api'
+        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
         logger.info(f"Attempting to deregister worker {name} via {server_url}")
 
         # First try HTTP deregistration if server is reachable
@@ -310,10 +321,7 @@ except Exception:
 
 
 def _get_server_url() -> str:
-    server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
-    if not server_url.endswith('/api'):
-        server_url = server_url + '/api'
-    return server_url
+    return _normalize_server_url(os.environ.get("NOETL_SERVER_URL", "http://localhost:8082"), ensure_api=True)
 
 
 # ------------------------------------------------------------------
@@ -331,11 +339,10 @@ class QueueWorker:
         thread_pool: Optional[ThreadPoolExecutor] = None,
         process_pool: Optional[ProcessPoolExecutor] = None,
     ) -> None:
-        self.server_url = (
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082")
-        ).rstrip("/")
-        if not self.server_url.endswith('/api'):
-            self.server_url = self.server_url + '/api'
+        self.server_url = _normalize_server_url(
+            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
+            ensure_api=True,
+        )
         self.worker_id = worker_id or os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
@@ -451,43 +458,10 @@ class QueueWorker:
 
             # Emit action_started event
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
-            # Safety: default unresolved templated 'with' values to sensible fallbacks
+            # Avoid playbook-specific coercions. Ensure 'with' is a dict, otherwise leave as-is.
             try:
-                if isinstance(action_cfg.get('with'), dict):
-                    safe_with = dict(action_cfg['with'])
-                    for k, v in list(safe_with.items()):
-                        if isinstance(v, str) and '{{' in v and '}}' in v:
-                            if k in ('alerts', 'items', 'districts'):
-                                safe_with[k] = '[]'
-                            elif k == 'city':
-                                # try to fall back to first city in context
-                                c = None
-                                try:
-                                    wl = context if isinstance(context, dict) else {}
-                                    cities = wl.get('cities') if isinstance(wl, dict) else None
-                                    if isinstance(cities, list) and cities and isinstance(cities[0], dict):
-                                        c = cities[0]
-                                except Exception:
-                                    c = None
-                                safe_with[k] = c or {"name": "Unknown"}
-                            elif k == 'district':
-                                safe_with[k] = {"name": "Unknown"}
-                        # Additional hardening: if city came through as a string, but context has a dict, use it
-                        elif k == 'city' and isinstance(v, str):
-                            try:
-                                wl = context if isinstance(context, dict) else {}
-                                # Prefer context.city if present
-                                if isinstance(wl.get('city'), dict):
-                                    safe_with[k] = wl.get('city')
-                                else:
-                                    cities = wl.get('cities') if isinstance(wl, dict) else None
-                                    if isinstance(cities, list) and cities and isinstance(cities[0], dict):
-                                        safe_with[k] = cities[0]
-                            except Exception:
-                                pass
-                        elif k == 'district' and isinstance(v, str) and not v.strip():
-                            safe_with[k] = {"name": "Unknown"}
-                    action_cfg['with'] = safe_with
+                if not isinstance(action_cfg.get('with'), dict):
+                    action_cfg['with'] = {}
             except Exception:
                 pass
 
@@ -531,7 +505,28 @@ class QueueWorker:
                 task_with = action_cfg.get('with', {}) if isinstance(action_cfg, dict) else {}
                 if not isinstance(task_with, dict):
                     task_with = {}
-                result = execute_task(action_cfg, task_name, context, self._jinja, task_with)
+                # Ensure env and job are available during local Jinja rendering
+                try:
+                    exec_ctx = dict(context) if isinstance(context, dict) else {}
+                except Exception:
+                    exec_ctx = {}
+                try:
+                    if 'env' not in exec_ctx:
+                        exec_ctx['env'] = dict(os.environ)
+                except Exception:
+                    pass
+                try:
+                    if 'job' not in exec_ctx:
+                        exec_ctx['job'] = {
+                            'id': job.get('id'),
+                            'uuid': str(job.get('id')) if job.get('id') is not None else None,
+                            'execution_id': job.get('execution_id'),
+                            'node_id': node_id,
+                            'worker_id': self.worker_id,
+                        }
+                except Exception:
+                    pass
+                result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
 
                 # Decide event type based on result status
                 res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
@@ -654,11 +649,10 @@ class ScalableQueueWorkerPool:
         worker_poll_interval: float = 1.0,
         max_processes: Optional[int] = None,
     ) -> None:
-        self.server_url = (
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082")
-        ).rstrip("/")
-        if not self.server_url.endswith('/api'):
-            self.server_url = self.server_url + '/api'
+        self.server_url = _normalize_server_url(
+            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
+            ensure_api=True,
+        )
         self.max_workers = max_workers or int(os.getenv("NOETL_MAX_WORKERS", "8"))
         self.check_interval = check_interval
         self.worker_poll_interval = worker_poll_interval

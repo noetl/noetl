@@ -86,6 +86,26 @@ def execute_python_task(
                         cw = context.get('city') or (context.get('work', {}).get('city') if isinstance(context.get('work'), dict) else None)
                         if isinstance(cw, dict):
                             task_with['city'] = cw
+                    # Threshold coercion: try to resolve from context or parse
+                    th = task_with.get('threshold')
+                    if isinstance(th, str):
+                        # Prefer context.temperature_threshold when available
+                        ctx_th = None
+                        try:
+                            if isinstance(context, dict):
+                                ctx_th = context.get('temperature_threshold')
+                                if ctx_th is None and isinstance(context.get('work'), dict):
+                                    ctx_th = context['work'].get('temperature_threshold')
+                        except Exception:
+                            ctx_th = None
+                        if ctx_th is not None:
+                            task_with['threshold'] = ctx_th
+                        else:
+                            try:
+                                task_with['threshold'] = float(th)
+                            except Exception:
+                                # Default sensible threshold if unresolved
+                                task_with['threshold'] = 0
                     # Coerce district string to object with name
                     if isinstance(task_with.get('district'), str):
                         task_with['district'] = {"name": task_with['district']}
