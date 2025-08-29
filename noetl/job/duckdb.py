@@ -121,7 +121,15 @@ def execute_duckdb_task(
         execution_id = context.get("execution_id") or context.get("jobId") or (context.get("job", {}).get("uuid") if isinstance(context.get("job"), dict) else None) or "default"
         if isinstance(execution_id, str) and ('{{' in execution_id or '}}' in execution_id):
             execution_id = render_template(jinja_env, execution_id, context)
-        duckdb_file = os.path.join(duckdb_data_dir, "noetldb", f"duckdb_{execution_id}.duckdb")
+        
+        custom_db_path = task_config.get('database')
+        if custom_db_path:
+            if '{{' in custom_db_path or '}}' in custom_db_path:
+                custom_db_path = render_template(jinja_env, custom_db_path, {**context, **task_with})
+            duckdb_file = custom_db_path
+        else:
+            duckdb_file = os.path.join(duckdb_data_dir, "noetldb", f"duckdb_{execution_id}.duckdb")
+        
         os.makedirs(os.path.dirname(duckdb_file), exist_ok=True)
         logger.info(f"Connecting to DuckDB at {duckdb_file} for execution {execution_id}")
         duckdb_con = duckdb.connect(duckdb_file)

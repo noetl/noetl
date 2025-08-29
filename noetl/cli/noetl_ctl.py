@@ -759,7 +759,100 @@ def manage_catalog(
         logger.info(f"  noetl catalog execute {resource_type} <resource name> --version 0.1.0")
         logger.info(f"  noetl catalog list {resource_type}")
         raise typer.Exit(code=1)
-@cli_app.command("execute")
+
+execute_app = typer.Typer()
+cli_app.add_typer(execute_app, name="execute")
+
+
+@execute_app.command("playbook")
+def execute_playbook_by_name(
+    playbook_id: str = typer.Argument(..., help="Playbook path/name as registered in catalog (e.g., examples/weather_loop_example)"),
+    host: str = typer.Option("localhost", "--host", help="NoETL server host"),
+    port: int = typer.Option(8082, "--port", "-p", help="NoETL server port"),
+    input: str = typer.Option(None, "--input", "-i", help="Path to JSON file with parameters"),
+    payload: str = typer.Option(None, "--payload", help="Inline JSON string with parameters"),
+    merge: bool = typer.Option(False, "--merge", help="Merge parameters into playbook workload on server"),
+):
+    """
+    Execute a registered playbook by name against a running NoETL server.
+
+    Equivalent REST call:
+      curl -X POST http://{host}:{port}/api/executions/run \
+           -H "Content-Type: application/json" \
+           -d '{"playbook_id": "<playbook_id>", "parameters": {...}}'
+
+    Example:
+      noetl execute playbook "examples/weather_loop_example" --host localhost --port 8082
+    """
+    try:
+        parameters = {}
+        if input:
+            try:
+                with open(input, "r") as f:
+                    parameters = json.load(f)
+                typer.echo(f"Loaded parameters from {input}")
+            except Exception as e:
+                typer.echo(f"Failed to read parameters file: {e}")
+                raise typer.Exit(code=1)
+        elif payload:
+            try:
+                parameters = json.loads(payload)
+                typer.echo("Parsed parameters from --payload")
+            except Exception as e:
+                typer.echo(f"Failed to parse --payload JSON: {e}")
+                raise typer.Exit(code=1)
+
+        url = f"http://{host}:{port}/api/executions/run"
+        body = {"playbook_id": playbook_id, "parameters": parameters, "merge": merge}
+        typer.echo(f"POST {url}")
+        resp = requests.post(url, json=body)
+        if resp.status_code >= 200 and resp.status_code < 300:
+            data = resp.json()
+            exec_id = data.get("id") or data.get("execution_id")
+            typer.echo("Execution started")
+            if exec_id:
+                typer.echo(f"execution_id: {exec_id}")
+            typer.echo(json.dumps(data, indent=2, cls=DateTimeEncoder))
+        else:
+            typer.echo(f"Server returned {resp.status_code}")
+            typer.echo(resp.text)
+            raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(code=1)
+
+
+@execute_app.command("status")
+def execution_status(
+    execution_id: str = typer.Argument(..., help="Execution ID to query"),
+    host: str = typer.Option("localhost", "--host", help="NoETL server host"),
+    port: int = typer.Option(8082, "--port", "-p", help="NoETL server port"),
+):
+    """
+    Fetch execution status and details from the server.
+
+    Equivalent REST call:
+      curl -X GET http://{host}:{port}/api/executions/{execution_id}
+
+    Example:
+      noetl execute status 219728589581451264
+    """
+    try:
+        url = f"http://{host}:{port}/api/executions/{execution_id}"
+        typer.echo(f"GET {url}")
+        resp = requests.get(url)
+        if resp.status_code == 200:
+            typer.echo(json.dumps(resp.json(), indent=2, cls=DateTimeEncoder))
+        else:
+            typer.echo(f"Server returned {resp.status_code}")
+            typer.echo(resp.text)
+            raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(code=1)
+
+
+@cli_app.command("execute-agent")
 def execute_playbook(
     playbook_path: str = typer.Argument(..., help="Path or name of the playbook to execute."),
     version: str = typer.Option(None, "--version", "-v", help="Version of the playbook."),
@@ -769,13 +862,7 @@ def execute_playbook(
     port: int | None = typer.Option(None, "--port", help="NoETL server port."),
 ):
     """
-    Execute a NoETL playbook via the REST API.
-
-    This command sends a request to the NoETL server to execute the specified playbook.
-
-    Examples:
-        noetl execute my_playbook_path.yaml --version 1.0 --input payload.json
-        noetl execute my_playbook --host 192.168.1.100 --port 8081
+    Execute a NoETL playbook via the legacy /api/agent/execute endpoint.
     """
 
     try:
