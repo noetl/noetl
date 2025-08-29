@@ -10,8 +10,31 @@ from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
 from noetl.logger import setup_logger
+import ast
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _coerce_param(value: Any) -> Any:
+    """Best-effort coercion of stringified literals into Python objects.
+    - Parses dict/list literals using ast.literal_eval to handle single quotes.
+    - Falls back to JSON when appropriate
+    - Leaves other types as-is
+    """
+    try:
+        if isinstance(value, str):
+            s = value.strip()
+            if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
+                try:
+                    return json.loads(s)
+                except Exception:
+                    try:
+                        return ast.literal_eval(s)
+                    except Exception:
+                        return value
+        return value
+    except Exception:
+        return value
 
 
 def execute_python_task(
@@ -78,7 +101,14 @@ def execute_python_task(
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
 
         if 'main' in exec_locals and callable(exec_locals['main']):
-            result_data = exec_locals['main'](**task_with)
+            # Normalize parameters from 'with' — server may render objects as strings
+            normalized_with = {}
+            try:
+                for k, v in (task_with or {}).items():
+                    normalized_with[k] = _coerce_param(v)
+            except Exception:
+                normalized_with = task_with or {}
+            result_data = exec_locals['main'](**normalized_with)
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
