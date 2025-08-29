@@ -23,7 +23,7 @@ workload:  # Input parameters section accessible throughout the workflow
       lat: 52.52
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
-  temperature_threshold: 22  # Threshold for alerting on temperature
+  temperature_threshold: 12  # Threshold for alerting on temperature
 
 workflow:  # Workflow steps and transitions
   - step: start  # Entry point of the workflow
@@ -358,9 +358,14 @@ workbook:
       district: "{{ district }}"
     code: |
       def main(city, district):
+          # Coerce string/empty inputs into dicts for robustness
+          if not isinstance(city, dict):
+              city = {"name": (city if isinstance(city, str) and city.strip() else "Unknown")}
+          if not isinstance(district, dict):
+              district = {"name": (district if isinstance(district, str) and district.strip() else "Unknown")}
           return {
-              "city": city["name"],
-              "district": district["name"],
+              "city": city.get("name"),
+              "district": district.get("name"),
               "processed": True,
               "timestamp": "2024-01-01T12:00:00Z"
           }
@@ -371,17 +376,36 @@ workbook:
       alerts: "{{ alerts if (alerts is defined and alerts) else (city_loop_results | map(attribute='fetch_and_evaluate') | list) }}"
     code: |
       def main(alerts):
-          import ast
-          if isinstance(alerts, str):
-              alerts = ast.literal_eval(alerts)
+          import ast, json
+          # Normalize alerts input into a list of dicts
+          if alerts is None:
+              alerts = []
+          elif isinstance(alerts, str):
+              s = alerts.strip()
+              if not s:
+                  alerts = []
+              else:
+                  try:
+                      alerts = json.loads(s)
+                  except Exception:
+                      try:
+                          alerts = ast.literal_eval(s)
+                      except Exception:
+                          alerts = []
+          # Coerce single dict to list
+          if isinstance(alerts, dict):
+              alerts = [alerts]
+          # Ensure list
+          if not isinstance(alerts, list):
+              alerts = []
+
           # Aggregate alerts and determine if a global alert is needed
-          alert_cities = [a for a in alerts if a and a.get('alert')]
-          global_alert = bool(alert_cities)
+          alert_items = [a for a in alerts if isinstance(a, dict) and a.get('alert')]
           summary = {
-              "alert_cities": [a["city"] for a in alert_cities],
-              "count": len(alert_cities)
+              "alert_cities": [a.get("city") for a in alert_items],
+              "count": len(alert_items)
           }
-          return {"global_alert": global_alert, "summary": summary}
+          return {"global_alert": bool(alert_items), "summary": summary}
 
   - name: global_alert_task
     type: http
@@ -418,6 +442,10 @@ workbook:
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- Insert the aggregate summary
+      -- Insert the aggregate summary (robust to summary being non-mapping)
       INSERT INTO public.weather_alert_summary (alert_cities, alert_count, execution_id)
-      VALUES ('{{ summary.alert_cities | join(",") if summary and (summary.alert_cities is defined) else '' }}', {{ summary.count if summary and (summary.count is defined) else 0 }}, '{{ job.uuid if job is defined else '' }}');
+      VALUES (
+        '{{ (summary.alert_cities | join(',')) if (summary is mapping and (summary.alert_cities is defined)) else '' }}',
+        {{ (summary.count | int) if (summary is mapping and (summary.count is defined)) else 0 }},
+        '{{ execution_id if execution_id is defined else (job.execution_id if (job is mapping and (job.execution_id is defined)) else (job.uuid if job is defined else '')) }}'
+      );
