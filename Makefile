@@ -24,54 +24,58 @@ KIND_CLUSTER ?= noetl
 .PHONY: help
 help:
 	@echo "Commands:"
-	@echo "  make build                 Build containers"
-	@echo "  make rebuild               Rebuild containers"
-	@echo "  make up                    Start containers"
-	@echo "  make down                  Stop containers"
-	@echo "  make restart               Restart services"
-	@echo "  make logs                  View logs"
-	@echo "  make clean                 Clean up"
-	@echo ""
-	@echo "Local Runtime (env + logs):"
-	@echo "  make server-start          Start NoETL server using .env.server or .env (logs/logs/server.log)"
-	@echo "  make server-stop           Stop NoETL server"
-	@echo "  make server-status         Check NoETL server status and port"
-	@echo "  make worker-start          Start NoETL worker using .env.worker or .env (logs/worker.log)"
-	@echo "  make worker-stop           Stop NoETL workers (supports multiple instances)"
+	@echo "  make build                 			Build containers"
+	@echo "  make rebuild               			Rebuild containers"
+	@echo "  make up                    			Start containers"
+	@echo "  make down                  			Stop containers"
+	@echo "  make restart               			Restart services"
+	@echo "  make logs                  			View logs"
+	@echo "  make clean                 			Clean up"
 	@echo ""
 	@echo "Development Commands:"
-	@echo "  make install-uv            Install uv package manager"
-	@echo "  make create-venv           Create virtual environment"
-	@echo "  make install-dev           Install development dependencies"
-	@echo "  make install               Install package"
-	@echo "  make run                   Run the server"
+	@echo "  make install-uv            			Install uv package manager"
+	@echo "  make create-venv           			Create virtual environment"
+	@echo "  make install-dev 			        Install development dependencies"
+	@echo "  make install               			Install package"
+	@echo "  make run                   			Run the server"
 	@echo ""
 	@echo "Test Commands:"
-	@echo "  make test-setup      Set up test environment (create required directories)"
-	@echo "  make test            Run all tests with coverage"
-	@echo "  make test-server-api Run server API tests"
-	@echo "  make test-server-api-unit Run server API unit tests"
-	@echo "  make test-parquet-export Run Parquet export tests"
-	@echo "  make test-keyval     Run key-value tests"
-	@echo "  make test-payload    Run payload tests"
-	@echo "  make test-playbook   Run playbook tests"
+	@echo "  make test-setup      					Set up test environment (create required directories)"
+	@echo "  make test            					Run all tests with coverage"
+	@echo "  make test-server-api 					Run server API tests"
+	@echo "  make test-server-api-unit				Run server API unit tests"
+	@echo "  make test-parquet-export 				Run Parquet export tests"
+	@echo "  make test-keyval     					Run key-value tests"
+	@echo "  make test-payload    					Run payload tests"
+	@echo "  make test-playbook   					Run playbook tests"
 	@echo ""
 	@echo "Kubernetes Commands:"
-	@echo "  make k8s-kind-create          Create kind cluster (or use existing) and set kubectl context"
-	@echo "  make k8s-kind-delete          Delete kind cluster"
-	@echo "  make k8s-kind-recreate        Recreate kind cluster (delete + create)"
-	@echo "  make k8s-reset                Recreate kind cluster and apply Postgres (delete + create + apply)"
-	@echo "  make k8s-postgres-apply       Apply ONLY Postgres manifests (NAMESPACE=ns)"
-	@echo "  make k8s-postgres-delete      Delete ONLY Postgres manifests (NAMESPACE=ns)"
-	@echo "  make k8s-postgres-recreate    Recreate ONLY Postgres (delete + apply) in namespace"
-	@echo "  make docker-build-postgres    Build postgres-noetl:latest Docker image locally"
-	@echo "  make k8s-load-postgres-image  Load postgres-noetl:latest into kind cluster ($(KIND_CLUSTER))"
-	@echo "  make k8s-postgres-deploy      Build + load image into kind + apply Postgres manifests"
-	@echo "  make k8s-postgres-port-forward     Set up port forwarding from localhost:30543 to Postgres (interactive)"
-	@echo "  make k8s-postgres-port-forward-bg  Set up background port forwarding from localhost:30543 to Postgres"
-	@echo "  make k8s-postgres-port-forward-stop Stop background port forwarding"
-	@echo "  make k8s-dev-setup               Complete development setup: deploy Postgres + start port forwarding"
-	@echo "  make postgres-reset-schema    Recreates noetl schema only in running postgres database instance"
+	@echo "  make k8s-kind-create          			Create kind cluster (or use existing) and set kubectl context"
+	@echo "  make k8s-kind-delete          			Delete kind cluster"
+	@echo "  make k8s-kind-recreate        			Recreate kind cluster (delete + create)"
+	@echo "  make k8s-reset                			Recreate kind cluster and apply Postgres (delete + create + apply)"
+	@echo "  make k8s-postgres-apply       			Apply ONLY Postgres manifests (NAMESPACE=ns)"
+	@echo "  make k8s-postgres-delete      			Delete ONLY Postgres manifests (NAMESPACE=ns)"
+	@echo "  make k8s-postgres-recreate    			Recreate ONLY Postgres (delete + apply) in namespace"
+	@echo "  make docker-build-postgres    			Build postgres-noetl:latest Docker image locally"
+	@echo "  make k8s-load-postgres-image  			Load postgres-noetl:latest into kind cluster ($(KIND_CLUSTER))"
+	@echo "  make k8s-postgres-deploy      			Build + load image into kind + apply Postgres manifests"
+	@echo "  make k8s-postgres-port-forward			Set up port forwarding from localhost:30543 to Postgres (interactive)"
+	@echo "  make k8s-postgres-port-forward-bg			Set up background port forwarding from localhost:30543 to Postgres"
+	@echo "  make k8s-postgres-port-forward-stop		 	Stop background port forwarding"
+	@echo "  make k8s-dev-setup              	 		Complete development setup: deploy Postgres + start port forwarding"
+	@echo "  make postgres-reset-schema    			Recreates noetl schema only in running postgres database instance"
+	@echo ""
+	@echo "Local Runtime (env + logs):"
+	@echo "  make start-server          			Start NoETL server using .env.server or .env (logs/logs/server.log)"
+	@echo "  make stop-server           			Stop NoETL server"
+	@echo "  make server-status         			Check NoETL server status and port"
+	@echo "  make worker-start          			Start NoETL worker using .env.worker or .env (logs/worker.log)"
+	@echo "  make worker-stop           			Stop NoETL workers (supports multiple instances)"
+	@echo "  make clean-logs           			Remove NoETL log files"
+	@echo "  make noetl-start      			Start NoETL runtime"
+	@echo "  make noetl-stop      				Stop NoETL runtime"
+	@echo "  make noetl-restart      			Restart NoETL runtime"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -195,11 +199,11 @@ ui:
 	cd ui-src && npm install && VITE_API_BASE_URL=$$VITE_API_BASE_URL npm run dev
 
 
-.PHONY: server-start server-stop worker-start worker-stop
+.PHONY: start-server stop-server worker-start worker-stop
 
-.PHONY: server-start server-stop
+.PHONY: start-server stop-server noetl-start noetl-stop
 
-server-start:
+start-server:
 	@mkdir -p logs
 	@set -a; \
 	if [ -f .env ]; then . .env; fi; \
@@ -228,7 +232,7 @@ server-start:
 	  exit 1; \
 	fi
 
-server-stop:
+stop-server:
 	@if [ -f ~/.noetl/noetl_server.pid ]; then \
 	  pid=$$(cat ~/.noetl/noetl_server.pid); \
 	  kill -TERM $$pid 2>/dev/null || true; \
@@ -257,10 +261,6 @@ server-status:
 	  fi; \
 	fi
 
-
-
-
-
 worker-start:
 	@mkdir -p logs
 	@/bin/bash -lc ' \
@@ -283,6 +283,57 @@ worker-start:
 worker-stop:
 	@echo "Stopping NoETL workers..."
 	-@noetl worker stop || true
+
+
+clean-logs:
+	@rm -rf logs/*
+
+register-examples:
+	bin/register_examples.sh 8082
+
+start-workers:
+	bin/start_workers.sh
+
+stop-workers:
+	bin/stop_workers.sh
+
+noetl-start: clean-logs start-server start-workers register-examples
+
+noetl-stop: stop-workers stop-server
+
+noetl-restart: noetl-stop noetl-start
+
+# Generate a DAG diagram using the NoETL CLI
+.PHONY: diagram
+# Usage examples:
+#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml
+#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml FORMAT=svg
+#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml OUTPUT=playbook.puml
+#   make diagram PLAYBOOK=playbook.puml FORMAT=svg OUTPUT=playbook.svg
+# Variables:
+#   PLAYBOOK - path to .yaml/.yml or .puml file (required)
+#   FORMAT   - plantuml (default), svg, or png
+#   OUTPUT   - output file path; if omitted, defaults to <PLAYBOOK base>.<ext>
+
+diagram:
+	@if [ -z "$(PLAYBOOK)" ]; then \
+	  echo "Usage: make diagram PLAYBOOK=path/to/playbook.(yaml|yml|puml) [FORMAT=plantuml|svg|png] [OUTPUT=/path/to/out.ext]"; \
+	  exit 1; \
+	fi
+	@fmt="$(FORMAT)"; \
+	if [ -z "$$fmt" ]; then fmt="plantuml"; fi; \
+	out="$(OUTPUT)"; \
+	if [ -z "$$out" ]; then \
+	  base="$$(/bin/echo $(PLAYBOOK) | sed -E 's/\.(yaml|yml|json|puml|plantuml)$$//')"; \
+	  if [ "$$fmt" = "plantuml" ]; then ext="puml"; else ext="$$fmt"; fi; \
+	  out="$$base.$$ext"; \
+	  echo "No OUTPUT provided; defaulting to $$out"; \
+	fi; \
+	cli="$(VENV)/bin/noetl"; \
+	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	echo "Generating diagram from $(PLAYBOOK) -> $$out (format=$$fmt) using '$$cli'"; \
+	"$$cli" diagram "$(PLAYBOOK)" -f "$$fmt" -o "$$out"
+
 
 # === kind Kubernetes cluster management ===
 .PHONY: k8s-kind-create k8s-kind-delete k8s-kind-recreate k8s-context
@@ -397,7 +448,7 @@ k8s-dev-setup: k8s-postgres-deploy k8s-postgres-port-forward-bg
 	@echo "Kubernetes development environment is ready!"
 	@echo "  - Postgres is running in namespace $(NAMESPACE)"
 	@echo "  - Port forwarding is active: localhost:30543 -> Postgres:5432"
-	@echo "  - You can now run 'make server-start' to start the NoETL server"
+	@echo "  - You can now run 'make start-server' to start the NoETL server"
 	@echo "  - Run 'make k8s-postgres-port-forward-stop' to stop port forwarding"
 
 k8s-postgres-delete:
@@ -433,38 +484,6 @@ postgres-reset-schema:
 		fi; \
 	fi
 
-# Generate a DAG diagram using the NoETL CLI
-.PHONY: diagram
-# Usage examples:
-#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml
-#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml FORMAT=svg
-#   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml OUTPUT=playbook.puml
-#   make diagram PLAYBOOK=playbook.puml FORMAT=svg OUTPUT=playbook.svg
-# Variables:
-#   PLAYBOOK - path to .yaml/.yml or .puml file (required)
-#   FORMAT   - plantuml (default), svg, or png
-#   OUTPUT   - output file path; if omitted, defaults to <PLAYBOOK base>.<ext>
-
-diagram:
-	@if [ -z "$(PLAYBOOK)" ]; then \
-	  echo "Usage: make diagram PLAYBOOK=path/to/playbook.(yaml|yml|puml) [FORMAT=plantuml|svg|png] [OUTPUT=/path/to/out.ext]"; \
-	  exit 1; \
-	fi
-	@fmt="$(FORMAT)"; \
-	if [ -z "$$fmt" ]; then fmt="plantuml"; fi; \
-	out="$(OUTPUT)"; \
-	if [ -z "$$out" ]; then \
-	  base="$$(/bin/echo $(PLAYBOOK) | sed -E 's/\.(yaml|yml|json|puml|plantuml)$$//')"; \
-	  if [ "$$fmt" = "plantuml" ]; then ext="puml"; else ext="$$fmt"; fi; \
-	  out="$$base.$$ext"; \
-	  echo "No OUTPUT provided; defaulting to $$out"; \
-	fi; \
-	cli="$(VENV)/bin/noetl"; \
-	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
-	echo "Generating diagram from $(PLAYBOOK) -> $$out (format=$$fmt) using '$$cli'"; \
-	"$$cli" diagram "$(PLAYBOOK)" -f "$$fmt" -o "$$out"
-
-
 
 #[GCP]##################################################################################################################
 .PHONY: gcp-credentials
@@ -474,3 +493,4 @@ gcp-credentials:
 	@rmdir ./secrets/application_default_credentials.json
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"
+
