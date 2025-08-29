@@ -772,6 +772,7 @@ def execute_playbook_by_name(
     input: str = typer.Option(None, "--input", "-i", help="Path to JSON file with parameters"),
     payload: str = typer.Option(None, "--payload", help="Inline JSON string with parameters"),
     merge: bool = typer.Option(False, "--merge", help="Merge parameters into playbook workload on server"),
+    json_only: bool = typer.Option(False, "--json", "-j", help="Emit the JSON response"),
 ):
     """
     Execute a registered playbook by name against a running NoETL server.
@@ -804,18 +805,21 @@ def execute_playbook_by_name(
 
         url = f"http://{host}:{port}/api/executions/run"
         body = {"playbook_id": playbook_id, "parameters": parameters, "merge": merge}
-        typer.echo(f"POST {url}")
+        if not json_only:
+            typer.echo(f"POST {url}")
         resp = requests.post(url, json=body)
         if resp.status_code >= 200 and resp.status_code < 300:
             data = resp.json()
             exec_id = data.get("id") or data.get("execution_id")
-            typer.echo("Execution started")
-            if exec_id:
-                typer.echo(f"execution_id: {exec_id}")
+            if not json_only:
+                typer.echo("Execution started")
+                if exec_id:
+                    typer.echo(f"execution_id: {exec_id}")
             typer.echo(json.dumps(data, indent=2, cls=DateTimeEncoder))
         else:
-            typer.echo(f"Server returned {resp.status_code}")
-            typer.echo(resp.text)
+            if not json_only:
+                typer.echo(f"Server returned {resp.status_code}")
+                typer.echo(resp.text)
             raise typer.Exit(code=1)
     except Exception as e:
         typer.echo(f"Error: {e}")
@@ -827,6 +831,7 @@ def execution_status(
     execution_id: str = typer.Argument(..., help="Execution ID to query"),
     host: str = typer.Option("localhost", "--host", help="NoETL server host"),
     port: int = typer.Option(8082, "--port", "-p", help="NoETL server port"),
+    json_only: bool = typer.Option(False, "--json", "-j", help="Emit only the JSON response (no preamble lines)"),
 ):
     """
     Fetch execution status and details from the server.
@@ -839,13 +844,15 @@ def execution_status(
     """
     try:
         url = f"http://{host}:{port}/api/executions/{execution_id}"
-        typer.echo(f"GET {url}")
+        if not json_only:
+            typer.echo(f"GET {url}")
         resp = requests.get(url)
         if resp.status_code == 200:
             typer.echo(json.dumps(resp.json(), indent=2, cls=DateTimeEncoder))
         else:
-            typer.echo(f"Server returned {resp.status_code}")
-            typer.echo(resp.text)
+            if not json_only:
+                typer.echo(f"Server returned {resp.status_code}")
+                typer.echo(resp.text)
             raise typer.Exit(code=1)
     except Exception as e:
         typer.echo(f"Error: {e}")

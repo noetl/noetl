@@ -67,15 +67,18 @@ help:
 	@echo "  make postgres-reset-schema    			Recreates noetl schema only in running postgres database instance"
 	@echo ""
 	@echo "Local Runtime (env + logs):"
-	@echo "  make start-server          			Start NoETL server using .env.server or .env (logs/logs/server.log)"
-	@echo "  make stop-server           			Stop NoETL server"
-	@echo "  make server-status         			Check NoETL server status and port"
-	@echo "  make worker-start          			Start NoETL worker using .env.worker or .env (logs/worker.log)"
-	@echo "  make worker-stop           			Stop NoETL workers (supports multiple instances)"
-	@echo "  make clean-logs           			Remove NoETL log files"
-	@echo "  make noetl-start      			Start NoETL runtime"
-	@echo "  make noetl-stop      				Stop NoETL runtime"
-	@echo "  make noetl-restart      			Restart NoETL runtime"
+	@echo "  make start-server									Start NoETL server using .env.server or .env (logs/logs/server.log)"
+	@echo "  make stop-server									Stop NoETL server"
+	@echo "  make server-status									Check NoETL server status and port"
+	@echo "  make worker-start									Start NoETL worker using .env.worker or .env (logs/worker.log)"
+	@echo "  make worker-stop									Stop NoETL workers (supports multiple instances)"
+	@echo "  make clean-logs									Remove NoETL log files"
+	@echo "  make noetl-start									Start NoETL runtime"
+	@echo "  make noetl-stop									Stop NoETL runtime"
+	@echo "  make noetl-restart									Restart NoETL runtime"
+	@echo "  make noetl-run PLAYBOOK=examples/weather_example HOST=localhost PORT=8082		Execute specific playbook"
+	@echo "  make noetl-execute PLAYBOOK=examples/other_example					Execute specific playbook"
+	@echo "  make noetl-status ID=219858139900542976						Get status for specific ID"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -301,9 +304,65 @@ noetl-start: clean-logs start-server start-workers register-examples
 
 noetl-stop: stop-workers stop-server
 
-noetl-restart: noetl-stop noetl-start
+noetl-restart: noetl-stop noetl-start noetl-status
+
+.PHONY: noetl-run noetl-execute noetl-execute-status
+
+NOETL_BIN ?= python -m noetl.main
+PLAYBOOK ?= examples/weather_loop_example
+HOST ?= localhost
+PORT ?= 8082
+ID ?=
+
+.ONESHELL:
+SHELL := /bin/bash
+.SHELLFLAGS := -eo pipefail -c
+
+# noetl execute status "$(noetl execute playbook "examples/weather_loop_example" --host localhost --port 8082 --json | tee >(jq -C . >&2) | jq -r '.result.execution_id // .execution_id // .id')" --host localhost --port 8082 --json | jq -C .
+
+noetl-run:
+	@out="$($(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json)"; \
+	  printf '%s\n' "$$out" | jq -C . >&2 || true; \
+	  eid="$$(printf '%s\n' "$$out" | jq -r '.result.execution_id // .execution_id // .id' || true)"; \
+	  if [[ -z "$$eid" || "$$eid" == "null" ]]; then \
+	    echo "Failed to start execution or parse execution_id" >&2; \
+	    exit 1; \
+	  fi; \
+	  $(NOETL_BIN) execute status "$$eid" --host $(HOST) --port $(PORT) --json | jq -C .
+
+noetl-execute:
+	@$(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json | jq -C .
+
+noetl-execute-status:
+	@$(NOETL_BIN) execute status $(ID) --host $(HOST) --port $(PORT) --json | jq -C .
+
+#NOETL_BIN ?= noetl
+#PLAYBOOK ?= examples/weather_loop_example
+#HOST ?= localhost
+#PORT ?= 8082
+#ID ?=
+#.ONESHELL:
+#	SHELL := /bin/bash
+#
+#noetl-run:
+#	$(NOETL_BIN) execute status "$$(noetl execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json | tee >(jq -C . >&2) | jq -r '.result.execution_id // .execution_id // .id')" --host $(HOST) --port $(PORT) --json | jq -C .
+#
+#noetl-execute:
+#	set -eo pipefail
+#	out="$($(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json 2>&1)"
+#	echo "$$out" | sed -n '/^{/,$$p' | jq -C . || { echo "$$out" >&2; exit 1; }
+#
+##noetl-execute:
+##	@set -e; out="$$( $(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json 2>&1 )";
+##	echo "$$out" | sed -n '/^{/,$$p' | jq -C . || { echo "$$out" >&2; exit 1; }
+#
+#noetl-status:
+#	$(NOETL_BIN) execute status $(ID) --host $(HOST) --port $(PORT) --json | jq -C .
+#
 
 # Generate a DAG diagram using the NoETL CLI
+
+
 .PHONY: diagram
 # Usage examples:
 #   make diagram PLAYBOOK=examples/weather/weather_loop_example.yaml
@@ -493,4 +552,3 @@ gcp-credentials:
 	@rmdir ./secrets/application_default_credentials.json
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"
-
