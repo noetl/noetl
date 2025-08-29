@@ -333,6 +333,17 @@ async def get_execution_summary(request: Request, execution_id: str):
                         (execution_id,)
                     )
                     errors = await cur3.fetchall() or []
+                    # Ensure datetimes are JSON-serializable
+                    try:
+                        for e in errors:
+                            ts = e.get('timestamp') if isinstance(e, dict) else None
+                            if ts is not None:
+                                try:
+                                    e['timestamp'] = ts.isoformat()
+                                except Exception:
+                                    e['timestamp'] = str(ts)
+                    except Exception:
+                        pass
 
         summary = {
             "execution_id": execution_id,
@@ -1343,9 +1354,11 @@ async def evaluate_broker_for_execution(
         step_index: Dict[str, int] = {}
         for i, st in enumerate(steps):
             if isinstance(st, dict):
-                _nm = st.get('step') or st.get('name') or st.get('task')
-                if _nm:
-                    step_index[str(_nm)] = i
+                # Index by all identifiers to resolve last_step_name reliably
+                for key_name in ('step', 'name', 'task'):
+                    val = st.get(key_name)
+                    if val:
+                        step_index[str(val)] = i
 
         idx: Optional[int] = None
         chosen_target_name: Optional[str] = None
@@ -1778,6 +1791,8 @@ async def evaluate_broker_for_execution(
             except Exception:
                 pass
 
+            # Emit completion for end_loop step with aggregated result
+            end_result = agg_result or {'results': loop_results}
             try:
                 await get_event_service().emit({
                     'execution_id': execution_id,
@@ -1786,12 +1801,74 @@ async def evaluate_broker_for_execution(
                     'node_id': f'{execution_id}-step-{idx+1}',
                     'node_name': end_step_name,
                     'node_type': 'task',
-                    'result': agg_result or {'results': loop_results},
+                    'result': end_result,
                     'context': {'workload': workload},
                 })
             except Exception:
                 logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit end_loop aggregation", exc_info=True)
-            return
+
+            # Promote end_loop result into context for subsequent transitions
+            try:
+                if isinstance(results_ctx, dict):
+                    results_ctx[end_step_name] = end_result
+                # Also promote flattened keys (e.g., alerts) for convenience
+                if isinstance(end_result, dict):
+                    for _k, _v in end_result.items():
+                        if _k not in base_ctx:
+                            base_ctx[_k] = _v
+                base_ctx[end_step_name] = end_result
+            except Exception:
+                pass
+
+            # Determine next step from the end_loop step's own 'next' transitions
+            chosen_after_end: Optional[str] = None
+            transition_vars = None
+            nxt_list = next_step.get('next') or []
+            if isinstance(nxt_list, list):
+                for case in nxt_list:
+                    if not isinstance(case, dict):
+                        continue
+                    if 'when' in case:
+                        cond_text = case.get('when')
+                        try:
+                            cond_val = render_template(jenv, cond_text, base_ctx, strict_keys=False)
+                        except Exception:
+                            cond_val = False
+                        if bool(cond_val):
+                            targets = case.get('then')
+                            if isinstance(targets, list) and targets:
+                                tgt = targets[0]
+                                if isinstance(tgt, dict):
+                                    chosen_after_end = tgt.get('step') or tgt.get('name') or tgt.get('task')
+                                    transition_vars = tgt.get('with')
+                                else:
+                                    chosen_after_end = str(tgt)
+                                break
+                    elif 'else' in case:
+                        targets = case.get('else')
+                        if isinstance(targets, list) and targets:
+                            tgt = targets[0]
+                            if isinstance(tgt, dict):
+                                chosen_after_end = tgt.get('step') or tgt.get('name') or tgt.get('task')
+                                transition_vars = tgt.get('with')
+                            else:
+                                chosen_after_end = str(tgt)
+                            break
+
+            if chosen_after_end and chosen_after_end in step_index:
+                # Advance scheduler to the chosen next step
+                last_step_name = end_step_name
+                idx = step_index[chosen_after_end]
+                next_step = steps[idx]
+                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Continuing after end_loop to '{chosen_after_end}' (idx={idx})")
+            else:
+                # No explicit next; proceed by falling back to default progression
+                last_step_name = end_step_name
+                idx = (idx + 1) if (idx is not None) else idx
+                if idx is None or idx >= len(steps):
+                    logger.info("EVALUATE_BROKER_FOR_EXECUTION: No further steps after end_loop")
+                    return
+                next_step = steps[idx]
 
         if last_step_name and isinstance(prev_cfg := steps[step_index[last_step_name]], dict) and 'loop' in prev_cfg:
             loop_spec = prev_cfg.get('loop') or {}

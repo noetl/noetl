@@ -510,6 +510,12 @@ class QueueWorker:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
                 except Exception:
                     exec_ctx = {}
+                # Ensure execution_id is available to Jinja when server render didn't inject it
+                try:
+                    if 'execution_id' not in exec_ctx:
+                        exec_ctx['execution_id'] = execution_id
+                except Exception:
+                    pass
                 try:
                     if 'env' not in exec_ctx:
                         exec_ctx['env'] = dict(os.environ)
