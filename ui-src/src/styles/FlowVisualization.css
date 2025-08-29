@@ -8,7 +8,6 @@
    ReactFlow Overrides
    ========================================================================== */
 
-/* Remove default ReactFlow node styling */
 .react-flow__node-default {
     background: transparent !important;
     border: none !important;
@@ -29,154 +28,212 @@
     height: auto;
 }
 
+/* Hide attribution for a cleaner canvas (optional) */
+.react-flow__attribution {
+    display: none !important;
+}
+
 /* ==========================================================================
    Flow Nodes
    ========================================================================== */
 
-/* Base Node Styles */
 .flow-node {
-    padding: 16px;
-    border-radius: 12px;
-    background: white;
-    min-width: 250px;
+    padding: 4px 12px 12px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
+    min-width: 280px;
     position: relative;
-    transition: all 0.3s ease;
-    border: 2px solid #8c8c8c;
-    /* default color */
+    transition: box-shadow .15s ease, border-color .15s ease, transform .15s ease;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 6px 16px rgba(17, 24, 39, .08);
+    --accent: #8c8c8c;
+}
+
+/* colored spine removed */
+.flow-node::before {
+    display: none !important;
+    content: none !important;
+}
+
+.flow-node:hover {
+    transform: translateY(-1px);
 }
 
 .flow-node.selected {
-    box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
-    border-color: #1890ff;
+    border-color: var(--accent);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .flow-node.unselected {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .06);
 }
 
-/* Node Type Colors - only border colors when not selected */
-.flow-node.log:not(.selected) {
-    border-color: #52c41a;
+/* type-to-accent map */
+.flow-node.log {
+    --accent: #52c41a;
 }
 
-.flow-node.http:not(.selected) {
-    border-color: #1890ff;
+.flow-node.http {
+    --accent: #1890ff;
 }
 
-.flow-node.sql:not(.selected) {
-    border-color: #722ed1;
+.flow-node.sql {
+    --accent: #722ed1;
 }
 
-.flow-node.script:not(.selected) {
-    border-color: #fa8c16;
+.flow-node.script {
+    --accent: #fa8c16;
 }
 
-.flow-node.secret:not(.selected) {
-    border-color: #eb2f96;
+.flow-node.secret {
+    --accent: #eb2f96;
 }
 
-.flow-node.export:not(.selected) {
-    border-color: #13c2c2;
+.flow-node.export {
+    --accent: #13c2c2;
 }
 
-.flow-node.python:not(.selected) {
-    border-color: #3776ab;
+.flow-node.python {
+    --accent: #3776ab;
 }
 
-.flow-node.workbook:not(.selected) {
-    border-color: #ff6b35;
+.flow-node.workbook {
+    --accent: #ff6b35;
 }
 
-.flow-node-delete {
+/* Header */
+.flow-node-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 4px;
+    padding-bottom: 0;
+    position: relative;
+    width: 100%;
+    /* ensure separator spans full node width */
+}
+
+/* subtle separator line under header now positioned just below header block */
+.flow-node-header::after {
+    content: "";
     position: absolute;
-    top: 8px;
-    right: 8px;
+    left: -12px;
+    /* extend through node horizontal padding */
+    right: -12px;
+    /* extend through node horizontal padding */
+    bottom: -6px;
+    height: 1px;
+    background: #e2e8f0;
+    pointer-events: none;
 }
 
-.flow-node-delete-button {
+/* add spacing to content that follows header so it clears the separator */
+.flow-node-header+* {
+    margin-top: 14px !important;
+    /* ensures clear visual gap after line */
+}
+
+/* Icon chip */
+.flow-node-icon {
     width: 20px;
     height: 20px;
-    padding: 0;
-    font-size: 10px;
+    display: inline-flex;
+    font-size: 14px;
 }
 
-.flow-node-header {
-    text-align: center;
-    margin-bottom: 12px;
+/* Select tweaks */
+.flow-node-type-select .ant-select-selector {
+    border-radius: 8px !important;
+    height: 28px !important;
 }
 
-.flow-node-icon {
-    font-size: 24px;
-    margin-bottom: 8px;
+.flow-node-toolbar-type-select .ant-select-selector {
+    height: 28px !important;
+    padding: 0 6px !important;
+    border-radius: 6px !important;
 }
 
-.flow-node-type-select {
-    width: 100%;
+.flow-node-toolbar-type-select {
+    min-width: 130px;
 }
 
-.flow-node-type-dropdown {
-    font-size: 12px;
-}
-
+/* Name + description spacing */
 .flow-node-name {
-    margin-bottom: 8px;
+    margin-top: 5px;
+    margin-bottom: 10px;
 }
 
 .flow-node-name-input {
-    font-weight: bold;
-    text-align: center;
+    border-radius: 5px;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
 }
 
-.flow-node-description {
-    margin-bottom: 4px;
+.flow-node-name-input:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .flow-node-description-input {
-    font-size: 11px;
-    resize: none;
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
 }
 
+/* Tiny field labels inside node */
+.flow-node-field-label {
+    display: block;
+    font-size: 12px;
+    line-height: 1.1;
+    letter-spacing: .5px;
+    color: #94a3b8;
+    margin: 0 0 4px 6px;
+    user-select: none;
+    pointer-events: none;
+}
+
+/* Status pill */
 .flow-node-status {
-    text-align: center;
-    font-size: 10px;
-    text-transform: uppercase;
-    font-weight: 500;
+    display: inline-block;
     margin-top: 4px;
-    color: #8c8c8c;
-    /* default color */
+    margin-left: 6px;
+    font-size: 11px;
+    text-transform: none;
+    font-weight: 600;
+    letter-spacing: .2px;
+    color: #6b7280;
 }
 
-/* Status indicator colors by type */
-.flow-node-status.log {
-    color: #52c41a;
+/* Floating toolbar for selected node */
+.flow-node-toolbar {
+    position: absolute;
+    top: -40px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    background: #ffffff;
+    padding: 4px 8px;
+    border: 1px solid rgba(226, 232, 240, .9);
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .12);
+    z-index: 10;
+    backdrop-filter: blur(6px) saturate(120%);
+    background: rgba(255, 255, 255, .9);
 }
 
-.flow-node-status.http {
-    color: #1890ff;
+.flow-node-toolbar-button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 12px;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .15);
+    border: 1px solid #d9e2ec;
 }
 
-.flow-node-status.sql {
-    color: #722ed1;
-}
-
-.flow-node-status.script {
-    color: #fa8c16;
-}
-
-.flow-node-status.secret {
-    color: #eb2f96;
-}
-
-.flow-node-status.export {
-    color: #13c2c2;
-}
-
-.flow-node-status.python {
-    color: #3776ab;
-}
-
-.flow-node-status.workbook {
-    color: #ff6b35;
+.flow-node-toolbar-button:hover {
+    background: #f1f5f9 !important;
 }
 
 /* ==========================================================================
@@ -248,13 +305,18 @@
 
 .flow-toolbar-container {
     position: absolute;
-    top: 16px;
-    left: 16px;
-    right: 16px;
-    z-index: 1000;
+    top: 10px;
+    left: 12px;
+    right: 12px;
+    z-index: 2;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    padding: 8px 10px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow: 0 6px 16px rgba(17, 24, 39, .06);
 }
 
 .flow-toolbar-button {
@@ -272,28 +334,70 @@
     width: 100%;
     height: 100%;
     position: relative;
-    padding-top: 60px;
+    background: linear-gradient(180deg, #fff, #fcfdff);
 }
 
-.flow-loading-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+.react-flow-wrapper {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
     height: 100%;
-    flex-direction: column;
-    gap: 16px;
 }
 
-.flow-loading-text {
-    color: #8c8c8c;
+/* ReactFlow controls & minimap to match theme */
+.react-flow__controls {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .06) !important;
+    overflow: hidden;
+    background: #fff !important;
 }
 
-/* ==========================================================================
-   Flow Edges
-   ========================================================================== */
+.react-flow__minimap {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .06);
+    background: #fff !important;
+}
 
+/* Edges — smooth & crisp */
 .flow-edge-solid {
-    stroke: #1890ff;
+    stroke: #a0aec0;
     stroke-width: 2;
     stroke-dasharray: none;
+}
+
+/* Rectangular connection handles */
+.flow-node-handle {
+    width: 4px !important;
+    height: 16px !important;
+    border-radius: 2px !important;
+    background: #cbd5e1 !important;
+    border: 1px solid #94a3b8 !important;
+    opacity: 1;
+    box-shadow: none;
+    transition: background .15s, transform .15s;
+}
+
+.flow-node-handle:hover {
+    background: #94a3b8 !important;
+}
+
+.flow-node-handle-target {
+    left: -3px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+}
+
+.flow-node-handle-source {
+    right: -3px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+}
+
+.flow-node.selected .flow-node-handle {
+    border-color: #94a3b8 !important;
 }

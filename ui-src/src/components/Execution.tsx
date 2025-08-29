@@ -28,7 +28,7 @@ import {
 import { apiService } from "../services/api";
 import { ExecutionData } from "../types";
 import moment from "moment";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   ReactFlow,
   MiniMap,
@@ -78,10 +78,10 @@ const Execution: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [showWorkflowVisualization, setShowWorkflowVisualization] =
-    useState(false);
-  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>("");
-  const [selectedPlaybookName, setSelectedPlaybookName] = useState<string>("");
+  const [showWorkflowVisualization, setShowWorkflowVisualization] = useState(false);
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
+  const [selectedPlaybookName, setSelectedPlaybookName] = useState<string>('');
+
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [workflowLoading, setWorkflowLoading] = useState(false);
@@ -98,24 +98,35 @@ const Execution: React.FC = () => {
   const [dateRange, setDateRange] = useState<[any, any] | null>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds: Edge[]) => addEdge(params, eds)),
-    [setEdges],
+    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+    [setEdges]
+
   );
 
-  // Check URL parameters for workflow visualization
+  // React to query string changes (supports navigating between history and workflow without full remount)
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const playbookId = urlParams.get("playbook");
-    const view = urlParams.get("view");
-
+    const params = new URLSearchParams(location.search);
+    const qsPlaybook = params.get("playbook");
+    const qsView = params.get("view");
+    // Prefer explicit state passed via navigate if present
+    const navState: any = (location as any).state || {};
+    const statePlaybook = navState.playbookId;
+    const stateView = navState.view;
+    const playbookId = statePlaybook || qsPlaybook;
+    const view = stateView || qsView;
     if (playbookId && view === "workflow") {
-      setSelectedPlaybookId(playbookId);
-      setSelectedPlaybookName(playbookId); // We'll use the ID as name for now
+      if (playbookId !== selectedPlaybookId) {
+        setSelectedPlaybookId(playbookId);
+        setSelectedPlaybookName(playbookId);
+      }
       setShowWorkflowVisualization(true);
+    } else {
+      setShowWorkflowVisualization(false);
     }
-  }, []);
+  }, [location, selectedPlaybookId]);
 
   useEffect(() => {
     fetchExecutions();
@@ -474,7 +485,8 @@ const Execution: React.FC = () => {
               source: sourceTask.id,
               target: task.id,
               animated: true,
-              style: { stroke: "#1890ff", strokeWidth: 3 },
+              style: { stroke: '#1890ff', strokeWidth: 3, strokeDasharray: '0' }
+
             });
           }
         });
@@ -484,7 +496,7 @@ const Execution: React.FC = () => {
           source: tasks[index - 1].id,
           target: task.id,
           animated: true,
-          style: { stroke: "#1890ff", strokeWidth: 3 },
+          style: { stroke: '#1890ff', strokeWidth: 3, strokeDasharray: '0' }
         });
       }
     });
