@@ -31,6 +31,8 @@ const ExecutionDetail: React.FC = () => {
     fetchExecution();
   }, [id]);
 
+
+
   if (loading) {
     return <Spin style={{ display: 'block', margin: '40px auto' }} />;
   }
@@ -44,7 +46,7 @@ const ExecutionDetail: React.FC = () => {
   const columns = [
     { title: 'Event Type', dataIndex: 'event_type', key: 'event_type' },
     { title: 'Node Name', dataIndex: 'node_name', key: 'node_name' },
-    { title: 'Status', dataIndex: 'status', key: 'status', render: (status: string) => <Tag color={status === 'success' ? 'green' : 'red'}>{status}</Tag> },
+    { title: 'Status', dataIndex: 'status', key: 'status', render: (status: string) => <Tag color={status === 'success' ? 'green' : 'blue'}>{status}</Tag> },
     { title: 'Timestamp', dataIndex: 'timestamp', key: 'timestamp', render: (ts: string) => moment(ts).format('YYYY-MM-DD HH:mm:ss') },
     { title: 'Duration', dataIndex: 'duration', key: 'duration', render: (d: number) => `${d}s` },
   ];
