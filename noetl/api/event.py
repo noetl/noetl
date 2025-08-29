@@ -2045,33 +2045,6 @@ async def evaluate_broker_for_execution(
                         task_cfg = dict(base_task)
                         task_cfg['name'] = tname or step_name
                         if merged_with:
-                            try:
-                                mw = dict(merged_with)
-                                city_val = mw.get('city')
-                                if city_val is not None and not isinstance(city_val, (dict, list)):
-                                    if isinstance(city_val, str):
-                                        s = city_val.strip()
-                                        if s.startswith('{') and s.endswith('}'):
-                                            try:
-                                                import json as _json, ast as _ast
-                                                try:
-                                                    mw['city'] = _json.loads(s)
-                                                except Exception:
-                                                    mw['city'] = _ast.literal_eval(s)
-                                            except Exception:
-                                                pass
-                                        if not isinstance(mw.get('city'), dict):
-                                            w_cities = workload.get('cities') if isinstance(workload, dict) else None
-                                            if isinstance(w_cities, list) and w_cities:
-                                                first_city = w_cities[0]
-                                                if isinstance(first_city, dict):
-                                                    mw['city'] = first_city
-                                # District safety: if unresolved or empty string, synthesize
-                                if isinstance(mw.get('district'), str) and not mw.get('district').strip():
-                                    mw['district'] = {"name": "Unknown"}
-                                merged_with = mw
-                            except Exception:
-                                pass
                             task_cfg['with'] = merged_with
             else:
                 task_cfg = next_step

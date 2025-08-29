@@ -1,52 +1,49 @@
 # This is a NoETL DSL Playbook for iterating over cities to fetch and evaluate weather data.
-# It includes a loop to process each city, fetch weather data, evaluate conditions, and handle alerts or logging.
-# The playbooks demonstrates nested loops for processing city districts, with conditions to skip certain districts.
-# noetl playbooks --execute --path "workflows/weather/weather_example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}], "temperature_threshold": 30}'
-
+# It processes each city, fetches weather data from Open-Meteo, evaluates against a threshold,
+# posts alerts/logs to httpbin, aggregates results, and stores a summary in DuckDB.
 
 apiVersion: noetl.io/v1
 kind: Playbook
 name: weather_example
-path: examples/weather_loop_example  # Unique path identifier for this playbooks
+path: examples/weather_loop_example
 
-workload:  # Input parameters section accessible throughout the workflow
+workload:
   jobId: "{{ job.uuid }}"
   state: ready
-  cities:  # List of cities to process in the loop
-    - name: "London"  # City name
-      lat: 51.51  # Latitude
-      lon: -0.13  # Longitude
+  cities:
+    - name: "London"
+      lat: 51.51
+      lon: -0.13
     - name: "Paris"
       lat: 48.85
       lon: 2.35
     - name: "Berlin"
       lat: 52.52
       lon: 13.41
-  base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
-  temperature_threshold: 12  # Threshold for alerting on temperature
+  base_url: "https://api.open-meteo.com/v1"
+  temperature_threshold: 12
 
-workflow:  # Workflow steps and transitions
-  - step: start  # Entry point of the workflow
+workflow:
+  - step: start
     desc: "Start Weather Analysis Workflow"
-    next:  # Transition rules based on condition
-      - when: "{{ workload.state == 'ready' }}"  # Condition for transition
+    next:
+      - when: "{{ workload.state == 'ready' }}"
         then:
-          - step: city_loop  # If condition met, goto city_loop step
+          - step: city_loop
       - else:
-          - step: end  # If not ready, end the workflow
+          - step: end
 
   - step: city_loop
     desc: "Iterate over cities"
     loop:
       in: "{{ workload.cities }}"
       iterator: city
-      filter: "{{}}"
     next:
       - step: fetch_and_evaluate
         with:
           city: "{{ city }}"
           base_url: "{{ workload.base_url }}"
-          temperature_threshold: "{{ temperature_threshold }}"
+          temperature_threshold: "{{ workload.temperature_threshold }}"
 
   - step: fetch_and_evaluate
     desc: "Fetch and evaluate weather for one city"
@@ -63,16 +60,12 @@ workflow:  # Workflow steps and transitions
             with:
               city: "{{ city.name }}"
               max_temp: "{{ evaluate_weather_directly.max_temp }}"
-          - step: get_city_districts
-            with:
-              city: "{{ city }}"
+          - step: end_city_loop
       - else:
           - step: log_step
             with:
               city: "{{ city.name }}"
-          - step: get_city_districts
-            with:
-              city: "{{ city }}"
+          - step: end_city_loop
 
   - step: evaluate_weather_step
     desc: "Evaluate weather data and determine if alert is needed"
@@ -80,7 +73,7 @@ workflow:  # Workflow steps and transitions
     name: evaluate_weather
     with:
       city: "{{ city }}"
-      threshold: "{{ temperature_threshold }}"
+      threshold: "{{ workload.temperature_threshold }}"
       forecast_data: "{{ get_forecast }}"
     next:
       - when: "{{ evaluate_weather.alert }}"
@@ -113,53 +106,6 @@ workflow:  # Workflow steps and transitions
     next:
       - step: end_city_loop
 
-
-  - step: get_city_districts
-    desc: "Fetch the districts of the city"
-    type: workbook
-    name: get_city_districts
-    with:
-      city: "{{ city.name }}"
-    next:
-      - step: district_loop
-        with:
-          city: "{{ city }}"
-          districts: "{{ get_city_districts }}"
-
-  - step: district_loop
-    desc: "Iterate over districts of the city"
-    loop:
-      in: "{{ districts }}"
-      iterator: district
-      filter: "{{ district.name != 'Mordor' }}"
-    next:
-      - step: process_district  # First step in the inner district loop
-        with:
-          city: "{{ city }}" # Pass the current city down
-          district: "{{ district }}"  # Pass the current district
-
-  - step: process_district
-    desc: "Do something with the district"
-    type: workbook
-    name: process_district
-    with:
-      city: "{{ city }}"
-      district: "{{ district }}"
-    next:
-      - step: end_district_loop
-        with:
-          output: "{{ output }}" # Pass results of the processing to the inner district loop
-
-  - step: end_district_loop
-    desc: "End of the district loop"
-    end_loop: district_loop # The loop to monitor
-    result:
-      district_loop_output: "{{ output }}" # The output is appended to the loop results variable called district_loop_output
-    next:
-      - step: end_city_loop
-        with:
-          district_loop_output: "{{ district_loop_output }}"
-
   - step: end_city_loop
     desc: "End of the city loop"
     end_loop: city_loop
@@ -177,42 +123,50 @@ workflow:  # Workflow steps and transitions
     with:
       alerts: "{{ alerts }}"
     next:
-      - step: store_aggregate_result
+      - step: log_aggregate_result
         with:
-          summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
+          summary: "{{ aggregate_alerts.summary }}"
       - when: "{{ aggregate_alerts.global_alert }}"
         then:
           - step: global_alert_step
             with:
-              summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
+              summary: "{{ aggregate_alerts.summary }}"
       - else:
           - step: end
 
-  # Log step removed; storage happens directly after aggregation
+  - step: log_aggregate_result
+    desc: "Log the aggregated alert summary"
+    type: workbook
+    name: log_aggregate_result_task
+    with:
+      summary: "{{ aggregate_alerts.summary }}"
+    next:
+      - step: store_aggregate_result
+        with:
+          summary: "{{ aggregate_alerts.summary }}"
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
     type: workbook
     name: global_alert_task
     with:
-      summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
+      summary: "{{ aggregate_alerts.summary }}"
     next:
       - step: store_aggregate_result
         with:
           summary: "{{ aggregate_alerts.summary }}"
 
   - step: store_aggregate_result
-    desc: "Store the aggregated alert summary in Postgres (public schema)"
+    desc: "Store the aggregated alert summary in DuckDB/Postgres"
     type: workbook
-    name: store_aggregate_result_pg
+    name: store_aggregate_result_task_postgres_pipeline
     with:
-      summary: "{{ aggregate_alerts.summary if aggregate_alerts is defined else (aggregate_alerts_task.summary if aggregate_alerts_task is defined else {'alert_cities': [], 'count': 0}) }}"
+      summary: "{{ aggregate_alerts.summary }}"
     next:
       - step: end
 
   - step: end
     desc: "End of workflow"
-
 
 workbook:
 
@@ -225,6 +179,7 @@ workbook:
       longitude: "{{ city.lon }}"
       hourly: "temperature_2m"
       forecast_days: 1
+    timeout: 10
 
   - name: get_forecast
     type: http
@@ -235,6 +190,7 @@ workbook:
       longitude: "{{ city.lon }}"
       hourly: "temperature_2m"
       forecast_days: 1
+    timeout: 10
 
   - name: evaluate_weather_directly
     type: python
@@ -245,175 +201,79 @@ workbook:
     code: |
       def main(city, threshold, base_url):
           import httpx
+          threshold = float(threshold) if threshold not in (None, "") else 25.0
+          try:
+              resp = httpx.get(
+                  f"{base_url}/forecast",
+                  params={
+                      "latitude": city["lat"],
+                      "longitude": city["lon"],
+                      "hourly": "temperature_2m",
+                      "forecast_days": 1,
+                  },
+                  timeout=10.0,
+              )
+              resp.raise_for_status()
+              data = resp.json()
+          except Exception as e:
+              return {"city": city["name"], "max_temp": 0.0, "alert": False, "error": str(e)}
 
-          # Convert threshold to float
-          threshold = float(threshold) if threshold else 25
-
-          # Fetch forecast data
-          url = f"{base_url}/forecast"
-          params = {
-              "latitude": city["lat"],
-              "longitude": city["lon"],
-              "hourly": "temperature_2m",
-              "forecast_days": 1
-          }
-
-          response = httpx.get(url, params=params)
-          forecast_data = response.json()
-
-          # Extract temperature data
           temps = []
-          if isinstance(forecast_data, dict):
-              hourly = forecast_data.get('hourly', {})
-              if isinstance(hourly, dict) and 'temperature_2m' in hourly:
-                  temps = hourly['temperature_2m']
+          if isinstance(data, dict):
+              hourly = data.get("hourly", {})
+              if isinstance(hourly, dict):
+                  temps = hourly.get("temperature_2m", []) or []
 
-          # Calculate max temperature and determine if alert is needed
-          max_temp = max(temps) if temps else 0
-          alert = max_temp > threshold
-
-          # Return result
-          result = {
-              "city": city["name"],
-              "max_temp": max_temp,
-              "alert": alert
-          }
-
-          return result
+          max_temp = max(temps) if temps else 0.0
+          return {"city": city["name"], "max_temp": max_temp, "alert": bool(max_temp > threshold)}
 
   - name: evaluate_weather
     type: python
     with:
       city: "{{ city }}"
-      threshold: "{{ temperature_threshold }}"
+      threshold: "{{ workload.temperature_threshold }}"
       forecast_data: "{{ get_forecast }}"
     code: |
       def main(city, threshold, forecast_data):
-          print(f"City: {city}")
-          print(f"Threshold: {threshold}")
-          print(f"Forecast data type: {type(forecast_data)}")
-          threshold = float(threshold) if threshold else 5
-          print(f"Threshold after conversion: {threshold}")
+          threshold = float(threshold) if threshold not in (None, "") else 5.0
           temps = []
           if isinstance(forecast_data, dict):
-              print(f"Forecast data keys: {forecast_data.keys()}")
-              hourly = forecast_data.get('hourly', {})
-              if isinstance(hourly, dict) and 'temperature_2m' in hourly:
-                  temps = hourly['temperature_2m']
-                  print(f"Found temps in hourly.temperature_2m: {temps}")
-              elif 'data' in forecast_data and isinstance(forecast_data['data'], dict):
-                  data = forecast_data['data']
-                  print(f"Data keys: {data.keys()}")
-                  data_hourly = data.get('hourly', {})
-                  if isinstance(data_hourly, dict) and 'temperature_2m' in data_hourly:
-                      temps = data_hourly['temperature_2m']
-                      print(f"Found temps in data.hourly.temperature_2m: {temps}")
-          max_temp = max(temps) if temps else 0
-          print(f"Max temperature: {max_temp}")
-          alert = max_temp > threshold
-          print(f"Alert needed: {alert}")
-          result = {
-              "city": city["name"],
-              "max_temp": max_temp,
-              "alert": alert
-          }
-          print(f"Returning result: {result}")
-          return result
+              hourly = forecast_data.get("hourly", {})
+              if isinstance(hourly, dict):
+                  temps = hourly.get("temperature_2m", []) or []
+          max_temp = max(temps) if temps else 0.0
+          return {"city": city["name"], "max_temp": max_temp, "alert": bool(max_temp > threshold)}
 
   - name: alert_task
     type: http
     method: POST
-    endpoint: "https://postman-echo.com/post"
+    endpoint: "https://httpbin.org/post"
     payload:
+      kind: "city_alert"
       city: "{{ city }}"
       temperature: "{{ temperature }}"
       message: "High temperature alert."
+    timeout: 10
 
   - name: log_task
     type: http
     method: POST
     endpoint: "https://httpbin.org/post"
     payload:
+      kind: "city_log"
       city: "{{ city }}"
       message: "No alert needed."
-
-  - name: get_city_districts
-    type: python
-    with:
-      city: "{{ city }}"
-    code: |
-      def main(city):
-          # Generate sample districts deterministically for testing
-          name = city.get('name') if isinstance(city, dict) else str(city)
-          return [
-              {"name": f"{name} Center"},
-              {"name": f"{name} North"},
-              {"name": f"{name} South"}
-          ]
-
-  - name: process_district
-    type: python
-    with:
-      city: "{{ city }}"
-      district: "{{ district }}"
-    code: |
-      def main(city, district):
-          # Coerce string/empty inputs into dicts for robustness
-          if not isinstance(city, dict):
-              city = {"name": (city if isinstance(city, str) and city.strip() else "Unknown")}
-          if not isinstance(district, dict):
-              district = {"name": (district if isinstance(district, str) and district.strip() else "Unknown")}
-          return {
-              "city": city.get("name"),
-              "district": district.get("name"),
-              "processed": True,
-              "timestamp": "2024-01-01T12:00:00Z"
-          }
-
-  - name: aggregate_alerts_task
-    type: python
-    with:
-      alerts: "{{ alerts if (alerts is defined and alerts) else (city_loop_results | map(attribute='fetch_and_evaluate') | list) }}"
-    code: |
-      def main(alerts):
-          import ast, json
-          # Normalize alerts input into a list of dicts
-          if alerts is None:
-              alerts = []
-          elif isinstance(alerts, str):
-              s = alerts.strip()
-              if not s:
-                  alerts = []
-              else:
-                  try:
-                      alerts = json.loads(s)
-                  except Exception:
-                      try:
-                          alerts = ast.literal_eval(s)
-                      except Exception:
-                          alerts = []
-          # Coerce single dict to list
-          if isinstance(alerts, dict):
-              alerts = [alerts]
-          # Ensure list
-          if not isinstance(alerts, list):
-              alerts = []
-
-          # Aggregate alerts and determine if a global alert is needed
-          alert_items = [a for a in alerts if isinstance(a, dict) and a.get('alert')]
-          summary = {
-              "alert_cities": [a.get("city") for a in alert_items],
-              "count": len(alert_items)
-          }
-          return {"global_alert": bool(alert_items), "summary": summary}
+    timeout: 10
 
   - name: global_alert_task
     type: http
     method: POST
-    endpoint: "https://postman-echo.com/post"
+    endpoint: "https://httpbin.org/post"
     payload:
+      kind: "global_alert"
       summary: "{{ summary }}"
       message: "Global weather alert triggered."
+    timeout: 10
 
   - name: log_aggregate_result_task
     type: python
@@ -424,28 +284,45 @@ workbook:
           print(f"Aggregated weather alert summary: {summary}")
           return {"logged": True, "summary": summary}
 
-  - name: store_aggregate_result_pg
-    type: postgres
+  - name: store_aggregate_result_task_postgres_pipeline
+    type: python
     with:
-      db_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-      db_port: "{{ env.POSTGRES_PORT | default('30543') }}"
-      db_user: "{{ env.POSTGRES_USER | default('demo') }}"
-      db_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
-      db_name: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
-    command: |
-      -- Create target table in public schema
-      CREATE TABLE IF NOT EXISTS public.weather_alert_summary (
-        id BIGSERIAL PRIMARY KEY,
-        alert_cities TEXT,
-        alert_count INTEGER,
-        execution_id TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+      summary: "{{ summary }}"
+    code: |
+      def main(summary):
+          import duckdb, json, time, os
+          con = duckdb.connect('data/noetldb/postgres_pipeline.duckdb')
+          con.execute("""
+              CREATE TABLE IF NOT EXISTS weather_alert_summary (
+                  id BIGINT,
+                  alert_cities TEXT,
+                  alert_count INTEGER,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+              )
+          """)
+          row_id = int(time.time() * 1000)
+          con.execute(
+              "INSERT INTO weather_alert_summary (id, alert_cities, alert_count) VALUES (?, ?, ?)",
+              (row_id, json.dumps(summary.get('alert_cities', [])), int(summary.get('count', 0)))
+          )
 
-      -- Insert the aggregate summary (robust to summary being non-mapping)
-      INSERT INTO public.weather_alert_summary (alert_cities, alert_count, execution_id)
-      VALUES (
-        '{{ (summary.alert_cities | join(',')) if (summary is mapping and (summary.alert_cities is defined)) else '' }}',
-        {{ (summary.count | int) if (summary is mapping and (summary.count is defined)) else 0 }},
-        '{{ execution_id if execution_id is defined else (job.execution_id if (job is mapping and (job.execution_id is defined)) else (job.uuid if job is defined else '')) }}'
-      );
+          # --- Optional: enable Postgres via DuckDB extension (requires reachable host & creds) ---
+          # if os.getenv("ENABLE_POSTGRES_BRIDGE") == "1":
+          #     con.execute("INSTALL postgres;")
+          #     con.execute("LOAD postgres;")
+          #     con.execute("ATTACH 'dbname=demo_noetl user=demo password=demo host=YOUR_HOST port=5432' AS pg (TYPE postgres);")
+          #     con.execute("""
+          #         CREATE TABLE IF NOT EXISTS pg.weather_alert_summary (
+          #             id BIGINT PRIMARY KEY,
+          #             alert_cities TEXT,
+          #             alert_count INTEGER,
+          #             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          #         )
+          #     """)
+          #     con.execute(
+          #         "INSERT INTO pg.weather_alert_summary (id, alert_cities, alert_count) VALUES (?, ?, ?)",
+          #         (row_id, json.dumps(summary.get('alert_cities', [])), int(summary.get('count', 0)))
+          #     )
+
+          con.close()
+          return {'status': 'stored_in_duckdb', 'id': row_id, 'summary': summary}

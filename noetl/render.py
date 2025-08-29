@@ -49,8 +49,6 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     if isinstance(template, str) and '{{' in template and '}}' in template:
         logger.debug(f"Render template: {template}")
         logger.debug(f"Render template context keys: {list(context.keys())}")
-        if 'city' in context:
-            logger.debug(f"Render template city value: {context['city']}, Type: {type(context['city'])}")
         if rules:
             logger.debug(f"Render template rules: {rules}")
 
