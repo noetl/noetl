@@ -56,7 +56,6 @@ def register_server_from_env() -> None:
         if labels:
             labels = [s.strip() for s in labels.split(',') if s.strip()]
         
-        # Get hostname with fallback
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
         
         payload = {
@@ -157,7 +156,6 @@ def register_worker_pool_from_env() -> None:
         if labels:
             labels = [s.strip() for s in labels.split(',') if s.strip()]
         
-        # Get hostname with fallback to socket.gethostname()
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
         
         payload = {
@@ -195,11 +193,9 @@ def deregister_worker_pool_from_env() -> None:
     try:
         name: Optional[str] = None
         
-        # First try to get name from environment
         name = os.environ.get('NOETL_WORKER_POOL_NAME')
         if name:
             logger.info(f"Using worker name from env: {name}")
-            # Try worker-specific file first
             worker_file = f'/tmp/noetl_worker_pool_name_{name}'
             if os.path.exists(worker_file):
                 try:
@@ -210,7 +206,6 @@ def deregister_worker_pool_from_env() -> None:
                 except Exception:
                     pass
         
-        # Fallback to old file for backward compatibility
         if not name and os.path.exists('/tmp/noetl_worker_pool_name'):
             try:
                 with open('/tmp/noetl_worker_pool_name', 'r') as f:
@@ -225,7 +220,6 @@ def deregister_worker_pool_from_env() -> None:
         server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
         logger.info(f"Attempting to deregister worker {name} via {server_url}")
 
-        # First try HTTP deregistration if server is reachable
         server_reachable = False
         try:
             health_url = server_url.replace('/api', '/health') if server_url.endswith('/api') else server_url + '/health'
@@ -277,12 +271,10 @@ def deregister_worker_pool_from_env() -> None:
                 logger.error(f"Direct database deregistration failed: {db_e}")
 
         try:
-            # Remove worker-specific file
             worker_file = f'/tmp/noetl_worker_pool_name_{name}'
             if os.path.exists(worker_file):
                 os.remove(worker_file)
                 logger.info("Removed worker-specific name file")
-            # Also try to remove legacy file for backward compatibility
             elif os.path.exists('/tmp/noetl_worker_pool_name'):
                 os.remove('/tmp/noetl_worker_pool_name')
                 logger.info("Removed legacy worker name file")
@@ -296,7 +288,6 @@ def deregister_worker_pool_from_env() -> None:
 def _on_worker_terminate(signum, frame):
     logger.info(f"Worker pool process received signal {signum}")
     try:
-        # Always try to deregister on exit
         retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
         backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
         for attempt in range(1, retries + 1):
@@ -325,7 +316,7 @@ def _get_server_url() -> str:
 
 
 # ------------------------------------------------------------------
-# Queue worker pool implementation
+# Queue worker pool
 # ------------------------------------------------------------------
 
 
@@ -440,10 +431,10 @@ class QueueWorker:
         # If server returned a rendered task, use it; otherwise parse raw.
         # Fallback: if rendered is not a dict, try parsing raw JSON.
         action_cfg = None
+        original_task_cfg = action_cfg_raw if isinstance(action_cfg_raw, dict) else None
         if rendered_task is not None and isinstance(rendered_task, dict):
             action_cfg = rendered_task
         else:
-            # Parse action config if it's a JSON string
             if isinstance(action_cfg_raw, str):
                 try:
                     action_cfg = json.loads(action_cfg_raw)
@@ -453,12 +444,43 @@ class QueueWorker:
             elif isinstance(action_cfg_raw, dict):
                 action_cfg = action_cfg_raw
 
+        try:
+            if isinstance(action_cfg, dict) and original_task_cfg:
+                import base64
+                if 'code_b64' in action_cfg and not action_cfg.get('code'):
+                    try:
+                        action_cfg['code'] = base64.b64decode(action_cfg['code_b64']).decode('utf-8')
+                    except Exception:
+                        logger.debug("WORKER: Failed to decode code_b64", exc_info=True)
+                for field in ('command', 'commands'):
+                    b64_key = f"{field}_b64"
+                    if b64_key in action_cfg and not action_cfg.get(field):
+                        try:
+                            action_cfg[field] = base64.b64decode(action_cfg[b64_key]).decode('utf-8')
+                        except Exception:
+                            logger.debug(f"WORKER: Failed to decode {b64_key}", exc_info=True)
+                placeholder_codes = {"", "def main(**kwargs):\n    return {}"}
+                if original_task_cfg.get('type') and action_cfg.get('type') in (None, 'python') and original_task_cfg.get('type') not in (None, 'python'):
+                    action_cfg['type'] = original_task_cfg.get('type')
+                if 'code' in original_task_cfg:
+                    if action_cfg.get('code') in placeholder_codes or 'code' not in action_cfg:
+                        action_cfg['code'] = original_task_cfg['code']
+                for field in ('command', 'commands'):
+                    if field in original_task_cfg and (field not in action_cfg or not action_cfg.get(field)):
+                        action_cfg[field] = original_task_cfg[field]
+                if isinstance(original_task_cfg.get('with'), dict):
+                    merged_with = {}
+                    merged_with.update(original_task_cfg.get('with') or {})
+                    if isinstance(action_cfg.get('with'), dict):
+                        merged_with.update(action_cfg.get('with') or {})
+                    action_cfg['with'] = merged_with
+        except Exception:
+            logger.debug("WORKER: Failed to merge original task config after server render", exc_info=True)
+
         if isinstance(action_cfg, dict):
             task_name = action_cfg.get("name") or node_id
 
-            # Emit action_started event
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
-            # Avoid playbook-specific coercions. Ensure 'with' is a dict, otherwise leave as-is.
             try:
                 if not isinstance(action_cfg.get('with'), dict):
                     action_cfg['with'] = {}
@@ -501,16 +523,13 @@ class QueueWorker:
             report_event(start_event, self.server_url)
 
             try:
-                # Execute the task
                 task_with = action_cfg.get('with', {}) if isinstance(action_cfg, dict) else {}
                 if not isinstance(task_with, dict):
                     task_with = {}
-                # Ensure env and job are available during local Jinja rendering
                 try:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
                 except Exception:
                     exec_ctx = {}
-                # Ensure execution_id is available to Jinja when server render didn't inject it
                 try:
                     if 'execution_id' not in exec_ctx:
                         exec_ctx['execution_id'] = execution_id
@@ -534,11 +553,9 @@ class QueueWorker:
                     pass
                 result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
 
-                # Decide event type based on result status
                 res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
                 emitted_error = False
                 if isinstance(res_status, str) and res_status.lower() == 'error':
-                    # Emit action_error and raise to fail the job
                     err_msg = (result or {}).get('error') if isinstance(result, dict) else 'Unknown error'
                     tb_text = ''
                     if isinstance(result, dict):
@@ -559,7 +576,6 @@ class QueueWorker:
                     emitted_error = True
                     raise RuntimeError(err_msg or "Task returned error status")
                 else:
-                    # Emit action_completed event
                     complete_event = {
                         "execution_id": execution_id,
                         "event_type": "action_completed",
@@ -575,7 +591,6 @@ class QueueWorker:
                     report_event(complete_event, self.server_url)
 
             except Exception as e:
-                # Emit action_error event with traceback (avoid duplicate if already emitted above)
                 try:
                     import traceback as _tb
                     tb_text = _tb.format_exc()
@@ -608,7 +623,7 @@ class QueueWorker:
         try:
             await loop.run_in_executor(executor, self._execute_job_sync, job)
             await self._complete_job(job["id"])
-        except Exception as exc:  # pragma: no cover - network best effort
+        except Exception as exc:
             logger.exception("Error executing job %s: %s", job.get("id"), exc)
             await self._fail_job(job["id"])
 
@@ -637,7 +652,7 @@ class QueueWorker:
                     await self._execute_job(job)
                 else:
                     await asyncio.sleep(interval)
-        finally:  # pragma: no cover - cleanup on exit
+        finally:
             try:
                 await asyncio.to_thread(deregister_worker_pool_from_env)
             except Exception:
@@ -712,7 +727,7 @@ class ScalableQueueWorkerPool:
             while not self._stop.is_set():
                 await self._scale_workers()
                 await asyncio.sleep(self.check_interval)
-        finally:  # pragma: no cover - cleanup on exit
+        finally:
             await self.stop()
 
     async def stop(self) -> None:

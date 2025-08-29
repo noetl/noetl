@@ -23,7 +23,6 @@ class Broker:
             server_url: The URL of the server to report events
         """
         self.agent = agent
-        # Normalize server URL: ensure scheme and '/api' suffix
         base_url = server_url or os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
         if base_url and not (base_url.startswith('http://') or base_url.startswith('https://')):
             base_url = 'http://' + base_url
@@ -183,7 +182,6 @@ class Broker:
         logger.debug("=== BROKER.DELEGATE_TASK_EXECUTION: Function entry ===")
         logger.debug(f"BROKER.DELEGATE_TASK_EXECUTION: Parameters - task_config={task_config}, task_name={task_name}")
         
-        # Check if we have a worker URL to delegate to
         worker_base_url = os.environ.get('NOETL_WORKER_BASE_URL')
         
         if not worker_base_url:
@@ -194,22 +192,34 @@ class Broker:
         logger.debug(f"BROKER.DELEGATE_TASK_EXECUTION: Delegating to worker at {worker_base_url}")
         
         try:
-            # Prepare the request payload for the worker
+            import base64
+            enriched_task_config = dict(task_config)
+            try:
+                code_val = enriched_task_config.get('code')
+                if isinstance(code_val, str) and code_val.strip() and os.environ.get('NOETL_EMBED_CODE_B64', '1') == '1':
+                    if code_val.strip() != 'def main(**kwargs):\n    return {}':
+                        enriched_task_config['code_b64'] = base64.b64encode(code_val.encode('utf-8')).decode('utf-8')
+                for field in ('command', 'commands'):
+                    cmd_val = enriched_task_config.get(field)
+                    if isinstance(cmd_val, str) and cmd_val.strip() and os.environ.get('NOETL_EMBED_CODE_B64', '1') == '1':
+                        enriched_task_config[f'{field}_b64'] = base64.b64encode(cmd_val.encode('utf-8')).decode('utf-8')
+            except Exception:
+                logger.debug("BROKER.DELEGATE_TASK_EXECUTION: Failed to enrich task with base64 code", exc_info=True)
             payload = {
                 "execution_id": getattr(self.agent, 'execution_id', 'unknown'),
-                "parent_event_id": None,  # Could be passed in if needed
+                "parent_event_id": None,
                 "node_id": f"step.{task_name}",
                 "node_name": task_name,
                 "node_type": "task",
                 "context": context,
                 "mock_mode": False,
-                "task": task_config
+                "task": enriched_task_config
             }
             
             worker_api_url = f"{worker_base_url}/worker/action"
             logger.debug(f"BROKER.DELEGATE_TASK_EXECUTION: Calling worker API at {worker_api_url}")
             
-            with httpx.Client(timeout=300.0) as client:  # 5 minute timeout for task execution
+            with httpx.Client(timeout=300.0) as client:
                 resp = client.post(worker_api_url, json=payload)
                 resp.raise_for_status()
                 result = resp.json()
