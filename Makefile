@@ -324,20 +324,27 @@ SHELL := /bin/bash
 # noetl execute status "$(noetl execute playbook "examples/weather_loop_example" --host localhost --port 8082 --json | tee >(jq -C . >&2) | jq -r '.result.execution_id // .execution_id // .id')" --host localhost --port 8082 --json | jq -C .
 
 noetl-run:
-	@out="$($(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json)"; \
-	  printf '%s\n' "$$out" | jq -C . >&2 || true; \
-	  eid="$$(printf '%s\n' "$$out" | jq -r '.result.execution_id // .execution_id // .id' || true)"; \
-	  if [[ -z "$$eid" || "$$eid" == "null" ]]; then \
-	    echo "Failed to start execution or parse execution_id" >&2; \
-	    exit 1; \
-	  fi; \
-	  $(NOETL_BIN) execute status "$$eid" --host $(HOST) --port $(PORT) --json | jq -C .
+	@cli="$(VENV)/bin/noetl"; \
+	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	out="$$("$$cli" execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json 2>/dev/null)"; \
+	if [ -z "$$out" ]; then \
+	  echo "Failed to start execution or parse execution_id" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$out" | jq -C . >&2 || true; \
+	eid="$$(printf '%s\n' "$$out" | jq -r '.result.execution_id // .execution_id // .id' || true)"; \
+	if [[ -z "$$eid" || "$$eid" == "null" ]]; then \
+	  echo "Failed to start execution or parse execution_id" >&2; \
+	  exit 1; \
+	fi; \
+	"$$cli" execute status "$$eid" --host $(HOST) --port $(PORT) --json | jq -C .
 
 noetl-execute:
-	@$(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json | jq -C .
+	@cli="$(VENV)/bin/noetl"; if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	"$$cli" execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json | jq -C .
 
 noetl-execute-status:
-	@$(NOETL_BIN) execute status $(ID) --host $(HOST) --port $(PORT) --json | jq -C .
+	@cli="$(VENV)/bin/noetl"; if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	"$$cli" execute status $(ID) --host $(HOST) --port $(PORT) --json | jq -C .
 
 #NOETL_BIN ?= noetl
 #PLAYBOOK ?= examples/weather_loop_example
