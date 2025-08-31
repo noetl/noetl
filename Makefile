@@ -76,9 +76,10 @@ help:
 	@echo "  make noetl-start									Start NoETL runtime"
 	@echo "  make noetl-stop									Stop NoETL runtime"
 	@echo "  make noetl-restart									Restart NoETL runtime"
-	@echo "  make noetl-run PLAYBOOK=examples/weather_example HOST=localhost PORT=8082		Execute specific playbook"
-	@echo "  make noetl-execute PLAYBOOK=examples/weather_example				Execute specific playbook"
-	@echo "  make noetl-execute-status ID=219858139900542976				Get status for specific ID"
+	@echo "  make noetl-run PLAYBOOK=examples/weather_example HOST=localhost PORT=8082\t\tExecute specific playbook"
+	@echo "  make noetl-execute PLAYBOOK=examples/weather_example\t\t\tExecute specific playbook"
+	@echo "  make noetl-execute-status ID=219858139900542976\t\t\tGet status for specific ID"
+	@echo "  make noetl-execute-watch ID=219858139900542976 HOST=localhost PORT=8082\tWatch status with live updates"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -309,7 +310,7 @@ noetl-stop: stop-workers stop-server
 
 noetl-restart: noetl-stop noetl-start server-status
 
-.PHONY: noetl-run noetl-execute noetl-execute-status
+.PHONY: noetl-run noetl-execute noetl-execute-status noetl-execute-watch
 
 NOETL_BIN ?= python -m noetl.main
 PLAYBOOK ?= examples/weather_loop_example
@@ -363,29 +364,45 @@ noetl-execute-status:
 	fi; \
 	exit $$rc
 
-#NOETL_BIN ?= noetl
-#PLAYBOOK ?= examples/weather_loop_example
-#HOST ?= localhost
-#PORT ?= 8082
-#ID ?=
-#.ONESHELL:
-#	SHELL := /bin/bash
-#
-#noetl-run:
-#	$(NOETL_BIN) execute status "$$(noetl execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json | tee >(jq -C . >&2) | jq -r '.result.execution_id // .execution_id // .id')" --host $(HOST) --port $(PORT) --json | jq -C .
-#
-#noetl-execute:
-#	set -eo pipefail
-#	out="$($(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json 2>&1)"
-#	echo "$$out" | sed -n '/^{/,$$p' | jq -C . || { echo "$$out" >&2; exit 1; }
-#
-##noetl-execute:
-##	@set -e; out="$$( $(NOETL_BIN) execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json 2>&1 )";
-##	echo "$$out" | sed -n '/^{/,$$p' | jq -C . || { echo "$$out" >&2; exit 1; }
-#
-#noetl-status:
-#	$(NOETL_BIN) execute status $(ID) --host $(HOST) --port $(PORT) --json | jq -C .
-#
+noetl-execute-watch:
+	@if [ -z "$(ID)" ]; then \
+	  echo "Usage: make noetl-execute-watch ID=<execution_id> [HOST=localhost] [PORT=8082]"; \
+	  exit 1; \
+	fi
+	@cli="$(VENV)/bin/noetl"; if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	echo "Watching execution $(ID) at $(HOST):$(PORT) (Ctrl-C to stop)"; \
+	while true; do \
+	  set +e; out_json="$$( $$cli execute status $(ID) --host $(HOST) --port $(PORT) --json 2>&1 )"; rc=$$?; set -e; \
+	  if printf '%s\n' "$$out_json" | jq -e . >/dev/null 2>&1; then \
+	    status="$$(printf '%s\n' "$$out_json" | jq -r '.status // .result.status // .normalized_status // "unknown"')"; \
+	    evcount="$$(printf '%s\n' "$$out_json" | jq -r '.events | length // 0')"; \
+	    last_line="$$(printf '%s\n' "$$out_json" | jq -r '.events[-1] | select(.) | (.timestamp // "") + "  " + (.node_name // "") + " (" + (.event_type // "") + ") " + ((.status // .normalized_status // .result.status // "") | tostring)')"; \
+	    echo "status: $$status | events: $$evcount"; \
+	    if [ -n "$$last_line" ]; then echo "last:   $$last_line"; fi; \
+	    n="$(LAST)"; \
+	    if [ -n "$$n" ] && [ "$$n" -gt 0 ] 2>/dev/null; then \
+	      echo "last $$n events:"; \
+	      printf '%s\n' "$$out_json" | jq -r --argjson n "$$n" '(.events // []) as $$e | (if ($$e|length)>0 then ($$e | (if (length > $$n) then .[-$$n:] else . end) | map((.timestamp // "") + "  " + (.node_name // "") + " (" + (.event_type // "") + ") " + ((.status // .normalized_status // .result.status // "")|tostring)) | .[]) else empty end)'; \
+	    fi; \
+	    case "$$status" in completed|failed|error|canceled) break;; esac; \
+	  else \
+	    if [ $$rc -ne 0 ]; then \
+	      set +e; out_plain="$$( $$cli execute status $(ID) --host $(HOST) --port $(PORT) 2>&1 )"; rc2=$$?; set -e; \
+	      json_line="$$(printf '%s\n' "$$out_plain" | sed -n 's/.*\({.*}\).*/\1/p' | head -n1)"; \
+	      if [ -n "$$json_line" ]; then \
+	        printf '%s\n' "$$json_line" | jq -C . || printf '%s\n' "$$json_line"; \
+	      else \
+	        printf '%s\n' "$$out_plain"; \
+	      fi; \
+	      break; \
+	    else \
+	      printf '%s\n' "$$out_json"; \
+	    fi; \
+	  fi; \
+	  sleep 1; \
+	done
+
+
 
 # Generate a DAG diagram using the NoETL CLI
 
