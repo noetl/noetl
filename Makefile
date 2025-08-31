@@ -77,8 +77,8 @@ help:
 	@echo "  make noetl-stop									Stop NoETL runtime"
 	@echo "  make noetl-restart									Restart NoETL runtime"
 	@echo "  make noetl-run PLAYBOOK=examples/weather_example HOST=localhost PORT=8082		Execute specific playbook"
-	@echo "  make noetl-execute PLAYBOOK=examples/other_example					Execute specific playbook"
-	@echo "  make noetl-status ID=219858139900542976						Get status for specific ID"
+	@echo "  make noetl-execute PLAYBOOK=examples/weather_example				Execute specific playbook"
+	@echo "  make noetl-execute-status ID=219858139900542976				Get status for specific ID"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -340,11 +340,28 @@ noetl-run:
 
 noetl-execute:
 	@cli="$(VENV)/bin/noetl"; if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
-	"$$cli" execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json | jq -C .
+	set +e; out="$$( $$cli execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) --json 2>&1 )"; rc=$$?; set -e; \
+	if [ $$rc -ne 0 ] && ! printf '%s\n' "$$out" | grep -q '{'; then \
+	  set +e; out2="$$( $$cli execute playbook $(PLAYBOOK) --host $(HOST) --port $(PORT) 2>&1 )"; rc2=$$?; set -e; \
+	  json1="$$(printf '%s\n' "$$out2" | sed -n 's/.*\({.*}\).*/\1/p' | head -n1)"; \
+	  if [ -n "$$json1" ]; then printf '%s\n' "$$json1" | jq -C . || printf '%s\n' "$$json1"; else printf '%s\n' "$$out2"; fi; \
+	  exit $$rc2; \
+	elif printf '%s\n' "$$out" | jq -e . >/dev/null 2>&1; then \
+	  printf '%s\n' "$$out" | jq -C .; \
+	else \
+	  printf '%s\n' "$$out"; \
+	fi; \
+	exit $$rc
 
 noetl-execute-status:
 	@cli="$(VENV)/bin/noetl"; if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
-	"$$cli" execute status $(ID) --host $(HOST) --port $(PORT) --json | jq -C .
+	set +e; out="$$( $$cli execute status $(ID) --host $(HOST) --port $(PORT) --json 2>&1 )"; rc=$$?; set -e; \
+	if printf '%s\n' "$$out" | jq -e . >/dev/null 2>&1; then \
+	  printf '%s\n' "$$out" | jq -C .; \
+	else \
+	  printf '%s\n' "$$out"; \
+	fi; \
+	exit $$rc
 
 #NOETL_BIN ?= noetl
 #PLAYBOOK ?= examples/weather_loop_example
