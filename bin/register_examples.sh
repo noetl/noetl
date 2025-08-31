@@ -5,6 +5,13 @@ HOST=${2:-localhost}
 
 echo "Loading playbooks on $HOST port $PORT"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+NOETL_CLI="$REPO_ROOT/.venv/bin/noetl"
+if [ ! -x "$NOETL_CLI" ]; then
+  NOETL_CLI="noetl"
+fi
+
 PLAYBOOKS=(
   "examples/weather/weather_example.yaml"
   "examples/batch/multi_playbook_example.yaml"
@@ -22,7 +29,7 @@ PLAYBOOKS=(
 for playbooks in "${PLAYBOOKS[@]}"; do
   echo "Loading $playbooks"
 
-  if noetl register "$playbooks" --port "$PORT" --host "$HOST"; then
+  if "$NOETL_CLI" register "$playbooks" --port "$PORT" --host "$HOST"; then
     echo "✓ loaded $playbooks"
   else
     echo "✗ Failed $playbooks"

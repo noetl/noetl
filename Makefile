@@ -221,10 +221,12 @@ start-server:
 	  exit 1; \
 	fi; \
 	mkdir -p ~/.noetl; \
+	cli="$(VENV)/bin/noetl"; \
+	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
 	if command -v setsid >/dev/null 2>&1; then \
-	  setsid nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
+	  setsid nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
 	else \
-	  nohup noetl server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
+	  nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
 	fi; \
 	sleep 3; \
 	if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \
@@ -245,7 +247,7 @@ stop-server:
 	  rm -f logs/server.pid; \
 	  echo "NoETL server stop: PID=$$pid"; \
 	else \
-	  noetl server stop -f || true; \
+	  $(VENV)/bin/noetl server stop -f || noetl server stop -f || true; \
 	fi
 
 server-status:
@@ -273,8 +275,9 @@ worker-start:
 		set +a; \
 		worker_name=$${NOETL_WORKER_POOL_NAME:-worker-$${NOETL_WORKER_POOL_RUNTIME:-cpu}}; \
 		worker_name=$${worker_name//-/_}; \
-		log_file=logs/worker_$${worker_name}.log; \
-		nohup noetl worker start > $$log_file 2>&1 & \
+			log_file=logs/worker_$${worker_name}.log; \
+			cli="$(VENV)/bin/noetl"; if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+			nohup "$$cli" worker start > "$$log_file" 2>&1 & \
 		sleep 1; \
 		pid_file=$$HOME/.noetl/noetl_worker_$${worker_name}.pid; \
 		if [ -f $$pid_file ]; then \
@@ -285,7 +288,7 @@ worker-start:
 
 worker-stop:
 	@echo "Stopping NoETL workers..."
-	-@noetl worker stop || true
+	-@$(VENV)/bin/noetl worker stop || noetl worker stop || true
 
 
 clean-logs:
@@ -304,7 +307,7 @@ noetl-start: clean-logs start-server start-workers register-examples
 
 noetl-stop: stop-workers stop-server
 
-noetl-restart: noetl-stop noetl-start noetl-status
+noetl-restart: noetl-stop noetl-start server-status
 
 .PHONY: noetl-run noetl-execute noetl-execute-status
 
