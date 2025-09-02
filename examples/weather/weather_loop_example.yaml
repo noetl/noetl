@@ -44,6 +44,8 @@ workflow:
       city: "{{ city }}"
       base_url: "{{ workload.base_url }}"
       temperature_threshold: "{{ workload.temperature_threshold }}"
+    next:
+      - step: aggregate_alerts
 
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
@@ -128,7 +130,7 @@ workflow:
   - step: end
     desc: "End of workflow"
 
-workbooks:
+workbook:
 
   - name: log_forcast_request
     type: http
