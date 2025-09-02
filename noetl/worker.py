@@ -507,6 +507,18 @@ class QueueWorker:
             except Exception:
                 loop_meta = None
 
+            # Extract parent_event_id from context metadata when provided (e.g., loop iteration parent)
+            parent_event_id = None
+            try:
+                if isinstance(context, dict):
+                    meta = context.get('_meta') or {}
+                    if isinstance(meta, dict):
+                        peid = meta.get('parent_event_id')
+                        if peid:
+                            parent_event_id = peid
+            except Exception:
+                parent_event_id = None
+
             start_event = { 
                 "execution_id": execution_id,
                 "event_type": "action_started",
@@ -520,6 +532,8 @@ class QueueWorker:
             }
             if loop_meta:
                 start_event.update(loop_meta)
+            if parent_event_id:
+                start_event["parent_event_id"] = parent_event_id
             report_event(start_event, self.server_url)
 
             try:
@@ -572,6 +586,10 @@ class QueueWorker:
                         "result": result,
                         "timestamp": datetime.datetime.now().isoformat(),
                     }
+                    if loop_meta:
+                        error_event.update(loop_meta)
+                    if parent_event_id:
+                        error_event["parent_event_id"] = parent_event_id
                     report_event(error_event, self.server_url)
                     emitted_error = True
                     raise RuntimeError(err_msg or "Task returned error status")
@@ -588,6 +606,8 @@ class QueueWorker:
                     }
                     if loop_meta:
                         complete_event.update(loop_meta)
+                    if parent_event_id:
+                        complete_event["parent_event_id"] = parent_event_id
                     report_event(complete_event, self.server_url)
 
             except Exception as e:
@@ -611,6 +631,8 @@ class QueueWorker:
                     }
                     if loop_meta:
                         error_event.update(loop_meta)
+                    if parent_event_id:
+                        error_event["parent_event_id"] = parent_event_id
                     report_event(error_event, self.server_url)
                 raise  # Re-raise to let the worker handle job failure
         else:
