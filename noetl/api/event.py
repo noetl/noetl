@@ -751,6 +751,15 @@ class EventService:
 
             async with get_async_db_connection() as conn:
                   async with conn.cursor() as cursor:
+                      # Default parent_event_id if missing: link to previous event in the same execution
+                      if not parent_event_id:
+                          try:
+                              await cursor.execute("SELECT event_id FROM event_log WHERE execution_id = %s ORDER BY timestamp DESC LIMIT 1", (execution_id,))
+                              _prev = await cursor.fetchone()
+                              if _prev and _prev[0]:
+                                  parent_event_id = _prev[0]
+                          except Exception:
+                              pass
                       await cursor.execute("""
                           SELECT COUNT(*) FROM event_log
                           WHERE execution_id = %s AND event_id = %s
@@ -1601,7 +1610,7 @@ async def evaluate_broker_for_execution(
                 try:
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
-                            if step_type_lower == 'playbook':
+                            if str(locals().get('step_type_lower','')) == 'playbook':
                                 # Count child executions that completed for this parent + step
                                 await cur.execute(
                                     """
@@ -1631,7 +1640,7 @@ async def evaluate_broker_for_execution(
                     try:
                         async with get_async_db_connection() as conn:
                             async with conn.cursor(row_factory=dict_row) as cur:
-                                if step_type_lower == 'playbook':
+                                if str(locals().get('step_type_lower','')) == 'playbook':
                                     await cur.execute(
                                         """
                                         SELECT output_result FROM noetl.event_log
@@ -2363,8 +2372,9 @@ async def evaluate_broker_for_execution(
             try:
                 if isinstance(rendered_workload, dict):
                     meta = rendered_workload.get('_meta') or {}
-                    if exec_start_eid and 'parent_event_id' not in meta:
-                        meta['parent_event_id'] = exec_start_eid
+                    _ese = locals().get('exec_start_eid')
+                    if _ese and 'parent_event_id' not in meta:
+                        meta['parent_event_id'] = _ese
                     if 'parent_execution_id' not in meta:
                         meta['parent_execution_id'] = execution_id
                     rendered_workload['_meta'] = meta
