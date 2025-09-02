@@ -1,7 +1,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: weather
-path: examples/weather_example
+path: examples/weather/weather_example
 description: "Simple weather data workflow"
 
 workload:

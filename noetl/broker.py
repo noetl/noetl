@@ -63,13 +63,77 @@ class Broker:
             The event ID if log_event exists, None otherwise
         """
         if self.has_log_event():
-            return self.agent.log_event(
+            # Default parent if not provided
+            pet = (event_type or '').lower()
+            if parent_event_id is None:
+                if pet == 'step_start':
+                    parent_event_id = self._last_step_complete_event_id or self._execution_start_event_id
+                elif pet == 'task_start':
+                    parent_event_id = self._current_step_event_id
+                elif pet in ('task_complete','task_error'):
+                    parent_event_id = self._last_task_start_event_id or self._current_step_event_id
+                elif pet in ('step_complete','action_completed','action_error'):
+                    parent_event_id = self._current_step_event_id
+            eid = self.agent.log_event(
                 event_type, node_id, node_name, node_type, status, duration,
                 input_context, output_result, metadata, parent_event_id, **kwargs
             )
-        else:
-            logger.warning(f"Agent does not have log_event method. Event type: {event_type}, Node: {node_name}")
-            return None
+            # Track lineage chain
+            try:
+                if pet == 'task_start':
+                    self._last_task_start_event_id = eid
+                elif pet == 'step_complete':
+                    self._last_step_complete_event_id = eid
+            except Exception:
+                pass
+            return eid
+        # Worker-side: post to server /api/events and return the server-generated event_id
+        if self.server_url and self.event_reporting_enabled:
+            try:
+                # Default parent if not provided (worker-side)
+                pet = (event_type or '').lower()
+                if parent_event_id is None:
+                    if pet == 'step_start':
+                        parent_event_id = self._last_step_complete_event_id or self._execution_start_event_id
+                    elif pet == 'task_start':
+                        parent_event_id = self._current_step_event_id
+                    elif pet in ('task_complete','task_error'):
+                        parent_event_id = self._last_task_start_event_id or self._current_step_event_id
+                    elif pet in ('step_complete','action_completed','action_error'):
+                        parent_event_id = self._current_step_event_id
+
+                payload: Dict[str, Any] = {
+                    'event_type': event_type,
+                    'execution_id': getattr(self.agent, 'execution_id', None) or os.environ.get('NOETL_EXECUTION_ID'),
+                    'node_id': node_id,
+                    'node_name': node_name,
+                    'node_type': node_type,
+                    'status': status,
+                    'duration': duration,
+                    'context': input_context,
+                    'result': output_result,
+                    'meta': metadata or {},
+                }
+                if parent_event_id:
+                    payload['parent_event_id'] = parent_event_id
+                # Include known loop metadata if provided
+                for k in ('loop_id','loop_name','iterator','current_index','current_item','items_count'):
+                    if k in kwargs:
+                        payload[k] = kwargs[k]
+                resp = report_event(payload, self.server_url)
+                eid = resp.get('event_id') or resp.get('id')
+                try:
+                    if pet == 'task_start':
+                        self._last_task_start_event_id = eid
+                    elif pet == 'step_complete':
+                        self._last_step_complete_event_id = eid
+                except Exception:
+                    pass
+                return eid
+            except Exception as e:
+                logger.warning(f"Failed to report event to server: {e}")
+        logger.warning(f"Agent does not have log_event method and reporting disabled. Event type: {event_type}, Node: {node_name}")
+        return None
 
     def validate_server_url(self):
         """
@@ -397,6 +461,9 @@ class Broker:
             {'step_type': 'standard'}, None
         )
         logger.debug(f"BROKER.EXECUTE_STEP: Step start event: {step_event}")
+        # Set lineage defaults for this step
+        self._current_step_event_id = step_event
+        self._last_task_start_event_id = None
         
         if self.server_url and self.event_reporting_enabled:
             logger.debug(f"BROKER.EXECUTE_STEP: Reporting step_start event to server: {self.server_url}")
@@ -454,6 +521,7 @@ class Broker:
                 logger.debug(f"BROKER.EXECUTE_STEP: Task name from call config: {task_name}")
                 
                 call_type = call_config.get('type', 'workbook')
+                ctype = str(call_type).strip().lower()
                 logger.debug(f"BROKER.EXECUTE_STEP: Call type: {call_type}")
                 
                 logger.debug(f"BROKER.EXECUTE_STEP: Rendering task_with template from call_config.with: {call_config.get('with', {})}")
@@ -531,7 +599,7 @@ class Broker:
                 call_config = step_config
                 logger.debug(f"BROKER.EXECUTE_STEP: Using step_config as call_config")
 
-            if call_type == 'workbook':
+            if ctype == 'workbook':
                 logger.debug(f"BROKER.EXECUTE_STEP: Executing workbook task: {task_name}")
                 logger.info(f"BROKER.EXECUTE_STEP: EXECUTING workbook task: {task_name}")
                 logger.debug(f"BROKER.EXECUTE_STEP: Finding task configuration for task_name={task_name}")
@@ -587,7 +655,7 @@ class Broker:
                         'error': error_msg
                     }
                 
-            elif call_type == 'Playbook':
+            elif ctype == 'playbook':
                 logger.debug(f"BROKER.EXECUTE_STEP: Executing playbooks task")
                 logger.info(f"BROKER.EXECUTE_STEP: EXECUTING playbooks task")
                 path = call_config.get('path')
@@ -626,13 +694,13 @@ class Broker:
                     }
                     logger.debug(f"BROKER.EXECUTE_STEP: Created result from playbook_result: {result}")
                     
-            elif call_type in ['http', 'python', 'duckdb', 'postgres', 'secrets']:
+            elif ctype in ['http', 'python', 'duckdb', 'postgres', 'secrets']:
                 logger.debug(f"BROKER.EXECUTE_STEP: Executing {call_type} task")
                 logger.info(f"BROKER.EXECUTE_STEP: EXECUTING {call_type} task")
                 
                 logger.debug(f"BROKER.EXECUTE_STEP: Creating task_config for {call_type} task")
                 task_config = {
-                    'type': call_type,
+                    'type': ctype,
                     'with': call_config.get('with', {})
                 }
                 logger.debug(f"BROKER.EXECUTE_STEP: Initial task_config: {task_config}")
@@ -647,7 +715,7 @@ class Broker:
                 })
                 logger.debug(f"BROKER.EXECUTE_STEP: Final task_config: {task_config}")
 
-                task_name_to_use = task_name or f"step_{call_type}_task"
+                task_name_to_use = task_name or f"step_{ctype}_task"
                 logger.debug(f"BROKER.EXECUTE_STEP: Using task_name: {task_name_to_use}")
                 
                 logger.debug(f"BROKER.EXECUTE_STEP: Delegating task execution with task_config={task_config}, task_name={task_name_to_use}")
@@ -733,7 +801,7 @@ class Broker:
             self.agent.update_context('result', result.get('data'))
             logger.debug(f"BROKER.EXECUTE_STEP: Updated context key=result, value={result.get('data')}")
 
-            if call_type == 'secrets' and result.get('status') == 'success':
+            if ctype == 'secrets' and result.get('status') == 'success':
                 logger.debug(f"BROKER.EXECUTE_STEP: Processing successful secrets step")
                 secret_data = result.get('data', {})
                 logger.debug(f"BROKER.EXECUTE_STEP: Secret data: {secret_data}")
@@ -1629,7 +1697,10 @@ def execute_playbook_via_broker(
     playbook_version: str,
     input_payload: Optional[Dict[str, Any]] = None,
     sync_to_postgres: bool = True,
-    merge: bool = False
+    merge: bool = False,
+    parent_execution_id: Optional[str] = None,
+    parent_event_id: Optional[str] = None,
+    parent_step: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Event-sourced kickoff of a playbook execution without directly using Worker.
@@ -1685,7 +1756,7 @@ def execute_playbook_via_broker(
                 import asyncio as _asyncio
                 if _asyncio.get_event_loop().is_running():
                     # within async server context
-                    _asyncio.create_task(es.emit({
+                    payload = {
                         'event_type': 'execution_start',
                         'execution_id': execution_id,
                         'status': 'in_progress',
@@ -1693,11 +1764,14 @@ def execute_playbook_via_broker(
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                         'context': ctx,
-                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
-                    }))
+                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                    }
+                    if parent_event_id:
+                        payload['parent_event_id'] = parent_event_id
+                    _asyncio.create_task(es.emit(payload))
                 else:
                     # best-effort synchronous run
-                    _asyncio.run(es.emit({
+                    payload = {
                         'event_type': 'execution_start',
                         'execution_id': execution_id,
                         'status': 'in_progress',
@@ -1705,8 +1779,11 @@ def execute_playbook_via_broker(
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                         'context': ctx,
-                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
-                    }))
+                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                    }
+                    if parent_event_id:
+                        payload['parent_event_id'] = parent_event_id
+                    _asyncio.run(es.emit(payload))
             except Exception:
                 # Fallback to HTTP if direct emit fails
                 server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')

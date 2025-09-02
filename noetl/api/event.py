@@ -176,15 +176,26 @@ async def render_context(request: Request):
                     if "id" in job_obj and job_obj["id"] is not None:
                         job_obj["uuid"] = str(job_obj["id"])
                     else:
-                        from uuid import uuid4
-                        job_obj["uuid"] = str(uuid4())
+                        try:
+                            job_obj["uuid"] = get_snowflake_id_str()
+                        except Exception:
+                            try:
+                                job_obj["uuid"] = str(get_snowflake_id())
+                            except Exception:
+                                from uuid import uuid4
+                                job_obj["uuid"] = str(uuid4())
             except Exception:
                 pass
-        # Provide a best-effort job uuid when none supplied
         try:
             if "job" not in base_ctx:
-                from uuid import uuid4
-                base_ctx["job"] = {"uuid": str(uuid4())}
+                try:
+                    base_ctx["job"] = {"uuid": get_snowflake_id_str()}
+                except Exception:
+                    try:
+                        base_ctx["job"] = {"uuid": str(get_snowflake_id())}
+                    except Exception:
+                        from uuid import uuid4
+                        base_ctx["job"] = {"uuid": str(uuid4())}
         except Exception:
             pass
 
@@ -709,7 +720,15 @@ class EventService:
 
     async def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
+            # Generate event_id using snowflake when not provided
+            try:
+                snow = get_snowflake_id_str()
+            except Exception:
+                try:
+                    snow = str(get_snowflake_id())
+                except Exception:
+                    snow = None
+            event_id = event_data.get("event_id", snow or f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id
             event_type = event_data.get("event_type", "UNKNOWN")
             status = event_data.get("status", "CREATED")
@@ -864,7 +883,8 @@ class EventService:
 
             try:
                 evt_l = (str(event_type) if event_type is not None else '').lower()
-                if evt_l in {"execution_start", "action_completed", "action_error"}:
+                # Re-evaluate broker on key lifecycle events, including task completion/errors
+                if evt_l in {"execution_start", "action_completed", "action_error", "task_complete", "task_error", "loop_iteration"}:
                     try:
                         if asyncio.get_event_loop().is_running():
                             asyncio.create_task(evaluate_broker_for_execution(execution_id))
@@ -1526,6 +1546,277 @@ async def evaluate_broker_for_execution(
         next_step = steps[idx]
         logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Next actionable step index={idx}, def={next_step}")
 
+        # Inline loop handler: if a step has a 'loop' attribute and also defines an action
+        # (python/http/duckdb/postgres/secrets/workbook or a named task), schedule that action
+        # for each item in parallel. When all items complete, emit a completion for the step
+        # with an aggregated result and proceed using this step's 'next' transitions.
+        if isinstance(next_step, dict) and ('loop' in next_step) and ((next_step.get('type') or '').lower() != 'loop'):
+            try:
+                step_nm = next_step.get('step') or next_step.get('name') or next_step.get('task') or f'step-{idx+1}'
+                # Build loop spec from attribute
+                lspec = next_step.get('loop') or {}
+                iterator = (lspec.get('iterator') or 'item').strip()
+                try:
+                    items = render_template(jenv, lspec.get('in', []), base_ctx, strict_keys=False)
+                    if isinstance(items, str):
+                        try:
+                            items = json.loads(items)
+                        except Exception:
+                            items = [items]
+                except Exception:
+                    items = []
+                if not isinstance(items, list):
+                    items = []
+                fexpr = lspec.get('filter')
+                def _accept(it):
+                    if not fexpr:
+                        return True
+                    try:
+                        fctx = dict(base_ctx)
+                        fctx[iterator] = it
+                        val = render_template(jenv, fexpr, fctx, strict_keys=False)
+                        if val is None:
+                            return True
+                        if isinstance(val, str) and val.strip() == '':
+                            return True
+                        return bool(val)
+                    except Exception:
+                        return True
+                items_f = [it for it in items if _accept(it)]
+
+                # Check if the step already has a completion event
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                "SELECT 1 FROM noetl.event_log WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success') LIMIT 1",
+                                (execution_id, step_nm)
+                            )
+                            done_evt = await cur.fetchone()
+                except Exception:
+                    done_evt = None
+
+                # Count completed per-item events for this step's action
+                done_count = 0
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            if step_type_lower == 'playbook':
+                                # Count child executions that completed for this parent + step
+                                await cur.execute(
+                                    """
+                                    SELECT COUNT(*) FROM noetl.event_log
+                                    WHERE (metadata->>'parent_execution_id') = %s
+                                      AND (metadata->>'parent_step') = %s
+                                      AND event_type = 'execution_complete'
+                                    """,
+                                    (execution_id, step_nm)
+                                )
+                            else:
+                                await cur.execute(
+                                    "SELECT COUNT(*) FROM noetl.event_log WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success')",
+                                    (execution_id, step_nm)
+                                )
+                            r = await cur.fetchone()
+                            done_count = (r[0] or 0) if r else 0
+                except Exception:
+                    pass
+
+                expected = len(items_f)
+
+                # If all items completed and no aggregate completion emitted, emit aggregate completion
+                if expected > 0 and done_count >= expected and not done_evt:
+                    # Build aggregated result as list of outputs for this node
+                    agg_list = []
+                    try:
+                        async with get_async_db_connection() as conn:
+                            async with conn.cursor(row_factory=dict_row) as cur:
+                                if step_type_lower == 'playbook':
+                                    await cur.execute(
+                                        """
+                                        SELECT output_result FROM noetl.event_log
+                                        WHERE (metadata->>'parent_execution_id') = %s
+                                          AND (metadata->>'parent_step') = %s
+                                          AND event_type = 'execution_complete'
+                                        ORDER BY timestamp
+                                        """,
+                                        (execution_id, step_nm)
+                                    )
+                                else:
+                                    await cur.execute(
+                                        """
+                                        SELECT output_result FROM noetl.event_log
+                                        WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success')
+                                        ORDER BY timestamp
+                                        """,
+                                        (execution_id, step_nm)
+                                    )
+                                rows = await cur.fetchall()
+                                for rr in rows:
+                                    data = rr.get('output_result')
+                                    try:
+                                        data = json.loads(data) if isinstance(data, str) else data
+                                    except Exception:
+                                        pass
+                                    agg_list.append(data)
+                    except Exception:
+                        pass
+                    try:
+                        await get_event_service().emit({
+                            'execution_id': execution_id,
+                            'event_type': 'action_completed',
+                            'status': 'COMPLETED',
+                            'node_id': f'{execution_id}-step-{idx+1}',
+                            'node_name': step_nm,
+                            'node_type': 'task',
+                            'result': {'results': agg_list, 'count': len(agg_list)},
+                            'context': {'workload': workload},
+                        })
+                    except Exception:
+                        logger.debug("INLINE LOOP: Failed to emit aggregate completion", exc_info=True)
+                    return
+
+                # Schedule per-item jobs if not already scheduled (or partially scheduled)
+                scheduled_any = False
+                # Build task config from the step itself
+                # Adapted from general task_cfg builder below
+                step_type_lower = str(next_step.get('type') or '').strip().lower()
+                if step_type_lower == 'playbook':
+                    # Proxy sub-playbook call via python on worker, waiting for completion
+                    sub_path = next_step.get('path') or ''
+                    task_code = (
+                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None):\n"
+                        "    import os, httpx, time\n"
+                        "    host = os.environ.get('NOETL_HOST','localhost')\n"
+                        "    port = os.environ.get('NOETL_PORT','8082')\n"
+                        "    base = f'http://{host}:{port}/api'\n"
+                        "    try:\n"
+                        "        # Normalize parameters\n"
+                        "        params = parameters.get('parameters', parameters) if isinstance(parameters, dict) else parameters\n"
+                        "        payload = {'playbook_id': playbook_id, 'parameters': params, 'merge': True}\n"
+                        "        # Parent linkage if provided (explicit args take precedence)\n"
+                        "        peid = parent_execution_id or (params.get('parent_execution_id') if isinstance(params, dict) else None)\n"
+                        "        pveid = parent_event_id or (params.get('parent_event_id') if isinstance(params, dict) else None)\n"
+                        "        if peid: payload['parent_execution_id'] = peid\n"
+                        "        if pveid: payload['parent_event_id'] = pveid\n"
+                        "        r = httpx.post(f'{base}/executions/run', json=payload, timeout=30.0)\n"
+                        "        r.raise_for_status()\n"
+                        "        data = r.json(); eid = data.get('id') or data.get('execution_id')\n"
+                        "        for _ in range(300):\n"
+                        "            s = httpx.get(f'{base}/executions/{eid}', timeout=30.0)\n"
+                        "            if s.status_code == 200:\n"
+                        "                js = s.json(); st = str(js.get('status','')).lower()\n"
+                        "                if st in ('completed','failed','error','canceled'):\n"
+                        "                    ev = js.get('events', [])\n"
+                        "                    for e in ev:\n"
+                        "                        if e.get('event_type')=='action_completed' and e.get('node_name')=='fetch_and_evaluate':\n"
+                        "                            return e.get('output_result') or e.get('result') or {'status': st, 'execution_id': eid}\n"
+                        "                    return {'status': st, 'execution_id': eid}\n"
+                        "            time.sleep(0.2)\n"
+                        "        return {'status': 'timeout', 'execution_id': eid}\n"
+                        "    except Exception as e:\n"
+                        "        return {'status': 'error', 'error': str(e)}\n"
+                    )
+                    # Render per-item parameters at worker from context; pass the step's with-template as a mapping
+                    step_with_tpl = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
+                    task_cfg = {
+                        'type': 'python',
+                        'name': step_nm,
+                        'code': task_code,
+                        'with': {
+                            'playbook_id': sub_path,
+                            'parameters': step_with_tpl,
+                            'parent_execution_id': '{{ _meta.parent_execution_id }}',
+                            'parent_event_id': '{{ _meta.parent_event_id }}'
+                        }
+                    }
+                elif 'call' in next_step:
+                    task_cfg = next_step['call']
+                elif 'action' in next_step:
+                    task_cfg = {"type": next_step.get('action'), **({k: v for k, v in next_step.items() if k not in {'action','loop','next'}})}
+                else:
+                    # Resolve workbook task by its task/name
+                    tname = next_step.get('task') or next_step.get('name') or step_nm
+                    base_task = locals().get('tasks_def_map', {}).get(str(tname), {})
+                    if not isinstance(base_task, dict) or not base_task:
+                        task_cfg = {'type': (next_step.get('type') or 'python'), 'name': tname, 'code': 'def main(**kwargs):\n    return {}'}
+                    else:
+                        sw = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
+                        bw = base_task.get('with', {}) if isinstance(base_task.get('with'), dict) else {}
+                        mw = {**bw, **sw}
+                        task_cfg = dict(base_task)
+                        task_cfg['name'] = step_nm
+                        if mw:
+                            task_cfg['with'] = mw
+
+                for i, it in enumerate(items_f):
+                    iter_node_id = f"{execution_id}-step-{idx+1}-iter-{i}"
+                    try:
+                        async with get_async_db_connection() as conn:
+                            async with conn.cursor() as cur:
+                                await cur.execute("SELECT 1 FROM noetl.queue WHERE execution_id=%s AND node_id=%s LIMIT 1", (execution_id, iter_node_id))
+                                if await cur.fetchone():
+                                    continue
+                    except Exception:
+                        pass
+                    iter_ctx = dict(workload) if isinstance(workload, dict) else {}
+                    iter_ctx[iterator] = it
+                    try:
+                        rendered_work = render_template(jenv, iter_ctx, base_ctx, strict_keys=False)
+                    except Exception:
+                        rendered_work = iter_ctx
+                    # Emit a loop_iteration event to create a real parent_event_id for child executions
+                    loop_iter_event_id = None
+                    try:
+                        evt = await get_event_service().emit({
+                            'execution_id': execution_id,
+                            'event_type': 'loop_iteration',
+                            'status': 'in_progress',
+                            'node_id': iter_node_id,
+                            'node_name': step_nm,
+                            'node_type': 'iteration',
+                            'context': {'workload': rendered_work, 'iterator': iterator, 'index': i}
+                        })
+                        loop_iter_event_id = evt.get('event_id')
+                    except Exception:
+                        logger.debug("INLINE LOOP: Failed to emit loop_iteration event", exc_info=True)
+                    try:
+                        if isinstance(rendered_work, dict):
+                            rendered_work['_loop'] = {
+                                'loop_id': f"{execution_id}:{step_nm}",
+                                'loop_name': step_nm,
+                                'iterator': iterator,
+                                'current_index': i,
+                                'current_item': it,
+                                'items_count': len(items_f)
+                            }
+                            rendered_work['_meta'] = {
+                                'parent_event_id': loop_iter_event_id,
+                                'parent_execution_id': execution_id,
+                                'parent_step': step_nm
+                            }
+                    except Exception:
+                        pass
+                    try:
+                        async with get_async_db_connection() as conn:
+                            async with conn.cursor() as cur:
+                                await cur.execute(
+                                    """
+                                    INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                    RETURNING id
+                                    """,
+                                    (execution_id, iter_node_id, json.dumps(task_cfg), json.dumps(rendered_work), 0, 5, None)
+                                )
+                                await conn.commit()
+                        scheduled_any = True
+                    except Exception:
+                        logger.debug("INLINE LOOP: Failed to enqueue per-item job", exc_info=True)
+                if scheduled_any:
+                    return
+            except Exception:
+                logger.debug("INLINE LOOP: scheduling error", exc_info=True)
+
         if isinstance(next_step, dict):
             _sname = next_step.get('step') or next_step.get('name')
             _stype = (next_step.get('type') or '').lower()
@@ -2055,13 +2346,30 @@ async def evaluate_broker_for_execution(
 
         try:
             try:
-                from uuid import uuid4
                 pre_ctx = dict(base_ctx)
                 pre_ctx['env'] = dict(os.environ)
-                pre_ctx['job'] = {'uuid': str(uuid4())}
+                try:
+                    pre_ctx['job'] = {'uuid': get_snowflake_id_str()}
+                except Exception:
+                    try:
+                        pre_ctx['job'] = {'uuid': str(get_snowflake_id())}
+                    except Exception:
+                        from uuid import uuid4
+                        pre_ctx['job'] = {'uuid': str(uuid4())}
                 rendered_workload = render_template(jenv, workload, pre_ctx, strict_keys=False)
             except Exception:
                 rendered_workload = workload
+            # Ensure _meta with parent linkage defaults
+            try:
+                if isinstance(rendered_workload, dict):
+                    meta = rendered_workload.get('_meta') or {}
+                    if exec_start_eid and 'parent_event_id' not in meta:
+                        meta['parent_event_id'] = exec_start_eid
+                    if 'parent_execution_id' not in meta:
+                        meta['parent_execution_id'] = execution_id
+                    rendered_workload['_meta'] = meta
+            except Exception:
+                pass
             node_id = f"{execution_id}-step-{idx+1}"
             step_name_guard = None
             if isinstance(next_step, dict):

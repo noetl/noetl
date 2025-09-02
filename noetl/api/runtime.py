@@ -276,6 +276,9 @@ async def execute_playbook(request: Request):
         playbook_id = body.get("playbook_id")
         parameters = body.get("parameters", {})
         merge = body.get("merge", False)
+        parent_execution_id = body.get("parent_execution_id")
+        parent_event_id = body.get("parent_event_id")
+        parent_step = body.get("parent_step")
 
         if not playbook_id:
             raise HTTPException(
@@ -296,7 +299,10 @@ async def execute_playbook(request: Request):
             playbook_version=entry.get("resource_version", "latest"),
             input_payload=parameters,
             sync_to_postgres=True,
-            merge=merge
+            merge=merge,
+            parent_execution_id=parent_execution_id,
+            parent_event_id=parent_event_id,
+            parent_step=parent_step
         )
 
         # Persist workload record for this execution (server-side tracking)

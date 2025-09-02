@@ -18,6 +18,7 @@ PLAYBOOKS=(
   "examples/google_secret_manager/secrets_test.yaml"
   "examples/google_secret_manager/gcs_secrets_example.yaml"
   "examples/weather/weather_loop_example.yaml"
+  "examples/weather/city_process.yaml"
   "examples/postgres/postgres_test.yaml"
   "examples/duckdb/load_dict_test.yaml"
   "examples/duckdb/gs_duckdb_postgres_example.yaml"

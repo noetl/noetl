@@ -5,7 +5,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: weather_example
-path: examples/weather_loop_example
+path: examples/weather/weather_loop_example
 
 workload:
   jobId: "{{ job.uuid }}"
@@ -34,117 +34,65 @@ workflow:
           - step: end
 
   - step: city_loop
-    desc: "Iterate over cities"
+    desc: "Iterate over cities and run sub-playbook"
     loop:
       in: "{{ workload.cities }}"
       iterator: city
-    next:
-      - step: fetch_and_evaluate
-        with:
-          city: "{{ city }}"
-          base_url: "{{ workload.base_url }}"
-          temperature_threshold: "{{ workload.temperature_threshold }}"
-
-  - step: fetch_and_evaluate
-    desc: "Fetch and evaluate weather for one city"
-    type: workbook
-    task: evaluate_weather_directly
+    type: Playbook
+    path: examples/weather/city_process
     with:
       city: "{{ city }}"
-      base_url: "{{ base_url }}"
-      threshold: "{{ temperature_threshold }}"
-    next:
-      - step: check_alert_needed
-        with:
-          city: "{{ city }}"
-          evaluation_result: "{{ evaluate_weather_directly }}"
-
-  - step: check_alert_needed
-    desc: "Check if alert is needed based on evaluation result"
-    type: python
-    code: |
-      def main(city, evaluation_result):
-          if evaluation_result.get("alert", False):
-              return {"action": "alert", "city": city, "max_temp": evaluation_result.get("max_temp", 0)}
-          else:
-              return {"action": "log", "city": city}
-    next:
-      - when: "{{ check_alert_needed.action == 'alert' }}"
-        then:
-          - step: alert_step
-            with:
-              city: "{{ city.name }}"
-              max_temp: "{{ check_alert_needed.max_temp }}"
-      - else:
-          - step: log_step
-            with:
-              city: "{{ city.name }}"
-
-  - step: evaluate_weather_step
-    desc: "Evaluate weather data and determine if alert is needed"
-    type: workbook
-    task: evaluate_weather
-    with:
-      city: "{{ city }}"
-      threshold: "{{ workload.temperature_threshold }}"
-      forecast_data: "{{ get_forecast }}"
-    next:
-      - when: "{{ evaluate_weather.alert }}"
-        then:
-          - step: alert_step
-            with:
-              city: "{{ city.name }}"
-              max_temp: "{{ evaluate_weather.max_temp }}"
-      - else:
-          - step: log_step
-            with:
-              city: "{{ city.name }}"
-
-  - step: alert_step
-    desc: "Send alert if threshold exceeded"
-    type: workbook
-    task: alert_task
-    with:
-      city: "{{ city }}"
-      temperature: "{{ max_temp }}"
-    next:
-      - step: end_city_loop
-
-  - step: log_step
-    desc: "Log result if no alert"
-    type: workbook
-    task: log_task
-    with:
-      city: "{{ city }}"
-    next:
-      - step: end_city_loop
-
-  - step: end_city_loop
-    desc: "End of the city loop"
-    end_loop: city_loop
-    result:
-      city_result: "{{ fetch_and_evaluate }}"
-      alerts: "{{ (city_loop_results | default([])) + [city_result] if city_result else (city_loop_results | default([])) }}"
-    next:
-      - step: aggregate_alerts
-        with:
-          alerts: "{{ alerts }}"
+      base_url: "{{ workload.base_url }}"
+      temperature_threshold: "{{ workload.temperature_threshold }}"
 
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
     type: workbook
     task: aggregate_alerts_task
     with:
-      alerts: "{{ alerts }}"
+      alerts: "{{ city_loop.results }}"
     next:
-      - step: log_aggregate_result
-        with:
-          summary: "{{ aggregate_alerts.summary }}"
       - when: "{{ aggregate_alerts.global_alert }}"
         then:
           - step: global_alert_step
             with:
               summary: "{{ aggregate_alerts.summary }}"
+          - step: log_aggregate_result
+            with:
+              summary: "{{ aggregate_alerts.summary }}"
+        else:
+          - step: log_aggregate_result
+            with:
+              summary: "{{ aggregate_alerts.summary }}"
+
+  - step: compute_stats
+    desc: "Compute loop statistics (count, cities, alert count)"
+    type: python
+    code: |
+      def main(results):
+          arr = results or []
+          processed = len(arr)
+          cities = []
+          alerts = 0
+          for r in arr:
+              try:
+                  d = r if isinstance(r, dict) else {}
+                  rd = d.get('result', {}) if isinstance(d.get('result'), dict) else {}
+                  city = rd.get('city')
+                  if city:
+                      cities.append(city)
+                  if rd.get('alert'):
+                      alerts += 1
+              except Exception:
+                  pass
+          return {"processed": processed, "cities": cities, "alert_count": alerts}
+    with:
+      results: "{{ city_loop.results }}"
+    next:
+      - step: log_alert_stats
+        with:
+          processed: "{{ compute_stats.processed }}"
+          alert_count: "{{ compute_stats.alert_count }}"
 
   - step: log_aggregate_result
     desc: "Log the aggregated alert summary"

@@ -76,10 +76,10 @@ help:
 	@echo "  make noetl-start									Start NoETL runtime"
 	@echo "  make noetl-stop									Stop NoETL runtime"
 	@echo "  make noetl-restart									Restart NoETL runtime"
-	@echo "  make noetl-run PLAYBOOK=examples/weather_example HOST=localhost PORT=8082\t\tExecute specific playbook"
-	@echo "  make noetl-execute PLAYBOOK=examples/weather_example\t\t\tExecute specific playbook"
-	@echo "  make noetl-execute-status ID=219858139900542976\t\t\tGet status for specific ID"
-	@echo "  make noetl-execute-watch ID=219858139900542976 HOST=localhost PORT=8082\tWatch status with live updates"
+	@echo "  make noetl-run PLAYBOOK=examples/weather/weather_loop_example HOST=localhost PORT=8082		Execute specific playbook"
+	@echo "  make noetl-execute PLAYBOOK=examples/weather/weather_loop_example					Execute specific playbook"
+	@echo "  make noetl-execute-status ID=219858139900542976					Get status for specific ID"
+	@echo "  make noetl-execute-watch ID=219858139900542976 HOST=localhost PORT=8082		Watch status with live updates"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -310,7 +310,7 @@ noetl-stop: stop-workers stop-server
 
 noetl-restart: noetl-stop noetl-start server-status
 
-.PHONY: noetl-run noetl-execute noetl-execute-status noetl-execute-watch
+.PHONY: noetl-run noetl-execute noetl-execute-status noetl-execute-watch noetl-validate-status
 
 NOETL_BIN ?= python -m noetl.main
 PLAYBOOK ?= examples/weather_loop_example
@@ -400,6 +400,55 @@ noetl-execute-watch:
 	    fi; \
 	  fi; \
 	  sleep 1; \
+	done
+
+noetl-validate-status:
+	@file="$(FILE)"; if [ -z "$$file" ]; then file="status.json"; fi; \
+	if [ ! -f "$$file" ]; then \
+	  echo "Usage: make noetl-validate-status FILE=/path/to/status.json"; \
+	  echo "Error: file not found: $$file"; \
+	  exit 1; \
+	fi; \
+	clean_file="$$file.clean"; \
+	sed -E 's/\x1b\[[0-9;]*m//g' "$$file" > "$$clean_file"; \
+	jq -r 'def lcase: ascii_downcase;\
+	  def errEvt: (select((.event_type=="action_error") or (((.status|tostring)|lcase)|test("error|failed"))));\
+	  def lastCity: (.events| map(select(.node_name=="city_loop" and .event_type=="action_completed")) | last);\
+	  def lastAgg: (.events| map(select(.node_name=="aggregate_alerts" and .event_type=="action_completed")) | last);\
+	  def lastStats: (.events| map(select(.node_name=="compute_stats" and .event_type=="action_completed")) | last);\
+	  "status: " + (.status // "unknown"),\
+	  "events: " + ((.events|length)|tostring),\
+	  "errors: " + ((.events|map(errEvt)|length)|tostring),\
+	  (if lastCity then "city_loop.count: " + ((lastCity.result.count // (lastCity.result.results|length) // 0)|tostring) else "city_loop.count: 0" end),\
+	  (if lastCity then "city_loop.results_len: " + ((lastCity.result.results|length // 0)|tostring) else "city_loop.results_len: 0" end),\
+	  (if lastAgg then "aggregate_alerts: " + ((lastAgg.output_result // {}) | tojson) else empty end),\
+	  (if lastStats then "compute_stats: " + ((lastStats.output_result // {}) | tojson) else empty end)\
+	' "$$clean_file"
+
+noetl-dump-lineage:
+	@if [ -z "$(ID)" ]; then \
+	  echo "Usage: make noetl-dump-lineage ID=<parent_execution_id> [HOST=localhost] [PORT=8082]"; \
+	  exit 1; \
+	fi; \
+	url="http://$(HOST):$(PORT)/api/events/by-execution/$(ID)"; \
+	printf "Parent: %s\n" "$(ID)"; \
+	# Dump loop_iteration events and their event_ids
+	curl -s "$${url}" | sed -E 's/\x1b\[[0-9;]*m//g' > /tmp/ev_$(ID).json; \
+	jq -r '\nEvents: ' /tmp/ev_$(ID).json >/dev/null 2>&1 || true; \
+	echo "Loop iterations:"; \
+	jq -r '.events[] | select(.event_type=="loop_iteration") | "  iter: " + (.node_name // "") + " idx=" + ((.context.index // 0)|tostring) + " event_id=" + (.event_id // "")' /tmp/ev_$(ID).json || true; \
+	# Attempt to dump child executions discovered via child execution_start with parent_execution_id
+	echo "Children:"; \
+	# naive scan: iterate all executions and print those with matching parent_execution_id
+	curl -s "http://$(HOST):$(PORT)/api/executions" | jq -r '.[]?.id' 2>/dev/null | while read -r cid; do \
+	  [ -z "$$cid" ] && continue; \
+	  curl -s "http://$(HOST):$(PORT)/api/events/by-execution/$$cid" | sed -E 's/\x1b\[[0-9;]*m//g' > /tmp/ev_$$cid.json 2>/dev/null || true; \
+	  pid=$$(jq -r '.events[]?|select(.event_type=="execution_start")|.metadata.parent_execution_id // empty' /tmp/ev_$$cid.json 2>/dev/null); \
+	  pstep=$$(jq -r '.events[]?|select(.event_type=="execution_start")|.metadata.parent_step // empty' /tmp/ev_$$cid.json 2>/dev/null); \
+	  if [ "$$pid" = "$(ID)" ]; then \
+	    term=$$(jq -r '.events[]?|select(.event_type=="execution_complete")|.output_result // {} | @json' /tmp/ev_$$cid.json 2>/dev/null); \
+	    echo "  child_execution_id=$$cid parent_step=$$pstep result=$$term"; \
+	  fi; \
 	done
 
 

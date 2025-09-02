@@ -45,7 +45,8 @@ def execute_task(
     Returns:
         Task execution result
     """
-    task_type = task_config.get('type', task_config.get('action', 'unknown'))
+    raw_type = task_config.get('type', task_config.get('action', 'unknown'))
+    task_type = str(raw_type).strip().lower()
     
     logger.debug(f"Executing task '{task_name}' of type '{task_type}'")
     
@@ -63,7 +64,7 @@ def execute_task(
         secret_manager = context.get('secret_manager')
         return execute_secrets_task(task_config, context, secret_manager, task_with or {}, log_event_callback)
     else:
-        raise ValueError(f"Unknown task type '{task_type}'. Available types: http, python, duckdb, postgres, secrets")
+        raise ValueError(f"Unknown task type '{raw_type}'. Available types: http, python, duckdb, postgres, secrets")
 
 
 def execute_task_resolved(
