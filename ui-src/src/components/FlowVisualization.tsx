@@ -47,6 +47,7 @@ interface FlowVisualizationProps {
   content?: string; // Optional content to use instead of fetching from API
   embedded?: boolean; // when true render inline instead of Modal
   readOnly?: boolean; // NEW: render in read-only (view) mode
+  hideTitle?: boolean; // NEW: suppress internal title (avoid duplicates)
 }
 
 interface TaskNode {
@@ -218,6 +219,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   content,
   embedded,
   readOnly,
+  hideTitle,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -760,15 +762,17 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         }}
       >
         {contextHolder}
-        <div
-          className="flow-modal-title"
-          style={{ display: "flex", alignItems: "center", gap: 12 }}
-        >
-          <span className="flow-modal-title-icon">🔄</span>
-          <span>{readOnly ? 'Workflow Visualization' : 'Flow Editor'} - {playbookName}</span>
-          {!readOnly && hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
-          {readOnly && <Tag color="blue">View Mode</Tag>}
-        </div>
+        {!hideTitle && (
+          <div
+            className="flow-modal-title"
+            style={{ display: "flex", alignItems: "center", gap: 12 }}
+          >
+            <span className="flow-modal-title-icon">🔄</span>
+            <span>{readOnly ? 'Workflow Visualization' : 'Flow Editor'} - {playbookName}</span>
+            {!readOnly && hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
+            {readOnly && <Tag color="blue">View Mode</Tag>}
+          </div>
+        )}
         {flowInner}
       </div>
     );

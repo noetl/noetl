@@ -680,6 +680,7 @@ const Execution: React.FC = () => {
             visible={showWorkflowVisualization}
             embedded={showWorkflowVisualization}
             readOnly
+            hideTitle
             onClose={() => {
               setShowWorkflowVisualization(false);
               navigate("/execution");
