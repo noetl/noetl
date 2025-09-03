@@ -7,7 +7,7 @@
 Playbook has 4 section:
 - metadata: contains name  and path and version and description of the playbook
 - workflow: has a steps and transition logic
-- wokrbook: is a namespace to keep named action types of the playbook that can be refered from the steps.
+- workbook: is a namespace to keep named action types of the playbook that can be refered from the steps.
 - workload: is a section for the static variables that can be override or merged with payload passed to the playbook.
 
 Step:
