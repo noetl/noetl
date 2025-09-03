@@ -11,7 +11,7 @@ Playbook has 4 section:
 - workload: is a section for the static variables that can be override or merged with payload passed to the playbook.
 
 Step:
-1. Steps defined in the worfklow section of the playbook.  
+1. Steps defined in the workflow section of the playbook.  
 
 2. Step has a type, e.g:  type: workbook or type: python or type: playbook.   
 2.1. If type: playbook and step has attribute path: examples/weather_loop then step will schedule this playbook for execution and pass context to it.  
