@@ -1,308 +1,201 @@
 # This is a NoETL DSL Playbook for iterating over cities to fetch and evaluate weather data.
-# It processes each city, fetches weather data from Open-Meteo, evaluates against a threshold,
-# posts alerts/logs to httpbin, aggregates results, and stores summary in DuckDB.
+# It includes a loop to process each city, fetch weather data, evaluate conditions, and handle alerts or logging.
+# The playbooks demonstrates nested loops for processing city districts, with conditions to skip certain districts.
+# noetl playbooks --execute --path "workflows/weather/weather_example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}], "temperature_threshold": 30}'
+
 
 apiVersion: noetl.io/v1
 kind: Playbook
 name: weather_example
-path: examples/weather/weather_loop_example
+path: examples/weather/weather_loop_example  # Unique path identifier for this playbooks
 
-workload:
+workload:  # Input parameters section accessible throughout the workflow
   jobId: "{{ job.uuid }}"
   state: ready
-  cities:
-    - name: "London"
-      lat: 51.51
-      lon: -0.13
+  cities:  # List of cities to process in the loop
+    - name: "London"  # City name
+      lat: 51.51  # Latitude
+      lon: -0.13  # Longitude
     - name: "Paris"
       lat: 48.85
       lon: 2.35
     - name: "Berlin"
       lat: 52.52
       lon: 13.41
-  base_url: "https://api.open-meteo.com/v1"
-  temperature_threshold: 12
-  pg_host: "localhost"
-  pg_port: 30543
-  pg_user: "demo"
-  pg_password: "demo"
-  pg_db: "demo_noetl"
+  base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
+  temperature_threshold: 12  # Threshold for alerting on temperature
+  # Postgres connection parameters (override via environment if desired)
+  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('30543') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
 
-workflow:
-  - step: start
+workflow:  # Workflow steps and transitions
+  - step: start  # Entry point of the workflow
     desc: "Start Weather Analysis Workflow"
-    next:
-      - when: "{{ workload.state == 'ready' }}"
+    next:  # Transition rules based on condition
+      - when: "{{ workload.state == 'ready' }}"  # Condition for transition
         then:
-          - step: city_loop
+          - step: city_loop  # If condition met, goto city_loop step
       - else:
-          - step: end
+          - step: end  # If not ready, end the workflow
 
   - step: city_loop
-    desc: "Iterate over cities and run sub-playbook (collected in Python)"
-    type: workbook
-    task: run_city_process_loop
+    desc: "Iterate over cities using sub-playbook"
+    type: playbook
+    path: examples/weather/city_process
+    loop:
+      in: "{{ workload.cities }}"
+      iterator: city
     with:
-      cities: "{{ workload.cities }}"
+      city: "{{ city }}"
       base_url: "{{ workload.base_url }}"
       temperature_threshold: "{{ workload.temperature_threshold }}"
     next:
       - step: aggregate_alerts
+        with:
+          alerts: "{{ city_loop.results }}"
+
+  # Steps between city_loop and end_city_loop were moved into examples/weather/city_process
 
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
     type: workbook
-    task: aggregate_alerts_task
+    name: aggregate_alerts_task
     with:
       alerts: "{{ city_loop.results }}"
     next:
       - step: log_aggregate_result
+        with:
+          summary: "{{ aggregate_alerts.summary }}"
 
   - step: log_aggregate_result
     desc: "Log the aggregated alert summary"
-    type: python
+    type: workbook
+    name: log_aggregate_result_task
     with:
       summary: "{{ aggregate_alerts.summary }}"
-    code: |
-      def main(summary):
-          print(f"Aggregated weather alert summary: {summary}")
-          return {"logged": True, "summary": summary}
     next:
-      - step: store_aggregate_result
+      - when: "{{ aggregate_alerts.global_alert }}"
+        then:
+          - step: global_alert_step
+      - else:
+          - step: store_summary_duckdb
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
     type: workbook
-    task: global_alert_task
-    with:
-      summary: "{{ aggregate_alerts.summary }}"
-    # Do not forward to storage here to avoid double-invocation of DuckDB step
-    # Storage will be triggered by log_aggregate_result only
-
-  - step: store_aggregate_result
-    desc: "Store the aggregated alert summary in PostgreSQL"
-    type: task
-    task: store_aggregate_result_postgres_task
+    name: global_alert_task
     with:
       summary: "{{ aggregate_alerts.summary }}"
     next:
-      - step: test_db_connection
+      - step: store_summary_duckdb
 
-  - step: test_db_connection
-    desc: "Test database connection and create table"
-    type: python
+  - step: store_summary_duckdb
+    desc: "Persist aggregated summary into DuckDB"
+    type: workbook
+    name: store_summary_duckdb_task
     with:
+      alert_cities: "{{ aggregate_alerts.summary.alert_cities }}"
+      alert_count: "{{ aggregate_alerts.summary.count }}"
+    next:
+      - step: store_summary_postgres
+
+  - step: store_summary_postgres
+    desc: "Persist aggregated summary into Postgres"
+    type: workbook
+    name: store_summary_postgres_task
+    with:
+      alert_cities: '["test_city"]'
+      alert_count: 1
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
-    code: |
-      def main(db_host, db_port, db_user, db_password, db_name):
-          import psycopg
-          
-          conn_string = f"dbname={db_name} user={db_user} password={db_password} host={db_host} port={db_port}"
-          
-          try:
-              with psycopg.connect(conn_string) as conn:
-                  with conn.cursor() as cursor:
-                      # Test connection
-                      cursor.execute("SELECT version()")
-                      version = cursor.fetchone()
-                      print(f"Connected to PostgreSQL: {version[0][:50]}...")
-                      
-                      # Create test table
-                      cursor.execute("""
-                          CREATE TABLE IF NOT EXISTS test_weather_table (
-                              id SERIAL PRIMARY KEY,
-                              test_data TEXT,
-                              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                          )
-                      """)
-                      
-                      # Insert test data
-                      cursor.execute("""
-                          INSERT INTO test_weather_table (test_data) 
-                          VALUES (%s)
-                      """, ("Test data from NoETL",))
-                      
-                      conn.commit()
-                      
-                      return {
-                          'status': 'success',
-                          'message': 'Database connection and table creation successful'
-                      }
-          except Exception as e:
-              return {'error': str(e)}
     next:
       - step: end
 
   - step: end
     desc: "End of workflow"
 
+
 workbook:
-
-  - name: run_city_process_loop
-    type: python
-    with:
-      cities: "{{ cities }}"
-      base_url: "{{ base_url }}"
-      temperature_threshold: "{{ temperature_threshold }}"
-    code: |
-      def main(cities, base_url, temperature_threshold):
-          import os, httpx, time
-          host = os.environ.get('NOETL_HOST','localhost')
-          port = os.environ.get('NOETL_PORT','8082')
-          base = f'http://{host}:{port}/api'
-
-          results = []
-          try:
-              for city in cities or []:
-                  payload = {
-                      'playbook_id': 'examples/weather/city_process',
-                      'parameters': {
-                          'city': city,
-                          'base_url': base_url,
-                          'temperature_threshold': str(temperature_threshold),
-                      },
-                      'merge': True,
-                  }
-                  r = httpx.post(f'{base}/executions/run', json=payload, timeout=30.0)
-                  r.raise_for_status()
-                  data = r.json(); eid = data.get('id') or data.get('execution_id')
-                  # poll child until terminal
-                  for _ in range(300):
-                      s = httpx.get(f'{base}/executions/{eid}', timeout=30.0)
-                      if s.status_code == 200:
-                          js = s.json(); st = str(js.get('status','')).lower()
-                          if st in ('completed','failed','error','canceled'):
-                              # try to locate fetch_and_evaluate result within child events
-                              ev = js.get('events', []) or []
-                              found = None
-                              for e in ev:
-                                  if e.get('event_type')=='action_completed' and e.get('node_name')=='fetch_and_evaluate':
-                                      out = e.get('output_result') or {}
-                                      # Some runtimes store under 'result' or directly return dict
-                                      cand = out.get('result') or out.get('data') or out
-                                      if isinstance(cand, dict) and cand:
-                                          found = cand
-                                          break
-                              # fallback minimal
-                              if not found:
-                                  found = {'city': city.get('name'), 'alert': False, 'max_temp': 0.0, 'status': st}
-                              results.append(found)
-                              break
-                      time.sleep(0.2)
-          except Exception as e:
-              # return partials with error flag
-              return {'results': results, 'count': len(results), 'error': str(e)}
-
-          return {'results': results, 'count': len(results)}
-
-  - name: log_forcast_request
-    type: http
-    method: GET
-    endpoint: "{{ base_url }}/forecast"
-    params:
-      latitude: "{{ city.lat }}"
-      longitude: "{{ city.lon }}"
-      hourly: "temperature_2m"
-      forecast_days: 1
-    timeout: 10
-
-  - name: get_forecast
-    type: http
-    method: GET
-    endpoint: "{{ base_url }}/forecast"
-    params:
-      latitude: "{{ city.lat }}"
-      longitude: "{{ city.lon }}"
-      hourly: "temperature_2m"
-      forecast_days: 1
-    timeout: 10
-
-  - name: evaluate_weather_directly
-    type: python
-    with:
-      city: "{{ city }}"
-      threshold: "{{ threshold }}"
-      base_url: "{{ base_url }}"
-    code: |
-      def main(city, threshold, base_url):
-          import httpx
-          threshold = float(threshold) if threshold not in (None, "") else 25.0
-          try:
-              resp = httpx.get(
-                  f"{base_url}/forecast",
-                  params={
-                      "latitude": city["lat"],
-                      "longitude": city["lon"],
-                      "hourly": "temperature_2m",
-                      "forecast_days": 1,
-                  },
-                  timeout=10.0,
-              )
-              resp.raise_for_status()
-              data = resp.json()
-          except Exception as e:
-              return {"city": city["name"], "max_temp": 0.0, "alert": False, "error": str(e)}
-
-          temps = []
-          if isinstance(data, dict):
-              hourly = data.get("hourly", {})
-              if isinstance(hourly, dict):
-                  temps = hourly.get("temperature_2m", []) or []
-
-          max_temp = max(temps) if temps else 0.0
-          return {"city": city["name"], "max_temp": max_temp, "alert": bool(max_temp > threshold)}
-
   - name: evaluate_weather
     type: python
     with:
       city: "{{ city }}"
-      threshold: "{{ workload.temperature_threshold }}"
+      threshold: "{{ temperature_threshold }}"
       forecast_data: "{{ get_forecast }}"
     code: |
       def main(city, threshold, forecast_data):
-          threshold = float(threshold) if threshold not in (None, "") else 5.0
+          print(f"City: {city}")
+          print(f"Threshold: {threshold}")
+          print(f"Forecast data type: {type(forecast_data)}")
+          threshold = float(threshold) if threshold else 5
+          print(f"Threshold after conversion: {threshold}")
           temps = []
           if isinstance(forecast_data, dict):
-              hourly = forecast_data.get("hourly", {})
-              if isinstance(hourly, dict):
-                  temps = hourly.get("temperature_2m", []) or []
-          max_temp = max(temps) if temps else 0.0
-          return {"city": city["name"], "max_temp": max_temp, "alert": bool(max_temp > threshold)}
+              print(f"Forecast data keys: {forecast_data.keys()}")
+              hourly = forecast_data.get('hourly', {})
+              if isinstance(hourly, dict) and 'temperature_2m' in hourly:
+                  temps = hourly['temperature_2m']
+                  print(f"Found temps in hourly.temperature_2m: {temps}")
+              elif 'data' in forecast_data and isinstance(forecast_data['data'], dict):
+                  data = forecast_data['data']
+                  print(f"Data keys: {data.keys()}")
+                  data_hourly = data.get('hourly', {})
+                  if isinstance(data_hourly, dict) and 'temperature_2m' in data_hourly:
+                      temps = data_hourly['temperature_2m']
+                      print(f"Found temps in data.hourly.temperature_2m: {temps}")
+          max_temp = max(temps) if temps else 0
+          print(f"Max temperature: {max_temp}")
+          alert = max_temp > threshold
+          print(f"Alert needed: {alert}")
+          result = {
+              "city": city["name"],
+              "max_temp": max_temp,
+              "alert": alert
+          }
+          print(f"Returning result: {result}")
+          return result
 
   - name: alert_task
     type: http
     method: POST
     endpoint: "https://postman-echo.com/post"
     payload:
-      kind: "city_alert"
-      city: "{{ city.name }}"
+      city: "{{ city }}"
       temperature: "{{ temperature }}"
       message: "High temperature alert."
-    timeout: 10
 
   - name: log_task
     type: http
     method: POST
     endpoint: "https://postman-echo.com/post"
     payload:
-      kind: "city_log"
-      city: "{{ city.name }}"
+      city: "{{ city }}"
       message: "No alert needed."
-    timeout: 10
 
-  - name: global_alert_task
+  - name: get_city_districts
     type: http
-    method: POST
+    method: GET
     endpoint: "https://postman-echo.com/post"
-    payload:
-      kind: "global_alert"
-      summary: "{{ summary }}"
-      message: "Global weather alert triggered."
-    timeout: 10
+
+  - name: process_district
+    type: python
+    with:
+      city: "{{ city }}"
+      district: "{{ district }}"
+    code: |
+      def main(city, district):
+          return {
+              "city": city["name"],
+              "district": district["name"],
+              "processed": True,
+              "timestamp": "2024-01-01T12:00:00Z"
+          }
 
   - name: aggregate_alerts_task
     type: python
@@ -310,26 +203,40 @@ workbook:
       alerts: "{{ alerts }}"
     code: |
       def main(alerts):
-          if not alerts:
-              return {"summary": {"alert_cities": [], "count": 0}, "global_alert": False}
+          import ast
+          # Normalize alerts input
+          if isinstance(alerts, str):
+              try:
+                  alerts = ast.literal_eval(alerts)
+              except Exception:
+                  alerts = []
+          alerts = alerts or []
+
+          # Unwrap nested results if coming from sub-playbook aggregates
+          normalized = []
+          for item in alerts:
+              if isinstance(item, dict):
+                  if 'fetch_and_evaluate' in item and isinstance(item['fetch_and_evaluate'], dict):
+                      normalized.append(item['fetch_and_evaluate'])
+                  else:
+                      normalized.append(item)
           
-          alert_cities = []
-          for alert in alerts:
-              if isinstance(alert, dict) and alert.get("alert", False):
-                  alert_cities.append({
-                      "city": alert.get("city", "Unknown"),
-                      "max_temp": alert.get("max_temp", 0.0)
-                  })
-          
+          # Compute summary
+          alert_cities = [a for a in normalized if isinstance(a, dict) and a.get('alert')]
+          global_alert = bool(alert_cities)
           summary = {
-              "alert_cities": alert_cities,
+              "alert_cities": [a.get("city") for a in alert_cities],
               "count": len(alert_cities)
           }
-          
-          return {
-              "summary": summary,
-              "global_alert": len(alert_cities) > 0
-          }
+          return {"global_alert": global_alert, "summary": summary}
+
+  - name: global_alert_task
+    type: http
+    method: POST
+    endpoint: "https://postman-echo.com/post"
+    payload:
+      summary: "{{ summary }}"
+      message: "Global weather alert triggered."
 
   - name: log_aggregate_result_task
     type: python
@@ -340,54 +247,48 @@ workbook:
           print(f"Aggregated weather alert summary: {summary}")
           return {"logged": True, "summary": summary}
 
-  - name: store_aggregate_result_task_postgres_pipeline
+  - name: store_summary_duckdb_task
     type: duckdb
     with:
-      summary: "{{ summary }}"
-    database: "data/noetldb/postgres_pipeline.duckdb"
+      alert_cities: "{{ alert_cities }}"
+      alert_count: "{{ alert_count }}"
     command: |
+      -- Create DuckDB table for weather alert summary and insert the current summary
       CREATE TABLE IF NOT EXISTS weather_alert_summary (
-          id BIGINT,
-          alert_cities TEXT,
-          alert_count INTEGER,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id BIGINT,
+        alert_cities TEXT,
+        alert_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      
-      -- Minimal insert to avoid template rendering issues in DuckDB example
-      INSERT INTO weather_alert_summary (id, alert_cities, alert_count) 
-      VALUES (
-          epoch_ms(now()),
-          '[]',
-          0
-      );
-      
-      SELECT 1 as status,
-             epoch_ms(now()) as id;
+      -- Insert aggregated summary. DuckDB does not support SQLite's strftime('%s', ...); use date_part('epoch', ...) for epoch seconds
+      INSERT INTO weather_alert_summary (id, alert_cities, alert_count)
+        VALUES ((date_part('epoch', current_timestamp)*1000)::BIGINT, '{{ alert_cities | tojson }}', {{ alert_count }});
 
-  - name: store_aggregate_result_postgres_task
+      SELECT * FROM weather_alert_summary ORDER BY created_at DESC LIMIT 5;
+
+  - name: store_summary_postgres_task
     type: postgres
     with:
+      alert_cities: "{{ alert_cities }}"
+      alert_count: "{{ alert_count }}"
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
       db_password: "{{ workload.pg_password }}"
       db_name: "{{ workload.pg_db }}"
-      summary: "{{ summary }}"
     command: |
-      CREATE TABLE IF NOT EXISTS public.weather_alert_summary (
-          id BIGINT,
-          alert_cities TEXT,
-          alert_count INTEGER,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      -- Insert aggregated weather alert summary into Postgres
+      -- Ensure target table exists
+      CREATE TABLE IF NOT EXISTS weather_alert_summary (
+        id SERIAL PRIMARY KEY,
+        alert_cities TEXT,
+        alert_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      
-      INSERT INTO public.weather_alert_summary (id, alert_cities, alert_count)
-      VALUES (
-          CAST((EXTRACT(EPOCH FROM NOW()) * 1000) AS BIGINT),
-          '{{ (summary.alert_cities | default([], true)) | tojson }}',
-          {{ summary.count | default(0, true) }}
-      );
-      
-      SELECT 'stored_in_postgres' as status,
-             CAST((EXTRACT(EPOCH FROM NOW()) * 1000) AS BIGINT) as id,
-             '{{ (summary | default({'alert_cities': [], 'count': 0}, true)) | tojson }}' as summary;
+
+      -- Insert aggregated summary
+      INSERT INTO weather_alert_summary (alert_cities, alert_count)
+        VALUES ('{{ alert_cities | tojson }}', {{ alert_count }});
+
+      -- Return a small result preview
+      SELECT * FROM weather_alert_summary ORDER BY id DESC LIMIT 5;

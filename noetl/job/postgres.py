@@ -101,11 +101,28 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         pg_password_raw = task_with.get('db_password', os.environ.get('POSTGRES_PASSWORD', 'noetl'))
         pg_db_raw = task_with.get('db_name', os.environ.get('POSTGRES_DB', 'noetl'))
 
-        pg_host = render_template(jinja_env, pg_host_raw, context) if isinstance(pg_host_raw, str) and '{{' in pg_host_raw else pg_host_raw
-        pg_port = render_template(jinja_env, pg_port_raw, context) if isinstance(pg_port_raw, str) and '{{' in pg_port_raw else pg_port_raw
-        pg_user = render_template(jinja_env, pg_user_raw, context) if isinstance(pg_user_raw, str) and '{{' in pg_user_raw else pg_user_raw
-        pg_password = render_template(jinja_env, pg_password_raw, context) if isinstance(pg_password_raw, str) and '{{' in pg_password_raw else pg_password_raw
-        pg_db = render_template(jinja_env, pg_db_raw, context) if isinstance(pg_db_raw, str) and '{{' in pg_db_raw else pg_db_raw
+        # Build a rendering context that includes a 'workload' alias for compatibility
+        render_ctx = dict(context) if isinstance(context, dict) else {}
+        try:
+            if isinstance(context, dict):
+                if 'workload' not in render_ctx:
+                    render_ctx['workload'] = context
+                if 'work' not in render_ctx:
+                    render_ctx['work'] = context
+            # Also make with-params visible for simple substitutions if needed
+            if isinstance(task_with, dict):
+                for _k, _v in task_with.items():
+                    if _k not in render_ctx:
+                        render_ctx[_k] = _v
+        except Exception:
+            # Best-effort enrichment; fall back to whatever context we have
+            pass
+
+        pg_host = render_template(jinja_env, pg_host_raw, render_ctx) if isinstance(pg_host_raw, str) and '{{' in pg_host_raw else pg_host_raw
+        pg_port = render_template(jinja_env, pg_port_raw, render_ctx) if isinstance(pg_port_raw, str) and '{{' in pg_port_raw else pg_port_raw
+        pg_user = render_template(jinja_env, pg_user_raw, render_ctx) if isinstance(pg_user_raw, str) and '{{' in pg_user_raw else pg_user_raw
+        pg_password = render_template(jinja_env, pg_password_raw, render_ctx) if isinstance(pg_password_raw, str) and '{{' in pg_password_raw else pg_password_raw
+        pg_db = render_template(jinja_env, pg_db_raw, render_ctx) if isinstance(pg_db_raw, str) and '{{' in pg_db_raw else pg_db_raw
 
         if 'db_conn_string' in task_with:
             conn_string_raw = task_with.get('db_conn_string')

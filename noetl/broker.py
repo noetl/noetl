@@ -1672,8 +1672,15 @@ class Broker:
             f"{self.agent.execution_id}_complete", self.agent.playbook.get('name', 'Unnamed'),
             'playbook',
             'success', execution_duration, self.agent.context, None,
-            {'playbook_path': self.agent.playbook_path}, execution_start_event
+            {
+                'playbook_path': self.agent.playbook_path,
+                'parent_execution_id': parent_execution_id,
+                'parent_step': parent_step,
+            }, execution_start_event
         )
+
+        # Prepare result of this playbook for reporting and return
+        step_result = self.agent.get_step_results()
 
         if self.server_url and self.event_reporting_enabled:
             report_event({
@@ -1683,10 +1690,17 @@ class Broker:
                 'status': 'success',
                 'duration': execution_duration,
                 'timestamp': datetime.datetime.now().isoformat(),
-                'playbook_path': self.agent.playbook_path
+                'result': step_result,
+                # Provide metadata expected by server aggregator
+                'meta': {
+                    'playbook_path': self.agent.playbook_path,
+                    'resource_path': self.agent.playbook_path,
+                    'resource_version': self.agent.context.get('version') if isinstance(self.agent.context, dict) else None,
+                    'parent_execution_id': parent_execution_id,
+                    'parent_step': parent_step,
+                }
             }, self.server_url)
 
-        step_result = self.agent.get_step_results()
         return step_result
 
 

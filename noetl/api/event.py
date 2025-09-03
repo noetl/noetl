@@ -1694,7 +1694,7 @@ async def evaluate_broker_for_execution(
                     # Proxy sub-playbook call via python on worker, waiting for completion
                     sub_path = next_step.get('path') or ''
                     task_code = (
-                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None):\n"
+                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None, parent_step=None):\n"
                         "    import os, httpx, time\n"
                         "    host = os.environ.get('NOETL_HOST','localhost')\n"
                         "    port = os.environ.get('NOETL_PORT','8082')\n"
@@ -1708,6 +1708,7 @@ async def evaluate_broker_for_execution(
                         "        pveid = parent_event_id or (params.get('parent_event_id') if isinstance(params, dict) else None)\n"
                         "        if peid: payload['parent_execution_id'] = peid\n"
                         "        if pveid: payload['parent_event_id'] = pveid\n"
+                        "        if parent_step: payload['parent_step'] = parent_step\n"
                         "        r = httpx.post(f'{base}/executions/run', json=payload, timeout=30.0)\n"
                         "        r.raise_for_status()\n"
                         "        data = r.json(); eid = data.get('id') or data.get('execution_id')\n"
@@ -1736,7 +1737,8 @@ async def evaluate_broker_for_execution(
                             'playbook_id': sub_path,
                             'parameters': step_with_tpl,
                             'parent_execution_id': '{{ _meta.parent_execution_id }}',
-                            'parent_event_id': '{{ _meta.parent_event_id }}'
+                            'parent_event_id': '{{ _meta.parent_event_id }}',
+                            'parent_step': step_nm,
                         }
                     }
                 elif 'call' in next_step:
@@ -2296,20 +2298,32 @@ async def evaluate_broker_for_execution(
                 return
 
         if isinstance(next_step, dict) and 'loop' in next_step:
+            # Only emit an empty_loop completion if the resolved items list is actually empty.
+            # Previously this fired unconditionally causing loops with items to appear skipped.
             try:
-                await get_event_service().emit({
-                    'execution_id': execution_id,
-                    'event_type': 'action_completed',
-                    'status': 'COMPLETED',
-                    'node_id': f'{execution_id}-step-{idx+1}',
-                    'node_name': next_step.get('step') or next_step.get('name') or f'step-{idx+1}',
-                    'node_type': 'task',
-                    'result': {'skipped': True, 'reason': 'empty_loop'},
-                    'context': {'workload': workload}
-                })
+                loop_cfg = next_step.get('loop') or {}
+                items_key = loop_cfg.get('in') or loop_cfg.get('items')
+                items_list = []
+                if items_key and isinstance(workload, dict):
+                    # Accept either direct list or dict key lookup
+                    candidate = workload.get(items_key)
+                    if isinstance(candidate, list):
+                        items_list = candidate
+                if not items_list:
+                    await get_event_service().emit({
+                        'execution_id': execution_id,
+                        'event_type': 'action_completed',
+                        'status': 'COMPLETED',
+                        'node_id': f'{execution_id}-step-{idx+1}',
+                        'node_name': next_step.get('step') or next_step.get('name') or f'step-{idx+1}',
+                        'node_type': 'task',
+                        'result': {'skipped': True, 'reason': 'empty_loop'},
+                        'context': {'workload': workload}
+                    })
+                    return
+                # If items exist, allow normal loop processing path to continue (no return here)
             except Exception:
-                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit empty_loop completion", exc_info=True)
-            return
+                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed loop empty check", exc_info=True)
 
         if isinstance(next_step, dict):
             if 'call' in next_step:
