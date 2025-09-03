@@ -44,6 +44,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "../styles/Execution.css";
+import FlowVisualization from "./FlowVisualization";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -654,7 +655,6 @@ const Execution: React.FC = () => {
   return (
     <Content className="execution-main-content">
       {showWorkflowVisualization ? (
-        // Show workflow visualization when accessed via View button
         <Space direction="vertical" size="large" className="execution-space-vertical">
           <Row justify="space-between" align="middle">
             <Col>
@@ -675,50 +675,18 @@ const Execution: React.FC = () => {
             </Col>
           </Row>
 
-          {/* Inline Flow Visualization */}
-          <div className="execution-flow-container">
-            {workflowLoading ? (
-              <div className="execution-flow-toolbar">
-                <Spin size="large" />
-                <div className="execution-flow-toolbar-loading">
-                  Loading workflow visualization...
-                </div>
-              </div>
-            ) : (
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                fitView
-                fitViewOptions={{ padding: 0.3 }}
-                attributionPosition="bottom-left"
-              >
-                <Controls
-                  style={{
-                    background: "white",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: "8px",
-                  }}
-                />
-                <MiniMap
-                  nodeColor={(node) => "#1890ff"}
-                  style={{
-                    background: "white",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: "8px",
-                  }}
-                />
-                <Background
-                  variant={BackgroundVariant.Dots}
-                  gap={20}
-                  size={1}
-                  color="#f0f0f0"
-                />
-              </ReactFlow>
-            )}
-          </div>
+          {/* Inline Flow Visualization using shared component in read-only view mode */}
+          <FlowVisualization
+            visible={showWorkflowVisualization}
+            embedded={showWorkflowVisualization}
+            readOnly
+            onClose={() => {
+              setShowWorkflowVisualization(false);
+              navigate("/execution");
+            }}
+            playbookId={selectedPlaybookId}
+            playbookName={selectedPlaybookName}
+          />
         </Space>
       ) : (
         // Show normal execution history

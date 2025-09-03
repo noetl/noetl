@@ -401,3 +401,50 @@
 .flow-node.selected .flow-node-handle {
     border-color: #94a3b8 !important;
 }
+
+/* Read-only (disabled) inputs inside nodes: improve legibility */
+.flow-node .ant-input[disabled],
+.flow-node .ant-input-disabled,
+.flow-node .ant-input[disabled]:hover,
+.flow-node .ant-input-affix-wrapper-disabled,
+.flow-node .ant-input-affix-wrapper[disabled] {
+    background: #ffffff !important;
+    /* keep white card bg */
+    color: #334155 !important;
+    /* slate-700 for strong readability */
+    opacity: 1 !important;
+    /* override default dim */
+    cursor: default !important;
+}
+
+.flow-node .ant-input-disabled::placeholder {
+    color: #94a3b8 !important;
+    /* subtle placeholder if any remains */
+}
+
+/* TextArea disabled styling */
+.flow-node .ant-input-disabled.ant-input-textarea,
+.flow-node .ant-input-textarea .ant-input[disabled] {
+    background: #ffffff !important;
+}
+
+.flow-node .ant-input-disabled.ant-input-textarea textarea {
+    background: transparent !important;
+    color: #475569 !important;
+    /* slate-600 for body text */
+    opacity: 1 !important;
+}
+
+/* Keep borders crisp in read-only */
+.flow-node .ant-input[disabled],
+.flow-node .ant-input-textarea .ant-input[disabled] {
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+}
+
+/* Optional: subtle italic for empty description in read-only */
+.flow-node .ant-input-textarea .ant-input[disabled][value=""]::before {
+    content: attr(placeholder);
+    font-style: italic;
+    color: #94a3b8;
+}

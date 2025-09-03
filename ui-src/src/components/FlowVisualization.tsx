@@ -46,6 +46,7 @@ interface FlowVisualizationProps {
   playbookName: string;
   content?: string; // Optional content to use instead of fetching from API
   embedded?: boolean; // when true render inline instead of Modal
+  readOnly?: boolean; // NEW: render in read-only (view) mode
 }
 
 interface TaskNode {
@@ -64,10 +65,11 @@ interface EditableTaskNode extends TaskNode {
 
 // Custom editable node component
 const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
-  const { task, onEdit, onDelete } = data as {
+  const { task, onEdit, onDelete, readOnly } = data as {
     task: EditableTaskNode;
     onEdit: (task: EditableTaskNode) => void;
     onDelete: (id: string) => void;
+    readOnly?: boolean;
   };
 
   // Ensure we get the latest nodeType based on current task type
@@ -75,16 +77,19 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
     nodeTypes[task?.type as keyof typeof nodeTypes] || nodeTypes.default;
 
   const handleNameChange = (value: string) => {
+    if (readOnly) return; // prevent edits in read-only
     const updatedTask = { ...task, name: value };
     onEdit?.(updatedTask);
   };
 
   const handleTypeChange = (value: string) => {
+    if (readOnly) return;
     const updatedTask = { ...task, type: value };
     onEdit?.(updatedTask);
   };
 
   const handleDescriptionChange = (value: string) => {
+    if (readOnly) return;
     const updatedTask = { ...task, description: value };
     onEdit?.(updatedTask);
   };
@@ -106,8 +111,8 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
         className="flow-node-handle flow-node-handle-source"
       />
 
-      {/* Inline toolbar shown only when node is selected */}
-      {selected && (
+      {/* Inline toolbar shown only when node is selected and not readOnly */}
+      {selected && !readOnly && (
         <div
           className="flow-node-toolbar nodrag"
           onClick={(e) => e.stopPropagation()}
@@ -172,6 +177,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
           placeholder="Task name"
           size="small"
           className="flow-node-name-input nodrag"
+          disabled={!!readOnly}
         />
       </div>
 
@@ -181,10 +187,11 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
         <Input.TextArea
           value={task?.description || ""}
           onChange={(e) => handleDescriptionChange(e.target.value)}
-          placeholder="Description (optional)"
+          placeholder={readOnly ? "" : "Description (optional)"}
           size="small"
           rows={2}
           className="flow-node-description-input nodrag"
+          disabled={!!readOnly}
         />
       </div>
     </div>
@@ -210,6 +217,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   playbookName,
   content,
   embedded,
+  readOnly,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -236,6 +244,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   // Handle task editing - simplified for direct updates
   const handleEditTask = useCallback(
     (updatedTask: EditableTaskNode) => {
+      if (readOnly) return; // prevent edits in read-only
       setTasks((prev) =>
         prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
       );
@@ -251,7 +260,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
       setHasChanges(true);
     },
-    [setNodes]
+    [setNodes, readOnly]
   );
 
   // Layout constants for auto positioning (breathe like the examples)
@@ -333,13 +342,15 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
   // Handle task deletion
   const handleDeleteTask = useCallback((taskId: string) => {
+    if (readOnly) return;
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     setHasChanges(true);
     messageApi.success("Component deleted");
-  }, [messageApi]);
+  }, [messageApi, readOnly]);
 
   // Handle adding new task
   const handleAddTask = useCallback(() => {
+    if (readOnly) return;
     const newTask: EditableTaskNode = {
       id: `task_${Date.now()}`,
       name: "New Task",
@@ -352,7 +363,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     setTasks((prev) => [...prev, newTask]);
     setHasChanges(true);
     messageApi.success("New component added");
-  }, [tasks, messageApi]);
+  }, [tasks, messageApi, readOnly]);
 
   // Re-enable automatic flow recreation for major changes
   useEffect(() => {
@@ -636,15 +647,17 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       {/* Toolbar */}
       <div className="flow-toolbar-container">
         <Space>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleAddTask}
-            size="small"
-          >
-            Add Component
-          </Button>
-          {hasChanges && (
+          {!readOnly && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleAddTask}
+              size="small"
+            >
+              Add Component
+            </Button>
+          )}
+          {!readOnly && hasChanges && (
             <Button
               type="primary"
               icon={<SaveOutlined />}
@@ -686,7 +699,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         ) : (
           <div className="react-flow-wrapper">
             <ReactFlow
-              nodes={nodes}
+              nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
@@ -699,7 +712,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               attributionPosition="bottom-left"
               key={`flow-${tasks.length}-${tasks
                 .map((t) => `${t.id}-${t.type}`)
-                .join("-")}`}
+                .join("-")}-${readOnly ? 'ro' : 'rw'}`}
             >
               <Controls />
               <MiniMap
@@ -752,8 +765,9 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           style={{ display: "flex", alignItems: "center", gap: 12 }}
         >
           <span className="flow-modal-title-icon">🔄</span>
-          <span>Flow Editor - {playbookName}</span>
-          {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
+          <span>{readOnly ? 'Workflow Visualization' : 'Flow Editor'} - {playbookName}</span>
+          {!readOnly && hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
+          {readOnly && <Tag color="blue">View Mode</Tag>}
         </div>
         {flowInner}
       </div>
@@ -767,8 +781,9 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         title={
           <div className="flow-modal-title">
             <span className="flow-modal-title-icon">🔄</span>
-            <span>Flow Editor - {playbookName}</span>
-            {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
+            <span>{readOnly ? 'Workflow Visualization' : 'Flow Editor'} - {playbookName}</span>
+            {!readOnly && hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
+            {readOnly && <Tag color="blue">View Mode</Tag>}
           </div>
         }
         open={visible}
