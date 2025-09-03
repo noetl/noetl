@@ -413,14 +413,14 @@ noetl-validate-status:
 	sed -E 's/\x1b\[[0-9;]*m//g' "$$file" > "$$clean_file"; \
 	jq -r 'def lcase: ascii_downcase;\
 	  def errEvt: (select((.event_type=="action_error") or (((.status|tostring)|lcase)|test("error|failed"))));\
-	  def lastCity: (.events| map(select(.node_name=="city_loop" and .event_type=="action_completed")) | last);\
-	  def lastAgg: (.events| map(select(.node_name=="aggregate_alerts" and .event_type=="action_completed")) | last);\
+	  def lastCity: (.events| map(select(.node_name=="run_city_process_loop" and .event_type=="action_completed")) | last);\
+	  def lastAgg: (.events| map(select(.node_name=="aggregate_alerts_task" and .event_type=="action_completed")) | last);\
 	  def lastStats: (.events| map(select(.node_name=="compute_stats" and .event_type=="action_completed")) | last);\
 	  "status: " + (.status // "unknown"),\
 	  "events: " + ((.events|length)|tostring),\
 	  "errors: " + ((.events|map(errEvt)|length)|tostring),\
-	  (if lastCity then "city_loop.count: " + ((lastCity.result.count // (lastCity.result.results|length) // 0)|tostring) else "city_loop.count: 0" end),\
-	  (if lastCity then "city_loop.results_len: " + ((lastCity.result.results|length // 0)|tostring) else "city_loop.results_len: 0" end),\
+	  (if lastCity then "city_loop.count: " + ((lastCity.output_result.data.count // (lastCity.output_result.data.results|length) // 0)|tostring) else "city_loop.count: 0" end),\
+	  (if lastCity then "city_loop.results_len: " + ((lastCity.output_result.data.results|length // 0)|tostring) else "city_loop.results_len: 0" end),\
 	  (if lastAgg then "aggregate_alerts: " + ((lastAgg.output_result // {}) | tojson) else empty end),\
 	  (if lastStats then "compute_stats: " + ((lastStats.output_result // {}) | tojson) else empty end)\
 	' "$$clean_file"

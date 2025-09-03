@@ -447,27 +447,35 @@ class QueueWorker:
         try:
             if isinstance(action_cfg, dict) and original_task_cfg:
                 import base64
-                if 'code_b64' in action_cfg and not action_cfg.get('code'):
+                if 'code_b64' in action_cfg:
                     try:
                         action_cfg['code'] = base64.b64decode(action_cfg['code_b64']).decode('utf-8')
                     except Exception:
                         logger.debug("WORKER: Failed to decode code_b64", exc_info=True)
                 for field in ('command', 'commands'):
                     b64_key = f"{field}_b64"
-                    if b64_key in action_cfg and not action_cfg.get(field):
+                    if b64_key in action_cfg:
                         try:
-                            action_cfg[field] = base64.b64decode(action_cfg[b64_key]).decode('utf-8')
+                            decoded = base64.b64decode(action_cfg[b64_key]).decode('utf-8')
+                            action_cfg[field] = decoded
                         except Exception:
                             logger.debug(f"WORKER: Failed to decode {b64_key}", exc_info=True)
                 placeholder_codes = {"", "def main(**kwargs):\n    return {}"}
                 if original_task_cfg.get('type') and action_cfg.get('type') in (None, 'python') and original_task_cfg.get('type') not in (None, 'python'):
                     action_cfg['type'] = original_task_cfg.get('type')
                 if 'code' in original_task_cfg:
-                    if action_cfg.get('code') in placeholder_codes or 'code' not in action_cfg:
+                    rendered_code = action_cfg.get('code')
+                    if (rendered_code in placeholder_codes or 
+                        'code' not in action_cfg or
+                        (isinstance(rendered_code, str) and '{{' in rendered_code and '}}' in rendered_code)):
                         action_cfg['code'] = original_task_cfg['code']
                 for field in ('command', 'commands'):
-                    if field in original_task_cfg and (field not in action_cfg or not action_cfg.get(field)):
-                        action_cfg[field] = original_task_cfg[field]
+                    if field in original_task_cfg:
+                        rendered_value = action_cfg.get(field)
+                        if (field not in action_cfg or 
+                            not rendered_value or 
+                            (isinstance(rendered_value, str) and '{{' in rendered_value and '}}' in rendered_value)):
+                            action_cfg[field] = original_task_cfg[field]
                 if isinstance(original_task_cfg.get('with'), dict):
                     merged_with = {}
                     merged_with.update(original_task_cfg.get('with') or {})

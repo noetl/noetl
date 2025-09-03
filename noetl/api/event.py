@@ -60,7 +60,7 @@ async def render_context(request: Request):
                 if row and row.get("input_context"):
                     try:
                         ctx_first = json.loads(row["input_context"]) if isinstance(row["input_context"], str) else row["input_context"]
-                        workload = ctx_first or {}
+                        workload = ctx_first.get("workload", {}) if isinstance(ctx_first, dict) else {}
                     except Exception:
                         workload = {}
 
