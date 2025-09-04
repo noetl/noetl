@@ -18,10 +18,60 @@ The Terraform configuration deploys:
 ## Prerequisites
 
 1. **Google Cloud Project**: Active GCP project with billing enabled
-2. **Terraform**: Terraform >= 1.0 installed locally
+2. **Terraform**: Terraform >= 1.0 installed locally (see [Terraform Installation](#terraform-installation) below)
 3. **gcloud CLI**: Google Cloud SDK installed and authenticated
 4. **Docker**: For building and pushing container images
 5. **Domain** : Optional, for custom domain setup
+
+### Terraform Installation
+
+We recommend using `tfenv` to manage Terraform versions:
+
+#### Install tfenv
+
+**On macOS:**
+```bash
+brew install tfenv
+```
+
+**On Linux:**
+```bash
+git clone https://github.com/tfutils/tfenv.git ~/.tfenv
+echo 'export PATH="$HOME/.tfenv/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Install and Use Terraform
+
+```bash
+# List available Terraform versions
+tfenv list-remote
+
+# Install the latest Terraform version
+tfenv install latest
+
+# Or install a specific version (recommended for production)
+tfenv install 1.10.3
+
+# Set the Terraform version to use
+tfenv use 1.10.3
+
+# Verify installation
+terraform version
+```
+
+#### Check Your Current Terraform Setup
+
+```bash
+# List installed versions
+tfenv list
+
+# Shows output like:
+# * 1.10.3 (set by /opt/homebrew/Cellar/tfenv/3.0.0/version)
+#   1.2.8
+```
+
+The `*` indicates the currently active version.
 
 ## Quick Start
 
@@ -30,7 +80,7 @@ The Terraform configuration deploys:
 Before you begin, ensure you have:
 
 - Google Cloud SDK `gcloud` installed and configured
-- Terraform >= 1.0 installed
+- Terraform >= 1.0 installed (see [Terraform Installation](#terraform-installation) above)
 - Docker installed to build images
 - A Google Cloud Project with billing enabled
 - Owner or Editor permissions on the project

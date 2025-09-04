@@ -25,8 +25,9 @@ Follow these steps to deploy NoETL to Google Cloud Platform:
 
 ### 1. Prerequisites
 
+Ensure you have the following installed and configured:
 - Google Cloud SDK (`gcloud`) 
-- Terraform >= 1.0
+- Terraform >= 1.0 (install via `tfenv` - see main README for details)
 - Docker
 - A Google Cloud Project with billing enabled
 - Owner or Editor permissions on the project
