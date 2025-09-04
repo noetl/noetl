@@ -88,16 +88,16 @@ workflow:  # Workflow steps and transitions
     next:
       - step: log_aggregate_result
         with:
-          summary: "{{ aggregate_alerts.summary }}"
+          summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
 
   - step: log_aggregate_result
     desc: "Log the aggregated alert summary"
     type: workbook
     name: log_aggregate_result_task
     with:
-      summary: "{{ aggregate_alerts.summary }}"
+      summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
     next:
-      - when: "{{ aggregate_alerts.global_alert }}"
+      - when: "{{ aggregate_alerts.global_alert | default(false) }}"
         then:
           - step: global_alert_step
       - else:
@@ -108,7 +108,7 @@ workflow:  # Workflow steps and transitions
     type: workbook
     name: global_alert_task
     with:
-      summary: "{{ aggregate_alerts.summary }}"
+      summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
     next:
       - step: store_summary_postgres
 
@@ -117,8 +117,8 @@ workflow:  # Workflow steps and transitions
     type: workbook
     name: store_summary_postgres_task
     with:
-      alert_cities: "{{ aggregate_alerts.summary.alert_cities }}"
-      alert_count: "{{ aggregate_alerts.summary.count }}"
+      alert_cities: "{{ aggregate_alerts.summary.alert_cities | default('[]') }}"
+      alert_count: "{{ aggregate_alerts.summary.count | default(0) }}"
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
