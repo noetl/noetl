@@ -22,6 +22,46 @@ import asyncio
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
+
+def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply base64 encoding to multiline code/commands in task configuration
+    to prevent serialization issues when passing through JSON in queue table.
+    Only base64 versions are stored - original fields are removed to ensure single method of handling.
+    
+    Args:
+        task_config: The original task configuration
+        
+    Returns:
+        Modified task configuration with base64 encoded fields, original fields removed
+    """
+    if not isinstance(task_config, dict):
+        return task_config
+    
+    import base64
+    encoded_task = dict(task_config)
+    
+    try:
+        # Encode Python code and remove original
+        code_val = encoded_task.get('code')
+        if isinstance(code_val, str) and code_val.strip():
+            encoded_task['code_b64'] = base64.b64encode(code_val.encode('utf-8')).decode('ascii')
+            # Remove original to ensure only base64 is used
+            encoded_task.pop('code', None)
+            
+        # Encode command/commands for PostgreSQL and DuckDB and remove originals
+        for field in ('command', 'commands'):
+            cmd_val = encoded_task.get(field)
+            if isinstance(cmd_val, str) and cmd_val.strip():
+                encoded_task[f'{field}_b64'] = base64.b64encode(cmd_val.encode('utf-8')).decode('ascii')
+                # Remove original to ensure only base64 is used
+                encoded_task.pop(field, None)
+                
+    except Exception:
+        logger.debug("ENCODE_TASK_FOR_QUEUE: Failed to encode task fields with base64", exc_info=True)
+        
+    return encoded_task
+
 @router.post("/context/render", response_class=JSONResponse)
 async def render_context(request: Request):
     """
@@ -1735,32 +1775,31 @@ async def evaluate_broker_for_execution(
                         "                js = s.json(); st = str(js.get('status','')).lower()\n"
                         "                if st in ('completed','failed','error','canceled'):\n"
                         "                    ev = js.get('events', [])\n"
-                        "                    print(f'DEBUG: Found {len(ev)} events in sub-execution {eid}')\n"
+                        "                    # Look for the return step completion event\n"
                         "                    for e in ev:\n"
-                        "                        if e.get('event_type')=='action_completed':\n"
-                        "                            print(f'DEBUG: Found completed step: {e.get(\"node_name\")}')\n"
                         "                        if e.get('event_type')=='action_completed' and e.get('node_name')==return_step:\n"
-                        "                            print(f'DEBUG: Found return step {return_step}')\n"
                         "                            output = e.get('output_result') or e.get('result')\n"
-                        "                            print(f'DEBUG: Raw output: {output}')\n"
                         "                            if isinstance(output, dict) and 'data' in output:\n"
-                        "                                print(f'DEBUG: Returning data: {output[\"data\"]}')\n"
                         "                                return output['data']\n"
-                        "                            print(f'DEBUG: Returning full output: {output}')\n"
                         "                            return output\n"
-                        "                    print(f'DEBUG: No return step {return_step} found, returning status')\n"
+                        "                    # If no return step found, return status\n"
                         "                    return {'status': st, 'execution_id': eid}\n"
                         "            time.sleep(0.2)\n"
                         "        return {'status': 'timeout', 'execution_id': eid}\n"
                         "    except Exception as e:\n"
                         "        return {'status': 'error', 'error': str(e)}\n"
                     )
+                    
+                    # Base64 encode the code to avoid serialization issues
+                    import base64
+                    encoded_code = base64.b64encode(task_code.encode('utf-8')).decode('ascii')
+                    
                     # Render per-item parameters at worker from context; pass the step's with-template as a mapping
                     step_with_tpl = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
                     task_cfg = {
                         'type': 'python',
                         'name': step_nm,
-                        'code': task_code,
+                        'code_b64': encoded_code,  # Use base64 encoded code instead of raw code
                         'with': {
                             'playbook_id': sub_path,
                             'parameters': step_with_tpl,
@@ -1846,7 +1885,7 @@ async def evaluate_broker_for_execution(
                                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                                     RETURNING id
                                     """,
-                                    (execution_id, iter_node_id, json.dumps(task_cfg), json.dumps(rendered_work), 0, 5, None)
+                                    (execution_id, iter_node_id, json.dumps(encode_task_for_queue(task_cfg)), json.dumps(rendered_work), 0, 5, None)
                                 )
                                 await conn.commit()
                         scheduled_any = True
@@ -1992,7 +2031,7 @@ async def evaluate_broker_for_execution(
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                                 RETURNING id
                                 """,
-                                (execution_id, iter_node_id, json.dumps(body_task_cfg), json.dumps(rendered_work), 0, 5, None)
+                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5, None)
                             )
                             await conn.commit()
                     scheduled_any = True
@@ -2303,7 +2342,7 @@ async def evaluate_broker_for_execution(
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                                 RETURNING id
                                 """,
-                                (execution_id, iter_node_id, json.dumps(body_task_cfg), json.dumps(rendered_work), 0, 5, None)
+                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5, None)
                             )
                             await conn.commit()
                     scheduled_any = True
@@ -2476,7 +2515,7 @@ async def evaluate_broker_for_execution(
                                 (
                                     execution_id,
                                     node_id,
-                                    json.dumps(task_cfg),
+                                    json.dumps(encode_task_for_queue(task_cfg)),
                                     json.dumps(rendered_workload),
                                     0,
                                     5,

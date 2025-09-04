@@ -111,7 +111,31 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
                 # Keep non-string values as-is (integers, booleans, etc.)
                 processed_task_with[key] = value
 
-        commands = task_config.get('command', task_config.get('commands', []))
+        # Get base64 encoded commands (only method supported)
+        command_b64 = task_config.get('command_b64', '')
+        commands_b64 = task_config.get('commands_b64', '')
+        
+        # Decode base64 commands
+        commands = ''
+        if command_b64:
+            import base64
+            try:
+                commands = base64.b64decode(command_b64.encode('ascii')).decode('utf-8')
+                logger.debug(f"POSTGRES.EXECUTE_POSTGRES_TASK: Decoded base64 command, length={len(commands)} chars")
+            except Exception as e:
+                logger.error(f"POSTGRES.EXECUTE_POSTGRES_TASK: Failed to decode base64 command: {e}")
+                raise ValueError(f"Invalid base64 command encoding: {e}")
+        elif commands_b64:
+            import base64
+            try:
+                commands = base64.b64decode(commands_b64.encode('ascii')).decode('utf-8')
+                logger.debug(f"POSTGRES.EXECUTE_POSTGRES_TASK: Decoded base64 commands, length={len(commands)} chars")
+            except Exception as e:
+                logger.error(f"POSTGRES.EXECUTE_POSTGRES_TASK: Failed to decode base64 commands: {e}")
+                raise ValueError(f"Invalid base64 commands encoding: {e}")
+        else:
+            raise ValueError("No command_b64 or commands_b64 field found - PostgreSQL tasks require base64 encoded commands")
+
         if isinstance(commands, str):
             commands_rendered = render_template(jinja_env, commands, {**context, **processed_task_with})
             commands = []

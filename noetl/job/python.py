@@ -70,7 +70,31 @@ def execute_python_task(
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Start time={start_time.isoformat()}")
 
     try:
-        code = task_config.get('code', '')
+        # Get base64 encoded code (only method supported)
+        code_b64 = task_config.get('code_b64', '')
+        code_base64 = task_config.get('code_base64', '')  # Backward compatibility
+        
+        # Decode base64 encoded code
+        code = ''
+        if code_b64:
+            import base64
+            try:
+                code = base64.b64decode(code_b64.encode('ascii')).decode('utf-8')
+                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
+            except Exception as e:
+                logger.error(f"PYTHON.EXECUTE_PYTHON_TASK: Failed to decode base64 code: {e}")
+                raise ValueError(f"Invalid base64 code encoding: {e}")
+        elif code_base64:
+            import base64
+            try:
+                code = base64.b64decode(code_base64.encode('ascii')).decode('utf-8')
+                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded backward-compatible base64 code, length={len(code)} chars")
+            except Exception as e:
+                logger.error(f"PYTHON.EXECUTE_PYTHON_TASK: Failed to decode backward-compatible base64 code: {e}")
+                raise ValueError(f"Invalid backward-compatible base64 code encoding: {e}")
+        else:
+            raise ValueError("No code_b64 or code_base64 field found - Python tasks require base64 encoded code")
+        
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Python code length={len(code)} chars")
 
         event_id = None

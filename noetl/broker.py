@@ -263,10 +263,14 @@ class Broker:
                 if isinstance(code_val, str) and code_val.strip() and os.environ.get('NOETL_EMBED_CODE_B64', '1') == '1':
                     if code_val.strip() != 'def main(**kwargs):\n    return {}':
                         enriched_task_config['code_b64'] = base64.b64encode(code_val.encode('utf-8')).decode('utf-8')
+                        # Remove original to ensure only base64 is used
+                        enriched_task_config.pop('code', None)
                 for field in ('command', 'commands'):
                     cmd_val = enriched_task_config.get(field)
                     if isinstance(cmd_val, str) and cmd_val.strip() and os.environ.get('NOETL_EMBED_CODE_B64', '1') == '1':
                         enriched_task_config[f'{field}_b64'] = base64.b64encode(cmd_val.encode('utf-8')).decode('utf-8')
+                        # Remove original to ensure only base64 is used
+                        enriched_task_config.pop(field, None)
             except Exception:
                 logger.debug("BROKER.DELEGATE_TASK_EXECUTION: Failed to enrich task with base64 code", exc_info=True)
             payload = {
