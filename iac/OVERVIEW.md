@@ -36,7 +36,7 @@ Follow these steps to deploy NoETL to Google Cloud Platform:
 1. **Authenticate with Google Cloud:**
    ```bash
    gcloud auth login
-   gcloud config set project PROJECT_ID
+   gcloud config set project GOOGLE_PROJECT_ID
    ```
 
 2. **Create Terraform service account:**
@@ -55,7 +55,7 @@ Follow these steps to deploy NoETL to Google Cloud Platform:
 
 1. **Build and push container images:**
    ```bash
-   ./build-and-deploy.sh --project YOUR_PROJECT_ID
+   ./build-and-deploy.sh --project GOOGLE_PROJECT_ID
    ```
 
 2. **Deploy infrastructure:**
