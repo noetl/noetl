@@ -45,6 +45,7 @@ workflow:  # Workflow steps and transitions
     desc: "Iterate over cities processing weather data"
     type: playbook
     path: "examples/weather/city_process"
+    return: "evaluate_weather"  # Return the evaluate_weather step result from sub-playbook
     loop:
       in: "{{ workload.cities }}"
       iterator: city
@@ -52,25 +53,6 @@ workflow:  # Workflow steps and transitions
       city: "{{ city }}"
       base_url: "{{ workload.base_url }}"
       temperature_threshold: "{{ workload.temperature_threshold }}"
-    next:
-      - step: debug_results
-        with:
-          results: "{{ city_loop_results }}"
-
-  - step: debug_results
-    desc: "Debug what city_loop_results contains"
-    type: python
-    code: |
-      def main(results):
-          print(f"DEBUG_RESULTS: city_loop_results = {results}")
-          print(f"DEBUG_RESULTS: type = {type(results)}")
-          if isinstance(results, list):
-              print(f"DEBUG_RESULTS: length = {len(results)}")
-              for i, item in enumerate(results):
-                  print(f"DEBUG_RESULTS: item[{i}] = {item} (type: {type(item)})")
-          return {"debug_complete": True, "results": results}
-    with:
-      results: "{{ city_loop_results }}"
     next:
       - step: debug_results
         with:
@@ -119,7 +101,7 @@ workflow:  # Workflow steps and transitions
         then:
           - step: global_alert_step
       - else:
-          - step: store_summary_duckdb
+          - step: store_summary_postgres
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
@@ -128,16 +110,6 @@ workflow:  # Workflow steps and transitions
     with:
       summary: "{{ aggregate_alerts.summary }}"
     next:
-      - step: store_summary_duckdb
-
-  - step: store_summary_duckdb
-    desc: "Persist aggregated summary into DuckDB"
-    type: workbook
-    name: store_summary_duckdb_task
-    with:
-      alert_cities: "{{ aggregate_alerts.summary.alert_cities }}"
-      alert_count: "{{ aggregate_alerts.summary.count }}"
-    next:
       - step: store_summary_postgres
 
   - step: store_summary_postgres
@@ -145,8 +117,8 @@ workflow:  # Workflow steps and transitions
     type: workbook
     name: store_summary_postgres_task
     with:
-      alert_cities: '["test_city"]'
-      alert_count: 1
+      alert_cities: "{{ aggregate_alerts.summary.alert_cities }}"
+      alert_count: "{{ aggregate_alerts.summary.count }}"
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -362,7 +334,7 @@ workbook:
       );
       -- Insert aggregated summary. DuckDB does not support SQLite's strftime('%s', ...); use date_part('epoch', ...) for epoch seconds
       INSERT INTO weather_alert_summary (id, alert_cities, alert_count)
-        VALUES ((date_part('epoch', current_timestamp)*1000)::BIGINT, '{{ alert_cities }}', {{ alert_count }});
+        VALUES ((date_part('epoch', current_timestamp)*1000)::BIGINT, '{{ alert_cities | tojson }}', {{ alert_count }});
 
       SELECT * FROM weather_alert_summary ORDER BY created_at DESC LIMIT 5;
 
@@ -388,7 +360,7 @@ workbook:
 
       -- Insert aggregated summary
       INSERT INTO weather_alert_summary (alert_cities, alert_count)
-        VALUES ('{{ alert_cities }}', {{ alert_count }});
+        VALUES ('{{ alert_cities | tojson }}', {{ alert_count }});
 
       -- Return a small result preview
       SELECT * FROM weather_alert_summary ORDER BY id DESC LIMIT 5;

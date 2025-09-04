@@ -1258,32 +1258,69 @@ class Broker:
 
                 continue
 
-            next_steps = step_config.get('next', [])
-            if not isinstance(next_steps, list):
-                next_steps = [next_steps]
-
-            iter_results = {}
-            for next_step in next_steps:
-                if isinstance(next_step, dict):
-                    next_step_name = next_step.get('step')
-                    next_step_with = next_step.get('with', {})
-                else:
-                    next_step_name = next_step
-                    next_step_with = {}
-
+            # Check if this loop step is itself a playbook call
+            if step_config.get('type') == 'playbook':
+                logger.debug(f"Loop step is a playbook call: {step_config.get('path')}")
+                
+                # Prepare context for playbook call
+                playbook_path = step_config.get('path')
+                playbook_with = step_config.get('with', {})
+                return_step = step_config.get('return')
+                
+                # Render the with parameters with iteration context
                 rules = {iterator: iter_context.get(iterator)}
-                logger.debug(f"Loop next step: {next_step_name}, next_step_with={next_step_with}, rules={rules}")
+                rendered_with = render_template(self.agent.jinja_env, playbook_with, iter_context, rules)
+                logger.debug(f"Loop playbook rendered with: {rendered_with}")
+                
+                # Create playbook call config
+                playbook_call_config = {
+                    'type': 'playbook',
+                    'path': playbook_path,
+                    'with': rendered_with
+                }
+                if return_step:
+                    playbook_call_config['return'] = return_step
+                
+                # Execute the playbook call
+                playbook_result = self.execute_playbook_call(playbook_call_config, iter_context, f"{step_id}_iter_{idx}")
+                
+                # Extract result data
+                if playbook_result.get('status') == 'success':
+                    result_data = playbook_result.get('data')
+                    logger.debug(f"Loop playbook iteration {idx} successful: {result_data}")
+                else:
+                    result_data = None
+                    logger.warning(f"Loop playbook iteration {idx} failed: {playbook_result.get('error')}")
+                
+                all_results.append(result_data)
+            else:
+                # Original logic for next steps
+                next_steps = step_config.get('next', [])
+                if not isinstance(next_steps, list):
+                    next_steps = [next_steps]
 
-                step_with = render_template(self.agent.jinja_env, next_step_with, iter_context, rules)
-                logger.debug(f"Loop step rendered with: {step_with}")
+                iter_results = {}
+                for next_step in next_steps:
+                    if isinstance(next_step, dict):
+                        next_step_name = next_step.get('step')
+                        next_step_with = next_step.get('with', {})
+                    else:
+                        next_step_name = next_step
+                        next_step_with = {}
 
-                if not next_step_name:
-                    continue
-                step_result = self.execute_step(next_step_name, step_with)
-                iter_results[next_step_name] = step_result.get('data') if step_result.get(
-                    'status') == 'success' else None
+                    rules = {iterator: iter_context.get(iterator)}
+                    logger.debug(f"Loop next step: {next_step_name}, next_step_with={next_step_with}, rules={rules}")
 
-            all_results.append(iter_results)
+                    step_with = render_template(self.agent.jinja_env, next_step_with, iter_context, rules)
+                    logger.debug(f"Loop step rendered with: {step_with}")
+
+                    if not next_step_name:
+                        continue
+                    step_result = self.execute_step(next_step_name, step_with)
+                    iter_results[next_step_name] = step_result.get('data') if step_result.get(
+                        'status') == 'success' else None
+
+                all_results.append(iter_results)
             self.write_event_log(
                 'loop_iteration_complete', f"{loop_id}_{idx}", f"{loop_name}[{idx}]", 'iteration',
                 'success', 0, iter_context, iter_results,
@@ -1700,6 +1737,10 @@ class Broker:
 
         execution_duration = (datetime.datetime.now() - datetime.datetime.fromisoformat(
             self.agent.context.get('execution_start'))).total_seconds()
+
+        # Get parent information from context if available
+        parent_execution_id = self.agent.context.get('parent_execution_id') if isinstance(self.agent.context, dict) else None
+        parent_step = self.agent.context.get('parent_step') if isinstance(self.agent.context, dict) else None
 
         self.write_event_log(
             'execution_complete',

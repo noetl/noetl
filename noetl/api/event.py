@@ -1569,9 +1569,15 @@ async def evaluate_broker_for_execution(
                     items = render_template(jenv, lspec.get('in', []), base_ctx, strict_keys=False)
                     if isinstance(items, str):
                         try:
+                            # Try JSON first (for proper JSON strings)
                             items = json.loads(items)
                         except Exception:
-                            items = [items]
+                            try:
+                                # Fallback to ast.literal_eval for Python-like strings  
+                                import ast
+                                items = ast.literal_eval(items)
+                            except Exception:
+                                items = [items]
                 except Exception:
                     items = []
                 if not isinstance(items, list):
@@ -1611,13 +1617,14 @@ async def evaluate_broker_for_execution(
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
                             if str(locals().get('step_type_lower','')) == 'playbook':
-                                # Count child executions that completed for this parent + step
+                                # Count completed task executions for this step
                                 await cur.execute(
                                     """
                                     SELECT COUNT(*) FROM noetl.event_log
-                                    WHERE (metadata->>'parent_execution_id') = %s
-                                      AND (metadata->>'parent_step') = %s
-                                      AND event_type = 'execution_complete'
+                                    WHERE execution_id = %s
+                                      AND node_name = %s
+                                      AND event_type = 'action_completed'
+                                      AND lower(status) IN ('completed','success')
                                     """,
                                     (execution_id, step_nm)
                                 )
@@ -1632,6 +1639,9 @@ async def evaluate_broker_for_execution(
                     pass
 
                 expected = len(items_f)
+                
+                # Define step_type_lower before aggregation logic
+                step_type_lower = str(next_step.get('type') or '').strip().lower()
 
                 # If all items completed and no aggregate completion emitted, emit aggregate completion
                 if expected > 0 and done_count >= expected and not done_evt:
@@ -1640,13 +1650,15 @@ async def evaluate_broker_for_execution(
                     try:
                         async with get_async_db_connection() as conn:
                             async with conn.cursor(row_factory=dict_row) as cur:
-                                if str(locals().get('step_type_lower','')) == 'playbook':
+                                if step_type_lower == 'playbook':
+                                    # For playbook type loops, get results from the individual task completions
                                     await cur.execute(
                                         """
                                         SELECT output_result FROM noetl.event_log
-                                        WHERE (metadata->>'parent_execution_id') = %s
-                                          AND (metadata->>'parent_step') = %s
-                                          AND event_type = 'execution_complete'
+                                        WHERE execution_id = %s
+                                          AND node_name = %s
+                                          AND event_type = 'action_completed'
+                                          AND lower(status) IN ('completed','success')
                                         ORDER BY timestamp
                                         """,
                                         (execution_id, step_nm)
@@ -1665,9 +1677,14 @@ async def evaluate_broker_for_execution(
                                     data = rr.get('output_result')
                                     try:
                                         data = json.loads(data) if isinstance(data, str) else data
+                                        # For playbook loops, extract the actual data if it's wrapped
+                                        if isinstance(data, dict) and 'data' in data:
+                                            data = data['data']
                                     except Exception:
                                         pass
-                                    agg_list.append(data)
+                                    # Skip null/empty results but include all actual data
+                                    if data is not None:
+                                        agg_list.append(data)
                     except Exception:
                         pass
                     try:
@@ -1689,12 +1706,12 @@ async def evaluate_broker_for_execution(
                 scheduled_any = False
                 # Build task config from the step itself
                 # Adapted from general task_cfg builder below
-                step_type_lower = str(next_step.get('type') or '').strip().lower()
                 if step_type_lower == 'playbook':
                     # Proxy sub-playbook call via python on worker, waiting for completion
                     sub_path = next_step.get('path') or ''
+                    return_step = next_step.get('return', 'fetch_and_evaluate')  # Use return attribute or default
                     task_code = (
-                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None, parent_step=None):\n"
+                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None, parent_step=None, return_step='fetch_and_evaluate'):\n"
                         "    import os, httpx, time\n"
                         "    host = os.environ.get('NOETL_HOST','localhost')\n"
                         "    port = os.environ.get('NOETL_PORT','8082')\n"
@@ -1718,9 +1735,20 @@ async def evaluate_broker_for_execution(
                         "                js = s.json(); st = str(js.get('status','')).lower()\n"
                         "                if st in ('completed','failed','error','canceled'):\n"
                         "                    ev = js.get('events', [])\n"
+                        "                    print(f'DEBUG: Found {len(ev)} events in sub-execution {eid}')\n"
                         "                    for e in ev:\n"
-                        "                        if e.get('event_type')=='action_completed' and e.get('node_name')=='fetch_and_evaluate':\n"
-                        "                            return e.get('output_result') or e.get('result') or {'status': st, 'execution_id': eid}\n"
+                        "                        if e.get('event_type')=='action_completed':\n"
+                        "                            print(f'DEBUG: Found completed step: {e.get(\"node_name\")}')\n"
+                        "                        if e.get('event_type')=='action_completed' and e.get('node_name')==return_step:\n"
+                        "                            print(f'DEBUG: Found return step {return_step}')\n"
+                        "                            output = e.get('output_result') or e.get('result')\n"
+                        "                            print(f'DEBUG: Raw output: {output}')\n"
+                        "                            if isinstance(output, dict) and 'data' in output:\n"
+                        "                                print(f'DEBUG: Returning data: {output[\"data\"]}')\n"
+                        "                                return output['data']\n"
+                        "                            print(f'DEBUG: Returning full output: {output}')\n"
+                        "                            return output\n"
+                        "                    print(f'DEBUG: No return step {return_step} found, returning status')\n"
                         "                    return {'status': st, 'execution_id': eid}\n"
                         "            time.sleep(0.2)\n"
                         "        return {'status': 'timeout', 'execution_id': eid}\n"
@@ -1739,6 +1767,7 @@ async def evaluate_broker_for_execution(
                             'parent_execution_id': '{{ _meta.parent_execution_id }}',
                             'parent_event_id': '{{ _meta.parent_event_id }}',
                             'parent_step': step_nm,
+                            'return_step': return_step,
                         }
                     }
                 elif 'call' in next_step:
