@@ -59,7 +59,7 @@ workflow:
           return decision
     with:
       city: "{{ workload.city }}"
-      result: "{{ evaluate_weather }}"
+      result: "{{ evaluate_weather_step }}"
     next:
       - when: "{{ decide.action == 'alert' }}"
         then:
@@ -79,19 +79,21 @@ workflow:
       def main(city, temperature, evaluation_result):
           # Note: This would call the alert_task workbook task
           # For now, just return the alert info
-          return {
+          result = {
               "action": "alert", 
               "city": city, 
               "temperature": temperature,
               "max_temp": evaluation_result.get("max_temp", 0),
               "alert": True
           }
+          print(f"ALERT_STEP: Returning result: {result}")
+          return result
     with:
       city: "{{ workload.city.name }}"
       temperature: "{{ decide.max_temp }}"
-      evaluation_result: "{{ evaluate_weather }}"
+      evaluation_result: "{{ evaluate_weather_step }}"
     next:
-      - step: return_result
+      - step: end
 
   - step: log_step
     desc: "Log result if no alert"
@@ -100,47 +102,23 @@ workflow:
       def main(city, evaluation_result):
           # Note: This would call the log_task workbook task
           # For now, just return the log info
-          return {
+          result = {
               "action": "log", 
               "city": city,
               "max_temp": evaluation_result.get("max_temp", 0),
               "alert": False
           }
-    with:
-      city: "{{ workload.city.name }}"
-      evaluation_result: "{{ evaluate_weather }}"
-    next:
-      - step: return_result
-
-  - step: return_result
-    desc: "Return the final result for the main workflow to collect"
-    type: python
-    code: |
-      def main(city, alert_step=None, log_step=None, evaluation_result=None):
-          # Collect the result from whichever step was executed (alert_step or log_step)
-          step_result = alert_step or log_step
-          
-          # Build the final result combining evaluation and action data
-          result = {
-              "city": city.get("name") if isinstance(city, dict) else str(city),
-              "action": step_result.get("action") if step_result else "unknown",
-              "max_temp": step_result.get("max_temp", 0) if step_result else (evaluation_result.get("max_temp", 0) if evaluation_result else 0),
-              "alert": step_result.get("alert", False) if step_result else False
-          }
-          
-          print(f"CITY_PROCESS_RETURN: Returning result for main workflow: {result}")
+          print(f"LOG_STEP: Returning result: {result}")
           return result
     with:
-      city: "{{ workload.city }}"
-      alert_step: "{{ alert_step }}"
-      log_step: "{{ log_step }}"
-      evaluation_result: "{{ evaluate_weather }}"
+      city: "{{ workload.city.name }}"
+      evaluation_result: "{{ evaluate_weather_step }}"
     next:
       - step: end
 
   - step: end
     desc: "End of city processing"
-    return: "return_result"  # Return the result of the return_result step
+    return: "evaluate_weather"  # Return the result from the evaluate_weather step (system renames evaluate_weather_step)
 
 workbook:
   # - name: get_forecast
