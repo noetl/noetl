@@ -686,12 +686,46 @@ class Broker:
 
                     result_id = str(uuid.uuid4())
                     logger.debug(f"BROKER.EXECUTE_STEP: Generated result_id={result_id}")
-                    result = {
-                        'id': result_id,
-                        'status': playbook_result.get('status', 'error'),
-                        'data': playbook_result.get('data'),
-                        'error': playbook_result.get('error')
-                    }
+                    
+                    # Handle return attribute for sub-playbook
+                    return_step = call_config.get('return')
+                    if return_step and playbook_result.get('status') == 'success':
+                        playbook_data = playbook_result.get('data', {})
+                        logger.debug(f"BROKER.EXECUTE_STEP: return attribute specified: {return_step}")
+                        logger.debug(f"BROKER.EXECUTE_STEP: playbook_data keys: {list(playbook_data.keys()) if isinstance(playbook_data, dict) else 'not a dict'}")
+                        
+                        if isinstance(playbook_data, dict) and return_step in playbook_data:
+                            returned_data = playbook_data[return_step]
+                            logger.debug(f"BROKER.EXECUTE_STEP: Found return step '{return_step}' with data: {returned_data}")
+                            
+                            # Extract the actual result data from the step result
+                            if isinstance(returned_data, dict) and 'data' in returned_data:
+                                actual_result = returned_data['data']
+                            else:
+                                actual_result = returned_data
+                                
+                            result = {
+                                'id': result_id,
+                                'status': playbook_result.get('status', 'error'),
+                                'data': actual_result,
+                                'error': playbook_result.get('error')
+                            }
+                            logger.debug(f"BROKER.EXECUTE_STEP: Using return step result: {result}")
+                        else:
+                            logger.warning(f"BROKER.EXECUTE_STEP: Return step '{return_step}' not found in playbook results. Available steps: {list(playbook_data.keys()) if isinstance(playbook_data, dict) else 'none'}")
+                            result = {
+                                'id': result_id,
+                                'status': playbook_result.get('status', 'error'),
+                                'data': playbook_result.get('data'),
+                                'error': playbook_result.get('error')
+                            }
+                    else:
+                        result = {
+                            'id': result_id,
+                            'status': playbook_result.get('status', 'error'),
+                            'data': playbook_result.get('data'),
+                            'error': playbook_result.get('error')
+                        }
                     logger.debug(f"BROKER.EXECUTE_STEP: Created result from playbook_result: {result}")
                     
             elif ctype in ['http', 'python', 'duckdb', 'postgres', 'secrets']:
@@ -1681,6 +1715,31 @@ class Broker:
 
         # Prepare result of this playbook for reporting and return
         step_result = self.agent.get_step_results()
+        
+        # Handle return attribute on end steps
+        if current_step and step_config:
+            return_step = step_config.get('return')
+            if return_step:
+                logger.debug(f"BROKER.RUN: End step '{current_step}' has return attribute: '{return_step}'")
+                logger.debug(f"BROKER.RUN: Available step results: {list(step_result.keys()) if isinstance(step_result, dict) else 'not a dict'}")
+                
+                if isinstance(step_result, dict) and return_step in step_result:
+                    returned_data = step_result[return_step]
+                    logger.debug(f"BROKER.RUN: Found return step '{return_step}' with data: {returned_data}")
+                    
+                    # Extract the actual result data from the step result
+                    if isinstance(returned_data, dict) and 'data' in returned_data:
+                        actual_result = returned_data['data']
+                    else:
+                        actual_result = returned_data
+                    
+                    # Replace step_result with just the returned data
+                    step_result = actual_result
+                    logger.debug(f"BROKER.RUN: Using return step result as playbook result: {step_result}")
+                else:
+                    logger.warning(f"BROKER.RUN: Return step '{return_step}' not found in step results. Available: {list(step_result.keys()) if isinstance(step_result, dict) else 'none'}")
+        
+        logger.debug(f"BROKER.RUN: Final step_result for playbook: {step_result}")
 
         if self.server_url and self.event_reporting_enabled:
             report_event({
