@@ -281,8 +281,8 @@ workbook:
           for item in alerts:
               print(f"AGGREGATE_ALERTS_TASK: Processing item: {item} (type: {type(item)})")
               if isinstance(item, dict):
-                  if 'fetch_and_evaluate' in item and isinstance(item['fetch_and_evaluate'], dict):
-                      normalized.append(item['fetch_and_evaluate'])
+                  if 'evaluate_weather' in item and isinstance(item['evaluate_weather'], dict):
+                      normalized.append(item['evaluate_weather'])
                   else:
                       normalized.append(item)
           
