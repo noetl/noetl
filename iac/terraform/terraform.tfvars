@@ -7,7 +7,7 @@ region     = "us-central1"
 zone       = "us-central1-a"
 
 # Environment Configuration  
-environment = "dev"  # Options: dev, staging, prod
+environment = "development"  # Options: development, staging, production
 
 # Database Configuration
 db_name     = "noetl"

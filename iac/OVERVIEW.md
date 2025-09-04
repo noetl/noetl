@@ -37,31 +37,49 @@ Ensure you have the following installed and configured:
 1. **Authenticate with Google Cloud:**
    ```bash
    gcloud auth login
-   gcloud config set project GOOGLE_PROJECT_ID
+   gcloud config set project YOUR_PROJECT_ID
    ```
 
 2. **Create Terraform service account:**
    ```bash
    ./setup-terraform-sa.sh
    ```
+   
+   This automatically:
+   - Enables required APIs
+   - Creates service account with proper IAM roles
+   - Sets up GCS backend for Terraform state
+   - Generates authentication keys
 
-3. **Configure deployment variables:**
+3. **Initialize Terraform:**
    ```bash
    cd terraform
+   source terraform.env
+   terraform init
+   ```
+
+4. **Configure deployment variables:**
+   ```bash
    cp terraform.tfvars.example terraform.tfvars
-   # Edit terraform.tfvars with project settings
+   # Edit terraform.tfvars with your specific settings
    ```
 
 ### 3. Deploy
 
 1. **Build and push container images:**
    ```bash
-   ./build-and-deploy.sh --project GOOGLE_PROJECT_ID
+   ./build-and-deploy.sh --project YOUR_PROJECT_ID
    ```
 
-2. **Deploy infrastructure:**
+2. **Deploy infrastructure (37 resources):**
    ```bash
    ./deploy.sh
+   ```
+   
+   Or manually:
+   ```bash
+   terraform plan   # Review planned changes
+   terraform apply  # Deploy infrastructure
    ```
 
 3. **Access NoETL:**

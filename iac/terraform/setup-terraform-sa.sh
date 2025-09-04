@@ -16,6 +16,17 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Function to cleanup on error
+cleanup() {
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Script failed. Check the error messages above.${NC}"
+        echo -e "${YELLOW}If the service account was partially created, you may need to:${NC}"
+        echo -e "${YELLOW}1. Delete the service account: gcloud iam service-accounts delete ${SA_EMAIL}${NC}"
+        echo -e "${YELLOW}2. Re-run this script${NC}"
+    fi
+}
+trap cleanup EXIT
+
 echo -e "${BLUE}Setting up Terraform Service Account for NoETL${NC}"
 echo -e "${BLUE}Project ID: ${PROJECT_ID}${NC}"
 echo -e "${BLUE}Service Account: ${SA_EMAIL}${NC}"
@@ -76,6 +87,24 @@ else
         --description="Service account for deploying NoETL infrastructure via Terraform" \
         --project="${PROJECT_ID}"
     echo -e "${GREEN}Service account created${NC}"
+    
+    # Wait for service account to propagate
+    echo -e "${BLUE}Waiting for service account to propagate...${NC}"
+    sleep 10
+    
+    # Verify service account exists before proceeding
+    retries=0
+    max_retries=10
+    while ! gcloud iam service-accounts describe "${SA_EMAIL}" --project="${PROJECT_ID}" >/dev/null 2>&1; do
+        retries=$((retries + 1))
+        if [ $retries -ge $max_retries ]; then
+            echo -e "${RED}Error: Service account creation failed or took too long to propagate${NC}"
+            exit 1
+        fi
+        echo -e "${YELLOW}Service account not yet available, waiting... (attempt $retries/$max_retries)${NC}"
+        sleep 5
+    done
+    echo -e "${GREEN}Service account confirmed available${NC}"
 fi
 
 # Grant IAM roles
@@ -96,15 +125,44 @@ ROLES=(
     "roles/cloudbuild.builds.editor"
     "roles/logging.admin"
     "roles/monitoring.admin"
+)
+
+# Optional roles that might fail in some environments
+OPTIONAL_ROLES=(
     "roles/billing.user"
 )
 
 for role in "${ROLES[@]}"; do
     echo -e "  Granting ${role}..."
-    gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    retries=0
+    max_retries=3
+    while ! gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
         --member="serviceAccount:${SA_EMAIL}" \
         --role="${role}" \
-        --quiet >/dev/null
+        --quiet >/dev/null 2>&1; do
+        retries=$((retries + 1))
+        if [ $retries -ge $max_retries ]; then
+            echo -e "${RED}Error: Failed to grant role ${role} after $max_retries attempts${NC}"
+            echo -e "${YELLOW}This might be due to API propagation delays. You can try running the script again in a few minutes.${NC}"
+            exit 1
+        fi
+        echo -e "${YELLOW}    Retry $retries/$max_retries for role ${role}...${NC}"
+        sleep 5
+    done
+done
+
+# Try to grant optional roles (don't fail if they can't be granted)
+for role in "${OPTIONAL_ROLES[@]}"; do
+    echo -e "  Granting ${role} (optional)..."
+    if gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+        --member="serviceAccount:${SA_EMAIL}" \
+        --role="${role}" \
+        --quiet >/dev/null 2>&1; then
+        echo -e "${GREEN}    Successfully granted ${role}${NC}"
+    else
+        echo -e "${YELLOW}    Could not grant ${role} - this may require billing admin permissions${NC}"
+        echo -e "${YELLOW}    You can grant this manually later if needed${NC}"
+    fi
 done
 
 echo -e "${GREEN}IAM roles granted${NC}"
