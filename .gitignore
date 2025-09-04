@@ -36,3 +36,5 @@ env/
 # Terraform
 .terraform*
 /.vscode/
+/status.json.clean
+/status.json

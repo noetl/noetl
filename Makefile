@@ -296,13 +296,13 @@ clean-logs:
 	@rm -rf logs/*
 
 register-examples:
-	bin/register_examples.sh 8082
+	examples/register_examples.sh 8082
 
 start-workers:
-	bin/start_workers.sh
+	scripts/start_workers.sh
 
 stop-workers:
-	bin/stop_workers.sh
+	scripts/stop_workers.sh
 
 noetl-start: clean-logs start-server start-workers register-examples
 
