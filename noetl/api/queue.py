@@ -109,7 +109,7 @@ async def complete_job(job_id: int):
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id", (job_id,))
+                await cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id, input_context", (job_id,))
                 row = await cur.fetchone()
                 await conn.commit()
         if not row:
@@ -117,16 +117,117 @@ async def complete_job(job_id: int):
         # schedule broker evaluation best-effort
         try:
             exec_id = row[1] if isinstance(row, tuple) else row.get("execution_id")
+            input_context = row[2] if isinstance(row, tuple) else row.get("input_context")
+            
+            # Check if this job has parent execution metadata (indicating it's part of a loop)
+            parent_execution_id = None
+            parent_step = None
+            return_step = None
+            if input_context:
+                try:
+                    import json
+                    context_data = json.loads(input_context) if isinstance(input_context, str) else input_context
+                    if isinstance(context_data, dict):
+                        meta = context_data.get('_meta', {})
+                        parent_execution_id = meta.get('parent_execution_id')
+                        parent_step = meta.get('parent_step')
+                        # Extract return_step from the action if it's a playbook task
+                        action_data = context_data.get('action')
+                        if isinstance(action_data, str):
+                            try:
+                                action_json = json.loads(action_data)
+                                if isinstance(action_json, dict):
+                                    return_step = action_json.get('with', {}).get('return_step')
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            
+            # If this is a child execution that completed, emit a mapping event to link results to parent loop
+            if parent_execution_id and parent_step and parent_execution_id != exec_id:
+                try:
+                    # Get the final result from the child execution
+                    from noetl.api.event import get_event_service
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            # Get the return step result if specified, otherwise get execution status
+                            if return_step:
+                                await cur.execute(
+                                    """
+                                    SELECT output_result FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND node_name = %s
+                                      AND event_type = 'action_completed'
+                                      AND lower(status) IN ('completed','success')
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (exec_id, return_step)
+                                )
+                            else:
+                                await cur.execute(
+                                    """
+                                    SELECT output_result FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND event_type = 'action_completed'
+                                      AND lower(status) IN ('completed','success')
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (exec_id,)
+                                )
+                            
+                            result_row = await cur.fetchone()
+                            child_result = None
+                            if result_row:
+                                result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                                try:
+                                    child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
+                                    # Extract data if wrapped
+                                    if isinstance(child_result, dict) and 'data' in child_result:
+                                        child_result = child_result['data']
+                                except Exception:
+                                    pass
+                            
+                            # Emit mapping event to link child result to parent loop step
+                            await get_event_service().emit({
+                                'execution_id': parent_execution_id,
+                                'event_type': 'loop_item_completed',
+                                'status': 'COMPLETED',
+                                'node_id': f'{parent_execution_id}-{parent_step}-item-{exec_id}',
+                                'node_name': parent_step,
+                                'node_type': 'loop_item',
+                                'result': child_result,
+                                'context': {
+                                    'child_execution_id': exec_id,
+                                    'parent_step': parent_step,
+                                    'return_step': return_step
+                                }
+                            })
+                            logger.debug(f"LOOP MAPPING: Emitted loop_item_completed for parent {parent_execution_id} step {parent_step} from child {exec_id}")
+                            
+                except Exception:
+                    logger.debug("Failed to emit loop mapping event", exc_info=True)
+            
             if exec_id:
                 import asyncio
                 from noetl.api.event import evaluate_broker_for_execution
                 try:
                     if asyncio.get_event_loop().is_running():
                         asyncio.create_task(evaluate_broker_for_execution(exec_id))
+                        # Also trigger parent execution evaluation if this was a loop task
+                        if parent_execution_id and parent_execution_id != exec_id:
+                            asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
                     else:
                         await evaluate_broker_for_execution(exec_id)
+                        # Also trigger parent execution evaluation if this was a loop task
+                        if parent_execution_id and parent_execution_id != exec_id:
+                            await evaluate_broker_for_execution(parent_execution_id)
                 except RuntimeError:
                     await evaluate_broker_for_execution(exec_id)
+                    # Also trigger parent execution evaluation if this was a loop task
+                    if parent_execution_id and parent_execution_id != exec_id:
+                        await evaluate_broker_for_execution(parent_execution_id)
         except Exception:
             logger.debug("Failed to schedule evaluation from complete_job", exc_info=True)
         return {"status": "ok", "id": job_id}
