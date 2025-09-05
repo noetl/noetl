@@ -38,6 +38,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
+// Import modular node type definitions
+import { nodeTypeMap, orderedNodeTypes } from './nodeTypes';
 
 interface FlowVisualizationProps {
   visible: boolean;
@@ -74,8 +76,7 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
   };
 
   // Ensure we get the latest nodeType based on current task type
-  const nodeType =
-    nodeTypes[task?.type as keyof typeof nodeTypes] || nodeTypes.default;
+  const nodeType = nodeTypeMap[task?.type] || nodeTypeMap['default'];
 
   const handleNameChange = (value: string) => {
     if (readOnly) return; // prevent edits in read-only
@@ -120,24 +121,14 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
         >
           {/* Type selector moved here */}
           <Select
-            value={task?.type || "default"}
+            value={task?.type || 'default'}
             onChange={handleTypeChange}
             size="small"
             className="flow-node-type-select flow-node-toolbar-type-select"
             popupClassName="flow-node-type-dropdown"
             dropdownMatchSelectWidth={false}
             getPopupContainer={() => document.body}
-            options={[
-              { value: "log", label: "📝 Log" },
-              { value: "http", label: "🌐 HTTP" },
-              { value: "sql", label: "🗄️ SQL" },
-              { value: "script", label: "⚙️ Script" },
-              { value: "secret", label: "🔑 Secret" },
-              { value: "export", label: "📤 Export" },
-              { value: "python", label: "🐍 Python" },
-              { value: "workbook", label: "📊 Workbook" },
-              { value: "default", label: "📄 Default" },
-            ]}
+            options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeTypeMap[t].icon} ${nodeTypeMap[t].label}` }))}
           />
           <Popconfirm
             title="Delete this component?"
@@ -197,18 +188,6 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
       </div>
     </div>
   );
-};
-
-const nodeTypes = {
-  log: { color: "#52c41a", icon: "📝" },
-  http: { color: "#1890ff", icon: "🌐" },
-  sql: { color: "#722ed1", icon: "🗄️" },
-  script: { color: "#fa8c16", icon: "⚙️" },
-  secret: { color: "#eb2f96", icon: "🔑" },
-  export: { color: "#13c2c2", icon: "📤" },
-  python: { color: "#3776ab", icon: "🐍" },
-  workbook: { color: "#ff6b35", icon: "📊" },
-  default: { color: "#8c8c8c", icon: "📄" },
 };
 
 const FlowVisualization: React.FC<FlowVisualizationProps> = ({
@@ -720,10 +699,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               <MiniMap
                 nodeColor={(node) => {
                   const type = (node.data as any)?.task?.type ?? "default";
-                  return (
-                    nodeTypes[type as keyof typeof nodeTypes]?.color ||
-                    nodeTypes.default.color
-                  );
+                  return nodeTypeMap[type]?.color || nodeTypeMap['default'].color;
                 }}
                 pannable
                 zoomable
