@@ -278,9 +278,9 @@ tasks:
   }
 
   return (
-    <Content>
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
-        <Row justify="space-between" align="middle">
+    <Content className="PlaybookEditor">
+      <Space className="PlaybookEditor__content" direction="vertical" size="large" style={{ width: "100%" }}>
+        <Row className="PlaybookEditor__header" justify="space-between" align="middle">
           <Col>
             <Title level={2}>✏️ Playbook Editor</Title>
             {playbook ? (
@@ -347,7 +347,7 @@ tasks:
 
         {/* Validation Results */}
         {validationResult && (
-          <Card size="small">
+          <Card className="PlaybookValidationErrors" size="small">
             <Alert
               message={
                 validationResult.valid
@@ -356,7 +356,7 @@ tasks:
               }
               description={
                 validationResult.errors &&
-                validationResult.errors.length > 0 ? (
+                  validationResult.errors.length > 0 ? (
                   <ul style={{ margin: 0, paddingLeft: 20 }}>
                     {validationResult.errors.map((error, index) => (
                       <li key={index}>{error}</li>
@@ -370,8 +370,17 @@ tasks:
           </Card>
         )}
 
+        {/* Flow Visualization (embedded above the code editor when requested) */}
+        <FlowVisualization
+          visible={showFlowVisualization}
+          onClose={() => setShowFlowVisualization(false)}
+          playbookId={playbookId || playbook?.id || "new"}
+          playbookName={playbook?.name || "New Playbook"}
+          content={content}
+        />
+
         {/* Code Editor */}
-        <Card style={{ height: isFullscreen ? "100vh" : "auto", padding: 0 }}>
+        <Card className="YamlEditor" style={{ height: isFullscreen ? "100vh" : "auto", padding: 0 }}>
           <MonacoEditor
             height={isFullscreen ? "90vh" : editorHeight}
             language="yaml"
@@ -405,15 +414,6 @@ tasks:
           </Text>
         </Card>
       </Space>
-
-      {/* Flow Visualization Modal */}
-      <FlowVisualization
-        visible={showFlowVisualization}
-        onClose={() => setShowFlowVisualization(false)}
-        playbookId={playbookId || playbook?.id || "new"}
-        playbookName={playbook?.name || "New Playbook"}
-        content={content}
-      />
     </Content>
   );
 };

@@ -28,7 +28,7 @@ import {
 import { apiService } from "../services/api";
 import { ExecutionData } from "../types";
 import moment from "moment";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   ReactFlow,
   MiniMap,
@@ -44,6 +44,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "../styles/Execution.css";
+import FlowVisualization from "./FlowVisualization";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -76,7 +77,7 @@ const Execution: React.FC = () => {
   const [executions, setExecutions] = useState<ExecutionData[]>([]);
   const [filteredExecutions, setFilteredExecutions] = useState<ExecutionData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);  
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showWorkflowVisualization, setShowWorkflowVisualization] = useState(false);
   const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
@@ -98,6 +99,7 @@ const Execution: React.FC = () => {
   const [dateRange, setDateRange] = useState<[any, any] | null>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -105,18 +107,27 @@ const Execution: React.FC = () => {
 
   );
 
-  // Check URL parameters for workflow visualization
+  // React to query string changes (supports navigating between history and workflow without full remount)
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const playbookId = urlParams.get("playbook");
-    const view = urlParams.get("view");
-
+    const params = new URLSearchParams(location.search);
+    const qsPlaybook = params.get("playbook");
+    const qsView = params.get("view");
+    // Prefer explicit state passed via navigate if present
+    const navState: any = (location as any).state || {};
+    const statePlaybook = navState.playbookId;
+    const stateView = navState.view;
+    const playbookId = statePlaybook || qsPlaybook;
+    const view = stateView || qsView;
     if (playbookId && view === "workflow") {
-      setSelectedPlaybookId(playbookId);
-      setSelectedPlaybookName(playbookId); // We'll use the ID as name for now
+      if (playbookId !== selectedPlaybookId) {
+        setSelectedPlaybookId(playbookId);
+        setSelectedPlaybookName(playbookId);
+      }
       setShowWorkflowVisualization(true);
+    } else {
+      setShowWorkflowVisualization(false);
     }
-  }, []);
+  }, [location, selectedPlaybookId]);
 
   useEffect(() => {
     fetchExecutions();
@@ -644,7 +655,6 @@ const Execution: React.FC = () => {
   return (
     <Content className="execution-main-content">
       {showWorkflowVisualization ? (
-        // Show workflow visualization when accessed via View button
         <Space direction="vertical" size="large" className="execution-space-vertical">
           <Row justify="space-between" align="middle">
             <Col>
@@ -665,50 +675,19 @@ const Execution: React.FC = () => {
             </Col>
           </Row>
 
-          {/* Inline Flow Visualization */}
-          <div className="execution-flow-container">
-            {workflowLoading ? (
-              <div className="execution-flow-toolbar">
-                <Spin size="large" />
-                <div className="execution-flow-toolbar-loading">
-                  Loading workflow visualization...
-                </div>
-              </div>
-            ) : (
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                fitView
-                fitViewOptions={{ padding: 0.3 }}
-                attributionPosition="bottom-left"
-              >
-                <Controls
-                  style={{
-                    background: "white",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: "8px",
-                  }}
-                />
-                <MiniMap
-                  nodeColor={(node) => "#1890ff"}
-                  style={{
-                    background: "white",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: "8px",
-                  }}
-                />
-                <Background
-                  variant={BackgroundVariant.Dots}
-                  gap={20}
-                  size={1}
-                  color="#f0f0f0"
-                />
-              </ReactFlow>
-            )}
-          </div>
+          {/* Inline Flow Visualization using shared component in read-only view mode */}
+          <FlowVisualization
+            visible={showWorkflowVisualization}
+            embedded={showWorkflowVisualization}
+            readOnly
+            hideTitle
+            onClose={() => {
+              setShowWorkflowVisualization(false);
+              navigate("/execution");
+            }}
+            playbookId={selectedPlaybookId}
+            playbookName={selectedPlaybookName}
+          />
         </Space>
       ) : (
         // Show normal execution history

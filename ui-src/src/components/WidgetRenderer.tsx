@@ -66,8 +66,8 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({ widget }) => {
               columns={columns}
               pagination={
                 typeof widget.config.pagination === "object" ||
-                widget.config.pagination === false ||
-                widget.config.pagination === undefined
+                  widget.config.pagination === false ||
+                  widget.config.pagination === undefined
                   ? widget.config.pagination
                   : false
               }
@@ -140,7 +140,7 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({ widget }) => {
 
   return (
     <Card
-      bordered={false}
+      variant="borderless"
       style={{
         height: "100%",
         boxShadow: "0 1px 3px rgba(0,0,0,0.1)",

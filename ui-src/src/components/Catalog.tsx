@@ -238,8 +238,10 @@ const Catalog: React.FC = () => {
   };
 
   const handleViewFlow = (playbookId: string, playbookName: string) => {
-    // Navigate to execution page with playbook visualization
-    navigate(`/execution?playbook=${playbookId}&view=workflow`);
+    // Navigate to execution page with playbook visualization (query + state)
+    navigate(`/execution?playbook=${encodeURIComponent(playbookId)}&view=workflow`, {
+      state: { playbookId, view: 'workflow' }
+    });
   };
 
   const getStatusColor = (status: string) => {

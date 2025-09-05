@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import type React from "react";
 import { createRoot } from "react-dom/client";
 import {
-  BrowserRouter as Router,
+  createBrowserRouter,
+  RouterProvider,
   Routes,
   Route,
   useNavigate,
@@ -114,13 +115,13 @@ const App: React.FC = () => {
           </div>
         </Header>
         <Content style={{ padding: "24px", margin: "0 24px" }}>
-          <div
+          <div className="AppRoutesContent"
             style={{
               background: "#fff",
               padding: "24px",
               borderRadius: "12px",
               boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
-              minHeight: "calc(100vh - 200px)",
+              // minHeight: "calc(100vh - 200px)",
             }}
           >
             <Routes>
@@ -151,8 +152,20 @@ const App: React.FC = () => {
 
 // Mount the app
 const root = createRoot(document.getElementById("root") as HTMLElement);
-root.render(
-  <Router>
-    <App />
-  </Router>,
+const router = createBrowserRouter(
+  [
+    {
+      path: "/*",
+      element: <App />,
+    },
+  ],
+  // Opt-in to v7 behaviors to avoid future flag warnings. Cast to any to satisfy TS.
+  ({
+    future: {
+      v7_startTransition: true,
+      v7_relativeSplatPath: true,
+    },
+  } as any),
 );
+
+root.render(<RouterProvider router={router} />);
