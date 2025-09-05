@@ -263,10 +263,14 @@ class Broker:
                 if isinstance(code_val, str) and code_val.strip() and os.environ.get('NOETL_EMBED_CODE_B64', '1') == '1':
                     if code_val.strip() != 'def main(**kwargs):\n    return {}':
                         enriched_task_config['code_b64'] = base64.b64encode(code_val.encode('utf-8')).decode('utf-8')
+                        # Remove original to ensure only base64 is used
+                        enriched_task_config.pop('code', None)
                 for field in ('command', 'commands'):
                     cmd_val = enriched_task_config.get(field)
                     if isinstance(cmd_val, str) and cmd_val.strip() and os.environ.get('NOETL_EMBED_CODE_B64', '1') == '1':
                         enriched_task_config[f'{field}_b64'] = base64.b64encode(cmd_val.encode('utf-8')).decode('utf-8')
+                        # Remove original to ensure only base64 is used
+                        enriched_task_config.pop(field, None)
             except Exception:
                 logger.debug("BROKER.DELEGATE_TASK_EXECUTION: Failed to enrich task with base64 code", exc_info=True)
             payload = {
@@ -686,12 +690,46 @@ class Broker:
 
                     result_id = str(uuid.uuid4())
                     logger.debug(f"BROKER.EXECUTE_STEP: Generated result_id={result_id}")
-                    result = {
-                        'id': result_id,
-                        'status': playbook_result.get('status', 'error'),
-                        'data': playbook_result.get('data'),
-                        'error': playbook_result.get('error')
-                    }
+                    
+                    # Handle return attribute for sub-playbook
+                    return_step = call_config.get('return')
+                    if return_step and playbook_result.get('status') == 'success':
+                        playbook_data = playbook_result.get('data', {})
+                        logger.debug(f"BROKER.EXECUTE_STEP: return attribute specified: {return_step}")
+                        logger.debug(f"BROKER.EXECUTE_STEP: playbook_data keys: {list(playbook_data.keys()) if isinstance(playbook_data, dict) else 'not a dict'}")
+                        
+                        if isinstance(playbook_data, dict) and return_step in playbook_data:
+                            returned_data = playbook_data[return_step]
+                            logger.debug(f"BROKER.EXECUTE_STEP: Found return step '{return_step}' with data: {returned_data}")
+                            
+                            # Extract the actual result data from the step result
+                            if isinstance(returned_data, dict) and 'data' in returned_data:
+                                actual_result = returned_data['data']
+                            else:
+                                actual_result = returned_data
+                                
+                            result = {
+                                'id': result_id,
+                                'status': playbook_result.get('status', 'error'),
+                                'data': actual_result,
+                                'error': playbook_result.get('error')
+                            }
+                            logger.debug(f"BROKER.EXECUTE_STEP: Using return step result: {result}")
+                        else:
+                            logger.warning(f"BROKER.EXECUTE_STEP: Return step '{return_step}' not found in playbook results. Available steps: {list(playbook_data.keys()) if isinstance(playbook_data, dict) else 'none'}")
+                            result = {
+                                'id': result_id,
+                                'status': playbook_result.get('status', 'error'),
+                                'data': playbook_result.get('data'),
+                                'error': playbook_result.get('error')
+                            }
+                    else:
+                        result = {
+                            'id': result_id,
+                            'status': playbook_result.get('status', 'error'),
+                            'data': playbook_result.get('data'),
+                            'error': playbook_result.get('error')
+                        }
                     logger.debug(f"BROKER.EXECUTE_STEP: Created result from playbook_result: {result}")
                     
             elif ctype in ['http', 'python', 'duckdb', 'postgres', 'secrets']:
@@ -1224,32 +1262,69 @@ class Broker:
 
                 continue
 
-            next_steps = step_config.get('next', [])
-            if not isinstance(next_steps, list):
-                next_steps = [next_steps]
-
-            iter_results = {}
-            for next_step in next_steps:
-                if isinstance(next_step, dict):
-                    next_step_name = next_step.get('step')
-                    next_step_with = next_step.get('with', {})
-                else:
-                    next_step_name = next_step
-                    next_step_with = {}
-
+            # Check if this loop step is itself a playbook call
+            if step_config.get('type') == 'playbook':
+                logger.debug(f"Loop step is a playbook call: {step_config.get('path')}")
+                
+                # Prepare context for playbook call
+                playbook_path = step_config.get('path')
+                playbook_with = step_config.get('with', {})
+                return_step = step_config.get('return')
+                
+                # Render the with parameters with iteration context
                 rules = {iterator: iter_context.get(iterator)}
-                logger.debug(f"Loop next step: {next_step_name}, next_step_with={next_step_with}, rules={rules}")
+                rendered_with = render_template(self.agent.jinja_env, playbook_with, iter_context, rules)
+                logger.debug(f"Loop playbook rendered with: {rendered_with}")
+                
+                # Create playbook call config
+                playbook_call_config = {
+                    'type': 'playbook',
+                    'path': playbook_path,
+                    'with': rendered_with
+                }
+                if return_step:
+                    playbook_call_config['return'] = return_step
+                
+                # Execute the playbook call
+                playbook_result = self.execute_playbook_call(playbook_call_config, iter_context, f"{step_id}_iter_{idx}")
+                
+                # Extract result data
+                if playbook_result.get('status') == 'success':
+                    result_data = playbook_result.get('data')
+                    logger.debug(f"Loop playbook iteration {idx} successful: {result_data}")
+                else:
+                    result_data = None
+                    logger.warning(f"Loop playbook iteration {idx} failed: {playbook_result.get('error')}")
+                
+                all_results.append(result_data)
+            else:
+                # Original logic for next steps
+                next_steps = step_config.get('next', [])
+                if not isinstance(next_steps, list):
+                    next_steps = [next_steps]
 
-                step_with = render_template(self.agent.jinja_env, next_step_with, iter_context, rules)
-                logger.debug(f"Loop step rendered with: {step_with}")
+                iter_results = {}
+                for next_step in next_steps:
+                    if isinstance(next_step, dict):
+                        next_step_name = next_step.get('step')
+                        next_step_with = next_step.get('with', {})
+                    else:
+                        next_step_name = next_step
+                        next_step_with = {}
 
-                if not next_step_name:
-                    continue
-                step_result = self.execute_step(next_step_name, step_with)
-                iter_results[next_step_name] = step_result.get('data') if step_result.get(
-                    'status') == 'success' else None
+                    rules = {iterator: iter_context.get(iterator)}
+                    logger.debug(f"Loop next step: {next_step_name}, next_step_with={next_step_with}, rules={rules}")
 
-            all_results.append(iter_results)
+                    step_with = render_template(self.agent.jinja_env, next_step_with, iter_context, rules)
+                    logger.debug(f"Loop step rendered with: {step_with}")
+
+                    if not next_step_name:
+                        continue
+                    step_result = self.execute_step(next_step_name, step_with)
+                    iter_results[next_step_name] = step_result.get('data') if step_result.get(
+                        'status') == 'success' else None
+
+                all_results.append(iter_results)
             self.write_event_log(
                 'loop_iteration_complete', f"{loop_id}_{idx}", f"{loop_name}[{idx}]", 'iteration',
                 'success', 0, iter_context, iter_results,
@@ -1667,6 +1742,10 @@ class Broker:
         execution_duration = (datetime.datetime.now() - datetime.datetime.fromisoformat(
             self.agent.context.get('execution_start'))).total_seconds()
 
+        # Get parent information from context if available
+        parent_execution_id = self.agent.context.get('parent_execution_id') if isinstance(self.agent.context, dict) else None
+        parent_step = self.agent.context.get('parent_step') if isinstance(self.agent.context, dict) else None
+
         self.write_event_log(
             'execution_complete',
             f"{self.agent.execution_id}_complete", self.agent.playbook.get('name', 'Unnamed'),
@@ -1681,6 +1760,31 @@ class Broker:
 
         # Prepare result of this playbook for reporting and return
         step_result = self.agent.get_step_results()
+        
+        # Handle return attribute on end steps
+        if current_step and step_config:
+            return_step = step_config.get('return')
+            if return_step:
+                logger.debug(f"BROKER.RUN: End step '{current_step}' has return attribute: '{return_step}'")
+                logger.debug(f"BROKER.RUN: Available step results: {list(step_result.keys()) if isinstance(step_result, dict) else 'not a dict'}")
+                
+                if isinstance(step_result, dict) and return_step in step_result:
+                    returned_data = step_result[return_step]
+                    logger.debug(f"BROKER.RUN: Found return step '{return_step}' with data: {returned_data}")
+                    
+                    # Extract the actual result data from the step result
+                    if isinstance(returned_data, dict) and 'data' in returned_data:
+                        actual_result = returned_data['data']
+                    else:
+                        actual_result = returned_data
+                    
+                    # Replace step_result with just the returned data
+                    step_result = actual_result
+                    logger.debug(f"BROKER.RUN: Using return step result as playbook result: {step_result}")
+                else:
+                    logger.warning(f"BROKER.RUN: Return step '{return_step}' not found in step results. Available: {list(step_result.keys()) if isinstance(step_result, dict) else 'none'}")
+        
+        logger.debug(f"BROKER.RUN: Final step_result for playbook: {step_result}")
 
         if self.server_url and self.event_reporting_enabled:
             report_event({

@@ -22,6 +22,46 @@ import asyncio
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
+
+def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply base64 encoding to multiline code/commands in task configuration
+    to prevent serialization issues when passing through JSON in queue table.
+    Only base64 versions are stored - original fields are removed to ensure single method of handling.
+    
+    Args:
+        task_config: The original task configuration
+        
+    Returns:
+        Modified task configuration with base64 encoded fields, original fields removed
+    """
+    if not isinstance(task_config, dict):
+        return task_config
+    
+    import base64
+    encoded_task = dict(task_config)
+    
+    try:
+        # Encode Python code and remove original
+        code_val = encoded_task.get('code')
+        if isinstance(code_val, str) and code_val.strip():
+            encoded_task['code_b64'] = base64.b64encode(code_val.encode('utf-8')).decode('ascii')
+            # Remove original to ensure only base64 is used
+            encoded_task.pop('code', None)
+            
+        # Encode command/commands for PostgreSQL and DuckDB and remove originals
+        for field in ('command', 'commands'):
+            cmd_val = encoded_task.get(field)
+            if isinstance(cmd_val, str) and cmd_val.strip():
+                encoded_task[f'{field}_b64'] = base64.b64encode(cmd_val.encode('utf-8')).decode('ascii')
+                # Remove original to ensure only base64 is used
+                encoded_task.pop(field, None)
+                
+    except Exception:
+        logger.debug("ENCODE_TASK_FOR_QUEUE: Failed to encode task fields with base64", exc_info=True)
+        
+    return encoded_task
+
 @router.post("/context/render", response_class=JSONResponse)
 async def render_context(request: Request):
     """
@@ -1569,9 +1609,15 @@ async def evaluate_broker_for_execution(
                     items = render_template(jenv, lspec.get('in', []), base_ctx, strict_keys=False)
                     if isinstance(items, str):
                         try:
+                            # Try JSON first (for proper JSON strings)
                             items = json.loads(items)
                         except Exception:
-                            items = [items]
+                            try:
+                                # Fallback to ast.literal_eval for Python-like strings  
+                                import ast
+                                items = ast.literal_eval(items)
+                            except Exception:
+                                items = [items]
                 except Exception:
                     items = []
                 if not isinstance(items, list):
@@ -1611,13 +1657,14 @@ async def evaluate_broker_for_execution(
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
                             if str(locals().get('step_type_lower','')) == 'playbook':
-                                # Count child executions that completed for this parent + step
+                                # Count completed loop item mapping events for playbook loops
                                 await cur.execute(
                                     """
                                     SELECT COUNT(*) FROM noetl.event_log
-                                    WHERE (metadata->>'parent_execution_id') = %s
-                                      AND (metadata->>'parent_step') = %s
-                                      AND event_type = 'execution_complete'
+                                    WHERE execution_id = %s
+                                      AND node_name = %s
+                                      AND event_type = 'loop_item_completed'
+                                      AND lower(status) IN ('completed','success')
                                     """,
                                     (execution_id, step_nm)
                                 )
@@ -1632,26 +1679,41 @@ async def evaluate_broker_for_execution(
                     pass
 
                 expected = len(items_f)
+                
+                # Define step_type_lower before aggregation logic
+                step_type_lower = str(next_step.get('type') or '').strip().lower()
+
+                logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}, step_type={step_type_lower}")
 
                 # If all items completed and no aggregate completion emitted, emit aggregate completion
                 if expected > 0 and done_count >= expected and not done_evt:
+                    logger.debug(f"INLINE LOOP AGGREGATION: Starting aggregation for {step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}")
                     # Build aggregated result as list of outputs for this node
                     agg_list = []
                     try:
                         async with get_async_db_connection() as conn:
                             async with conn.cursor(row_factory=dict_row) as cur:
-                                if str(locals().get('step_type_lower','')) == 'playbook':
+                                if step_type_lower == 'playbook':
+                                    # For playbook type loops, get results from loop_item_completed events
                                     await cur.execute(
                                         """
-                                        SELECT output_result FROM noetl.event_log
-                                        WHERE (metadata->>'parent_execution_id') = %s
-                                          AND (metadata->>'parent_step') = %s
-                                          AND event_type = 'execution_complete'
+                                        SELECT result FROM noetl.event_log
+                                        WHERE execution_id = %s
+                                          AND node_name = %s
+                                          AND event_type = 'loop_item_completed'
+                                          AND lower(status) IN ('completed','success')
                                         ORDER BY timestamp
                                         """,
                                         (execution_id, step_nm)
                                     )
+                                    rows = await cur.fetchall()
+                                    for rr in rows:
+                                        data = rr.get('result')
+                                        # Skip null/empty results but include all actual data
+                                        if data is not None:
+                                            agg_list.append(data)
                                 else:
+                                    # For non-playbook loops, use the original logic
                                     await cur.execute(
                                         """
                                         SELECT output_result FROM noetl.event_log
@@ -1660,14 +1722,19 @@ async def evaluate_broker_for_execution(
                                         """,
                                         (execution_id, step_nm)
                                     )
-                                rows = await cur.fetchall()
-                                for rr in rows:
-                                    data = rr.get('output_result')
-                                    try:
-                                        data = json.loads(data) if isinstance(data, str) else data
-                                    except Exception:
-                                        pass
-                                    agg_list.append(data)
+                                    rows = await cur.fetchall()
+                                    for rr in rows:
+                                        data = rr.get('output_result')
+                                        try:
+                                            data = json.loads(data) if isinstance(data, str) else data
+                                            # Extract the actual data if it's wrapped
+                                            if isinstance(data, dict) and 'data' in data:
+                                                data = data['data']
+                                        except Exception:
+                                            pass
+                                        # Skip null/empty results but include all actual data
+                                        if data is not None:
+                                            agg_list.append(data)
                     except Exception:
                         pass
                     try:
@@ -1689,12 +1756,12 @@ async def evaluate_broker_for_execution(
                 scheduled_any = False
                 # Build task config from the step itself
                 # Adapted from general task_cfg builder below
-                step_type_lower = str(next_step.get('type') or '').strip().lower()
                 if step_type_lower == 'playbook':
                     # Proxy sub-playbook call via python on worker, waiting for completion
                     sub_path = next_step.get('path') or ''
+                    return_step = next_step.get('return', 'fetch_and_evaluate')  # Use return attribute or default
                     task_code = (
-                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None, parent_step=None):\n"
+                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None, parent_step=None, return_step='fetch_and_evaluate'):\n"
                         "    import os, httpx, time\n"
                         "    host = os.environ.get('NOETL_HOST','localhost')\n"
                         "    port = os.environ.get('NOETL_PORT','8082')\n"
@@ -1718,27 +1785,38 @@ async def evaluate_broker_for_execution(
                         "                js = s.json(); st = str(js.get('status','')).lower()\n"
                         "                if st in ('completed','failed','error','canceled'):\n"
                         "                    ev = js.get('events', [])\n"
+                        "                    # Look for the return step completion event\n"
                         "                    for e in ev:\n"
-                        "                        if e.get('event_type')=='action_completed' and e.get('node_name')=='fetch_and_evaluate':\n"
-                        "                            return e.get('output_result') or e.get('result') or {'status': st, 'execution_id': eid}\n"
+                        "                        if e.get('event_type')=='action_completed' and e.get('node_name')==return_step:\n"
+                        "                            output = e.get('output_result') or e.get('result')\n"
+                        "                            if isinstance(output, dict) and 'data' in output:\n"
+                        "                                return output['data']\n"
+                        "                            return output\n"
+                        "                    # If no return step found, return status\n"
                         "                    return {'status': st, 'execution_id': eid}\n"
                         "            time.sleep(0.2)\n"
                         "        return {'status': 'timeout', 'execution_id': eid}\n"
                         "    except Exception as e:\n"
                         "        return {'status': 'error', 'error': str(e)}\n"
                     )
+                    
+                    # Base64 encode the code to avoid serialization issues
+                    import base64
+                    encoded_code = base64.b64encode(task_code.encode('utf-8')).decode('ascii')
+                    
                     # Render per-item parameters at worker from context; pass the step's with-template as a mapping
                     step_with_tpl = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
                     task_cfg = {
                         'type': 'python',
                         'name': step_nm,
-                        'code': task_code,
+                        'code_b64': encoded_code,  # Use base64 encoded code instead of raw code
                         'with': {
                             'playbook_id': sub_path,
                             'parameters': step_with_tpl,
                             'parent_execution_id': '{{ _meta.parent_execution_id }}',
                             'parent_event_id': '{{ _meta.parent_event_id }}',
                             'parent_step': step_nm,
+                            'return_step': return_step,
                         }
                     }
                 elif 'call' in next_step:
@@ -1762,14 +1840,26 @@ async def evaluate_broker_for_execution(
 
                 for i, it in enumerate(items_f):
                     iter_node_id = f"{execution_id}-step-{idx+1}-iter-{i}"
+                    
+                    # Check if this iteration was already scheduled (using node_id to identify the specific iteration)
                     try:
                         async with get_async_db_connection() as conn:
                             async with conn.cursor() as cur:
-                                await cur.execute("SELECT 1 FROM noetl.queue WHERE execution_id=%s AND node_id=%s LIMIT 1", (execution_id, iter_node_id))
+                                await cur.execute("SELECT 1 FROM noetl.queue WHERE node_id=%s LIMIT 1", (iter_node_id,))
                                 if await cur.fetchone():
                                     continue
                     except Exception:
                         pass
+                    
+                    # Generate unique child execution ID for each loop iteration
+                    try:
+                        child_execution_id = get_snowflake_id_str()
+                    except Exception:
+                        try:
+                            child_execution_id = str(get_snowflake_id())
+                        except Exception:
+                            from uuid import uuid4
+                            child_execution_id = str(uuid4())
                     iter_ctx = dict(workload) if isinstance(workload, dict) else {}
                     iter_ctx[iterator] = it
                     try:
@@ -1786,7 +1876,7 @@ async def evaluate_broker_for_execution(
                             'node_id': iter_node_id,
                             'node_name': step_nm,
                             'node_type': 'iteration',
-                            'context': {'workload': rendered_work, 'iterator': iterator, 'index': i}
+                            'context': {'workload': rendered_work, 'iterator': iterator, 'index': i, 'child_execution_id': child_execution_id}
                         })
                         loop_iter_event_id = evt.get('event_id')
                     except Exception:
@@ -1817,7 +1907,7 @@ async def evaluate_broker_for_execution(
                                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                                     RETURNING id
                                     """,
-                                    (execution_id, iter_node_id, json.dumps(task_cfg), json.dumps(rendered_work), 0, 5, None)
+                                    (child_execution_id, iter_node_id, json.dumps(encode_task_for_queue(task_cfg)), json.dumps(rendered_work), 0, 5, None)
                                 )
                                 await conn.commit()
                         scheduled_any = True
@@ -1827,6 +1917,8 @@ async def evaluate_broker_for_execution(
                     return
             except Exception:
                 logger.debug("INLINE LOOP: scheduling error", exc_info=True)
+            # Always return after handling a step with loop attribute to prevent falling through to control step detection
+            return
 
         if isinstance(next_step, dict):
             _sname = next_step.get('step') or next_step.get('name')
@@ -1963,7 +2055,7 @@ async def evaluate_broker_for_execution(
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                                 RETURNING id
                                 """,
-                                (execution_id, iter_node_id, json.dumps(body_task_cfg), json.dumps(rendered_work), 0, 5, None)
+                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5, None)
                             )
                             await conn.commit()
                     scheduled_any = True
@@ -2274,7 +2366,7 @@ async def evaluate_broker_for_execution(
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                                 RETURNING id
                                 """,
-                                (execution_id, iter_node_id, json.dumps(body_task_cfg), json.dumps(rendered_work), 0, 5, None)
+                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5, None)
                             )
                             await conn.commit()
                     scheduled_any = True
@@ -2447,7 +2539,7 @@ async def evaluate_broker_for_execution(
                                 (
                                     execution_id,
                                     node_id,
-                                    json.dumps(task_cfg),
+                                    json.dumps(encode_task_for_queue(task_cfg)),
                                     json.dumps(rendered_workload),
                                     0,
                                     5,

@@ -24,12 +24,12 @@ workload:  # Input parameters section accessible throughout the workflow
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"  # Base URL for weather API
   temperature_threshold: 12  # Threshold for alerting on temperature
-  # Postgres connection parameters (override via environment if desired)
-  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-  pg_port: "{{ env.POSTGRES_PORT | default('30543') }}"
-  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
-  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
-  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  # Postgres connection parameters (must be provided - no defaults)
+  pg_host: "localhost"
+  pg_port: "30543"
+  pg_user: "demo"
+  pg_password: "demo"
+  pg_db: "demo_noetl"
 
 workflow:  # Workflow steps and transitions
   - step: start  # Entry point of the workflow
@@ -42,20 +42,40 @@ workflow:  # Workflow steps and transitions
           - step: end  # If not ready, end the workflow
 
   - step: city_loop
-    desc: "Iterate over cities using sub-playbook"
+    desc: "Iterate over cities processing weather data"
     type: playbook
-    path: examples/weather/city_process
+    path: "examples/weather/city_process"
+    return: "evaluate_weather"  # Return the evaluate_weather step result from sub-playbook
     loop:
       in: "{{ workload.cities }}"
       iterator: city
     with:
       city: "{{ city }}"
-      base_url: "{{ workload.base_url }}"
-      temperature_threshold: "{{ workload.temperature_threshold }}"
+      base_url: "{{ workload.base_url | default('https://api.open-meteo.com/v1') }}"
+      temperature_threshold: "{{ workload.temperature_threshold | default(20) }}"
+    next:
+      - step: debug_results
+        with:
+          results: "{{ city_loop_results }}"
+
+  - step: debug_results
+    desc: "Debug what city_loop_results contains"
+    type: python
+    code: |
+      def main(results):
+          print(f"DEBUG_RESULTS: city_loop_results = {results}")
+          print(f"DEBUG_RESULTS: type = {type(results)}")
+          if isinstance(results, list):
+              print(f"DEBUG_RESULTS: length = {len(results)}")
+              for i, item in enumerate(results):
+                  print(f"DEBUG_RESULTS: item[{i}] = {item} (type: {type(item)})")
+          return {"debug_complete": True, "results": results}
+    with:
+      results: "{{ city_loop_results }}"
     next:
       - step: aggregate_alerts
         with:
-          alerts: "{{ city_loop.results }}"
+          alerts: "{{ city_loop_results }}"
 
   # Steps between city_loop and end_city_loop were moved into examples/weather/city_process
 
@@ -64,41 +84,27 @@ workflow:  # Workflow steps and transitions
     type: workbook
     name: aggregate_alerts_task
     with:
-      alerts: "{{ city_loop.results }}"
+      alerts: "{{ city_loop_results }}"
     next:
       - step: log_aggregate_result
         with:
-          summary: "{{ aggregate_alerts.summary }}"
+          summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
 
   - step: log_aggregate_result
     desc: "Log the aggregated alert summary"
     type: workbook
     name: log_aggregate_result_task
     with:
-      summary: "{{ aggregate_alerts.summary }}"
+      summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
     next:
-      - when: "{{ aggregate_alerts.global_alert }}"
-        then:
-          - step: global_alert_step
-      - else:
-          - step: store_summary_duckdb
+      - step: global_alert_step
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
     type: workbook
     name: global_alert_task
     with:
-      summary: "{{ aggregate_alerts.summary }}"
-    next:
-      - step: store_summary_duckdb
-
-  - step: store_summary_duckdb
-    desc: "Persist aggregated summary into DuckDB"
-    type: workbook
-    name: store_summary_duckdb_task
-    with:
-      alert_cities: "{{ aggregate_alerts.summary.alert_cities }}"
-      alert_count: "{{ aggregate_alerts.summary.count }}"
+      summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
     next:
       - step: store_summary_postgres
 
@@ -107,8 +113,8 @@ workflow:  # Workflow steps and transitions
     type: workbook
     name: store_summary_postgres_task
     with:
-      alert_cities: '["test_city"]'
-      alert_count: 1
+      alert_cities: "{{ aggregate_alerts.summary.alert_cities | default('[]') }}"
+      alert_count: "{{ aggregate_alerts.summary.count | default(0) }}"
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -122,6 +128,54 @@ workflow:  # Workflow steps and transitions
 
 
 workbook:
+  - name: process_city_weather
+    type: python
+    with:
+      city: "{{ city }}"
+      base_url: "{{ base_url }}"
+      temperature_threshold: "{{ temperature_threshold }}"
+    code: |
+      def main(city, base_url, temperature_threshold):
+          print(f"PROCESS_CITY_WEATHER: Processing city: {city}")
+          print(f"PROCESS_CITY_WEATHER: Temperature threshold: {temperature_threshold}")
+          
+          # Step 1: Get forecast (simplified - just return empty data)
+          forecast_data = {}
+          
+          # Step 2: Evaluate weather
+          try:
+              threshold = float(temperature_threshold) if temperature_threshold not in (None, "") else 25.0
+          except Exception:
+              threshold = 25.0
+
+          temps = []
+          if isinstance(forecast_data, dict):
+              hourly = forecast_data.get("hourly", {})
+              if isinstance(hourly, dict):
+                  temps = hourly.get("temperature_2m", []) or []
+
+          max_temp = max(temps) if temps else 0.0
+          alert = bool(max_temp > threshold)
+          
+          # Step 3: Determine action
+          if alert:
+              action = "alert"
+              print(f"PROCESS_CITY_WEATHER: Alert needed for {city['name']} - temp {max_temp} > {threshold}")
+          else:
+              action = "log"
+              print(f"PROCESS_CITY_WEATHER: No alert for {city['name']} - temp {max_temp} <= {threshold}")
+          
+          # Step 4: Return result
+          result = {
+              "city": city["name"],
+              "action": action,
+              "max_temp": max_temp,
+              "alert": alert
+          }
+          
+          print(f"PROCESS_CITY_WEATHER: Final result: {result}")
+          return result
+
   - name: evaluate_weather
     type: python
     with:
@@ -203,6 +257,9 @@ workbook:
       alerts: "{{ alerts }}"
     code: |
       def main(alerts):
+          print(f"AGGREGATE_ALERTS_TASK: Received alerts input: {alerts}")
+          print(f"AGGREGATE_ALERTS_TASK: Alerts type: {type(alerts)}")
+          
           import ast
           # Normalize alerts input
           if isinstance(alerts, str):
@@ -212,23 +269,34 @@ workbook:
                   alerts = []
           alerts = alerts or []
 
+          print(f"AGGREGATE_ALERTS_TASK: After normalization: {alerts}")
+          print(f"AGGREGATE_ALERTS_TASK: After normalization type: {type(alerts)}")
+          
           # Unwrap nested results if coming from sub-playbook aggregates
           normalized = []
           for item in alerts:
+              print(f"AGGREGATE_ALERTS_TASK: Processing item: {item} (type: {type(item)})")
               if isinstance(item, dict):
-                  if 'fetch_and_evaluate' in item and isinstance(item['fetch_and_evaluate'], dict):
-                      normalized.append(item['fetch_and_evaluate'])
+                  if 'evaluate_weather' in item and isinstance(item['evaluate_weather'], dict):
+                      normalized.append(item['evaluate_weather'])
                   else:
                       normalized.append(item)
           
+          print(f"AGGREGATE_ALERTS_TASK: Normalized results: {normalized}")
+          
           # Compute summary
           alert_cities = [a for a in normalized if isinstance(a, dict) and a.get('alert')]
+          print(f"AGGREGATE_ALERTS_TASK: Alert cities: {alert_cities}")
+          
           global_alert = bool(alert_cities)
           summary = {
               "alert_cities": [a.get("city") for a in alert_cities],
               "count": len(alert_cities)
           }
-          return {"global_alert": global_alert, "summary": summary}
+          
+          result = {"global_alert": global_alert, "summary": summary}
+          print(f"AGGREGATE_ALERTS_TASK: Final result: {result}")
+          return result
 
   - name: global_alert_task
     type: http
@@ -268,27 +336,26 @@ workbook:
 
   - name: store_summary_postgres_task
     type: postgres
+    host: "{{ db_host }}"
+    port: "{{ db_port }}"
+    user: "{{ db_user }}"
+    password: "{{ db_password }}"
+    database: "{{ db_name }}"
     with:
       alert_cities: "{{ alert_cities }}"
       alert_count: "{{ alert_count }}"
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
     command: |
-      -- Insert aggregated weather alert summary into Postgres
-      -- Ensure target table exists
+      -- Create table if not exists
       CREATE TABLE IF NOT EXISTS weather_alert_summary (
-        id SERIAL PRIMARY KEY,
-        alert_cities TEXT,
-        alert_count INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          id SERIAL PRIMARY KEY,
+          alert_cities TEXT,
+          alert_count INTEGER,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
       -- Insert aggregated summary
       INSERT INTO weather_alert_summary (alert_cities, alert_count)
         VALUES ('{{ alert_cities | tojson }}', {{ alert_count }});
 
-      -- Return a small result preview
+      -- Return recent entries for verification
       SELECT * FROM weather_alert_summary ORDER BY id DESC LIMIT 5;

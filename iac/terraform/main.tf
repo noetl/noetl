@@ -18,8 +18,7 @@ terraform {
   }
 
   backend "gcs" {
-    # Bucket name will be provided via -backend-config during init
-    # or set via environment variable TF_VAR_terraform_state_bucket
+    bucket = "noetl-demo-19700101-terraform-state"
     prefix = "noetl/terraform/state"
   }
 }

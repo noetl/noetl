@@ -4,10 +4,21 @@ import logging
 import base64
 import traceback
 from typing import Any, Dict, List, Union, Optional
-from jinja2 import Environment, meta, StrictUndefined, BaseLoader
+from jinja2 import Environment, meta, StrictUndefined, BaseLoader, Undefined
 from noetl.logger import log_error
 
 logger = logging.getLogger(__name__)
+
+
+def _handle_undefined_values(value: Any) -> Any:
+    """Convert Undefined values to None to prevent JSON serialization errors."""
+    if isinstance(value, Undefined):
+        return None
+    elif isinstance(value, dict):
+        return {k: _handle_undefined_values(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_handle_undefined_values(item) for item in value]
+    return value
 
 
 def add_b64encode_filter(env: Environment) -> Environment:
@@ -124,6 +135,9 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
                 if 'result' in render_ctx and isinstance(render_ctx['result'], dict):
                     custom_context['result'] = TaskResultProxy(render_ctx['result'])
+
+                # Clean Undefined values from context before rendering
+                custom_context = _handle_undefined_values(custom_context)
 
                 rendered = template_obj.render(**custom_context)
                 logger.debug(f"render_template: Successfully rendered: {rendered}")

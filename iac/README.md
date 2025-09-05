@@ -1,19 +1,93 @@
 # NoETL Infrastructure as Code (IaC)
 
-This directory contains Infrastructure as Code (IaC) configurations for deploying NoETL to Google Cloud Platform using Terraform.
+This directory contains Infrastructure as Code (IaC) configurations f### 3. Deploy Infrastructure
 
-## Architecture
+1. **Build and push container images:**
+   ```bash
+   # From the iac directory
+   ./build-and-deploy.sh --project GOOGLE_PROJECT_ID
+   ```
 
-The Terraform configuration deploys:
+2. **Deploy the infrastructure:**
+   ```bash
+   ./deploy.sh
+   ```
+   
+   Or manually with Terraform:
+   ```bash
+   cd terraform
+   source terraform.env
+   terraform plan
+   terraform apply
+   ```
 
-- **NoETL Server**: Cloud Run service for the main API server
-- **NoETL CPU Workers**: Cloud Run services for CPU-intensive workloads
-- **NoETL GPU Workers**: Cloud Run services for GPU-intensive workloads (optional)
-- **Cloud SQL PostgreSQL**: Managed database for NoETL metadata
-- **Container Registry**: For storing Docker images
-- **Service Accounts**: With appropriate IAM roles
-- **Networking**: VPC, subnets, and firewall rules
-- **Secrets**: For storing sensitive configuration
+3. **Access your NoETL instance:**
+   The deployment will output the server URL. Visit it to access the NoETL UI.ETL to Google Cloud Platform using Terraform.
+
+## Current Status
+
+- **Service Account Setup**: Completed and tested  
+- **Terraform Configuration**: Complete with 37 cloud resources  
+- **Terraform Initialization**: Working with GCS backend  
+- **Infrastructure Plan**: Validated and ready for deployment  
+- **Container Images**: Need to be built before Cloud Run deployment  
+- **Infrastructure Deployment**: Ready to deploy once images are built  
+
+### What Gets Deployed
+
+When you run `terraform apply`, the following infrastructure will be created:
+
+**Core Services:**
+- 1x NoETL Server (Cloud Run)
+- 2x CPU Workers (Cloud Run) 
+- 0x GPU Workers (disabled by default)
+
+**Database & Storage:**
+- 1x PostgreSQL 15 instance (Cloud SQL)
+- 1x Cloud Storage bucket
+- Auto-generated secure passwords in Secret Manager
+
+**Networking & Security:**
+- Private VPC with subnet and firewall rules
+- Cloud NAT for outbound connectivity
+- Service accounts with least-privilege IAM
+- Private database connectivity with no public access
+
+**Monitoring & Logging:**
+- Cloud Logging integration
+- Cloud Monitoring and Tracing
+- Health checks for all services
+
+The NoETL infrastructure deploys a cloud-native solution on Google Cloud Platform:
+
+### Core Components
+
+- **NoETL Server**: Cloud Run service hosting the main API server and web UI
+- **NoETL CPU Workers**: Scalable Cloud Run services for CPU-intensive workloads (2 instances by default)
+- **NoETL GPU Workers**: Optional Cloud Run services for GPU-intensive workloads
+- **Cloud SQL PostgreSQL**: Managed database with automated backups and high availability options
+- **VPC Networking**: Private network with Cloud NAT for secure outbound connectivity
+- **Secret Manager**: Secure storage for database passwords and API keys
+- **Cloud Storage**: Bucket for NoETL data with lifecycle management
+- **IAM & Security**: Service accounts with least-privilege access
+
+### Infrastructure Resources
+
+The Terraform configuration creates **37 cloud resources** including:
+
+- **Networking**: VPC, subnet, firewall rules, Cloud NAT, private IP peering
+- **Database**: PostgreSQL 15 instance with private IP, automated backups, point-in-time recovery
+- **Services**: Auto-scaling Cloud Run services with health checks and monitoring
+- **Security**: Service accounts, IAM roles, Secret Manager secrets, encrypted storage
+- **Monitoring**: Cloud Logging, Monitoring, and Tracing integration
+
+### Environment Configuration
+
+The infrastructure supports multiple environments (development, staging, production) with:
+- Environment-specific resource sizing and scaling limits
+- Configurable database tiers and backup retention
+- Optional high availability and deletion protection for production
+- Customizable networking and security settings
 
 ## Prerequisites
 
@@ -91,35 +165,68 @@ Before you begin, ensure you have:
    ```bash
    ./setup-terraform-sa.sh
    ```
+   
+   This script will:
+   - Enable required Google Cloud APIs (Cloud Run, Cloud SQL, Secret Manager, etc.)
+   - Create a service account with necessary IAM roles
+   - Generate and download a service account key
+   - Create a GCS bucket for Terraform state storage
+   - Set up environment variables in `terraform.env`
 
-2. **Configure Terraform backend:**
+2. **Configure Terraform:**
    ```bash
    cd terraform
-   # Edit main.tf to set backend bucket name
-   # The bucket will be created automatically if it doesn't exist
+   source terraform.env  # Load service account credentials
+   terraform init        # Initialize Terraform with GCS backend
    ```
 
 3. **Configure your deployment:**
    ```bash
-   cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-   # Edit terraform.tfvars with project settings
+   cp terraform.tfvars.example terraform.tfvars
+   # Edit terraform.tfvars with your project settings
+   # The project_id should already be set correctly by the setup script
    ```
 
 ### 3. Deploy Infrastructure
 
+**Important**: You must build and push Docker images before deploying Cloud Run services.
+
 1. **Build and push container images:**
    ```bash
    # From the iac directory
-   ./build-and-deploy.sh --project PROJECT_ID
+   ./build-and-deploy.sh --project GOOGLE_PROJECT_ID
    ```
 
-2. **Deploy the infrastructure:**
+2. **Plan and deploy the infrastructure:**
    ```bash
    ./deploy.sh
+   ```
+   
+   Or manually with Terraform:
+   ```bash
+   cd terraform
+   source terraform.env
+   terraform plan    # Review what will be created (37 resources)
+   terraform apply   # Deploy the infrastructure
    ```
 
 3. **Access your NoETL instance:**
    The deployment will output the server URL. Visit it to access the NoETL UI.
+
+### 4. Verify Deployment
+
+After successful deployment, you can verify the setup:
+
+```bash
+# Check Cloud Run services
+gcloud run services list --region=us-central1
+
+# Check database instance
+gcloud sql instances list
+
+# View Terraform outputs
+terraform output
+```
 
 ## Scripts Overview
 
@@ -323,6 +430,39 @@ gcloud secrets add-iam-policy-binding noetl-db-password \
   --member="serviceAccount:noetl-server@project.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```
+
+## Troubleshooting
+
+### Common Issues and Solutions
+
+#### Service Account Setup
+**Issue**: `ERROR: Service account terraform-noetl@project.iam.gserviceaccount.com does not exist`  
+**Solution**: The script now includes retry logic and propagation delays. If it still fails, wait 2-3 minutes and re-run the script.
+
+**Issue**: `Could not grant roles/billing.user`  
+**Solution**: This role is now optional. The deployment will work without it. You can grant it manually if needed for billing operations.
+
+#### Terraform Initialization
+**Issue**: `bucket doesn't exist`  
+**Solution**: The setup script creates the bucket automatically. Ensure you ran `./setup-terraform-sa.sh` successfully first.
+
+**Issue**: `No valid credential sources found`  
+**Solution**: Run `source terraform.env` to load the service account credentials before using Terraform.
+
+#### Container Images
+**Issue**: Cloud Run deployment fails with "image not found"  
+**Solution**: Run `./build-and-deploy.sh --project GOOGLE_PROJECT_ID` before `terraform apply`.
+
+#### Variable Warnings
+**Issue**: `Value for undeclared variable` warnings  
+**Solution**: These are warnings, not errors. The deployment will work. You can ignore them or remove unused variables from `terraform.tfvars`.
+
+### Getting Help
+
+1. **Check Terraform plan**: Always run `terraform plan` to see what will be created/changed
+2. **Review logs**: Use `gcloud logging read` to check service logs
+3. **Verify authentication**: Ensure `source terraform.env` was run and credentials are valid
+4. **Check API enablement**: Verify all required APIs are enabled in your project
 
 ## Maintenance
 

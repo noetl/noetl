@@ -161,6 +161,14 @@ async def mkdir(dir_path):
 
 
 def make_serializable(value):
+    # Handle Jinja2 Undefined objects
+    try:
+        from jinja2 import Undefined
+        if isinstance(value, Undefined):
+            return None
+    except ImportError:
+        pass
+    
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, Exception):
@@ -182,6 +190,14 @@ class SafeEncoder(json.JSONEncoder):
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
+        # Handle Jinja2 Undefined objects
+        try:
+            from jinja2 import Undefined
+            if isinstance(obj, Undefined):
+                return None
+        except ImportError:
+            pass
+            
         if isinstance(obj, datetime):
             return obj.isoformat()
         elif isinstance(obj, date):

@@ -445,21 +445,11 @@ class QueueWorker:
                 action_cfg = action_cfg_raw
 
         try:
+            # Base64 decoding is now handled in individual task executors
+            # to ensure single method of code/command handling
+            
+            # Original task config merging logic (only when original_task_cfg exists)
             if isinstance(action_cfg, dict) and original_task_cfg:
-                import base64
-                if 'code_b64' in action_cfg:
-                    try:
-                        action_cfg['code'] = base64.b64decode(action_cfg['code_b64']).decode('utf-8')
-                    except Exception:
-                        logger.debug("WORKER: Failed to decode code_b64", exc_info=True)
-                for field in ('command', 'commands'):
-                    b64_key = f"{field}_b64"
-                    if b64_key in action_cfg:
-                        try:
-                            decoded = base64.b64decode(action_cfg[b64_key]).decode('utf-8')
-                            action_cfg[field] = decoded
-                        except Exception:
-                            logger.debug(f"WORKER: Failed to decode {b64_key}", exc_info=True)
                 placeholder_codes = {"", "def main(**kwargs):\n    return {}"}
                 if original_task_cfg.get('type') and action_cfg.get('type') in (None, 'python') and original_task_cfg.get('type') not in (None, 'python'):
                     action_cfg['type'] = original_task_cfg.get('type')

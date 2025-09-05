@@ -143,6 +143,20 @@ Example:
         - step: handle_error
 ```
 
+Tip (exact-match OR): to match any of several exact values (complete match), prefer list membership:
+
+```yaml
+- step: choose_file_branch
+  next:
+    - when: "{{ workload.filename in ['error_log.json', 'event_log.json', 'queue.json'] }}"
+      then:
+        - step: handle_known_file
+    - else:
+        - step: handle_other_file
+```
+
+See also: [Query Conditions: Exact/Complete Match with OR](query_conditions.md)
+
 
 
 - [Workflow Tasks](action_type.md) - Learn about available tasks and their parameters
