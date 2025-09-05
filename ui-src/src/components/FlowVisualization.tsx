@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect, memo } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -16,13 +16,13 @@ import {
   Handle,
   Position,
   MarkerType,
+  useReactFlow,
 } from "@xyflow/react";
 import {
   Modal,
   Button,
   Spin,
   message,
-  Input,
   Select,
   Space,
   Popconfirm,
@@ -66,8 +66,8 @@ interface EditableTaskNode extends TaskNode {
   position?: { x: number; y: number };
 }
 
-// Custom editable node component
-const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
+// Custom editable node component (memoized) using React Flow updateNodeData pattern
+const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) => {
   const { task, onEdit, onDelete, readOnly } = data as {
     task: EditableTaskNode;
     onEdit: (task: EditableTaskNode) => void;
@@ -75,54 +75,30 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
     readOnly?: boolean;
   };
 
-  // Ensure we get the latest nodeType based on current task type
+  const { updateNodeData } = useReactFlow();
   const nodeType = nodeTypeMap[task?.type] || nodeTypeMap['default'];
 
-  const handleNameChange = (value: string) => {
-    if (readOnly) return; // prevent edits in read-only
-    const updatedTask = { ...task, name: value };
-    onEdit?.(updatedTask);
-  };
-
-  const handleTypeChange = (value: string) => {
+  const updateField = (field: keyof EditableTaskNode, value: any) => {
     if (readOnly) return;
-    const updatedTask = { ...task, type: value };
+    const updatedTask = { ...task, [field]: value } as EditableTaskNode;
+    // keep outer state in sync
     onEdit?.(updatedTask);
+    // update node data for immediate React Flow re-render
+    updateNodeData(id, { task: updatedTask });
   };
 
-  const handleDescriptionChange = (value: string) => {
-    if (readOnly) return;
-    const updatedTask = { ...task, description: value };
-    onEdit?.(updatedTask);
-  };
-
-  const nodeClass = `flow-node ${task?.type || "default"} ${selected ? "selected" : "unselected"
-    }`;
+  const nodeClass = `flow-node ${task?.type || 'default'} ${selected ? 'selected' : 'unselected'}`;
 
   return (
     <div className={nodeClass}>
-      {/* connection handles */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="flow-node-handle flow-node-handle-target"
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="flow-node-handle flow-node-handle-source"
-      />
+      <Handle type="target" position={Position.Left} className="flow-node-handle flow-node-handle-target" />
+      <Handle type="source" position={Position.Right} className="flow-node-handle flow-node-handle-source" />
 
-      {/* Inline toolbar shown only when node is selected and not readOnly */}
       {selected && !readOnly && (
-        <div
-          className="flow-node-toolbar nodrag"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Type selector moved here */}
+        <div className="flow-node-toolbar nodrag" onClick={(e) => e.stopPropagation()}>
           <Select
             value={task?.type || 'default'}
-            onChange={handleTypeChange}
+            onChange={(val) => updateField('type', val)}
             size="small"
             className="flow-node-type-select flow-node-toolbar-type-select"
             popupClassName="flow-node-type-dropdown"
@@ -132,63 +108,48 @@ const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
           />
           <Popconfirm
             title="Delete this component?"
-            onConfirm={(e) => {
-              e?.stopPropagation();
-              onDelete?.(id);
-            }}
+            onConfirm={(e) => { e?.stopPropagation(); onDelete?.(id); }}
             okText="Yes"
             cancelText="No"
           >
-            <Button
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              className="flow-node-toolbar-button"
-              onClick={(e) => e.stopPropagation()}
-            />
+            <Button size="small" danger icon={<DeleteOutlined />} className="flow-node-toolbar-button" onClick={(e) => e.stopPropagation()} />
           </Popconfirm>
         </div>
       )}
 
-      {/* Header: icon + status pill now inline above separator */}
       <div className="flow-node-header">
-        <span className="flow-node-icon" aria-hidden>
-          {nodeType.icon}
-        </span>
-        <div className={`flow-node-status inline ${task?.type || "default"}`}>
-          {(task?.type ? task.type.charAt(0).toUpperCase() + task.type.slice(1) : "Default")}
-        </div>
+        <span className="flow-node-icon" aria-hidden>{nodeType.icon}</span>
+        <div className={`flow-node-status inline ${task?.type || 'default'}`}>{task?.type ? task.type.charAt(0).toUpperCase() + task.type.slice(1) : 'Default'}</div>
       </div>
 
-      {/* Task name - always editable */}
       <div className="flow-node-name">
         <span className="flow-node-field-label">Name</span>
-        <Input
-          value={task?.name || "Unnamed Task"}
-          onChange={(e) => handleNameChange(e.target.value)}
+        <input
+          value={task?.name || 'Unnamed Task'}
+          onChange={(e) => updateField('name', e.target.value)}
           placeholder="Task name"
-          size="small"
-          className="flow-node-name-input nodrag"
+          className="xy-theme__input flow-node-name-input nodrag"
           disabled={!!readOnly}
+          type="text"
+          style={{ width: '100%' }}
         />
       </div>
 
-      {/* Description - always editable */}
       <div className="flow-node-description">
         <span className="flow-node-field-label">Description</span>
-        <Input.TextArea
-          value={task?.description || ""}
-          onChange={(e) => handleDescriptionChange(e.target.value)}
-          placeholder={readOnly ? "" : "Description (optional)"}
-          size="small"
+        <textarea
+          value={task?.description || ''}
+          onChange={(e) => updateField('description', e.target.value)}
+          placeholder={readOnly ? '' : 'Description (optional)'}
           rows={2}
-          className="flow-node-description-input nodrag"
+          className="xy-theme__input flow-node-description-input nodrag"
           disabled={!!readOnly}
+          style={{ resize: 'vertical', width: '100%' }}
         />
       </div>
     </div>
   );
-};
+});
 
 const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   visible,
