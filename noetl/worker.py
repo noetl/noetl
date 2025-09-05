@@ -7,6 +7,7 @@ import uuid
 import asyncio
 import httpx
 import socket
+import contextlib
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -329,6 +330,8 @@ class QueueWorker:
         worker_id: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
         process_pool: Optional[ProcessPoolExecutor] = None,
+        deregister_on_exit: bool = True,
+        register_on_init: bool = True,
     ) -> None:
         self.server_url = _normalize_server_url(
             server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
@@ -338,7 +341,9 @@ class QueueWorker:
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
         self._process_pool = process_pool or ProcessPoolExecutor()
-        self._register_pool()
+        self._deregister_on_exit = deregister_on_exit
+        if register_on_init:
+            self._register_pool()
 
     # ------------------------------------------------------------------
     # Queue interaction helpers
@@ -673,10 +678,11 @@ class QueueWorker:
                 else:
                     await asyncio.sleep(interval)
         finally:
-            try:
-                await asyncio.to_thread(deregister_worker_pool_from_env)
-            except Exception:
-                pass
+            if self._deregister_on_exit:
+                try:
+                    await asyncio.to_thread(deregister_worker_pool_from_env)
+                except Exception:
+                    pass
 
 
 class ScalableQueueWorkerPool:
@@ -722,6 +728,8 @@ class ScalableQueueWorkerPool:
             self.server_url,
             thread_pool=self._thread_pool,
             process_pool=self._process_pool,
+            deregister_on_exit=False,
+            register_on_init=False,
         )
         task = asyncio.create_task(
             worker.run_forever(self.worker_poll_interval, stop_evt)
@@ -743,12 +751,41 @@ class ScalableQueueWorkerPool:
     # --------------------------------------------------------------
     async def run_forever(self) -> None:
         """Run the auto-scaling loop until ``stop`` is called."""
+        # Ensure single registration for the pool
+        try:
+            register_worker_pool_from_env()
+        except Exception:
+            logger.debug("Pool initial registration failed", exc_info=True)
+
+        # Heartbeat loop task
+        heartbeat_interval = float(os.environ.get("NOETL_WORKER_HEARTBEAT_INTERVAL", "15"))
+        async def _heartbeat_loop():
+            name = os.environ.get('NOETL_WORKER_POOL_NAME') or 'worker-cpu'
+            payload = {"name": name}
+            url = f"{self.server_url}/worker/pool/heartbeat"
+            while not self._stop.is_set():
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.post(url, json=payload)
+                        if resp.status_code != 200:
+                            logger.debug(f"Worker heartbeat non-200 {resp.status_code}: {resp.text}")
+                except Exception:
+                    logger.debug("Worker heartbeat failed", exc_info=True)
+                await asyncio.sleep(heartbeat_interval)
+
+        hb_task = asyncio.create_task(_heartbeat_loop())
         try:
             while not self._stop.is_set():
                 await self._scale_workers()
                 await asyncio.sleep(self.check_interval)
         finally:
             await self.stop()
+            try:
+                hb_task.cancel()
+                with contextlib.suppress(Exception):
+                    await hb_task
+            except Exception:
+                pass
 
     async def stop(self) -> None:
         """Request the scaling loop and all workers to stop."""

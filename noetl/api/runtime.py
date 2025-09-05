@@ -1,4 +1,5 @@
 from typing import Optional
+import os
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 import json
@@ -230,9 +231,51 @@ async def deregister_runtime_component(request: Request):
 
 @router.post("/worker/pool/heartbeat", response_class=JSONResponse)
 async def heartbeat_worker_pool(request: Request):
-    body = await request.json()
-    #logger.info(f"heartbeat_worker_pool: {body}")
-    return JSONResponse(content={"status": "ok"})
+    """Persist heartbeat for a worker pool.
+
+    Body (minimal): { name: str }
+    Optional extra fields are ignored. If the runtime row does not exist we
+    return status=unknown so caller can decide to re-register.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = (body.get("name") or "").strip() or os.environ.get("NOETL_WORKER_POOL_NAME", "").strip()
+    if not name:
+        # For backward compatibility with older tests that didn't send a name,
+        # just return ok without DB update. (Avoid raising 400 in that case.)
+        return JSONResponse(content={"status": "ok", "name": None})
+
+    updated = False
+    try:
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        """
+                        UPDATE runtime
+                        SET last_heartbeat = now(), status = 'ready', updated_at = now()
+                        WHERE component_type = 'worker_pool' AND name = %s
+                        RETURNING runtime_id
+                        """,
+                        (name,)
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        updated = True
+                except Exception as e:
+                    logger.warning(f"Heartbeat update failed for worker pool {name}: {e}")
+                try:
+                    await conn.commit()
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"Heartbeat DB connection issue for {name}: {e}")
+
+    if not updated:
+        return JSONResponse(content={"status": "unknown", "name": name})
+    return JSONResponse(content={"status": "ok", "name": name})
 
 
 @router.get("/worker/pools", response_class=JSONResponse)

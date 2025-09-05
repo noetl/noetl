@@ -6,6 +6,7 @@ import os
 import json
 import yaml
 import tempfile
+import contextlib
 import psycopg
 import base64
 from datetime import datetime, timedelta, timezone
@@ -14,7 +15,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
+from noetl.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection
 from noetl.logger import setup_logger
 from noetl.broker import Broker, execute_playbook_via_broker
 from noetl.api import router as api_router
@@ -142,7 +143,72 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         register_server_directly()
+
+        # --------------------------------------------------
+        # Background runtime sweeper / server heartbeat
+        # --------------------------------------------------
+        stop_event = asyncio.Event()
+        sweep_interval = float(os.environ.get("NOETL_RUNTIME_SWEEP_INTERVAL", "15"))
+        offline_after = int(os.environ.get("NOETL_RUNTIME_OFFLINE_SECONDS", "60"))
+        try:
+            server_name = get_settings().server_name
+        except Exception:
+            server_name = os.environ.get("NOETL_SERVER_NAME", "server-local")
+
+        async def _runtime_sweeper():
+            while not stop_event.is_set():
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            # Mark stale (non-offline) runtimes offline
+                            try:
+                                await cur.execute(
+                                    """
+                                    UPDATE runtime
+                                    SET status = 'offline', updated_at = now()
+                                    WHERE status != 'offline'
+                                      AND now() - last_heartbeat > (%s || ' seconds')::interval
+                                    """,
+                                    (str(offline_after),)
+                                )
+                            except Exception as e:
+                                logger.debug(f"Runtime sweeper update offline error: {e}")
+                            # Heartbeat this server instance so it isn't marked offline
+                            try:
+                                await cur.execute(
+                                    """
+                                    UPDATE runtime
+                                    SET last_heartbeat = now(), updated_at = now(), status = 'ready'
+                                    WHERE component_type = 'server_api' AND name = %s
+                                    """,
+                                    (server_name,)
+                                )
+                            except Exception as e:
+                                logger.debug(f"Server heartbeat refresh failed: {e}")
+                            try:
+                                await conn.commit()
+                            except Exception:
+                                pass
+                except Exception as outer_e:
+                    logger.debug(f"Runtime sweeper loop error: {outer_e}")
+                await asyncio.sleep(sweep_interval)
+
+        sweeper_task: Optional[asyncio.Task] = None
+        try:
+            sweeper_task = asyncio.create_task(_runtime_sweeper())
+        except Exception as e:
+            logger.debug(f"Failed to start runtime sweeper: {e}")
+
         yield
+        # Shutdown
+        stop_event.set()
+        if sweeper_task:
+            try:
+                sweeper_task.cancel()
+                with contextlib.suppress(Exception):
+                    await sweeper_task
+            except Exception:
+                pass
         try:
             deregister_server_directly()
         except Exception as e:
