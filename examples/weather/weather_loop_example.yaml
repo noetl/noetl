@@ -51,8 +51,8 @@ workflow:  # Workflow steps and transitions
       iterator: city
     with:
       city: "{{ city }}"
-      base_url: "{{ workload.base_url }}"
-      temperature_threshold: "{{ workload.temperature_threshold }}"
+      base_url: "{{ workload.base_url | default('https://api.open-meteo.com/v1') }}"
+      temperature_threshold: "{{ workload.temperature_threshold | default(20) }}"
     next:
       - step: debug_results
         with:
@@ -97,11 +97,7 @@ workflow:  # Workflow steps and transitions
     with:
       summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
     next:
-      - when: "{{ aggregate_alerts.global_alert | default(false) }}"
-        then:
-          - step: global_alert_step
-      - else:
-          - step: store_summary_postgres
+      - step: global_alert_step
 
   - step: global_alert_step
     desc: "Send a global alert if any city triggered an alert"
@@ -340,27 +336,26 @@ workbook:
 
   - name: store_summary_postgres_task
     type: postgres
+    host: "{{ db_host }}"
+    port: "{{ db_port }}"
+    user: "{{ db_user }}"
+    password: "{{ db_password }}"
+    database: "{{ db_name }}"
     with:
       alert_cities: "{{ alert_cities }}"
       alert_count: "{{ alert_count }}"
-      db_host: "{{ db_host }}"
-      db_port: "{{ db_port }}"
-      db_user: "{{ db_user }}"
-      db_password: "{{ db_password }}"
-      db_name: "{{ db_name }}"
     command: |
-      -- Insert aggregated weather alert summary into Postgres
-      -- Ensure target table exists
+      -- Create table if not exists
       CREATE TABLE IF NOT EXISTS weather_alert_summary (
-        id SERIAL PRIMARY KEY,
-        alert_cities TEXT,
-        alert_count INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          id SERIAL PRIMARY KEY,
+          alert_cities TEXT,
+          alert_count INTEGER,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
       -- Insert aggregated summary
       INSERT INTO weather_alert_summary (alert_cities, alert_count)
         VALUES ('{{ alert_cities | tojson }}', {{ alert_count }});
 
-      -- Return a small result preview
+      -- Return recent entries for verification
       SELECT * FROM weather_alert_summary ORDER BY id DESC LIMIT 5;
