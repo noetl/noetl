@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 PROJECT_ID=""
 REGION="us-central1"
 IMAGE_TAG="latest"
-BUILD_CONTEXT="../../"  # Path to the project root from this script
+BUILD_CONTEXT="../"  # Path to the project root from this script
 DOCKERFILE_PATH="docker/noetl/dev/Dockerfile"
 
 SERVER_REPO="gcr.io"
@@ -93,6 +93,8 @@ build_image() {
     
     print_success "Built $full_image_name"
     echo "$full_image_name"
+
+    push_image "$full_image_name"
 }
 
 push_image() {
@@ -110,11 +112,9 @@ build_and_push_all() {
     
     local server_image
     server_image=$(build_image "noetl-server" "production")
-    push_image "$server_image"
     
     local worker_image
     worker_image=$(build_image "noetl-worker" "production")
-    push_image "$worker_image"
     
     print_success "All images built and pushed successfully!"
     echo ""
