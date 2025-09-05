@@ -115,13 +115,13 @@ const App: React.FC = () => {
           </div>
         </Header>
         <Content style={{ padding: "24px", margin: "0 24px" }}>
-          <div
+          <div className="AppRoutesContent"
             style={{
               background: "#fff",
               padding: "24px",
               borderRadius: "12px",
               boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
-              minHeight: "calc(100vh - 200px)",
+              // minHeight: "calc(100vh - 200px)",
             }}
           >
             <Routes>

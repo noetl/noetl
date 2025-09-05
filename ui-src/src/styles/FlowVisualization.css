@@ -256,6 +256,7 @@
 
 .flow-modal.flow-modal-windowed {
     top: 50px !important;
+    height: 100% !important;
 }
 
 .flow-modal-content {

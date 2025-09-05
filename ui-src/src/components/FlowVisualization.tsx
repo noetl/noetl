@@ -40,6 +40,8 @@ import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
 // Import modular node type definitions
 import { nodeTypeMap, orderedNodeTypes } from './nodeTypes';
+import { EditableTaskNode, TaskNode } from "./types";
+import { EditableNode } from "./EditableNode";
 
 interface FlowVisualizationProps {
   visible: boolean;
@@ -47,107 +49,11 @@ interface FlowVisualizationProps {
   playbookId: string;
   playbookName: string;
   content?: string; // Optional content to use instead of fetching from API
-  embedded?: boolean; // when true render inline instead of Modal
   readOnly?: boolean; // NEW: render in read-only (view) mode
   hideTitle?: boolean; // NEW: suppress internal title (avoid duplicates)
 }
 
-interface TaskNode {
-  id: string;
-  name: string;
-  type: string;
-  config?: any;
-  dependencies?: string[];
-  description?: string;
-  enabled?: boolean;
-}
 
-interface EditableTaskNode extends TaskNode {
-  position?: { x: number; y: number };
-}
-
-// Custom editable node component (memoized) using React Flow updateNodeData pattern
-const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) => {
-  const { task, onEdit, onDelete, readOnly } = data as {
-    task: EditableTaskNode;
-    onEdit: (task: EditableTaskNode) => void;
-    onDelete: (id: string) => void;
-    readOnly?: boolean;
-  };
-
-  const { updateNodeData } = useReactFlow();
-  const nodeType = nodeTypeMap[task?.type] || nodeTypeMap['default'];
-
-  const updateField = (field: keyof EditableTaskNode, value: any) => {
-    if (readOnly) return;
-    const updatedTask = { ...task, [field]: value } as EditableTaskNode;
-    // keep outer state in sync
-    onEdit?.(updatedTask);
-    // update node data for immediate React Flow re-render
-    updateNodeData(id, { task: updatedTask });
-  };
-
-  const nodeClass = `flow-node ${task?.type || 'default'} ${selected ? 'selected' : 'unselected'}`;
-
-  return (
-    <div className={nodeClass}>
-      <Handle type="target" position={Position.Left} className="flow-node-handle flow-node-handle-target" />
-      <Handle type="source" position={Position.Right} className="flow-node-handle flow-node-handle-source" />
-
-      {selected && !readOnly && (
-        <div className="flow-node-toolbar nodrag" onClick={(e) => e.stopPropagation()}>
-          <Select
-            value={task?.type || 'default'}
-            onChange={(val) => updateField('type', val)}
-            size="small"
-            className="flow-node-type-select flow-node-toolbar-type-select"
-            popupClassName="flow-node-type-dropdown"
-            dropdownMatchSelectWidth={false}
-            getPopupContainer={() => document.body}
-            options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeTypeMap[t].icon} ${nodeTypeMap[t].label}` }))}
-          />
-          <Popconfirm
-            title="Delete this component?"
-            onConfirm={(e) => { e?.stopPropagation(); onDelete?.(id); }}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} className="flow-node-toolbar-button" onClick={(e) => e.stopPropagation()} />
-          </Popconfirm>
-        </div>
-      )}
-
-      <div className="flow-node-header">
-        <span className="flow-node-icon" aria-hidden>{nodeType.icon}</span>
-        <div className={`flow-node-status inline ${task?.type || 'default'}`}>{task?.type ? task.type.charAt(0).toUpperCase() + task.type.slice(1) : 'Default'}</div>
-      </div>
-
-      <div className="flow-node-name">
-        <span className="flow-node-field-label">Name</span>
-        <input
-          value={task?.name ?? ''}
-          onChange={(e) => updateField('name', e.target.value)}
-          placeholder="Task name"
-          className="xy-theme__input flow-node-name-input nodrag"
-          disabled={!!readOnly}
-          type="text"
-        />
-      </div>
-
-      <div className="flow-node-description">
-        <span className="flow-node-field-label">Description</span>
-        <textarea
-          value={task?.description || ''}
-          onChange={(e) => updateField('description', e.target.value)}
-          placeholder={readOnly ? '' : 'Description (optional)'}
-          rows={2}
-          className="xy-theme__input flow-node-description-input nodrag"
-          disabled={!!readOnly}
-        />
-      </div>
-    </div>
-  );
-});
 
 const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   visible,
@@ -155,7 +61,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   playbookId,
   playbookName,
   content,
-  embedded,
   readOnly,
   hideTitle,
 }) => {
@@ -569,10 +474,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   useEffect(() => {
-    if ((visible || embedded) && (playbookId || content)) {
+    if (visible && (playbookId || content)) {
       loadPlaybookFlow();
     }
-  }, [visible, embedded, playbookId, content]);
+  }, [visible, playbookId, content]);
 
   const handleFullscreen = () => setFullscreen((f) => !f);
 
@@ -583,7 +488,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   const flowInner = (
-    <div className="flow-layout-root">
+    <div className="FlowVisualization flow-layout-root">
       {/* Content container now full-width; dock moved inside canvas wrapper */}
       <div className="flow-content-container">
         {loading ? (
@@ -634,92 +539,52 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 size="small"
               />
             </div>
-            <ReactFlow
-              nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              nodeTypes={customNodeTypes}
-              defaultEdgeOptions={defaultEdgeOptions}
-              connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
-              fitView
-              fitViewOptions={{ padding: 0.18 }}
-              attributionPosition="bottom-left"
-              key={`flow-${tasks.length}-${tasks
-                .map((t) => `${t.id}-${t.type}`)
-                .join("-")}-${readOnly ? 'ro' : 'rw'}`}
-            >
-              <Controls />
-              <MiniMap
-                nodeColor={(node) => {
-                  const type = (node.data as any)?.task?.type ?? "default";
-                  return nodeTypeMap[type]?.color || nodeTypeMap['default'].color;
-                }}
-                pannable
-                zoomable
-                style={{
-                  background: "white",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 8,
-                }}
-              />
-              <Background
-                variant={BackgroundVariant.Dots}
-                gap={22}
-                size={1}
-                color="#eaeef5"
-              />
-            </ReactFlow>
+            <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '500px' }}>
+              <ReactFlow
+                nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                nodeTypes={customNodeTypes}
+                defaultEdgeOptions={defaultEdgeOptions}
+                connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
+                fitView
+                fitViewOptions={{ padding: 0.18 }}
+                attributionPosition="bottom-left"
+                key={`flow-${tasks.length}-${tasks
+                  .map((t) => `${t.id}-${t.type}`)
+                  .join("-")}-${readOnly ? 'ro' : 'rw'}`}
+              >
+                <Controls />
+                <MiniMap
+                  nodeColor={(node) => {
+                    const type = (node.data as any)?.task?.type ?? "default";
+                    return nodeTypeMap[type]?.color || nodeTypeMap['default'].color;
+                  }}
+                  pannable
+                  zoomable
+                  style={{
+                    background: "white",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 8,
+                  }}
+                />
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={22}
+                  size={1}
+                  color="#eaeef5"
+                />
+              </ReactFlow>
+            </div>
           </div>
         )}
       </div>
     </div>
   );
-
-  // Render inline when embedded flag is set, otherwise use Modal
-  if (embedded) {
-    return (
-      <div
-        className={
-          fullscreen
-            ? "flow-modal-fullscreen flow-embedded"
-            : "flow-modal-windowed flow-embedded"
-        }
-        style={{
-          width: "100%", // use full available width
-          height: fullscreen ? "85vh" : "70vh",
-          margin: 0, // remove side margins
-        }}
-      >
-        {contextHolder}
-        {/* Title removed as requested */}
-        {flowInner}
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {contextHolder}
-      <Modal
-        title={null} // Title removed as requested
-        open={visible}
-        onCancel={onClose}
-        footer={null}
-        closable={false}
-        width={fullscreen ? "95vw" : "80vw"}
-        className={fullscreen ? "flow-modal-fullscreen" : "flow-modal-windowed"}
-        styles={
-          fullscreen
-            ? { body: { height: "85vh", padding: 0, overflow: "hidden" } }
-            : { body: { height: "70vh", padding: 0, overflow: "hidden" } }
-        }
-      >
-        {flowInner}
-      </Modal>
-    </>
-  );
+  if (!visible) return null;
+  return flowInner;
 };
 
 export default FlowVisualization;
