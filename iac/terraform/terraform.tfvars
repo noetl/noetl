@@ -2,12 +2,12 @@
 # Copy this file to terraform.tfvars and modify the values as needed
 
 # Project Configuration
-project_id = "noetl-demo-19700101"
+project_id = "mestumre-dev-host"
 region     = "us-central1"
 zone       = "us-central1-a"
 
 # Environment Configuration  
-environment = "development"  # Options: development, staging, production
+environment = "dev"  # Options: dev, staging, prod
 
 # Database Configuration
 db_name     = "noetl"

@@ -93,6 +93,8 @@ build_image() {
     
     print_success "Built $full_image_name"
     echo "$full_image_name"
+
+    push_image "$full_image_name"
 }
 
 push_image() {
@@ -110,11 +112,9 @@ build_and_push_all() {
     
     local server_image
     server_image=$(build_image "noetl-server" "production")
-    push_image "$server_image"
     
     local worker_image
     worker_image=$(build_image "noetl-worker" "production")
-    push_image "$worker_image"
     
     print_success "All images built and pushed successfully!"
     echo ""
