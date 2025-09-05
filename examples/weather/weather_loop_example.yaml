@@ -327,7 +327,7 @@ workbook:
       db_port: "30543"
       db_user: "demo"
       db_password: "demo"
-      db_database: "demo_noetl"
+      db_name: "demo_noetl"
     command: |
       -- Create table if not exists
       CREATE TABLE IF NOT EXISTS weather_alert_summary (
