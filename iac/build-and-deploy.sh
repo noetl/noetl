@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 PROJECT_ID=""
 REGION="us-central1"
 IMAGE_TAG="latest"
-BUILD_CONTEXT="../../"  # Path to the project root from this script
+BUILD_CONTEXT="../"  # Path to the project root from this script
 DOCKERFILE_PATH="docker/noetl/dev/Dockerfile"
 
 SERVER_REPO="gcr.io"

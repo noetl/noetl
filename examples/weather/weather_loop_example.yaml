@@ -51,8 +51,8 @@ workflow:  # Workflow steps and transitions
       iterator: city
     with:
       city: "{{ city }}"
-      base_url: "{{ workload.base_url | default('https://api.open-meteo.com/v1') }}"
-      temperature_threshold: "{{ workload.temperature_threshold | default(20) }}"
+      base_url: "{{ workload.base_url }}"
+      temperature_threshold: "{{ workload.temperature_threshold }}"
     next:
       - step: debug_results
         with:
