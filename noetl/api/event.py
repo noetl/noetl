@@ -414,8 +414,104 @@ async def create_event(
 ):
     try:
         body = await request.json()
+        
+        # Debug all incoming events
+        if body.get('event_type') == 'execution_complete':
+            logger.info(f"EVENT_DEBUG: Received execution_complete event: {body}")
+        
         event_service = get_event_service()
         result = await event_service.emit(body)
+        
+        # Check if this is a child execution completion event
+        if body.get('event_type') == 'execution_complete':
+            try:
+                meta = body.get('meta', {})
+                parent_execution_id = meta.get('parent_execution_id')
+                parent_step = meta.get('parent_step')
+                exec_id = body.get('execution_id')
+                
+                if parent_execution_id and parent_step and exec_id and parent_execution_id != exec_id:
+                    logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
+                    
+                    # Extract result from the event
+                    child_result = body.get('result')
+                    if not child_result:
+                        # Try to get meaningful result from step results
+                        from noetl.common import get_async_db_connection as get_db_conn
+                        async with get_db_conn() as conn:
+                            async with conn.cursor() as cur:
+                                # Try to find meaningful results by step name priority
+                                for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
+                                    await cur.execute(
+                                        """
+                                        SELECT output_result FROM noetl.event_log
+                                        WHERE execution_id = %s
+                                          AND node_name = %s
+                                          AND event_type = 'action_completed'
+                                          AND lower(status) IN ('completed','success')
+                                          AND output_result IS NOT NULL
+                                          AND output_result != '{}'
+                                          AND NOT (output_result::text LIKE '%"skipped": true%')
+                                          AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                                        ORDER BY timestamp DESC
+                                        LIMIT 1
+                                        """,
+                                        (exec_id, step_name)
+                                    )
+                                    result_row = await cur.fetchone()
+                                    if result_row:
+                                        result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                                        try:
+                                            import json
+                                            child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
+                                            # Extract data if wrapped
+                                            if isinstance(child_result, dict) and 'data' in child_result:
+                                                child_result = child_result['data']
+                                            break
+                                        except Exception:
+                                            pass
+                    
+                    if child_result:
+                        # Find the iteration node_id pattern by looking up the loop_iteration event for this child
+                        from noetl.common import get_async_db_connection as get_db_conn
+                        async with get_db_conn() as conn:
+                            async with conn.cursor() as cur:
+                                await cur.execute(
+                                    """
+                                    SELECT node_id FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND event_type = 'loop_iteration'
+                                      AND node_name = %s
+                                      AND input_context LIKE %s
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (parent_execution_id, parent_step, f'%"child_execution_id": "{exec_id}"%')
+                                )
+                                iter_row = await cur.fetchone()
+                                iter_node_id = None
+                                if iter_row:
+                                    iter_node_id = iter_row[0] if isinstance(iter_row, tuple) else iter_row.get('node_id')
+                                
+                                # Emit action_completed event for the parent loop to aggregate
+                                await event_service.emit({
+                                    'execution_id': parent_execution_id,
+                                    'event_type': 'action_completed',
+                                    'status': 'COMPLETED',
+                                    'node_id': iter_node_id or f'{parent_execution_id}-step-X-iter-{exec_id}',
+                                    'node_name': parent_step,
+                                    'node_type': 'task',
+                                    'output_result': child_result,
+                                    'context': {
+                                        'child_execution_id': exec_id,
+                                        'parent_step': parent_step,
+                                        'return_step': None
+                                    }
+                                })
+                                logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result}")
+            except Exception:
+                logger.debug("Failed to handle execution_complete event", exc_info=True)
+        
         try:
             execution_id = result.get("execution_id") or body.get("execution_id")
             if execution_id:
