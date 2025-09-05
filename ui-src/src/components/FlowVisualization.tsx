@@ -583,53 +583,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   const flowInner = (
-    <>
-      {/* Toolbar */}
-      <div className="flow-toolbar-container">
-        <Space>
-          {!readOnly && (
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleAddTask}
-              size="small"
-            >
-              Add Component
-            </Button>
-          )}
-          {!readOnly && hasChanges && (
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              onClick={handleSaveWorkflow}
-              loading={loading}
-              size="small"
-            >
-              Save Workflow
-            </Button>
-          )}
-        </Space>
-
-        <Space>
-          <Button
-            type="text"
-            icon={<FullscreenOutlined />}
-            onClick={handleFullscreen}
-            title="Toggle Fullscreen"
-            className="flow-toolbar-button"
-            size="small"
-          />
-          <Button
-            type="text"
-            icon={<CloseOutlined />}
-            onClick={onClose}
-            title="Close"
-            className="flow-toolbar-button"
-            size="small"
-          />
-        </Space>
-      </div>
-
+    <div className="flow-layout-root">
+      {/* Content container now full-width; dock moved inside canvas wrapper */}
       <div className="flow-content-container">
         {loading ? (
           <div className="flow-loading-container">
@@ -638,6 +593,47 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           </div>
         ) : (
           <div className="react-flow-wrapper">
+            {/* Left Vertical Dock now inside bordered wrapper */}
+            <div className="flow-dock">
+              {!readOnly && (
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleAddTask}
+                  size="small"
+                  className="flow-dock-btn"
+                  title="Add Component"
+                />
+              )}
+              {!readOnly && hasChanges && (
+                <Button
+                  type="primary"
+                  icon={<SaveOutlined />}
+                  onClick={handleSaveWorkflow}
+                  loading={loading}
+                  size="small"
+                  className="flow-dock-btn"
+                  title="Save Workflow"
+                />
+              )}
+              <div className="flow-dock-separator" />
+              <Button
+                type="text"
+                icon={<FullscreenOutlined />}
+                onClick={handleFullscreen}
+                title="Toggle Fullscreen"
+                className="flow-dock-btn"
+                size="small"
+              />
+              <Button
+                type="text"
+                icon={<CloseOutlined />}
+                onClick={onClose}
+                title="Close"
+                className="flow-dock-btn"
+                size="small"
+              />
+            </div>
             <ReactFlow
               nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
               edges={edges}
@@ -678,7 +674,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 
   // Render inline when embedded flag is set, otherwise use Modal
@@ -691,23 +687,13 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             : "flow-modal-windowed flow-embedded"
         }
         style={{
-          width: fullscreen ? "95vw" : "80vw",
+          width: "100%", // use full available width
           height: fullscreen ? "85vh" : "70vh",
-          margin: "24px auto",
+          margin: 0, // remove side margins
         }}
       >
         {contextHolder}
-        {!hideTitle && (
-          <div
-            className="flow-modal-title"
-            style={{ display: "flex", alignItems: "center", gap: 12 }}
-          >
-            <span className="flow-modal-title-icon">🔄</span>
-            <span>{readOnly ? 'Workflow Visualization' : 'Flow Editor'} - {playbookName}</span>
-            {!readOnly && hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
-            {readOnly && <Tag color="blue">View Mode</Tag>}
-          </div>
-        )}
+        {/* Title removed as requested */}
         {flowInner}
       </div>
     );
@@ -717,14 +703,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     <>
       {contextHolder}
       <Modal
-        title={
-          <div className="flow-modal-title">
-            <span className="flow-modal-title-icon">🔄</span>
-            <span>{readOnly ? 'Workflow Visualization' : 'Flow Editor'} - {playbookName}</span>
-            {!readOnly && hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
-            {readOnly && <Tag color="blue">View Mode</Tag>}
-          </div>
-        }
+        title={null} // Title removed as requested
         open={visible}
         onCancel={onClose}
         footer={null}

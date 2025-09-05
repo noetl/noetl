@@ -303,49 +303,70 @@
     margin: 0 !important;
 }
 
-.flow-toolbar-container {
+/* Left vertical dock */
+.flow-dock {
     position: absolute;
-    top: 10px;
-    left: 12px;
-    right: 12px;
-    z-index: 2;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 10px;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px 6px;
+    /* slightly tighter now that it's flush */
     background: #ffffff;
     border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    box-shadow: 0 6px 16px rgba(17, 24, 39, .06);
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(17, 24, 39, 0.12);
+    z-index: 15;
+    width: 48px;
+    align-items: center;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
 }
 
-.flow-toolbar-button {
-    background: white;
-    border: 1px solid #d9d9d9;
+.flow-dock-btn {
+    width: 36px !important;
+    height: 36px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    padding: 0 !important;
+    border-radius: 10px !important;
 }
 
-.flow-container {
-    flex: 1;
-    border: 1px solid #d9d9d9;
-    border-radius: 6px;
+.flow-dock-btn.ant-btn-primary:not([disabled]) {
+    background: linear-gradient(180deg, #2563eb, #1d4ed8) !important;
+    border-color: #1d4ed8 !important;
+    box-shadow: 0 2px 6px rgba(29, 78, 216, 0.35);
 }
 
-.flow-content-container {
+.flow-dock-btn.ant-btn-primary:hover:not([disabled]) {
+    background: linear-gradient(180deg, #1d4ed8, #1e40af) !important;
+}
+
+.flow-dock-btn.ant-btn-text {
+    border: 1px solid #e2e8f0 !important;
+    background: #f8fafc !important;
+}
+
+.flow-dock-btn.ant-btn-text:hover {
+    background: #f1f5f9 !important;
+}
+
+.flow-dock-separator {
     width: 100%;
-    height: 100%;
-    position: relative;
-    background: linear-gradient(180deg, #fff, #fcfdff);
+    height: 1px;
+    background: #e5e7eb;
+    margin: 4px 0 2px;
 }
 
-.react-flow-wrapper {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-}
+/* Removed padding-left that shifted entire canvas and could cause blank area */
+/* .flow-content-container .react-flow-wrapper { padding-left: 90px; } */
+
+/* Optional reserved space variant (not applied by default)
+.flow-canvas-offset .react-flow__renderer { margin-left: 88px; }
+*/
 
 /* ReactFlow controls & minimap to match theme */
 .react-flow__controls {
@@ -354,6 +375,16 @@
     box-shadow: 0 4px 12px rgba(17, 24, 39, .06) !important;
     overflow: hidden;
     background: #fff !important;
+    /* reposition flush left under dock */
+    position: absolute !important;
+    left: 6px !important;
+    /* align with dock padding */
+    bottom: 18px !important;
+    /* keep clear of bottom edge */
+    top: auto !important;
+    right: auto !important;
+    z-index: 14;
+    /* just beneath dock (15) */
 }
 
 .react-flow__minimap {
@@ -447,4 +478,60 @@
     content: attr(placeholder);
     font-style: italic;
     color: #94a3b8;
+}
+
+.flow-content-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: linear-gradient(180deg, #fff, #fcfdff);
+    min-height: 520px;
+    padding-left: 0;
+    /* remove external padding; dock now inside wrapper */
+}
+
+.react-flow-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 500px;
+    overflow: hidden;
+    background: #ffffff;
+    border-radius: 14px;
+    border: 1px solid #d7dde3;
+    box-shadow: 0 2px 6px rgba(17, 24, 39, 0.06), 0 1px 2px rgba(17, 24, 39, 0.04);
+}
+
+/* Adjust dock positioning now that it's inside the wrapper */
+.react-flow-wrapper .flow-dock {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    margin-left: 0;
+    /* flush */
+}
+
+/* Add left padding for canvas render area so nodes not hidden */
+.react-flow-wrapper .react-flow__renderer {
+    margin-left: 60px;
+}
+
+/* Controls shift accordingly */
+.react-flow-wrapper .react-flow__controls {
+    left: 66px !important;
+}
+
+/* Focus state subtle */
+.react-flow-wrapper:focus-within {
+    border-color: #b7c2cc;
+    box-shadow: 0 3px 8px rgba(17, 24, 39, 0.07);
+}
+
+.flow-layout-root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
 }
