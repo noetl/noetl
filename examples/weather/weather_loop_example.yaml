@@ -314,7 +314,11 @@ workbook:
       );
       -- Insert aggregated summary. DuckDB does not support SQLite's strftime('%s', ...); use date_part('epoch', ...) for epoch seconds
       INSERT INTO weather_alert_summary (id, alert_cities, alert_count)
-        VALUES ((date_part('epoch', current_timestamp)*1000)::BIGINT, '{{ alert_cities | tojson }}', {{ alert_count }});
+        VALUES (
+          (date_part('epoch', current_timestamp)*1000)::BIGINT,
+          '{{ alert_cities | default([]) | tojson }}',
+          {{ alert_count | default(0) }}
+        );
 
       SELECT * FROM weather_alert_summary ORDER BY created_at DESC LIMIT 5;
 
@@ -331,15 +335,18 @@ workbook:
     command: |
       -- Create table if not exists
       CREATE TABLE IF NOT EXISTS weather_alert_summary (
-          id SERIAL PRIMARY KEY,
-          alert_cities TEXT,
-          alert_count INTEGER,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id SERIAL PRIMARY KEY,
+        alert_cities TEXT,
+        alert_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
       -- Insert aggregated summary
       INSERT INTO weather_alert_summary (alert_cities, alert_count)
-        VALUES ('{{ alert_cities | tojson }}', {{ alert_count }});
+        VALUES (
+          '{{ alert_cities | default([]) | tojson }}',
+          {{ alert_count | default(0) }}
+        );
 
       -- Return recent entries for verification
       SELECT * FROM weather_alert_summary ORDER BY id DESC LIMIT 5;

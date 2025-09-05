@@ -78,8 +78,9 @@ help:
 	@echo "  make noetl-restart										Restart NoETL runtime"
 	@echo "  make noetl-run PLAYBOOK=examples/weather/weather_loop_example HOST=localhost PORT=8082	Execute specific playbook"
 	@echo "  make noetl-execute PLAYBOOK=examples/weather/weather_loop_example				Execute specific playbook"
-	@echo "  make noetl-execute-watch ID=219858139900542976 HOST=localhost PORT=8082			Watch status with live updates"
-	@echo "  make noetl-execute-status ID=219858139900542976 > status.json					Get status for specific ID"
+	@echo "  make export-execution-logs ID=222437726840946688 HOST=localhost PORT=8082			Dump execution to logs for specific ID"
+	@echo "  make noetl-execute-watch ID=222437726840946688 HOST=localhost PORT=8082			Watch status with live updates"
+	@echo "  make noetl-execute-status ID=222437726840946688 > status.json					Get status for specific ID"
 	@echo "  make noetl-validate-status FILE=status.json							Validate and clean up a status.json file"
 
 docker-login:
@@ -413,6 +414,44 @@ noetl-validate-status:
 	clean_file="$$file.clean"; \
 	sed -E 's/\x1b\[[0-9;]*m//g' "$$file" > "$$clean_file"; \
 	jq -r -f scripts/status_validate.jq "$$clean_file"
+
+# === Export execution data to JSON files under logs/ ===
+.PHONY: export-event-log export-queue export-runtime export-execution-logs
+
+# Usage:
+#   make export-execution-logs ID=<execution_id>
+#   or individually:
+#   make export-event-log ID=<execution_id>
+#   make export-queue ID=<execution_id>
+#   make export-runtime
+
+export-event-log:
+	@mkdir -p logs
+	@set -a; [ -f .env ] && . .env; set +a; \
+	if [ -z "$(ID)" ]; then echo "Usage: make export-event-log ID=<execution_id>"; exit 1; fi; \
+	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, input_context, output_result, metadata, error, loop_id, loop_name, iterator, items, current_index, current_item, results, worker_id, distributed_state, context_key, context_value FROM noetl.event_log WHERE execution_id = $(ID) ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event_log.json; \
+	[ -s logs/event_log.json ] && (jq . logs/event_log.json >/dev/null 2>&1 && jq . logs/event_log.json > logs/event_log.json.tmp && mv logs/event_log.json.tmp logs/event_log.json || true) || true; \
+	echo "Wrote logs/event_log.json"
+
+export-queue:
+	@mkdir -p logs
+	@set -a; [ -f .env ] && . .env; set +a; \
+	if [ -z "$(ID)" ]; then echo "Usage: make export-queue ID=<execution_id>"; exit 1; fi; \
+	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	psql -v ON_ERROR_STOP=1 -Atc "WITH q AS (SELECT id, created_at, available_at, lease_until, last_heartbeat, status, execution_id, node_id, action, input_context, priority, attempts, max_attempts, worker_id FROM noetl.queue WHERE execution_id = $(ID) ORDER BY id) SELECT coalesce(json_agg(row_to_json(q)),'[]'::json) FROM q;" > logs/queue.json; \
+	[ -s logs/queue.json ] && (jq . logs/queue.json >/dev/null 2>&1 && jq . logs/queue.json > logs/queue.json.tmp && mv logs/queue.json.tmp logs/queue.json || true) || true; \
+	echo "Wrote logs/queue.json"
+
+export-runtime:
+	@mkdir -p logs
+	@set -a; [ -f .env ] && . .env; set +a; \
+	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	psql -v ON_ERROR_STOP=1 -Atc "SELECT coalesce(json_agg(row_to_json(r)),'[]'::json) FROM noetl.runtime r;" > logs/runtime.json; \
+	[ -s logs/runtime.json ] && (jq . logs/runtime.json >/dev/null 2>&1 && jq . logs/runtime.json > logs/runtime.json.tmp && mv logs/runtime.json.tmp logs/runtime.json || true) || true; \
+	echo "Wrote logs/runtime.json"
+
+export-execution-logs: export-event-log export-queue export-runtime
 
 noetl-dump-lineage:
 	@if [ -z "$(ID)" ]; then \
