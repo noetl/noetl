@@ -50,6 +50,8 @@ workflow:  # Workflow steps and transitions
       distribution: true
     with:
       city: "{{ city_item }}"
+      base_url: "{{ workload.base_url }}"
+      temperature_threshold: "{{ workload.temperature_threshold }}"
     next:
       - step: debug_results
 
@@ -94,11 +96,6 @@ workflow:  # Workflow steps and transitions
         with:
           alert_cities: "{{ aggregate_alerts.summary.alert_cities | default([]) }}"
           alert_count: "{{ aggregate_alerts.summary.count | default(0) }}"
-          db_host: "{{ workload.pg_host }}"
-          db_port: "{{ workload.pg_port }}"
-          db_user: "{{ workload.pg_user }}"
-          db_password: "{{ workload.pg_password }}"
-          db_name: "{{ workload.pg_db }}"
 
   - step: store_summary_postgres
     desc: "Store aggregated summary in Postgres"
@@ -107,11 +104,6 @@ workflow:  # Workflow steps and transitions
     with:
       alert_cities: "{{ alert_cities }}"
       alert_count: "{{ alert_count }}"
-      db_host: "{{ db_host }}"
-      db_port: "{{ db_port }}"
-      db_user: "{{ db_user }}"
-      db_password: "{{ db_password }}"
-      db_name: "{{ db_name }}"
     next:
       - step: end
 
@@ -328,14 +320,14 @@ workbook:
 
   - name: store_summary_postgres_task
     type: postgres
-    host: "{{ db_host }}"
-    port: "{{ db_port }}"
-    user: "{{ db_user }}"
-    password: "{{ db_password }}"
-    database: "{{ db_name }}"
     with:
       alert_cities: "{{ alert_cities }}"
       alert_count: "{{ alert_count }}"
+      db_host: "localhost"
+      db_port: "30543"
+      db_user: "demo"
+      db_password: "demo"
+      db_database: "demo_noetl"
     command: |
       -- Create table if not exists
       CREATE TABLE IF NOT EXISTS weather_alert_summary (

@@ -6,7 +6,7 @@ import traceback
 import datetime
 from typing import List, Optional, Dict, Any, Union
 import psycopg
-from noetl.common import make_serializable
+from noetl.common import make_serializable, get_snowflake_id
 from noetl.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -212,7 +212,7 @@ class DatabaseSchema:
                 """)
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workload (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         data TEXT,
                         PRIMARY KEY (execution_id)
@@ -220,9 +220,10 @@ class DatabaseSchema:
                 """)
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.event_log (
-                        execution_id VARCHAR,
-                        event_id VARCHAR,
-                        parent_event_id VARCHAR,
+                        execution_id BIGINT,
+                        event_id BIGINT,
+                        parent_event_id BIGINT,
+                        parent_execution_id BIGINT,
                         timestamp TIMESTAMP,
                         event_type VARCHAR,
                         node_id VARCHAR,
@@ -254,9 +255,14 @@ class DatabaseSchema:
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):
                         self.conn.rollback()
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workflow (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         step_id VARCHAR,
                         step_name VARCHAR,
                         step_type VARCHAR,
@@ -267,7 +273,7 @@ class DatabaseSchema:
                 """)
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workbook (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         task_id VARCHAR,
                         task_name VARCHAR,
                         task_type VARCHAR,
@@ -277,7 +283,7 @@ class DatabaseSchema:
                 """)
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.transition (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         from_step VARCHAR,
                         to_step VARCHAR,
                         condition TEXT,
@@ -291,7 +297,7 @@ class DatabaseSchema:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         error_type VARCHAR(50),
                         error_message TEXT,
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         step_id VARCHAR,
                         step_name VARCHAR,
                         template_string TEXT,
@@ -403,7 +409,7 @@ class DatabaseSchema:
                         lease_until TIMESTAMPTZ,
                         last_heartbeat TIMESTAMPTZ,
                         status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','leased','done','failed','dead')),
-                        execution_id VARCHAR NOT NULL,
+                        execution_id BIGINT NOT NULL,
                         node_id TEXT NOT NULL,
                         action TEXT NOT NULL,
                         input_context JSONB NOT NULL DEFAULT '{{}}'::jsonb,
@@ -707,7 +713,7 @@ class DatabaseSchema:
                 logger.info("Creating workload table (async).")
                 await cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workload (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         data TEXT,
                         PRIMARY KEY (execution_id)
@@ -718,9 +724,10 @@ class DatabaseSchema:
                 logger.info("Creating event_log table (async).")
                 await cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.event_log (
-                        execution_id VARCHAR,
-                        event_id VARCHAR,
-                        parent_event_id VARCHAR,
+                        execution_id BIGINT,
+                        event_id BIGINT,
+                        parent_event_id BIGINT,
+                        parent_execution_id BIGINT,
                         timestamp TIMESTAMP,
                         event_type VARCHAR,
                         node_id VARCHAR,
@@ -760,11 +767,25 @@ class DatabaseSchema:
                     except Exception:
                         if not getattr(self.conn, "autocommit", False):
                             await self.conn.rollback()
+                
+                try:
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
+                except Exception as e:
+                    logger.warning(f"ALTER event_log add parent_execution_id failed as noetl user, retrying as admin: {e}")
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
+                        await admin_conn.close()
+                    except Exception:
+                        if not getattr(self.conn, "autocommit", False):
+                            await self.conn.rollback()
 
                 logger.info("Creating workflow table (async).")
                 await cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workflow (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         step_id VARCHAR,
                         step_name VARCHAR,
                         step_type VARCHAR,
@@ -777,7 +798,7 @@ class DatabaseSchema:
                 logger.info("Creating workbook table (async).")
                 await cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.workbook (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         task_id VARCHAR,
                         task_name VARCHAR,
                         task_type VARCHAR,
@@ -789,7 +810,7 @@ class DatabaseSchema:
                 logger.info("Creating transition table (async).")
                 await cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.transition (
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         from_step VARCHAR,
                         to_step VARCHAR,
                         condition TEXT,
@@ -805,7 +826,7 @@ class DatabaseSchema:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         error_type VARCHAR(50),
                         error_message TEXT,
-                        execution_id VARCHAR,
+                        execution_id BIGINT,
                         step_id VARCHAR,
                         step_name VARCHAR,
                         template_string TEXT,
@@ -939,7 +960,7 @@ class DatabaseSchema:
                         lease_until TIMESTAMPTZ,
                         last_heartbeat TIMESTAMPTZ,
                         status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','leased','done','failed','dead')),
-                        execution_id VARCHAR NOT NULL,
+                        execution_id BIGINT NOT NULL,
                         node_id TEXT NOT NULL,
                         action TEXT NOT NULL,
                         input_context JSONB NOT NULL DEFAULT '{{}}'::jsonb,
@@ -1148,7 +1169,7 @@ class DatabaseSchema:
                     logger.info("Workload table created (async).")
 
                     try:
-                        test_id = f"test_{uuid.uuid4()}"
+                        test_id = get_snowflake_id()
                         test_data = json.dumps({"test": "data"})
                         logger.info(f"Testing workload table with test_id: {test_id}.")
 

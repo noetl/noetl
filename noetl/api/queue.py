@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.common import get_async_db_connection
+from noetl.common import get_async_db_connection, snowflake_id_to_int, convert_snowflake_ids_for_api
 from noetl.logger import setup_logger
 
 
@@ -29,6 +29,9 @@ async def enqueue_job(request: Request):
         if not execution_id or not node_id or not action:
             raise HTTPException(status_code=400, detail="execution_id, node_id and action are required")
 
+        # Convert execution_id from string to int for database storage
+        execution_id_int = snowflake_id_to_int(execution_id)
+
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -37,7 +40,7 @@ async def enqueue_job(request: Request):
                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                     RETURNING id
                     """,
-                    (execution_id, node_id, action, json.dumps(input_context), priority, max_attempts, available_at)
+                    (execution_id_int, node_id, action, json.dumps(input_context), priority, max_attempts, available_at)
                 )
                 row = await cur.fetchone()
                 await conn.commit()
@@ -114,6 +117,8 @@ async def complete_job(job_id: int):
                 await conn.commit()
         if not row:
             raise HTTPException(status_code=404, detail="job not found")
+        
+        logger.info(f"QUEUE_COMPLETION_DEBUG: Job {job_id} completed for execution {row[1] if isinstance(row, tuple) else row.get('execution_id')}")
         # schedule broker evaluation best-effort
         try:
             exec_id = row[1] if isinstance(row, tuple) else row.get("execution_id")

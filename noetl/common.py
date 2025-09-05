@@ -60,6 +60,53 @@ def get_snowflake_id() -> int:
 def get_snowflake_id_str() -> str:
     return str(get_snowflake_id())
 
+
+def snowflake_id_to_str(snowflake_id: Union[int, str, None]) -> str:
+    """
+    Convert snowflake ID to string for API/UI compatibility.
+    External systems may fail to support 64-bit integers.
+    """
+    if snowflake_id is None:
+        return ""
+    return str(snowflake_id)
+
+
+def snowflake_id_to_int(snowflake_id: Union[int, str, None]) -> int:
+    """
+    Convert snowflake ID string back to int for database operations.
+    Returns 0 for invalid/None values.
+    """
+    if snowflake_id is None:
+        return 0
+    if isinstance(snowflake_id, int):
+        return snowflake_id
+    if isinstance(snowflake_id, str):
+        try:
+            return int(snowflake_id)
+        except (ValueError, TypeError):
+            return 0
+    return 0
+
+
+def convert_snowflake_ids_for_api(data: Any) -> Any:
+    """
+    Recursively convert snowflake ID fields to strings for API responses.
+    Handles execution_id, event_id, parent_event_id, parent_execution_id fields.
+    """
+    if isinstance(data, dict):
+        result = {}
+        snowflake_fields = ['execution_id', 'event_id', 'parent_event_id', 'parent_execution_id', 'id']
+        for key, value in data.items():
+            if key in snowflake_fields:
+                result[key] = snowflake_id_to_str(value)
+            else:
+                result[key] = convert_snowflake_ids_for_api(value)
+        return result
+    elif isinstance(data, list):
+        return [convert_snowflake_ids_for_api(item) for item in data]
+    else:
+        return data
+
 #===================================
 #  time calendar
 #===================================

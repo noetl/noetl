@@ -760,6 +760,69 @@ def manage_catalog(
         logger.info(f"  noetl catalog list {resource_type}")
         raise typer.Exit(code=1)
 
+@cli_app.command("run")
+def run_playbook(
+    playbook_id: str = typer.Argument(..., help="Playbook path/name as registered in catalog (e.g., examples/weather_loop_example)"),
+    host: str = typer.Option("localhost", "--host", help="NoETL server host"),
+    port: int = typer.Option(8082, "--port", "-p", help="NoETL server port"),
+    input: str = typer.Option(None, "--input", "-i", help="Path to JSON file with parameters"),
+    payload: str = typer.Option(None, "--payload", help="Inline JSON string with parameters"),
+    merge: bool = typer.Option(False, "--merge", help="Merge parameters into playbook workload on server"),
+    json_only: bool = typer.Option(False, "--json", "-j", help="Emit the JSON response"),
+):
+    """
+    Execute a registered playbook by name against a running NoETL server.
+    This is an alias for 'noetl execute playbook'.
+
+    Equivalent REST call:
+      curl -X POST http://{host}:{port}/api/executions/run \
+           -H "Content-Type: application/json" \
+           -d '{"playbook_id": "<playbook_id>", "parameters": {...}}'
+
+    Example:
+      noetl run "examples/weather_loop_example" --host localhost --port 8082
+    """
+    try:
+        parameters = {}
+        if input:
+            try:
+                with open(input, "r") as f:
+                    parameters = json.load(f)
+                typer.echo(f"Loaded parameters from {input}")
+            except Exception as e:
+                typer.echo(f"Failed to read parameters file: {e}")
+                raise typer.Exit(code=1)
+        elif payload:
+            try:
+                parameters = json.loads(payload)
+                typer.echo("Parsed parameters from --payload")
+            except Exception as e:
+                typer.echo(f"Failed to parse --payload JSON: {e}")
+                raise typer.Exit(code=1)
+
+        url = f"http://{host}:{port}/api/executions/run"
+        body = {"playbook_id": playbook_id, "parameters": parameters, "merge": merge}
+        if not json_only:
+            typer.echo(f"POST {url}")
+        resp = requests.post(url, json=body)
+        if resp.status_code >= 200 and resp.status_code < 300:
+            data = resp.json()
+            exec_id = data.get("id") or data.get("execution_id")
+            if not json_only:
+                typer.echo("Execution started")
+                if exec_id:
+                    typer.echo(f"execution_id: {exec_id}")
+            typer.echo(json.dumps(data, indent=2, cls=DateTimeEncoder))
+        else:
+            if not json_only:
+                typer.echo(f"Server returned {resp.status_code}")
+                typer.echo(resp.text)
+            raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(code=1)
+
+
 execute_app = typer.Typer()
 cli_app.add_typer(execute_app, name="execute")
 
