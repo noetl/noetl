@@ -47,6 +47,7 @@ workflow:  # Workflow steps and transitions
     loop:
       in: "{{ workload.cities }}"
       iterator: city_item
+      distribution: true
     with:
       city: "{{ city_item }}"
     next:

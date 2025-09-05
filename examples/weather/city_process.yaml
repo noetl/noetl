@@ -121,7 +121,7 @@ workflow:
 
   - step: end
     desc: "End of city processing"
-    return: "{{ evaluate_weather_step }}"
+    return: "{{ evaluate_weather_step.result }}"
 
 workbook:
   - name: debug_city_format

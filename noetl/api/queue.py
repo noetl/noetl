@@ -198,7 +198,31 @@ async def complete_job(job_id: int):
                                 )
                                 result_row = await cur.fetchone()
                                 
-                                # If no end step result, try to find meaningful results (non-empty, non-control steps)
+                                # If no end step result, try to find meaningful results by step name priority
+                                if not result_row:
+                                    # Try common return step names first
+                                    for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
+                                        await cur.execute(
+                                            """
+                                            SELECT output_result FROM noetl.event_log
+                                            WHERE execution_id = %s
+                                              AND node_name = %s
+                                              AND event_type = 'action_completed'
+                                              AND lower(status) IN ('completed','success')
+                                              AND output_result IS NOT NULL
+                                              AND output_result != '{}'
+                                              AND NOT (output_result::text LIKE '%"skipped": true%')
+                                              AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                                            ORDER BY timestamp DESC
+                                            LIMIT 1
+                                            """,
+                                            (exec_id, step_name)
+                                        )
+                                        result_row = await cur.fetchone()
+                                        if result_row:
+                                            break
+                                
+                                # Last resort: find any meaningful result
                                 if not result_row:
                                     await cur.execute(
                                         """
