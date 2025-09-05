@@ -1170,6 +1170,11 @@ async def evaluate_broker_for_execution(
     """
     logger.info(f"=== EVALUATE_BROKER_FOR_EXECUTION: Starting for execution_id={execution_id} ===")
     try:
+        # Guard to prevent re-enqueuing post-loop steps per-item immediately
+        # after an end_loop aggregation. Without this, steps following a loop
+        # can be incorrectly treated as loop bodies, preventing final steps
+        # (like logging and DB writes) from running.
+        just_aggregated_end_loop: bool = False
         playbook_path = None
         playbook_version = None
         workload = {}
@@ -1639,13 +1644,13 @@ async def evaluate_broker_for_execution(
                         return True
                 items_f = [it for it in items if _accept(it)]
 
-                # Check if the step already has a completion event
+                # Check if the step already has a completion event (exclude iteration events with iter- in node_id)
                 try:
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
                             await cur.execute(
-                                "SELECT 1 FROM noetl.event_log WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success') LIMIT 1",
-                                (execution_id, step_nm)
+                                "SELECT 1 FROM noetl.event_log WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success') AND node_id NOT LIKE %s LIMIT 1",
+                                (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
                             )
                             done_evt = await cur.fetchone()
                 except Exception:
@@ -1684,9 +1689,33 @@ async def evaluate_broker_for_execution(
                 step_type_lower = str(next_step.get('type') or '').strip().lower()
 
                 logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}, step_type={step_type_lower}")
+                logger.debug(f"INLINE LOOP AGGREGATION CONDITIONS: expected > 0? {expected > 0}, done_count >= expected? {done_count >= expected}, not done_evt? {not done_evt}")
+
+                # Check for completed loop iterations (action_completed events with iter- in node_id)
+                iter_complete_count = 0
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor(row_factory=dict_row) as cur:
+                            await cur.execute(
+                                """
+                                SELECT COUNT(*) as iter_count FROM noetl.event_log
+                                WHERE execution_id = %s
+                                  AND node_name = %s
+                                  AND event_type = 'action_completed'
+                                  AND node_id LIKE %s
+                                  AND lower(status) IN ('completed','success')
+                                """,
+                                (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
+                            )
+                            result = await cur.fetchone()
+                            iter_complete_count = result['iter_count'] if result else 0
+                except Exception:
+                    pass
+
+                logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, iter_complete_count={iter_complete_count}, done_evt={done_evt}, step_type={step_type_lower}")
 
                 # If all items completed and no aggregate completion emitted, emit aggregate completion
-                if expected > 0 and done_count >= expected and not done_evt:
+                if expected > 0 and iter_complete_count >= expected and not done_evt:
                     logger.debug(f"INLINE LOOP AGGREGATION: Starting aggregation for {step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}")
                     # Build aggregated result as list of outputs for this node
                     agg_list = []
@@ -1694,24 +1723,46 @@ async def evaluate_broker_for_execution(
                         async with get_async_db_connection() as conn:
                             async with conn.cursor(row_factory=dict_row) as cur:
                                 if step_type_lower == 'playbook':
-                                    # For playbook type loops, get results from loop_item_completed events
+                                    # For playbook type loops, get results from action_completed iteration events
                                     await cur.execute(
                                         """
-                                        SELECT result FROM noetl.event_log
+                                        SELECT output_result FROM noetl.event_log
                                         WHERE execution_id = %s
                                           AND node_name = %s
-                                          AND event_type = 'loop_item_completed'
+                                          AND event_type = 'action_completed'
+                                          AND node_id LIKE %s
                                           AND lower(status) IN ('completed','success')
                                         ORDER BY timestamp
                                         """,
-                                        (execution_id, step_nm)
+                                        (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
                                     )
                                     rows = await cur.fetchall()
                                     for rr in rows:
-                                        data = rr.get('result')
-                                        # Skip null/empty results but include all actual data
-                                        if data is not None:
-                                            agg_list.append(data)
+                                        output_result = rr.get('output_result')
+                                        try:
+                                            # Parse the output_result which contains the execution info
+                                            if isinstance(output_result, str):
+                                                output_data = json.loads(output_result)
+                                            else:
+                                                output_data = output_result
+                                            
+                                            # Extract the actual result data from the child execution
+                                            if isinstance(output_data, dict) and 'data' in output_data:
+                                                result_data = output_data['data']
+                                                # If it contains execution_id, we need to fetch the actual result
+                                                if isinstance(result_data, dict) and 'execution_id' in result_data:
+                                                    child_exec_id = result_data['execution_id']
+                                                    # TODO: Fetch the actual result from the child execution
+                                                    # For now, just use the status info
+                                                    agg_list.append(result_data)
+                                                else:
+                                                    agg_list.append(result_data)
+                                            else:
+                                                agg_list.append(output_data)
+                                        except Exception:
+                                            # If parsing fails, just include the raw output
+                                            if output_result is not None:
+                                                agg_list.append(output_result)
                                 else:
                                     # For non-playbook loops, use the original logic
                                     await cur.execute(
@@ -2255,6 +2306,7 @@ async def evaluate_broker_for_execution(
                 idx = step_index[chosen_after_end]
                 next_step = steps[idx]
                 logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Continuing after end_loop to '{chosen_after_end}' (idx={idx})")
+                just_aggregated_end_loop = True
             else:
                 # No explicit next; proceed by falling back to default progression
                 last_step_name = end_step_name
@@ -2263,8 +2315,9 @@ async def evaluate_broker_for_execution(
                     logger.info("EVALUATE_BROKER_FOR_EXECUTION: No further steps after end_loop")
                     return
                 next_step = steps[idx]
+                just_aggregated_end_loop = True
 
-        if last_step_name and isinstance(prev_cfg := steps[step_index[last_step_name]], dict) and 'loop' in prev_cfg:
+        if (not just_aggregated_end_loop) and last_step_name and isinstance(prev_cfg := steps[step_index[last_step_name]], dict) and 'loop' in prev_cfg:
             loop_spec = prev_cfg.get('loop') or {}
             iterator = (loop_spec.get('iterator') or 'item').strip()
             items = []
@@ -2481,8 +2534,20 @@ async def evaluate_broker_for_execution(
                     _ese = locals().get('exec_start_eid')
                     if _ese and 'parent_event_id' not in meta:
                         meta['parent_event_id'] = _ese
-                    if 'parent_execution_id' not in meta:
+                    
+                    # If this execution has parent metadata (indicating it's a child execution),
+                    # pass that parent metadata through to the queue jobs it creates
+                    if isinstance(metadata, dict):
+                        parent_execution_id = metadata.get('parent_execution_id')
+                        parent_step = metadata.get('parent_step')
+                        if parent_execution_id and parent_step:
+                            meta['parent_execution_id'] = parent_execution_id
+                            meta['parent_step'] = parent_step
+                        elif 'parent_execution_id' not in meta:
+                            meta['parent_execution_id'] = execution_id
+                    elif 'parent_execution_id' not in meta:
                         meta['parent_execution_id'] = execution_id
+                    
                     rendered_workload['_meta'] = meta
             except Exception:
                 pass

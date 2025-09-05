@@ -148,10 +148,12 @@ async def complete_job(job_id: int):
                 try:
                     # Get the final result from the child execution
                     from noetl.api.event import get_event_service
-                    async with get_async_db_connection() as conn:
+                    from noetl.common import get_async_db_connection as get_db_conn
+                    async with get_db_conn() as conn:
                         async with conn.cursor() as cur:
-                            # Get the return step result if specified, otherwise get execution status
+                            # Get the end step's return value, or fall back to meaningful results
                             if return_step:
+                                # First try the specified return step
                                 await cur.execute(
                                     """
                                     SELECT output_result FROM noetl.event_log
@@ -164,11 +166,29 @@ async def complete_job(job_id: int):
                                     """,
                                     (exec_id, return_step)
                                 )
+                                result_row = await cur.fetchone()
+                                # If the specified return step doesn't exist, try 'end' step as fallback
+                                if not result_row:
+                                    await cur.execute(
+                                        """
+                                        SELECT output_result FROM noetl.event_log
+                                        WHERE execution_id = %s
+                                          AND node_name = 'end'
+                                          AND event_type = 'action_completed'
+                                          AND lower(status) IN ('completed','success')
+                                        ORDER BY timestamp DESC
+                                        LIMIT 1
+                                        """,
+                                        (exec_id,)
+                                    )
+                                    result_row = await cur.fetchone()
                             else:
+                                # First try the 'end' step (which should have the return value)
                                 await cur.execute(
                                     """
                                     SELECT output_result FROM noetl.event_log
                                     WHERE execution_id = %s
+                                      AND node_name = 'end'
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
                                     ORDER BY timestamp DESC
@@ -176,8 +196,27 @@ async def complete_job(job_id: int):
                                     """,
                                     (exec_id,)
                                 )
+                                result_row = await cur.fetchone()
+                                
+                                # If no end step result, try to find meaningful results (non-empty, non-control steps)
+                                if not result_row:
+                                    await cur.execute(
+                                        """
+                                        SELECT output_result FROM noetl.event_log
+                                        WHERE execution_id = %s
+                                          AND event_type = 'action_completed'
+                                          AND lower(status) IN ('completed','success')
+                                          AND output_result IS NOT NULL
+                                          AND output_result != '{}'
+                                          AND NOT (output_result::text LIKE '%"skipped": true%')
+                                          AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                                        ORDER BY timestamp DESC
+                                        LIMIT 1
+                                        """,
+                                        (exec_id,)
+                                    )
+                                    result_row = await cur.fetchone()
                             
-                            result_row = await cur.fetchone()
                             child_result = None
                             if result_row:
                                 result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
@@ -189,22 +228,64 @@ async def complete_job(job_id: int):
                                 except Exception:
                                     pass
                             
-                            # Emit mapping event to link child result to parent loop step
+                            # If no meaningful result found, fall back to the last result
+                            if not child_result:
+                                await cur.execute(
+                                    """
+                                    SELECT output_result FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND event_type = 'action_completed'
+                                      AND lower(status) IN ('completed','success')
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (exec_id,)
+                                )
+                                result_row = await cur.fetchone()
+                                if result_row:
+                                    result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                                    try:
+                                        child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
+                                        # Extract data if wrapped
+                                        if isinstance(child_result, dict) and 'data' in child_result:
+                                            child_result = child_result['data']
+                                    except Exception:
+                                        pass
+                            
+                            # Find the iteration node_id pattern by looking up the loop_iteration event for this child
+                            await cur.execute(
+                                """
+                                SELECT node_id FROM noetl.event_log
+                                WHERE execution_id = %s
+                                  AND event_type = 'loop_iteration'
+                                  AND node_name = %s
+                                  AND input_context LIKE %s
+                                ORDER BY timestamp DESC
+                                LIMIT 1
+                                """,
+                                (parent_execution_id, parent_step, f'%"child_execution_id": "{exec_id}"%')
+                            )
+                            iter_row = await cur.fetchone()
+                            iter_node_id = None
+                            if iter_row:
+                                iter_node_id = iter_row[0] if isinstance(iter_row, tuple) else iter_row.get('node_id')
+                            
+                            # Emit action_completed event with iter- pattern for aggregation logic to detect
                             await get_event_service().emit({
                                 'execution_id': parent_execution_id,
-                                'event_type': 'loop_item_completed',
+                                'event_type': 'action_completed',
                                 'status': 'COMPLETED',
-                                'node_id': f'{parent_execution_id}-{parent_step}-item-{exec_id}',
+                                'node_id': iter_node_id or f'{parent_execution_id}-step-X-iter-{exec_id}',
                                 'node_name': parent_step,
-                                'node_type': 'loop_item',
-                                'result': child_result,
+                                'node_type': 'task',
+                                'output_result': child_result,
                                 'context': {
                                     'child_execution_id': exec_id,
                                     'parent_step': parent_step,
                                     'return_step': return_step
                                 }
                             })
-                            logger.debug(f"LOOP MAPPING: Emitted loop_item_completed for parent {parent_execution_id} step {parent_step} from child {exec_id}")
+                            logger.debug(f"LOOP MAPPING: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with node_id {iter_node_id}")
                             
                 except Exception:
                     logger.debug("Failed to emit loop mapping event", exc_info=True)

@@ -42,28 +42,22 @@ workflow:  # Workflow steps and transitions
           - step: end  # If not ready, end the workflow
 
   - step: city_loop
-    desc: "Iterate over cities processing weather data"
     type: playbook
-    path: "examples/weather/city_process"
-    return: "evaluate_weather"  # Return the evaluate_weather step result from sub-playbook
+    path: examples/weather/city_process
     loop:
       in: "{{ workload.cities }}"
-      iterator: city
+      iterator: city_item
     with:
-      city: "{{ city }}"
-      base_url: "{{ workload.base_url }}"
-      temperature_threshold: "{{ workload.temperature_threshold }}"
+      city: "{{ city_item }}"
     next:
       - step: debug_results
-        with:
-          results: "{{ city_loop_results }}"
 
   - step: debug_results
-    desc: "Debug what city_loop_results contains"
+    desc: "Debug what city_loop.result contains"
     type: python
     code: |
       def main(results):
-          print(f"DEBUG_RESULTS: city_loop_results = {results}")
+          print(f"DEBUG_RESULTS: city_loop.result = {results}")
           print(f"DEBUG_RESULTS: type = {type(results)}")
           if isinstance(results, list):
               print(f"DEBUG_RESULTS: length = {len(results)}")
@@ -71,20 +65,18 @@ workflow:  # Workflow steps and transitions
                   print(f"DEBUG_RESULTS: item[{i}] = {item} (type: {type(item)})")
           return {"debug_complete": True, "results": results}
     with:
-      results: "{{ city_loop_results }}"
+      results: "{{ city_loop.result }}"
     next:
       - step: aggregate_alerts
         with:
-          alerts: "{{ city_loop_results }}"
-
-  # Steps between city_loop and end_city_loop were moved into examples/weather/city_process
+          alerts: "{{ city_loop.result }}"
 
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
     type: workbook
     name: aggregate_alerts_task
     with:
-      alerts: "{{ city_loop_results }}"
+      alerts: "{{ city_loop.result }}"
     next:
       - step: log_aggregate_result
         with:
@@ -97,29 +89,28 @@ workflow:  # Workflow steps and transitions
     with:
       summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
     next:
-      - step: global_alert_step
-
-  - step: global_alert_step
-    desc: "Send a global alert if any city triggered an alert"
-    type: workbook
-    name: global_alert_task
-    with:
-      summary: "{{ aggregate_alerts.summary | default({'alert_cities': [], 'count': 0}) }}"
-    next:
       - step: store_summary_postgres
+        with:
+          alert_cities: "{{ aggregate_alerts.summary.alert_cities | default([]) }}"
+          alert_count: "{{ aggregate_alerts.summary.count | default(0) }}"
+          db_host: "{{ workload.pg_host }}"
+          db_port: "{{ workload.pg_port }}"
+          db_user: "{{ workload.pg_user }}"
+          db_password: "{{ workload.pg_password }}"
+          db_name: "{{ workload.pg_db }}"
 
   - step: store_summary_postgres
-    desc: "Persist aggregated summary into Postgres"
+    desc: "Store aggregated summary in Postgres"
     type: workbook
     name: store_summary_postgres_task
     with:
-      alert_cities: "{{ aggregate_alerts.summary.alert_cities | default('[]') }}"
-      alert_count: "{{ aggregate_alerts.summary.count | default(0) }}"
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
+      alert_cities: "{{ alert_cities }}"
+      alert_count: "{{ alert_count }}"
+      db_host: "{{ db_host }}"
+      db_port: "{{ db_port }}"
+      db_user: "{{ db_user }}"
+      db_password: "{{ db_password }}"
+      db_name: "{{ db_name }}"
     next:
       - step: end
 

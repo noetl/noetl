@@ -484,6 +484,8 @@ class Broker:
             }, self.server_url)
 
         logger.debug(f"BROKER.EXECUTE_STEP: Determining step type for step_name={step_name}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Full step_config={step_config}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Step config keys: {list(step_config.keys())}")
         
         if 'end_loop' in step_config:
             logger.debug(f"BROKER.EXECUTE_STEP: Step is an end_loop step")
@@ -1264,38 +1266,93 @@ class Broker:
 
             # Check if this loop step is itself a playbook call
             if step_config.get('type') == 'playbook':
+                # Nested playbook loop iteration
                 logger.debug(f"Loop step is a playbook call: {step_config.get('path')}")
-                
-                # Prepare context for playbook call
+
                 playbook_path = step_config.get('path')
                 playbook_with = step_config.get('with', {})
-                return_step = step_config.get('return')
-                
-                # Render the with parameters with iteration context
+                return_step = step_config.get('return', 'end')  # Use return attribute from step config, default to 'end'
+
+                # Render iteration-specific parameters
                 rules = {iterator: iter_context.get(iterator)}
                 rendered_with = render_template(self.agent.jinja_env, playbook_with, iter_context, rules)
-                logger.debug(f"Loop playbook rendered with: {rendered_with}")
-                
-                # Create playbook call config
-                playbook_call_config = {
-                    'type': 'playbook',
-                    'path': playbook_path,
-                    'with': rendered_with
-                }
-                if return_step:
-                    playbook_call_config['return'] = return_step
-                
-                # Execute the playbook call
-                playbook_result = self.execute_playbook_call(playbook_call_config, iter_context, f"{step_id}_iter_{idx}")
-                
-                # Extract result data
+                logger.debug(f"Loop playbook rendered with (iteration {idx}): {rendered_with}")
+
+                # Execute sub-playbook properly (previous implementation incorrectly passed a dict to execute_playbook_call)
+                try:
+                    playbook_result = self.execute_playbook_call(
+                        path=playbook_path,
+                        version=None,
+                        input_payload=rendered_with,
+                        merge=True
+                    )
+                except Exception as e:
+                    logger.error(f"Loop playbook iteration {idx} execution error: {e}")
+                    playbook_result = { 'status': 'error', 'error': str(e) }
+
+                # Handle return_step if specified: if sub-playbook result is a dict and contains the return_step key
                 if playbook_result.get('status') == 'success':
-                    result_data = playbook_result.get('data')
-                    logger.debug(f"Loop playbook iteration {idx} successful: {result_data}")
+                    pdata = playbook_result.get('data')
+                    logger.debug(f"Loop playbook iteration {idx} raw result: {pdata}")
+
+                    if return_step and isinstance(pdata, dict) and return_step in pdata:
+                        # If sub-playbook did not internally collapse via its own end return attribute
+                        returned_data = pdata.get(return_step)
+                        if isinstance(returned_data, dict) and 'data' in returned_data:
+                            result_data = returned_data['data']
+                        else:
+                            result_data = returned_data
+                        logger.debug(f"Loop playbook iteration {idx} using explicit return_step '{return_step}' data: {result_data}")
+                    else:
+                        # Common case: sub-playbook end step already applied its own return, so pdata is the desired value
+                        result_data = pdata
+                        logger.debug(f"Loop playbook iteration {idx} using collapsed sub-playbook result: {result_data}")
                 else:
-                    result_data = None
                     logger.warning(f"Loop playbook iteration {idx} failed: {playbook_result.get('error')}")
-                
+                    result_data = None
+
+                # Fallback: if result_data is None or missing expected weather evaluation keys, attempt to fetch execution detail
+                if (result_data is None or (isinstance(result_data, dict) and not any(k in result_data for k in ('city','max_temp','alert')))) and playbook_result.get('execution_id'):
+                    child_exec_id = playbook_result.get('execution_id')
+                    try:
+                        fetch_url = f"{self.server_url}/executions/{child_exec_id}"
+                        logger.debug(f"Loop playbook iteration {idx}: fetching child execution result from {fetch_url}")
+                        with httpx.Client(timeout=30.0) as client:
+                            resp = client.get(fetch_url)
+                            resp.raise_for_status()
+                            exec_payload = resp.json()
+                        # Heuristic extraction paths
+                        candidate = None
+                        if isinstance(exec_payload, dict):
+                            # Common shapes
+                            for key in ('result','data'):
+                                val = exec_payload.get(key)
+                                if isinstance(val, dict):
+                                    # If val directly has keys
+                                    if any(k in val for k in ('city','max_temp','alert')):
+                                        candidate = val
+                                        break
+                                    # Nested: val.get('result')
+                                    inner = val.get('result') if isinstance(val.get('result'), dict) else None
+                                    if inner and any(k in inner for k in ('city','max_temp','alert')):
+                                        candidate = inner
+                                        break
+                            # Sometimes payload already flattened
+                            if candidate is None and any(k in exec_payload for k in ('city','max_temp','alert')):
+                                candidate = exec_payload
+                            # Look for evaluate_weather key container
+                            if candidate is None and 'evaluate_weather' in exec_payload:
+                                ew = exec_payload.get('evaluate_weather')
+                                if isinstance(ew, dict) and any(k in ew for k in ('city','max_temp','alert')):
+                                    candidate = ew
+                        if candidate is not None:
+                            logger.debug(f"Loop playbook iteration {idx}: extracted candidate child result: {candidate}")
+                            result_data = candidate
+                        else:
+                            logger.debug(f"Loop playbook iteration {idx}: no suitable candidate found in child execution payload")
+                    except Exception as fe:
+                        logger.warning(f"Loop playbook iteration {idx}: failed to fetch/parse child execution {child_exec_id}: {fe}")
+
                 all_results.append(result_data)
             else:
                 # Original logic for next steps
@@ -1348,8 +1405,9 @@ class Broker:
                 }, self.server_url)
 
         self.agent.update_context(f"{loop_name}_results", all_results)
+        step_name = step_config.get('step', 'loop')
         self.agent.save_step_result(
-            step_id, step_config.get('step', 'loop'), None,
+            step_id, step_name, None,
             'success', all_results, None
         )
         end_time = datetime.datetime.now()
@@ -1377,6 +1435,12 @@ class Broker:
                 'processed_count': len(all_results),
                 'results': all_results
             }, self.server_url)
+
+        # Store results in the same format as regular steps
+        self.agent.update_context(step_name, all_results)
+        self.agent.update_context(step_name + '.result', all_results)
+        self.agent.update_context(step_name + '.status', 'success')
+        self.agent.update_context('result', all_results)
 
         loop_name = step_config.get('step')
         for step in self.agent.playbook.get('workflow', []):

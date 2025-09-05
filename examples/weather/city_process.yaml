@@ -99,8 +99,6 @@ workflow:
       city: "{{ workload.city.name }}"
       temperature: "{{ decide.max_temp }}"
       evaluation_result: "{{ evaluate_weather_step }}"
-    next:
-      - step: end
 
   - step: log_step
     desc: "Log result if no alert"
@@ -120,12 +118,10 @@ workflow:
     with:
       city: "{{ workload.city.name }}"
       evaluation_result: "{{ evaluate_weather_step }}"
-    next:
-      - step: end
 
   - step: end
     desc: "End of city processing"
-    return: "evaluate_weather"  # Return the result from the evaluate_weather step (system renames evaluate_weather_step)
+    return: "{{ evaluate_weather_step }}"
 
 workbook:
   - name: debug_city_format
@@ -239,6 +235,41 @@ workbook:
                   "error": "Invalid forecast data",
                   "timestamp": "2025-09-05T12:00:00Z"
               }
+
+  # Added evaluate_weather task (was missing causing empty results returned to parent loop)
+  - name: evaluate_weather
+    type: python
+    with:
+      city: "{{ workload.city }}"
+      threshold: "{{ workload.temperature_threshold }}"
+      forecast_data: "{{ get_forecast }}"
+    code: |
+      def main(city, threshold, forecast_data):
+        print(f"EVALUATE_WEATHER: city={city}")
+        print(f"EVALUATE_WEATHER: threshold raw={threshold}")
+        print(f"EVALUATE_WEATHER: forecast_data type={type(forecast_data)}")
+        try:
+          threshold_val = float(threshold) if threshold not in (None, "") else 5.0
+        except Exception:
+          threshold_val = 5.0
+        temps = []
+        if isinstance(forecast_data, dict):
+          hourly = forecast_data.get('hourly', {})
+          if isinstance(hourly, dict) and 'temperature_2m' in hourly:
+            temps = hourly['temperature_2m']
+          elif 'data' in forecast_data and isinstance(forecast_data['data'], dict):
+            data_hourly = forecast_data['data'].get('hourly', {})
+            if isinstance(data_hourly, dict) and 'temperature_2m' in data_hourly:
+              temps = data_hourly['temperature_2m']
+        max_temp = max(temps) if temps else 0
+        alert = max_temp > threshold_val
+        result = {
+          "city": city.get("name") if isinstance(city, dict) else city,
+          "max_temp": max_temp,
+          "alert": alert
+        }
+        print(f"EVALUATE_WEATHER: result={result}")
+        return result
 
   - name: alert_task
     type: http
