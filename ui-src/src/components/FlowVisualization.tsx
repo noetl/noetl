@@ -125,13 +125,12 @@ const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) => {
       <div className="flow-node-name">
         <span className="flow-node-field-label">Name</span>
         <input
-          value={task?.name || 'Unnamed Task'}
+          value={task?.name ?? ''}
           onChange={(e) => updateField('name', e.target.value)}
           placeholder="Task name"
           className="xy-theme__input flow-node-name-input nodrag"
           disabled={!!readOnly}
           type="text"
-          style={{ width: '100%' }}
         />
       </div>
 
@@ -144,7 +143,6 @@ const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) => {
           rows={2}
           className="xy-theme__input flow-node-description-input nodrag"
           disabled={!!readOnly}
-          style={{ resize: 'vertical', width: '100%' }}
         />
       </div>
     </div>
