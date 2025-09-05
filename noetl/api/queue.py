@@ -145,6 +145,7 @@ async def complete_job(job_id: int):
             
             # If this is a child execution that completed, emit a mapping event to link results to parent loop
             if parent_execution_id and parent_step and parent_execution_id != exec_id:
+                logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
                 try:
                     # Get the final result from the child execution
                     from noetl.api.event import get_event_service
@@ -309,6 +310,7 @@ async def complete_job(job_id: int):
                                     'return_step': return_step
                                 }
                             })
+                            logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result}")
                             logger.debug(f"LOOP MAPPING: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with node_id {iter_node_id}")
                             
                 except Exception:
