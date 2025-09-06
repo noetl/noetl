@@ -3352,22 +3352,25 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                     
                     # Step 5: If all children completed, emit final loop result event (only once!)
                     if new_completed_count == len(child_executions_data):
-                        # Check if we already emitted action_completed for this loop to prevent infinite recursion
+                        # Check if we already emitted the final action_completed event for this specific loop completion
+                        # to prevent infinite recursion, but allow legitimate workflow transition events
                         await cur.execute(
                             """
-                            SELECT COUNT(*) as already_completed_count FROM noetl.event_log
+                            SELECT COUNT(*) as final_completion_count FROM noetl.event_log
                             WHERE execution_id = %s
                               AND event_type = 'action_completed'
                               AND node_name = %s
                               AND lower(status) = 'completed'
+                              AND input_context::text LIKE '%loop_completed%'
+                              AND input_context::text LIKE '%true%'
                             """,
                             (parent_execution_id, loop_step_name)
                         )
-                        already_completed_row = await cur.fetchone()
-                        already_completed_count = already_completed_row[0] if already_completed_row else 0
+                        final_completion_row = await cur.fetchone()
+                        final_completion_count = final_completion_row[0] if final_completion_row else 0
                         
-                        if already_completed_count > 0:
-                            logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} already has {already_completed_count} completion events - skipping to prevent infinite recursion")
+                        if final_completion_count > 0:
+                            logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} already has {final_completion_count} final completion events - skipping to prevent infinite recursion")
                             continue
                         
                         # Sort results by iteration index
