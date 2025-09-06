@@ -2963,6 +2963,35 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                             except Exception as e:
                                 logger.debug(f"PROACTIVE_COMPLETION_CHECK: Error parsing result from {step_name}: {e}")
                                 continue
+
+                    # Fallback: accept any non-empty action_completed result from the child
+                    if child_result is None:
+                        await cur.execute(
+                            """
+                            SELECT output_result FROM noetl.event_log
+                            WHERE execution_id = %s
+                              AND event_type = 'action_completed'
+                              AND lower(status) IN ('completed','success')
+                              AND output_result IS NOT NULL
+                              AND output_result != '{}'
+                              AND NOT (output_result::text LIKE '%"skipped": true%')
+                              AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                            ORDER BY timestamp DESC
+                            LIMIT 1
+                            """,
+                            (child_exec_id,)
+                        )
+                        row_any = await cur.fetchone()
+                        if row_any:
+                            try:
+                                import json
+                                any_out = row_any[0] if isinstance(row_any, tuple) else row_any.get('output_result')
+                                child_result = json.loads(any_out) if isinstance(any_out, str) else any_out
+                                if isinstance(child_result, dict) and 'data' in child_result:
+                                    child_result = child_result['data']
+                                logger.info(f"PROACTIVE_COMPLETION_CHECK: Fallback accepted child {child_exec_id} result: {child_result}")
+                            except Exception:
+                                pass
                     
                     if child_result:
                         # Emit action_completed event for the parent loop to aggregate
@@ -3219,6 +3248,42 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                 'result': child_result
                             })
                             logger.info(f"LOOP_COMPLETION_CHECK: Child {child_exec_id} completed with result: {child_result}")
+                        else:
+                            # Fallback: accept any non-empty action_completed result from the child
+                            await cur.execute(
+                                """
+                                SELECT output_result FROM noetl.event_log
+                                WHERE execution_id = %s
+                                  AND event_type = 'action_completed'
+                                  AND lower(status) IN ('completed','success')
+                                  AND output_result IS NOT NULL
+                                  AND output_result != '{}'
+                                  AND NOT (output_result::text LIKE '%"skipped": true%')
+                                  AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                                ORDER BY timestamp DESC
+                                LIMIT 1
+                                """,
+                                (child_exec_id,)
+                            )
+                            row_any = await cur.fetchone()
+                            if row_any:
+                                try:
+                                    import json
+                                    any_out = row_any[0] if isinstance(row_any, tuple) else row_any.get('output_result')
+                                    any_res = json.loads(any_out) if isinstance(any_out, str) else any_out
+                                    if isinstance(any_res, dict) and 'data' in any_res:
+                                        any_res = any_res['data']
+                                    child_data['completed'] = True
+                                    child_data['result'] = any_res
+                                    new_completed_count += 1
+                                    new_aggregated_results.append({
+                                        'iteration_index': child_data.get('iteration_index', 0),
+                                        'child_execution_id': child_exec_id,
+                                        'result': any_res
+                                    })
+                                    logger.info(f"LOOP_COMPLETION_CHECK: Fallback accepted child {child_exec_id} result: {any_res}")
+                                except Exception:
+                                    pass
                         
                         updated_children.append(child_data)
                     

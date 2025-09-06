@@ -316,8 +316,8 @@ workbook:
       INSERT INTO weather_alert_summary (id, alert_cities, alert_count)
         VALUES (
           (date_part('epoch', current_timestamp)*1000)::BIGINT,
-          '{{ alert_cities | default([]) | tojson }}',
-          {{ alert_count | default(0) }}
+          '{{ alert_cities | default([], true) | tojson }}',
+          {{ alert_count | default(0, true) }}
         );
 
       SELECT * FROM weather_alert_summary ORDER BY created_at DESC LIMIT 5;
@@ -344,8 +344,8 @@ workbook:
       -- Insert aggregated summary
       INSERT INTO weather_alert_summary (alert_cities, alert_count)
         VALUES (
-          '{{ alert_cities | default([]) | tojson }}',
-          {{ alert_count | default(0) }}
+          '{{ alert_cities | default([], true) | tojson }}',
+          {{ alert_count | default(0, true) }}
         );
 
       -- Return recent entries for verification
