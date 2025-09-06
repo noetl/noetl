@@ -25,6 +25,27 @@ logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
 
+@router.post("/broker/evaluate/{execution_id}")
+async def trigger_broker_evaluation(execution_id: str):
+    """Manually trigger broker evaluation for an execution, including loop completion checks."""
+    try:
+        await evaluate_broker_for_execution(execution_id)
+        return {"status": "success", "message": f"Broker evaluation triggered for execution {execution_id}"}
+    except Exception as e:
+        logger.error(f"Failed to trigger broker evaluation for {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger broker evaluation: {str(e)}")
+
+@router.post("/loop/complete/{execution_id}")
+async def trigger_loop_completion(execution_id: str):
+    """Manually trigger loop completion check for an execution."""
+    try:
+        await check_and_process_completed_loops(execution_id)
+        return {"status": "success", "message": f"Loop completion check triggered for execution {execution_id}"}
+    except Exception as e:
+        logger.error(f"Failed to trigger loop completion for {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger loop completion: {str(e)}")
+
+
 def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Apply base64 encoding to multiline code/commands in task configuration
@@ -3201,15 +3222,39 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             updated_children.append(child_data)
                             continue
                         
-                        # Check if this child execution has meaningful results
+                        # Check if this child execution has completed and get its return value
                         child_result = None
-                        logger.info(f"LOOP_COMPLETION_CHECK: Checking child execution {child_exec_id} for results")
-                        for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
+                        logger.info(f"LOOP_COMPLETION_CHECK: Checking child execution {child_exec_id} for completion")
+                        
+                        # First check for execution_complete event which should have the final return value
+                        await cur.execute(
+                            """
+                            SELECT output_result FROM noetl.event_log
+                            WHERE execution_id = %s
+                              AND event_type = 'execution_complete'
+                              AND lower(status) IN ('completed','success')
+                              AND output_result IS NOT NULL
+                              AND output_result != '{}'
+                            ORDER BY timestamp DESC
+                            LIMIT 1
+                            """,
+                            (child_exec_id,)
+                        )
+                        exec_complete_row = await cur.fetchone()
+                        
+                        if exec_complete_row:
+                            result_data = exec_complete_row[0] if isinstance(exec_complete_row, tuple) else exec_complete_row.get('output_result')
+                            try:
+                                child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
+                                logger.info(f"LOOP_COMPLETION_CHECK: Found execution_complete result for child {child_exec_id}: {child_result}")
+                            except Exception:
+                                logger.debug(f"LOOP_COMPLETION_CHECK: Failed to parse execution_complete result for child {child_exec_id}")
+                        else:
+                            # Fallback: Look for any meaningful step result from any completed action
                             await cur.execute(
                                 """
-                                SELECT output_result FROM noetl.event_log
+                                SELECT node_name, output_result FROM noetl.event_log
                                 WHERE execution_id = %s
-                                  AND node_name = %s
                                   AND event_type = 'action_completed'
                                   AND lower(status) IN ('completed','success')
                                   AND output_result IS NOT NULL
@@ -3217,25 +3262,24 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                   AND NOT (output_result::text LIKE '%%"skipped": true%%')
                                   AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                                 ORDER BY timestamp DESC
-                                LIMIT 1
                                 """,
-                                (child_exec_id, step_name)
+                                (child_exec_id,)
                             )
-                            result_row = await cur.fetchone()
-                            if result_row:
-                                result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                            step_results = await cur.fetchall()
+                            
+                            for step_name, step_output in step_results:
                                 try:
-                                    child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
+                                    step_result = json.loads(step_output) if isinstance(step_output, str) else step_output
                                     # Extract data if wrapped
-                                    if isinstance(child_result, dict) and 'data' in child_result:
-                                        child_result = child_result['data']
-                                    logger.info(f"LOOP_COMPLETION_CHECK: Found result from {step_name} in child {child_exec_id}: {child_result}")
-                                    break
+                                    if isinstance(step_result, dict) and 'data' in step_result:
+                                        step_result = step_result['data']
+                                    if step_result:  # Any non-empty result
+                                        child_result = step_result
+                                        logger.info(f"LOOP_COMPLETION_CHECK: Found step result from {step_name} in child {child_exec_id}: {child_result}")
+                                        break
                                 except Exception:
                                     logger.debug(f"LOOP_COMPLETION_CHECK: Failed to parse result from {step_name} in child {child_exec_id}")
                                     continue
-                            else:
-                                logger.debug(f"LOOP_COMPLETION_CHECK: No result found for step {step_name} in child {child_exec_id}")
                         
                         if child_result:
                             # Mark as completed and add to aggregated results
@@ -3306,19 +3350,33 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                         })
                         logger.info(f"LOOP_COMPLETION_CHECK: Updated end_loop tracking for {loop_step_name}: {new_completed_count}/{len(child_executions_data)} completed")
                     
-                    # Step 5: If all meaningful children completed, emit final loop result event
-                    # Only count action_completed children as they contain the actual playbook results
-                    action_completed_children = [c for c in child_executions_data if c.get('source_event') == 'action_completed']
-                    action_completed_count = sum(1 for c in updated_children if c.get('source_event') == 'action_completed' and c.get('completed', False))
-                    
-                    if len(action_completed_children) > 0 and action_completed_count == len(action_completed_children):
+                    # Step 5: If all children completed, emit final loop result event (only once!)
+                    if new_completed_count == len(child_executions_data):
+                        # Check if we already emitted action_completed for this loop to prevent infinite recursion
+                        await cur.execute(
+                            """
+                            SELECT COUNT(*) as already_completed_count FROM noetl.event_log
+                            WHERE execution_id = %s
+                              AND event_type = 'action_completed'
+                              AND node_name = %s
+                              AND lower(status) = 'completed'
+                            """,
+                            (parent_execution_id, loop_step_name)
+                        )
+                        already_completed_row = await cur.fetchone()
+                        already_completed_count = already_completed_row[0] if already_completed_row else 0
+                        
+                        if already_completed_count > 0:
+                            logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} already has {already_completed_count} completion events - skipping to prevent infinite recursion")
+                            continue
+                        
                         # Sort results by iteration index
                         sorted_results = sorted(new_aggregated_results, key=lambda x: x.get('iteration_index', 0))
                         final_results = [r['result'] for r in sorted_results]
                         
-                        logger.info(f"LOOP_COMPLETION_CHECK: All meaningful children completed for {loop_step_name}: {action_completed_count}/{len(action_completed_children)} action_completed children")
+                        logger.info(f"LOOP_COMPLETION_CHECK: All children completed for {loop_step_name}: {new_completed_count}/{len(child_executions_data)} total children")
                         
-                        # Create final loop result event
+                        # Create final loop result event with aggregated data
                         await event_service.emit({
                             'execution_id': parent_execution_id,
                             'event_type': 'action_completed',
