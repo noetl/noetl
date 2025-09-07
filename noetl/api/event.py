@@ -2189,10 +2189,10 @@ async def evaluate_broker_for_execution(
                                 await cur.execute(
                                     """
                                     INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
-                                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                     RETURNING id
                                     """,
-                                    (child_execution_id, iter_node_id, json.dumps(encode_task_for_queue(task_cfg)), json.dumps(rendered_work), 0, 5, None)
+                                    (child_execution_id, iter_node_id, json.dumps(encode_task_for_queue(task_cfg)), json.dumps(rendered_work), 0, 5)
                                 )
                                 await conn.commit()
                         scheduled_any = True
@@ -2337,10 +2337,10 @@ async def evaluate_broker_for_execution(
                             await cur.execute(
                                 """
                                 INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
-                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                 RETURNING id
                                 """,
-                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5, None)
+                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5)
                             )
                             await conn.commit()
                     scheduled_any = True
@@ -2650,10 +2650,10 @@ async def evaluate_broker_for_execution(
                             await cur.execute(
                                 """
                                 INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
-                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                 RETURNING id
                                 """,
-                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5, None)
+                                (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5)
                             )
                             await conn.commit()
                     scheduled_any = True
@@ -2832,7 +2832,7 @@ async def evaluate_broker_for_execution(
                             await cur.execute(
                                 """
                                 INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
-                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                 RETURNING id
                                 """,
                                 (
@@ -2841,8 +2841,7 @@ async def evaluate_broker_for_execution(
                                     json.dumps(encode_task_for_queue(task_cfg)),
                                     json.dumps(rendered_workload),
                                     0,
-                                    5,
-                                    None,
+                                    5
                                 )
                             )
                             row = await cur.fetchone()

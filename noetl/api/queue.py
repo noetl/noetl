@@ -37,7 +37,7 @@ async def enqueue_job(request: Request):
                 await cur.execute(
                     """
                     INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()))
                     RETURNING id
                     """,
                     (execution_id_int, node_id, action, json.dumps(input_context), priority, max_attempts, available_at)
