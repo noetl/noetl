@@ -111,8 +111,11 @@ async def complete_job(job_id: int):
     """Mark a job completed."""
     try:
         async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id, input_context", (job_id,))
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id, input_context",
+                    (job_id,)
+                )
                 row = await cur.fetchone()
                 await conn.commit()
         if not row:
@@ -136,15 +139,32 @@ async def complete_job(job_id: int):
                         meta = context_data.get('_meta', {})
                         parent_execution_id = meta.get('parent_execution_id')
                         parent_step = meta.get('parent_step')
-                        # Extract return_step from the action if it's a playbook task
-                        action_data = context_data.get('action')
-                        if isinstance(action_data, str):
-                            try:
-                                action_json = json.loads(action_data)
-                                if isinstance(action_json, dict):
-                                    return_step = action_json.get('with', {}).get('return_step')
-                            except Exception:
-                                pass
+                        # Extract return_step from the queue.action when available (preferred)
+                        try:
+                            await cur.execute("SELECT action FROM noetl.queue WHERE id = %s", (job_id,))
+                            action_row = await cur.fetchone()
+                            action_json = None
+                            if action_row:
+                                action_val = action_row[0] if isinstance(action_row, tuple) else action_row.get('action')
+                                if isinstance(action_val, str) and action_val.strip():
+                                    try:
+                                        action_json = json.loads(action_val)
+                                    except Exception:
+                                        action_json = None
+                            if isinstance(action_json, dict):
+                                return_step = (action_json.get('with') or {}).get('return_step') or return_step
+                        except Exception:
+                            pass
+                        # Legacy fallback: some older producers embed action JSON in input_context
+                        if return_step is None:
+                            action_data = context_data.get('action')
+                            if isinstance(action_data, str):
+                                try:
+                                    action_json = json.loads(action_data)
+                                    if isinstance(action_json, dict):
+                                        return_step = action_json.get('with', {}).get('return_step')
+                                except Exception:
+                                    pass
                 except Exception:
                     pass
             
@@ -158,8 +178,20 @@ async def complete_job(job_id: int):
                     async with get_db_conn() as conn:
                         async with conn.cursor() as cur:
                             # Get the end step's return value, or fall back to meaningful results
+                            result_row = None
+                            # 0) Prefer execution_complete final result
+                            await cur.execute(
+                                """
+                                SELECT output_result FROM noetl.event_log
+                                WHERE execution_id = %s AND event_type = 'execution_complete'
+                                ORDER BY timestamp DESC
+                                LIMIT 1
+                                """,
+                                (exec_id,)
+                            )
+                            result_row = await cur.fetchone()
+                            # 1) Return step (if provided), require non-empty and not a control_step
                             if return_step:
-                                # First try the specified return step
                                 await cur.execute(
                                     """
                                     SELECT output_result FROM noetl.event_log
@@ -167,29 +199,79 @@ async def complete_job(job_id: int):
                                       AND node_name = %s
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
+                                      AND output_result IS NOT NULL
+                                      AND output_result != '{}'
+                                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
                                     (exec_id, return_step)
                                 )
                                 result_row = await cur.fetchone()
-                                # If the specified return step doesn't exist, try 'end' step as fallback
-                                if not result_row:
+
+                            # 2) Common step names
+                            if not result_row:
+                                for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
                                     await cur.execute(
                                         """
                                         SELECT output_result FROM noetl.event_log
                                         WHERE execution_id = %s
-                                          AND node_name = 'end'
+                                          AND node_name = %s
                                           AND event_type = 'action_completed'
                                           AND lower(status) IN ('completed','success')
+                                          AND output_result IS NOT NULL
+                                          AND output_result != '{}'
+                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                                         ORDER BY timestamp DESC
                                         LIMIT 1
                                         """,
-                                        (exec_id,)
+                                        (exec_id, step_name)
                                     )
                                     result_row = await cur.fetchone()
-                            else:
-                                # First try the 'end' step (which should have the return value)
+                                    if result_row:
+                                        break
+
+                            # 3) Any meaningful result
+                            if not result_row:
+                                await cur.execute(
+                                    """
+                                    SELECT output_result FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND event_type = 'action_completed'
+                                      AND lower(status) IN ('completed','success')
+                                      AND output_result IS NOT NULL
+                                      AND output_result != '{}'
+                                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (exec_id,)
+                                )
+                                result_row = await cur.fetchone()
+
+                            # 4) Prefer any result that looks like an evaluation result containing 'alert'
+                            if not result_row:
+                                await cur.execute(
+                                    """
+                                    SELECT output_result FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND event_type = 'action_completed'
+                                      AND lower(status) IN ('completed','success')
+                                      AND output_result IS NOT NULL
+                                      AND output_result != '{}'
+                                      AND output_result::text LIKE '%%"alert":%%'
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (exec_id,)
+                                )
+                                result_row = await cur.fetchone()
+
+                            # 5) As last fallback, try 'end' only if it has a meaningful result
+                            if not result_row:
                                 await cur.execute(
                                     """
                                     SELECT output_result FROM noetl.event_log
@@ -197,55 +279,16 @@ async def complete_job(job_id: int):
                                       AND node_name = 'end'
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
+                                      AND output_result IS NOT NULL
+                                      AND output_result != '{}'
+                                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
                                     (exec_id,)
                                 )
                                 result_row = await cur.fetchone()
-                                
-                                # If no end step result, try to find meaningful results by step name priority
-                                if not result_row:
-                                    # Try common return step names first
-                                    for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
-                                        await cur.execute(
-                                            """
-                                            SELECT output_result FROM noetl.event_log
-                                            WHERE execution_id = %s
-                                              AND node_name = %s
-                                              AND event_type = 'action_completed'
-                                              AND lower(status) IN ('completed','success')
-                                              AND output_result IS NOT NULL
-                                              AND output_result != '{}'
-                                              AND NOT (output_result::text LIKE '%"skipped": true%')
-                                              AND NOT (output_result::text LIKE '%"reason": "control_step"%')
-                                            ORDER BY timestamp DESC
-                                            LIMIT 1
-                                            """,
-                                            (exec_id, step_name)
-                                        )
-                                        result_row = await cur.fetchone()
-                                        if result_row:
-                                            break
-                                
-                                # Last resort: find any meaningful result
-                                if not result_row:
-                                    await cur.execute(
-                                        """
-                                        SELECT output_result FROM noetl.event_log
-                                        WHERE execution_id = %s
-                                          AND event_type = 'action_completed'
-                                          AND lower(status) IN ('completed','success')
-                                          AND output_result IS NOT NULL
-                                          AND output_result != '{}'
-                                          AND NOT (output_result::text LIKE '%"skipped": true%')
-                                          AND NOT (output_result::text LIKE '%"reason": "control_step"%')
-                                        ORDER BY timestamp DESC
-                                        LIMIT 1
-                                        """,
-                                        (exec_id,)
-                                    )
-                                    result_row = await cur.fetchone()
                             
                             child_result = None
                             if result_row:
@@ -317,6 +360,133 @@ async def complete_job(job_id: int):
                             })
                             logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result}")
                             logger.debug(f"LOOP MAPPING: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with node_id {iter_node_id}")
+                            
+                            # If this was part of a loop, check if all iterations are completed now; if so, emit a final aggregated event.
+                            try:
+                                if parent_execution_id and parent_step:
+                                    # Count expected iterations for this loop on the parent
+                                    await cur.execute(
+                                        """
+                                        SELECT COUNT(*) FROM noetl.event_log
+                                        WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
+                                        """,
+                                        (parent_execution_id, parent_step)
+                                    )
+                                    row_ct = await cur.fetchone()
+                                    expected = (row_ct[0] if isinstance(row_ct, tuple) else row_ct.get('count')) if row_ct else 0
+                                    # Count completed iteration mapping events so far
+                                    await cur.execute(
+                                        """
+                                        SELECT COUNT(*) FROM noetl.event_log
+                                        WHERE execution_id = %s AND node_name = %s AND event_type = 'action_completed'
+                                          AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
+                                          AND output_result IS NOT NULL AND output_result != '{}'
+                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                          AND output_result::text LIKE '%%"alert":%%'
+                                        """,
+                                        (parent_execution_id, parent_step)
+                                    )
+                                    row_done = await cur.fetchone()
+                                    done = row_done[0] if row_done else 0
+                                    # Guard: if a final aggregate already exists, skip
+                                    await cur.execute(
+                                        """
+                                        SELECT COUNT(*) FROM noetl.event_log
+                                        WHERE execution_id = %s AND event_type = 'action_completed' AND node_name = %s
+                                          AND input_context::text LIKE '%%loop_completed%%' AND input_context::text LIKE '%%true%%'
+                                        """,
+                                        (parent_execution_id, parent_step)
+                                    )
+                                    row_final = await cur.fetchone()
+                                    already_final = (row_final[0] if row_final else 0) > 0
+                                    if expected > 0 and done >= expected and not already_final:
+                                        # Collect results from each iteration mapping event
+                                        await cur.execute(
+                                            """
+                                            SELECT output_result FROM noetl.event_log
+                                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_completed'
+                                              AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
+                                              AND output_result IS NOT NULL AND output_result != '{}'
+                                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                              AND output_result::text LIKE '%%"alert":%%'
+                                            ORDER BY timestamp
+                                            """,
+                                            (parent_execution_id, parent_step)
+                                        )
+                                        rows_res = await cur.fetchall()
+                                        final_results = []
+                                        for rr in rows_res or []:
+                                            val = rr[0] if isinstance(rr, tuple) else rr.get('output_result')
+                                            try:
+                                                parsed = json.loads(val) if isinstance(val, str) else val
+                                            except Exception:
+                                                parsed = val
+                                            if parsed is not None:
+                                                final_results.append(parsed)
+                                        # Emit a single final aggregated event (will be the last action_completed for city_loop)
+                                        # Emit final aggregated action_completed for the loop
+                                        await get_event_service().emit({
+                                            'execution_id': parent_execution_id,
+                                            'event_type': 'action_completed',
+                                            'node_name': parent_step,
+                                            'node_type': 'loop',
+                                            'status': 'COMPLETED',
+                                            'result': {
+                                                'data': {
+                                                    'results': final_results,
+                                                    'result': final_results,
+                                                    'count': len(final_results)
+                                                },
+                                                'results': final_results,
+                                                'result': final_results,
+                                                'count': len(final_results)
+                                            },
+                                            'context': {
+                                                'loop_completed': True,
+                                                'total_iterations': expected
+                                            }
+                                        })
+                                        # Emit an explicit loop_completed marker event for broker/control logic
+                                        try:
+                                            await get_event_service().emit({
+                                                'execution_id': parent_execution_id,
+                                                'event_type': 'loop_completed',
+                                                'node_name': parent_step,
+                                                'node_type': 'loop_control',
+                                                'status': 'COMPLETED',
+                                                'result': {
+                                                    'data': {
+                                                        'results': final_results,
+                                                        'result': final_results,
+                                                        'count': len(final_results)
+                                                    },
+                                                    'results': final_results,
+                                                    'result': final_results,
+                                                    'count': len(final_results)
+                                                },
+                                                'context': {
+                                                    'loop_completed': True,
+                                                    'total_iterations': expected,
+                                                    'aggregated_results': final_results
+                                                }
+                                            })
+                                        except Exception:
+                                            logger.debug("Failed to emit loop_completed marker event", exc_info=True)
+                                        logger.info(f"COMPLETION_HANDLER: Emitted final aggregated event for {parent_step} with {len(final_results)} results")
+                                        # Trigger broker to advance the parent after aggregate
+                                        try:
+                                            from noetl.api.event import evaluate_broker_for_execution
+                                            import asyncio
+                                            if asyncio.get_event_loop().is_running():
+                                                asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
+                                            else:
+                                                await evaluate_broker_for_execution(parent_execution_id)
+                                        except Exception:
+                                            logger.debug("Failed to schedule broker evaluation after aggregated event", exc_info=True)
+                            except Exception:
+                                logger.debug("Failed to emit aggregated loop completion from queue complete", exc_info=True)
                             
                 except Exception:
                     logger.debug("Failed to emit loop mapping event", exc_info=True)

@@ -327,6 +327,7 @@ workbook:
     with:
       alert_cities: "{{ alert_cities }}"
       alert_count: "{{ alert_count }}"
+      execution_id: "{{ execution_id }}"
       db_host: "localhost"
       db_port: "30543"
       db_user: "demo"
@@ -340,10 +341,13 @@ workbook:
         alert_count INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      -- Ensure new column exists when table was created by older runs
+      ALTER TABLE weather_alert_summary ADD COLUMN IF NOT EXISTS execution_id BIGINT;
 
       -- Insert aggregated summary
-      INSERT INTO weather_alert_summary (alert_cities, alert_count)
+      INSERT INTO weather_alert_summary (execution_id, alert_cities, alert_count)
         VALUES (
+          {{ execution_id | default(0, true) }},
           '{{ alert_cities | default([], true) | tojson }}',
           {{ alert_count | default(0, true) }}
         );

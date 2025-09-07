@@ -474,8 +474,8 @@ async def create_event(
                                           AND lower(status) IN ('completed','success')
                                           AND output_result IS NOT NULL
                                           AND output_result != '{}'
-                                          AND NOT (output_result::text LIKE '%"skipped": true%')
-                                          AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                                         ORDER BY timestamp DESC
                                         LIMIT 1
                                         """,
@@ -1084,7 +1084,7 @@ class EventService:
             try:
                 evt_l = (str(event_type) if event_type is not None else '').lower()
                 # Re-evaluate broker on key lifecycle events, including task completion/errors
-                if evt_l in {"execution_start", "action_completed", "action_error", "task_complete", "task_error", "loop_iteration"}:
+                if evt_l in {"execution_start", "action_completed", "action_error", "task_complete", "task_error", "loop_iteration", "loop_completed"}:
                     try:
                         if asyncio.get_event_loop().is_running():
                             asyncio.create_task(evaluate_broker_for_execution(execution_id))
@@ -1536,6 +1536,7 @@ async def evaluate_broker_for_execution(
             "workload": workload,
             "results": results_ctx,
             "context": workload,
+            "execution_id": execution_id,
         }
         # Promote step results and workload fields to top-level for direct Jinja access
         try:
@@ -1837,6 +1838,7 @@ async def evaluate_broker_for_execution(
         # with an aggregated result and proceed using this step's 'next' transitions.
         if isinstance(next_step, dict) and ('loop' in next_step) and ((next_step.get('type') or '').lower() != 'loop'):
             try:
+                loop_completed_advance = False
                 step_nm = next_step.get('step') or next_step.get('name') or next_step.get('task') or f'step-{idx+1}'
                 # Build loop spec from attribute
                 lspec = next_step.get('loop') or {}
@@ -1935,6 +1937,10 @@ async def evaluate_broker_for_execution(
                                   AND event_type = 'action_completed'
                                   AND node_id LIKE %s
                                   AND lower(status) IN ('completed','success')
+                                  AND output_result IS NOT NULL AND output_result != '{}'
+                                  AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                  AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                  AND output_result::text LIKE '%%"alert":%%'
                                 """,
                                 (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
                             )
@@ -1954,7 +1960,7 @@ async def evaluate_broker_for_execution(
                         async with get_async_db_connection() as conn:
                             async with conn.cursor(row_factory=dict_row) as cur:
                                 if step_type_lower == 'playbook':
-                                    # For playbook type loops, get results from action_completed iteration events
+                                    # For playbook loops, aggregate iteration mapping events containing evaluation outputs ("alert")
                                     await cur.execute(
                                         """
                                         SELECT output_result FROM noetl.event_log
@@ -1963,6 +1969,10 @@ async def evaluate_broker_for_execution(
                                           AND event_type = 'action_completed'
                                           AND node_id LIKE %s
                                           AND lower(status) IN ('completed','success')
+                                          AND output_result IS NOT NULL AND output_result != '{}'
+                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                          AND output_result::text LIKE '%%"alert":%%'
                                         ORDER BY timestamp
                                         """,
                                         (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
@@ -2030,16 +2040,38 @@ async def evaluate_broker_for_execution(
                             'result': {
                                 'data': {
                                     'results': agg_list,
+                                    'result': agg_list,
                                     'count': len(agg_list)
                                 },
                                 'results': agg_list,
+                                'result': agg_list,
                                 'count': len(agg_list)
                             },
-                            'context': {'workload': workload},
+                            'context': {'workload': workload, 'loop_completed': True, 'total_iterations': len(agg_list)},
                         })
                     except Exception:
                         logger.debug("INLINE LOOP: Failed to emit aggregate completion", exc_info=True)
-                    return
+                    # After emitting aggregate, continue to advance to next step below
+                    loop_completed_advance = True
+
+                # If aggregate already exists and all iterations are complete, advance to the next step
+                if expected > 0 and iter_complete_count >= expected and done_evt:
+                    try:
+                        nxt_list = next_step.get('next') or []
+                        target_after_loop = None
+                        if isinstance(nxt_list, list) and nxt_list:
+                            first_case = nxt_list[0]
+                            if isinstance(first_case, dict):
+                                target_after_loop = first_case.get('step') or first_case.get('name') or first_case.get('task')
+                            else:
+                                target_after_loop = str(first_case)
+                        if target_after_loop and target_after_loop in step_index:
+                            idx = step_index[target_after_loop]
+                            next_step = steps[idx]
+                            logger.info(f"INLINE LOOP: Loop '{step_nm}' completed; advancing to next step '{target_after_loop}' (idx={idx})")
+                            loop_completed_advance = True
+                    except Exception:
+                        logger.debug("INLINE LOOP: Failed to compute next step after loop completion", exc_info=True)
 
                 # Schedule per-item jobs if not already scheduled (or partially scheduled)
                 scheduled_any = False
@@ -2212,8 +2244,10 @@ async def evaluate_broker_for_execution(
                     return
             except Exception:
                 logger.debug("INLINE LOOP: scheduling error", exc_info=True)
-            # Always return after handling a step with loop attribute to prevent falling through to control step detection
-            return
+            # Only return early if we did not advance to the next step after loop completion
+            if not locals().get('loop_completed_advance'):
+                # Prevent falling through to control step detection while loop is still active
+                return
 
         if isinstance(next_step, dict):
             _sname = next_step.get('step') or next_step.get('name')
@@ -2978,8 +3012,8 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                               AND lower(status) IN ('completed','success')
                               AND output_result IS NOT NULL
                               AND output_result != '{}'
-                              AND NOT (output_result::text LIKE '%"skipped": true%')
-                              AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                             ORDER BY timestamp DESC
                             LIMIT 1
                             """,
@@ -3010,8 +3044,8 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                               AND lower(status) IN ('completed','success')
                               AND output_result IS NOT NULL
                               AND output_result != '{}'
-                              AND NOT (output_result::text LIKE '%"skipped": true%')
-                              AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                             ORDER BY timestamp DESC
                             LIMIT 1
                             """,
@@ -3317,8 +3351,8 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                   AND lower(status) IN ('completed','success')
                                   AND output_result IS NOT NULL
                                   AND output_result != '{}'
-                                  AND NOT (output_result::text LIKE '%"skipped": true%')
-                                  AND NOT (output_result::text LIKE '%"reason": "control_step"%')
+                                  AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                  AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
                                 ORDER BY timestamp DESC
                                 LIMIT 1
                                 """,
@@ -3376,8 +3410,8 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                               AND event_type = 'action_completed'
                               AND node_name = %s
                               AND lower(status) = 'completed'
-                              AND input_context::text LIKE '%loop_completed%'
-                              AND input_context::text LIKE '%true%'
+                              AND input_context::text LIKE '%%loop_completed%%'
+                              AND input_context::text LIKE '%%true%%'
                             """,
                             (parent_execution_id, loop_step_name)
                         )
@@ -3404,9 +3438,11 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             'result': {
                                 'data': {
                                     'results': final_results,
+                                    'result': final_results,
                                     'count': len(final_results)
                                 },
                                 'results': final_results,
+                                'result': final_results,
                                 'count': len(final_results)
                             },
                             'context': {
@@ -3416,6 +3452,32 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             }
                         })
                         logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} completed! Final aggregated results: {final_results}")
+                        # Emit an explicit loop_completed marker event too
+                        try:
+                            await event_service.emit({
+                                'execution_id': parent_execution_id,
+                                'event_type': 'loop_completed',
+                                'node_name': loop_step_name,
+                                'node_type': 'loop_control',
+                                'status': 'COMPLETED',
+                                'result': {
+                                    'data': {
+                                        'results': final_results,
+                                        'result': final_results,
+                                        'count': len(final_results)
+                                    },
+                                    'results': final_results,
+                                    'result': final_results,
+                                    'count': len(final_results)
+                                },
+                                'context': {
+                                    'loop_completed': True,
+                                    'total_iterations': len(final_results),
+                                    'aggregated_results': final_results
+                                }
+                            })
+                        except Exception:
+                            logger.debug("LOOP_COMPLETION_CHECK: Failed to emit loop_completed marker", exc_info=True)
                         
     except Exception as e:
         logger.error(f"LOOP_COMPLETION_CHECK: Error processing loop completion: {e}")
