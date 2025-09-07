@@ -10,22 +10,71 @@ data:
     #!/bin/bash
     set -e
 
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-      CREATE SCHEMA IF NOT EXISTS $POSTGRES_SCHEMA;
-      CREATE SCHEMA IF NOT EXISTS noetl;
-      -- CREATE EXTENSION IF NOT EXISTS plpython3u;
-    EOSQL
+    POSTGRES="psql -d ${POSTGRES_DB} --username ${POSTGRES_USER}"
 
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -f /schema_ddl.sql
+    echo "Creating database schemas in $POSTGRES_DB"
+
+    echo "Creating database schema ${POSTGRES_SCHEMA}"
+
+    $POSTGRES <<-ESQL
+    \connect ${POSTGRES_DB};
+    SET SESSION AUTHORIZATION ${POSTGRES_USER};
+    CREATE SCHEMA IF NOT EXISTS ${POSTGRES_SCHEMA};
+    CREATE EXTENSION IF NOT EXISTS plpython3u;
+    ESQL
+
+    echo "Database schema ${POSTGRES_SCHEMA} created"
+
+    # Create noetl user and schema
+    echo "Creating noetl user and schema"
+
+    $POSTGRES <<-ESQL
+    \connect ${POSTGRES_DB};
+    SET SESSION AUTHORIZATION ${POSTGRES_USER};
+
+    -- Create noetl user if it doesn't exist
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${NOETL_USER}') THEN
+        CREATE USER ${NOETL_USER} WITH PASSWORD '${NOETL_PASSWORD}' CREATEDB LOGIN;
+      END IF;
+    END
+    \$\$;
+
+    -- Create noetl schema if it doesn't exist
+    CREATE SCHEMA IF NOT EXISTS ${NOETL_SCHEMA};
+
+    -- Grant privileges to noetl user
+    GRANT ALL PRIVILEGES ON SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};
+    ALTER DEFAULT PRIVILEGES IN SCHEMA ${NOETL_SCHEMA} GRANT ALL ON TABLES TO ${NOETL_USER};
+    ALTER DEFAULT PRIVILEGES IN SCHEMA ${NOETL_SCHEMA} GRANT ALL ON SEQUENCES TO ${NOETL_USER};
+    ESQL
+
+    echo "Noetl user and schema created"
+
+    # Apply canonical schema DDL
+    $POSTGRES -v ON_ERROR_STOP=1 -f /schema_ddl.sql --echo-all
+
+    echo "Database schema objects created"
 
   schema_ddl.sql: |
-    -- Schema DDL for NoETL
-    CREATE SCHEMA IF NOT EXISTS noetl;
+    -- Canonical Schema DDL for NoETL (single source of truth)
+    -- Ensures noetl owns all objects to avoid owner-only DDL failures
 
+    CREATE SCHEMA IF NOT EXISTS noetl;
+    ALTER SCHEMA noetl OWNER TO noetl;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON TABLES TO noetl;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;
+
+    -- Resource
     CREATE TABLE IF NOT EXISTS noetl.resource (
         name TEXT PRIMARY KEY
     );
+    ALTER TABLE noetl.resource OWNER TO noetl;
 
+    -- Catalog
     CREATE TABLE IF NOT EXISTS noetl.catalog (
         resource_path     TEXT     NOT NULL,
         resource_type     TEXT     NOT NULL REFERENCES noetl.resource(name),
@@ -39,14 +88,18 @@ data:
         timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (resource_path, resource_version)
     );
+    ALTER TABLE noetl.catalog OWNER TO noetl;
 
+    -- Workload
     CREATE TABLE IF NOT EXISTS noetl.workload (
         execution_id BIGINT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         data TEXT,
         PRIMARY KEY (execution_id)
     );
+    ALTER TABLE noetl.workload OWNER TO noetl;
 
+    -- Event log
     CREATE TABLE IF NOT EXISTS noetl.event_log (
         execution_id BIGINT,
         event_id BIGINT,
@@ -77,10 +130,11 @@ data:
         trace_component JSONB,
         PRIMARY KEY (execution_id, event_id)
     );
-
+    ALTER TABLE noetl.event_log OWNER TO noetl;
     ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB;
     ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
 
+    -- Workflow/workbook/transition
     CREATE TABLE IF NOT EXISTS noetl.workflow (
         execution_id BIGINT,
         step_id VARCHAR,
@@ -90,6 +144,7 @@ data:
         raw_config TEXT,
         PRIMARY KEY (execution_id, step_id)
     );
+    ALTER TABLE noetl.workflow OWNER TO noetl;
 
     CREATE TABLE IF NOT EXISTS noetl.workbook (
         execution_id BIGINT,
@@ -99,6 +154,7 @@ data:
         raw_config TEXT,
         PRIMARY KEY (execution_id, task_id)
     );
+    ALTER TABLE noetl.workbook OWNER TO noetl;
 
     CREATE TABLE IF NOT EXISTS noetl.transition (
         execution_id BIGINT,
@@ -108,7 +164,9 @@ data:
         with_params TEXT,
         PRIMARY KEY (execution_id, from_step, to_step, condition)
     );
+    ALTER TABLE noetl.transition OWNER TO noetl;
 
+    -- Error log
     CREATE TABLE IF NOT EXISTS noetl.error_log (
         error_id BIGINT PRIMARY KEY,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -127,14 +185,13 @@ data:
         resolution_notes TEXT,
         resolution_timestamp TIMESTAMP
     );
-
-    ALTER TABLE noetl.error_log ALTER COLUMN error_id TYPE BIGINT;
-
+    ALTER TABLE noetl.error_log OWNER TO noetl;
     CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON noetl.error_log (timestamp);
     CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON noetl.error_log (error_type);
     CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON noetl.error_log (execution_id);
     CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON noetl.error_log (resolved);
 
+    -- Credential
     CREATE TABLE IF NOT EXISTS noetl.credential (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
@@ -146,11 +203,11 @@ data:
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
-
+    ALTER TABLE noetl.credential OWNER TO noetl;
     CREATE INDEX IF NOT EXISTS idx_credential_type ON noetl.credential (type);
     ALTER TABLE noetl.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
 
-    -- Unified runtime table for servers, brokers, and worker pools (transient runtime info)
+    -- Runtime
     CREATE TABLE IF NOT EXISTS noetl.runtime (
         runtime_id BIGINT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -165,14 +222,13 @@ data:
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
-    ALTER TABLE noetl.runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+    ALTER TABLE noetl.runtime OWNER TO noetl;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON noetl.runtime (component_type, name);
-
     CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
     CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
     CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
 
-    -- Queue table (job queue)
+    -- Queue
     CREATE TABLE IF NOT EXISTS noetl.queue (
         id BIGSERIAL PRIMARY KEY,
         execution_id BIGINT NOT NULL,
@@ -190,13 +246,13 @@ data:
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
-
+    ALTER TABLE noetl.queue OWNER TO noetl;
     CREATE INDEX IF NOT EXISTS idx_queue_status ON noetl.queue (status);
     CREATE INDEX IF NOT EXISTS idx_queue_priority ON noetl.queue (priority);
     CREATE INDEX IF NOT EXISTS idx_queue_available_at ON noetl.queue (available_at);
     CREATE INDEX IF NOT EXISTS idx_queue_worker ON noetl.queue (worker_id);
 
-    -- Schedule table
+    -- Schedule
     CREATE TABLE IF NOT EXISTS noetl.schedule (
         schedule_id BIGSERIAL PRIMARY KEY,
         playbook_path TEXT NOT NULL,
@@ -213,6 +269,7 @@ data:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         meta JSONB
     );
+    ALTER TABLE noetl.schedule OWNER TO noetl;
     CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON noetl.schedule (next_run_at) WHERE enabled = TRUE;
     CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON noetl.schedule (playbook_path);
 
@@ -222,6 +279,8 @@ data:
         name TEXT UNIQUE NOT NULL,
         description TEXT
     );
+    ALTER TABLE noetl.role OWNER TO noetl;
+
     CREATE TABLE IF NOT EXISTS noetl.profile (
         id BIGINT PRIMARY KEY,
         username TEXT UNIQUE NOT NULL,
@@ -231,6 +290,8 @@ data:
         type TEXT NOT NULL CHECK (type IN ('user','bot')),
         created_at TIMESTAMPTZ DEFAULT now()
     );
+    ALTER TABLE noetl.profile OWNER TO noetl;
+
     CREATE TABLE IF NOT EXISTS noetl.session (
         id BIGINT PRIMARY KEY,
         profile_id BIGINT REFERENCES noetl.profile(id),
@@ -239,6 +300,8 @@ data:
         disconnected_at TIMESTAMPTZ,
         metadata JSONB
     );
+    ALTER TABLE noetl.session OWNER TO noetl;
+
     CREATE TABLE IF NOT EXISTS noetl.label (
         id BIGINT PRIMARY KEY,
         parent_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
@@ -246,6 +309,8 @@ data:
         owner_id BIGINT REFERENCES noetl.profile(id),
         created_at TIMESTAMPTZ DEFAULT now()
     );
+    ALTER TABLE noetl.label OWNER TO noetl;
+
     CREATE TABLE IF NOT EXISTS noetl.chat (
         id BIGINT PRIMARY KEY,
         label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
@@ -253,6 +318,8 @@ data:
         owner_id BIGINT REFERENCES noetl.profile(id),
         created_at TIMESTAMPTZ DEFAULT now()
     );
+    ALTER TABLE noetl.chat OWNER TO noetl;
+
     CREATE TABLE IF NOT EXISTS noetl.member (
         id BIGINT PRIMARY KEY,
         chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
@@ -261,6 +328,8 @@ data:
         joined_at TIMESTAMPTZ DEFAULT now(),
         UNIQUE(chat_id, profile_id)
     );
+    ALTER TABLE noetl.member OWNER TO noetl;
+
     CREATE TABLE IF NOT EXISTS noetl.message (
         id BIGINT PRIMARY KEY,
         chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
@@ -271,6 +340,8 @@ data:
         metadata JSONB,
         created_at TIMESTAMPTZ DEFAULT now()
     );
+    ALTER TABLE noetl.message OWNER TO noetl;
+
     CREATE TABLE IF NOT EXISTS noetl.attachment (
         id BIGINT PRIMARY KEY,
         label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
@@ -280,14 +351,16 @@ data:
         uploaded_by BIGINT REFERENCES noetl.profile(id),
         created_at TIMESTAMPTZ DEFAULT now()
     );
+    ALTER TABLE noetl.attachment OWNER TO noetl;
     CREATE INDEX IF NOT EXISTS idx_label_parent ON noetl.label(parent_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON noetl.label(parent_id, name);
     CREATE INDEX IF NOT EXISTS idx_chat_label ON noetl.chat(label_id);
     CREATE INDEX IF NOT EXISTS idx_message_chat_created ON noetl.message(chat_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON noetl.attachment(chat_id, created_at);
 
-    -- Snowflake-like id generation helpers
+    -- Snowflake-like id helpers
     CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
+    ALTER SEQUENCE noetl.snowflake_seq OWNER TO noetl;
     CREATE OR REPLACE FUNCTION noetl.snowflake_id() RETURNS BIGINT AS $$
     DECLARE
         our_epoch BIGINT := 1704067200000;
@@ -302,6 +375,7 @@ data:
                (seq_id & 262143);
     END;
     $$ LANGUAGE plpgsql;
+    ALTER FUNCTION noetl.snowflake_id() OWNER TO noetl;
     ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
     ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
     ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
@@ -311,7 +385,7 @@ data:
     ALTER TABLE noetl.message ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
     ALTER TABLE noetl.attachment ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 
-    -- Seed data example (id auto via function)
+    -- Seed sample roles (ids via function)
     INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'admin', 'Administrator') ON CONFLICT (name) DO NOTHING;
     INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'user', 'Standard user') ON CONFLICT (name) DO NOTHING;
     INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'bot', 'Automation bot') ON CONFLICT (name) DO NOTHING;

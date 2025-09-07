@@ -2117,8 +2117,14 @@ async def evaluate_broker_for_execution(
                         if mw:
                             task_cfg['with'] = mw
 
+                # Use a stable step index for node_id to avoid generating
+                # new node_ids across reevaluations that would re-enqueue endlessly.
+                try:
+                    sidx = step_index.get(step_nm, idx)
+                except Exception:
+                    sidx = idx
                 for i, it in enumerate(items_f):
-                    iter_node_id = f"{execution_id}-step-{idx+1}-iter-{i}"
+                    iter_node_id = f"{execution_id}-step-{sidx+1}-iter-{i}"
                     
                     # Check if this iteration was already scheduled (using node_id to identify the specific iteration)
                     try:

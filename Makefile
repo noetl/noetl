@@ -654,14 +654,12 @@ postgres-reset-schema:
 	echo "Dropping schema $${NOETL_SCHEMA:-noetl}..."; \
 	psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS $${NOETL_SCHEMA:-noetl} CASCADE;"; \
 	echo "Applying schema DDL..."; \
-	if $(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files >/dev/null 2>&1 ; then \
+	if [ -f scripts/database/postgres/schema_ddl.sql ]; then \
+		psql -v ON_ERROR_STOP=1 -f scripts/database/postgres/schema_ddl.sql ; \
+	elif $(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files >/dev/null 2>&1 ; then \
 		$(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files -o jsonpath='{.data.schema_ddl\.sql}' | psql -v ON_ERROR_STOP=1 -f - ; \
 	else \
-		if [ -f k8s/postgres/schema_ddl.sql ]; then \
-			psql -v ON_ERROR_STOP=1 -f k8s/postgres/schema_ddl.sql ; \
-		else \
-			echo "Could not find schema_ddl.sql locally or in cluster configmap; aborting."; exit 1; \
-		fi; \
+		echo "Could not find schema_ddl.sql locally or in cluster configmap; aborting."; exit 1; \
 	fi
 
 

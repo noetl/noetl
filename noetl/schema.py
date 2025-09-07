@@ -335,6 +335,22 @@ class DatabaseSchema:
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
                 """)
+                # Ensure ownership so subsequent index/alter operations succeed
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.credential OWNER TO {self.noetl_user}")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                    try:
+                        admin = psycopg.connect(self.admin_conn)
+                        try:
+                            admin.autocommit = True
+                            with admin.cursor() as ac:
+                                ac.execute(f"ALTER TABLE {self.noetl_schema}.credential OWNER TO {self.noetl_user}")
+                        finally:
+                            admin.close()
+                    except Exception:
+                        pass
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_credential_type ON {self.noetl_schema}.credential (type);
                 """)
@@ -363,6 +379,16 @@ class DatabaseSchema:
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):
                         self.conn.rollback()
+                    try:
+                        admin = psycopg.connect(self.admin_conn)
+                        try:
+                            admin.autocommit = True
+                            with admin.cursor() as ac:
+                                ac.execute(f"ALTER TABLE {self.noetl_schema}.runtime OWNER TO {self.noetl_user}")
+                        finally:
+                            admin.close()
+                    except Exception:
+                        pass
                 # Schedule registry for time-based playbook execution
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.schedule (
@@ -382,6 +408,22 @@ class DatabaseSchema:
                         meta JSONB
                     )
                 """)
+                # Ensure ownership for schedule table before creating indexes
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.schedule OWNER TO {self.noetl_user}")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                    try:
+                        admin = psycopg.connect(self.admin_conn)
+                        try:
+                            admin.autocommit = True
+                            with admin.cursor() as ac:
+                                ac.execute(f"ALTER TABLE {self.noetl_schema}.schedule OWNER TO {self.noetl_user}")
+                        finally:
+                            admin.close()
+                    except Exception:
+                        pass
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON {self.noetl_schema}.schedule (next_run_at) WHERE enabled = TRUE;
                 """)
@@ -425,6 +467,17 @@ class DatabaseSchema:
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):
                         self.conn.rollback()
+                    # Try with admin connection if current user isn't the owner
+                    try:
+                        admin = psycopg.connect(self.admin_conn)
+                        try:
+                            admin.autocommit = True
+                            with admin.cursor() as ac:
+                                ac.execute(f"ALTER TABLE {self.noetl_schema}.queue OWNER TO {self.noetl_user}")
+                        finally:
+                            admin.close()
+                    except Exception:
+                        pass
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_status_available ON {self.noetl_schema}.queue (status, available_at, priority DESC, id)
                 """)
@@ -526,13 +579,32 @@ class DatabaseSchema:
                         created_at TIMESTAMPTZ DEFAULT now()
                     )
                 """)
-                cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
-                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
-                """)
+                try:
+                    cursor.execute(f"""
+                        CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
+                        CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                        CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
+                        CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                    """)
+                except Exception as e:
+                    logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (sync): {e}. Retrying as admin.")
+                    try:
+                        admin = psycopg.connect(self.admin_conn)
+                        try:
+                            admin.autocommit = True
+                            with admin.cursor() as ac:
+                                ac.execute(f"""
+                                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
+                                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
+                                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
+                                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                                """)
+                        finally:
+                            admin.close()
+                    except Exception as e2:
+                        logger.error(f"Admin fallback also failed creating identity/collab indexes (sync): {e2}")
                 if not getattr(self.conn, "autocommit", False):
                     self.conn.commit()
                 logger.info("Postgres database tables initialized in noetl schema (sync).")
@@ -880,6 +952,18 @@ class DatabaseSchema:
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
                 """)
+                # Ensure credential table is owned by the noetl user so index/alter can proceed
+                try:
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.credential OWNER TO {self.noetl_user}")
+                except Exception:
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.credential OWNER TO {self.noetl_user}")
+                        await admin_conn.close()
+                    except Exception:
+                        pass
 
                 await cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_credential_type ON {self.noetl_schema}.credential (type);
@@ -913,7 +997,14 @@ class DatabaseSchema:
                 try:
                     await cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime OWNER TO {self.noetl_user}")
                 except Exception:
-                    pass
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.runtime OWNER TO {self.noetl_user}")
+                        await admin_conn.close()
+                    except Exception:
+                        pass
                 await cursor.execute(f"""
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON {self.noetl_schema}.runtime (component_type, name);
                 """)
@@ -947,6 +1038,18 @@ class DatabaseSchema:
                         meta JSONB
                     )
                 """)
+                # Ensure ownership for schedule table before indexes
+                try:
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.schedule OWNER TO {self.noetl_user}")
+                except Exception:
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.schedule OWNER TO {self.noetl_user}")
+                        await admin_conn.close()
+                    except Exception:
+                        pass
                 await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON {self.noetl_schema}.schedule (next_run_at) WHERE enabled = TRUE;")
                 await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON {self.noetl_schema}.schedule (playbook_path);")
 
@@ -974,7 +1077,15 @@ class DatabaseSchema:
                 try:
                     await cursor.execute(f"ALTER TABLE {self.noetl_schema}.queue OWNER TO {self.noetl_user}")
                 except Exception:
-                    pass
+                    # Try admin fallback when table is owned by a different role
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.queue OWNER TO {self.noetl_user}")
+                        await admin_conn.close()
+                    except Exception:
+                        pass
                 await cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_status_available ON {self.noetl_schema}.queue (status, available_at, priority DESC, id)
                 """)
@@ -1069,32 +1180,94 @@ class DatabaseSchema:
                         created_at TIMESTAMPTZ DEFAULT now()
                     )
                 """)
-                await cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
-                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
-                """)
+                try:
+                    await cursor.execute(f"""
+                        CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
+                        CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                        CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
+                        CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                    """)
+                except Exception as e:
+                    logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (async): {e}. Retrying as admin.")
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        try:
+                            await admin_conn.set_autocommit(True)
+                            async with admin_conn.cursor() as ac:
+                                await ac.execute(f"""
+                                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
+                                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
+                                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
+                                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                                """)
+                        finally:
+                            await admin_conn.close()
+                    except Exception as e2:
+                        logger.error(f"Admin fallback also failed creating identity/collab indexes (async): {e2}")
 
                 # Snowflake-like ID function (best-effort) and defaults
-                await cursor.execute(f"""
-                    CREATE OR REPLACE FUNCTION {self.noetl_schema}.snowflake_id() RETURNS BIGINT AS $$
-                    DECLARE
-                        our_epoch BIGINT := 1704067200000; -- 2024-01-01 UTC in ms
-                        seq_id BIGINT;
-                        now_ms BIGINT;
-                        shard_id INT := 1; -- single shard default
-                    BEGIN
-                        SELECT nextval('{self.noetl_schema}.snowflake_seq') % 1024 INTO seq_id;
-                        now_ms := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
-                        RETURN ((now_ms - our_epoch) << 23) |
-                               ((shard_id & 31) << 18) |
-                               (seq_id & 262143);
-                    END;
-                    $$ LANGUAGE plpgsql;
-                """)
+                try:
+                    await cursor.execute(f"""
+                        CREATE OR REPLACE FUNCTION {self.noetl_schema}.snowflake_id() RETURNS BIGINT AS $$
+                        DECLARE
+                            our_epoch BIGINT := 1704067200000; -- 2024-01-01 UTC in ms
+                            seq_id BIGINT;
+                            now_ms BIGINT;
+                            shard_id INT := 1; -- single shard default
+                        BEGIN
+                            SELECT nextval('{self.noetl_schema}.snowflake_seq') % 1024 INTO seq_id;
+                            now_ms := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+                            RETURN ((now_ms - our_epoch) << 23) |
+                                   ((shard_id & 31) << 18) |
+                                   (seq_id & 262143);
+                        END;
+                        $$ LANGUAGE plpgsql;
+                    """)
+                except Exception as e:
+                    # If function exists with different owner, try to change owner via admin and retry
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER FUNCTION {self.noetl_schema}.snowflake_id() OWNER TO {self.noetl_user}")
+                        await admin_conn.close()
+                    except Exception:
+                        pass
+                    try:
+                        await cursor.execute(f"""
+                            CREATE OR REPLACE FUNCTION {self.noetl_schema}.snowflake_id() RETURNS BIGINT AS $$
+                            DECLARE
+                                our_epoch BIGINT := 1704067200000; -- 2024-01-01 UTC in ms
+                                seq_id BIGINT;
+                                now_ms BIGINT;
+                                shard_id INT := 1; -- single shard default
+                            BEGIN
+                                SELECT nextval('{self.noetl_schema}.snowflake_seq') % 1024 INTO seq_id;
+                                now_ms := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+                                RETURN ((now_ms - our_epoch) << 23) |
+                                       ((shard_id & 31) << 18) |
+                                       (seq_id & 262143);
+                            END;
+                            $$ LANGUAGE plpgsql;
+                        """)
+                    except Exception:
+                        pass
+
+                # Sequence and ownership
                 await cursor.execute(f"CREATE SEQUENCE IF NOT EXISTS {self.noetl_schema}.snowflake_seq;")
+                try:
+                    await cursor.execute(f"ALTER SEQUENCE {self.noetl_schema}.snowflake_seq OWNER TO {self.noetl_user}")
+                except Exception:
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER SEQUENCE {self.noetl_schema}.snowflake_seq OWNER TO {self.noetl_user}")
+                        await admin_conn.close()
+                    except Exception:
+                        pass
                 for tbl in ['role','profile','session','label','chat','member','message','attachment']:
                     try:
                         await cursor.execute(f"ALTER TABLE {self.noetl_schema}." + tbl + " ALTER COLUMN id SET DEFAULT {self.noetl_schema}.snowflake_id();")

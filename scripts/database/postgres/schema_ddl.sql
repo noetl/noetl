@@ -1,119 +1,329 @@
-SET statement_timeout = 0;
-SET lock_timeout = 0;
-SET idle_in_transaction_session_timeout = 0;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
--- SELECT pg_catalog.set_config('search_path', '', false);
-SET check_function_bodies = false;
-SET xmloption = content;
-SET client_min_messages = warning;
-SET row_security = off;
+-- Canonical Schema DDL for NoETL (single source of truth)
+-- Ensures noetl owns all objects to avoid owner-only DDL failures
 
-CREATE EXTENSION IF NOT EXISTS plpython3u WITH SCHEMA pg_catalog;
+CREATE SCHEMA IF NOT EXISTS noetl;
+ALTER SCHEMA noetl OWNER TO noetl;
+ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON TABLES TO noetl;
+ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;
 
-SET search_path TO :"SCHEMA_NAME", pg_catalog;
-
-CREATE TABLE IF NOT EXISTS test_data_table (
-    id SERIAL PRIMARY KEY,                    -- Auto-incrementing primary key
-    name TEXT NOT NULL,                       -- Text data
-    age INTEGER,                              -- Integer for numerical data
-    created_at TIMESTAMP DEFAULT now(),       -- Timestamp with default current time
-    is_active BOOLEAN DEFAULT true,           -- Boolean flag
-    meta_data JSONB,                          -- JSONB for structured data
-    description TEXT                          -- Text field to test large multi-line data
+-- Resource
+CREATE TABLE IF NOT EXISTS noetl.resource (
+    name TEXT PRIMARY KEY
 );
+ALTER TABLE noetl.resource OWNER TO noetl;
 
-COMMENT ON TABLE test_data_table IS 'Table for testing data loading and exporting with multiline support.';
-COMMENT ON COLUMN test_data_table.meta_data IS 'Contains JSONB data for structured information.';
-COMMENT ON COLUMN test_data_table.description IS 'Contains large multiline text data for validation purposes.';
+-- Catalog
+CREATE TABLE IF NOT EXISTS noetl.catalog (
+    resource_path     TEXT     NOT NULL,
+    resource_type     TEXT     NOT NULL REFERENCES noetl.resource(name),
+    resource_version  TEXT     NOT NULL,
+    source            TEXT     NOT NULL DEFAULT 'inline',
+    resource_location TEXT,
+    content           TEXT,
+    payload           JSONB    NOT NULL,
+    meta              JSONB,
+    template          TEXT,
+    timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (resource_path, resource_version)
+);
+ALTER TABLE noetl.catalog OWNER TO noetl;
 
-INSERT INTO test_data_table (name, age, meta_data, description)
-VALUES
-('Alice', 30, '{"key_1": "value_1", "key_2": 123}'::jsonb, 'Line 1\nLine 2\nLine 3'),
-('Bob', 25, '{"key_1": "value_2", "key_2": 456}'::jsonb, 'This is a\nmultiline description\nfor Bob.'),
-('Charlie', 40, '{"key_1": "value_3", "key_3": "extra_key"}'::jsonb, 'Description\nwith only two lines.'),
-('Daisy', 35, '{"key_4": "value_4", "nested_key": {"inner_key": "value"}}'::jsonb, 'Another\nexample\nof multiline text.'),
-('Eva', NULL, NULL, 'NULL JSON\nand AGE values.');
+-- Workload
+CREATE TABLE IF NOT EXISTS noetl.workload (
+    execution_id BIGINT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    data TEXT,
+    PRIMARY KEY (execution_id)
+);
+ALTER TABLE noetl.workload OWNER TO noetl;
 
--- CREATE TABLE IF NOT EXISTS resource (
---     name TEXT PRIMARY KEY
--- );
---
--- CREATE TABLE IF NOT EXISTS catalog (
---     resource_path     TEXT     NOT NULL,
---     resource_type     TEXT     NOT NULL REFERENCES resource(name),
---     resource_version  TEXT     NOT NULL,
---     source            TEXT     NOT NULL DEFAULT 'inline',
---     resource_location TEXT,
---     content           TEXT,
---     payload           JSONB    NOT NULL,
---     meta              JSONB,
---     template          TEXT,
---     timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
---     PRIMARY KEY (resource_path, resource_version)
--- );
---
---
--- CREATE TABLE IF NOT EXISTS event_log (
---     execution_id VARCHAR,
---     event_id VARCHAR,
---     parent_event_id VARCHAR,
---     timestamp TIMESTAMP,
---     event_type VARCHAR,
---     node_id VARCHAR,
---     node_name VARCHAR,
---     node_type VARCHAR,
---     status VARCHAR,
---     duration DOUBLE PRECISION,
---     input_context TEXT,
---     output_result TEXT,
---     metadata TEXT,
---     error TEXT,
---     loop_id VARCHAR,
---     loop_name VARCHAR,
---     iterator VARCHAR,
---     items TEXT,
---     current_index INTEGER,
---     current_item TEXT,
---     results TEXT,
---     worker_id VARCHAR,
---     distributed_state VARCHAR,
---     context_key VARCHAR,
---     context_value TEXT,
---     PRIMARY KEY (execution_id, event_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS workflow (
---     execution_id VARCHAR,
---     step_id VARCHAR,
---     step_name VARCHAR,
---     step_type VARCHAR,
---     description TEXT,
---     raw_config TEXT,
---     PRIMARY KEY (execution_id, step_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS workbook (
---     execution_id VARCHAR,
---     task_id VARCHAR,
---     task_name VARCHAR,
---     task_type VARCHAR,
---     raw_config TEXT,
---     PRIMARY KEY (execution_id, task_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS workload (
---     execution_id VARCHAR,
---     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
---     data TEXT,
---     PRIMARY KEY (execution_id)
--- );
---
--- CREATE TABLE IF NOT EXISTS transition (
---     execution_id VARCHAR,
---     from_step VARCHAR,
---     to_step VARCHAR,
---     condition TEXT,
---     with_params TEXT,
---     PRIMARY KEY (execution_id, from_step, to_step, condition)
--- );
+-- Event log
+CREATE TABLE IF NOT EXISTS noetl.event_log (
+    execution_id BIGINT,
+    event_id BIGINT,
+    parent_event_id BIGINT,
+    parent_execution_id BIGINT,
+    timestamp TIMESTAMP,
+    event_type VARCHAR,
+    node_id VARCHAR,
+    node_name VARCHAR,
+    node_type VARCHAR,
+    status VARCHAR,
+    duration DOUBLE PRECISION,
+    input_context TEXT,
+    output_result TEXT,
+    metadata TEXT,
+    error TEXT,
+    loop_id VARCHAR,
+    loop_name VARCHAR,
+    iterator VARCHAR,
+    items TEXT,
+    current_index INTEGER,
+    current_item TEXT,
+    results TEXT,
+    worker_id VARCHAR,
+    distributed_state VARCHAR,
+    context_key VARCHAR,
+    context_value TEXT,
+    trace_component JSONB,
+    PRIMARY KEY (execution_id, event_id)
+);
+ALTER TABLE noetl.event_log OWNER TO noetl;
+ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB;
+ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
+
+-- Workflow/workbook/transition
+CREATE TABLE IF NOT EXISTS noetl.workflow (
+    execution_id BIGINT,
+    step_id VARCHAR,
+    step_name VARCHAR,
+    step_type VARCHAR,
+    description TEXT,
+    raw_config TEXT,
+    PRIMARY KEY (execution_id, step_id)
+);
+ALTER TABLE noetl.workflow OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.workbook (
+    execution_id BIGINT,
+    task_id VARCHAR,
+    task_name VARCHAR,
+    task_type VARCHAR,
+    raw_config TEXT,
+    PRIMARY KEY (execution_id, task_id)
+);
+ALTER TABLE noetl.workbook OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.transition (
+    execution_id BIGINT,
+    from_step VARCHAR,
+    to_step VARCHAR,
+    condition TEXT,
+    with_params TEXT,
+    PRIMARY KEY (execution_id, from_step, to_step, condition)
+);
+ALTER TABLE noetl.transition OWNER TO noetl;
+
+-- Error log
+CREATE TABLE IF NOT EXISTS noetl.error_log (
+    error_id BIGINT PRIMARY KEY,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    error_type VARCHAR(50),
+    error_message TEXT,
+    execution_id BIGINT,
+    step_id VARCHAR,
+    step_name VARCHAR,
+    template_string TEXT,
+    context_data JSONB,
+    stack_trace TEXT,
+    input_data JSONB,
+    output_data JSONB,
+    severity VARCHAR(20) DEFAULT 'error',
+    resolved BOOLEAN DEFAULT FALSE,
+    resolution_notes TEXT,
+    resolution_timestamp TIMESTAMP
+);
+ALTER TABLE noetl.error_log OWNER TO noetl;
+CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON noetl.error_log (timestamp);
+CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON noetl.error_log (error_type);
+CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON noetl.error_log (execution_id);
+CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON noetl.error_log (resolved);
+
+-- Credential
+CREATE TABLE IF NOT EXISTS noetl.credential (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL,
+    data_encrypted TEXT NOT NULL,
+    meta JSONB,
+    tags TEXT[],
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE noetl.credential OWNER TO noetl;
+CREATE INDEX IF NOT EXISTS idx_credential_type ON noetl.credential (type);
+ALTER TABLE noetl.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
+
+-- Runtime
+CREATE TABLE IF NOT EXISTS noetl.runtime (
+    runtime_id BIGINT PRIMARY KEY,
+    name TEXT NOT NULL,
+    component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
+    base_url TEXT,
+    status TEXT NOT NULL,
+    labels JSONB,
+    capabilities JSONB,
+    capacity INTEGER,
+    runtime JSONB,
+    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE noetl.runtime OWNER TO noetl;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON noetl.runtime (component_type, name);
+CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
+CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
+CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
+
+-- Queue
+CREATE TABLE IF NOT EXISTS noetl.queue (
+    id BIGSERIAL PRIMARY KEY,
+    execution_id BIGINT NOT NULL,
+    node_id VARCHAR NOT NULL,
+    action TEXT NOT NULL,
+    input_context JSONB,
+    status TEXT NOT NULL DEFAULT 'queued',
+    priority INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    lease_until TIMESTAMPTZ,
+    worker_id TEXT,
+    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE noetl.queue OWNER TO noetl;
+CREATE INDEX IF NOT EXISTS idx_queue_status ON noetl.queue (status);
+CREATE INDEX IF NOT EXISTS idx_queue_priority ON noetl.queue (priority);
+CREATE INDEX IF NOT EXISTS idx_queue_available_at ON noetl.queue (available_at);
+CREATE INDEX IF NOT EXISTS idx_queue_worker ON noetl.queue (worker_id);
+
+-- Schedule
+CREATE TABLE IF NOT EXISTS noetl.schedule (
+    schedule_id BIGSERIAL PRIMARY KEY,
+    playbook_path TEXT NOT NULL,
+    playbook_version TEXT,
+    cron TEXT,
+    interval_seconds INTEGER,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    timezone TEXT DEFAULT 'UTC',
+    next_run_at TIMESTAMPTZ,
+    last_run_at TIMESTAMPTZ,
+    last_status TEXT,
+    input_payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    meta JSONB
+);
+ALTER TABLE noetl.schedule OWNER TO noetl;
+CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON noetl.schedule (next_run_at) WHERE enabled = TRUE;
+CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON noetl.schedule (playbook_path);
+
+-- Identity & collaboration tables
+CREATE TABLE IF NOT EXISTS noetl.role (
+    id BIGINT PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT
+);
+ALTER TABLE noetl.role OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.profile (
+    id BIGINT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE,
+    password_hash TEXT,
+    role_id BIGINT REFERENCES noetl.role(id),
+    type TEXT NOT NULL CHECK (type IN ('user','bot')),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE noetl.profile OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.session (
+    id BIGINT PRIMARY KEY,
+    profile_id BIGINT REFERENCES noetl.profile(id),
+    session_type TEXT NOT NULL CHECK (session_type IN ('user','bot','ai')),
+    connected_at TIMESTAMPTZ DEFAULT now(),
+    disconnected_at TIMESTAMPTZ,
+    metadata JSONB
+);
+ALTER TABLE noetl.session OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.label (
+    id BIGINT PRIMARY KEY,
+    parent_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    owner_id BIGINT REFERENCES noetl.profile(id),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE noetl.label OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.chat (
+    id BIGINT PRIMARY KEY,
+    label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    owner_id BIGINT REFERENCES noetl.profile(id),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE noetl.chat OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.member (
+    id BIGINT PRIMARY KEY,
+    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
+    profile_id BIGINT REFERENCES noetl.profile(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
+    joined_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(chat_id, profile_id)
+);
+ALTER TABLE noetl.member OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.message (
+    id BIGINT PRIMARY KEY,
+    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
+    sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
+    sender_id BIGINT,
+    role TEXT,
+    content TEXT NOT NULL,
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE noetl.message OWNER TO noetl;
+
+CREATE TABLE IF NOT EXISTS noetl.attachment (
+    id BIGINT PRIMARY KEY,
+    label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    filepath TEXT NOT NULL,
+    uploaded_by BIGINT REFERENCES noetl.profile(id),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE noetl.attachment OWNER TO noetl;
+CREATE INDEX IF NOT EXISTS idx_label_parent ON noetl.label(parent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON noetl.label(parent_id, name);
+CREATE INDEX IF NOT EXISTS idx_chat_label ON noetl.chat(label_id);
+CREATE INDEX IF NOT EXISTS idx_message_chat_created ON noetl.message(chat_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON noetl.attachment(chat_id, created_at);
+
+-- Snowflake-like id helpers
+CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
+ALTER SEQUENCE noetl.snowflake_seq OWNER TO noetl;
+CREATE OR REPLACE FUNCTION noetl.snowflake_id() RETURNS BIGINT AS $$
+DECLARE
+    our_epoch BIGINT := 1704067200000;
+    seq_id BIGINT;
+    now_ms BIGINT;
+    shard_id INT := 1;
+BEGIN
+    SELECT nextval('noetl.snowflake_seq') % 1024 INTO seq_id;
+    now_ms := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+    RETURN ((now_ms - our_epoch) << 23) |
+           ((shard_id & 31) << 18) |
+           (seq_id & 262143);
+END;
+$$ LANGUAGE plpgsql;
+ALTER FUNCTION noetl.snowflake_id() OWNER TO noetl;
+ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.label ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.chat ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.member ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.message ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.attachment ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+
+-- Seed sample roles (ids via function)
+INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'admin', 'Administrator') ON CONFLICT (name) DO NOTHING;
+INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'user', 'Standard user') ON CONFLICT (name) DO NOTHING;
+INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'bot', 'Automation bot') ON CONFLICT (name) DO NOTHING;
