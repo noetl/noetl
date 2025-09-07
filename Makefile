@@ -80,8 +80,8 @@ help:
 	@echo "  make noetl-execute PLAYBOOK=examples/weather/weather_loop_example				Execute specific playbook"
 	@echo "  make export-execution-logs ID=222437726840946688 HOST=localhost PORT=8082			Dump execution to logs for specific ID"
 	@echo "  make noetl-execute-watch ID=222437726840946688 HOST=localhost PORT=8082			Watch status with live updates"
-	@echo "  make noetl-execute-status ID=222437726840946688 > status.json					Get status for specific ID"
-	@echo "  make noetl-validate-status FILE=status.json							Validate and clean up a status.json file"
+	@echo "  make noetl-execute-status ID=222437726840946688 > logs/status.json					Get status for specific ID"
+	@echo "  make noetl-validate-status FILE=logs/status.json							Validate and clean up a status.json file"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin

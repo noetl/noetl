@@ -915,7 +915,10 @@ class EventService:
             error = event_data.get("error")
             traceback_text = event_data.get("traceback")
             input_context_dict = event_data.get("context", {})
+            # Accept either 'result' (preferred) or legacy 'output_result' key from callers
             output_result_dict = event_data.get("result", {})
+            if (not output_result_dict) and (event_data.get("output_result") is not None):
+                output_result_dict = event_data.get("output_result")
             input_context = json.dumps(input_context_dict)
             output_result = json.dumps(output_result_dict)
             metadata_str = json.dumps(metadata)
@@ -2024,7 +2027,14 @@ async def evaluate_broker_for_execution(
                             'node_id': f'{execution_id}-step-{idx+1}',
                             'node_name': step_nm,
                             'node_type': 'task',
-                            'result': {'results': agg_list, 'count': len(agg_list)},
+                            'result': {
+                                'data': {
+                                    'results': agg_list,
+                                    'count': len(agg_list)
+                                },
+                                'results': agg_list,
+                                'count': len(agg_list)
+                            },
                             'context': {'workload': workload},
                         })
                     except Exception:
@@ -3391,7 +3401,14 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             'node_name': loop_step_name,
                             'node_type': 'loop',
                             'status': 'COMPLETED',
-                            'result': final_results,
+                            'result': {
+                                'data': {
+                                    'results': final_results,
+                                    'count': len(final_results)
+                                },
+                                'results': final_results,
+                                'count': len(final_results)
+                            },
                             'context': {
                                 'loop_completed': True,
                                 'total_iterations': len(final_results),
