@@ -501,7 +501,8 @@ async def create_event(
                             async with conn.cursor() as cur:
                                 await cur.execute(
                                     """
-                                    SELECT node_id FROM noetl.event_log
+                                    SELECT node_id, loop_id, loop_name, iterator, current_index, current_item 
+                                    FROM noetl.event_log
                                     WHERE execution_id = %s
                                       AND event_type = 'loop_iteration'
                                       AND node_name = %s
@@ -513,11 +514,30 @@ async def create_event(
                                 )
                                 iter_row = await cur.fetchone()
                                 iter_node_id = None
+                                loop_metadata = {}
                                 if iter_row:
-                                    iter_node_id = iter_row[0] if isinstance(iter_row, tuple) else iter_row.get('node_id')
+                                    if isinstance(iter_row, tuple):
+                                        iter_node_id, loop_id, loop_name, iterator, current_index, current_item = iter_row
+                                    else:
+                                        iter_node_id = iter_row.get('node_id')
+                                        loop_id = iter_row.get('loop_id')
+                                        loop_name = iter_row.get('loop_name')
+                                        iterator = iter_row.get('iterator')
+                                        current_index = iter_row.get('current_index')
+                                        current_item = iter_row.get('current_item')
+                                    
+                                    # Build loop metadata dict for action_completed event
+                                    if loop_id:
+                                        loop_metadata.update({
+                                            'loop_id': loop_id,
+                                            'loop_name': loop_name,
+                                            'iterator': iterator,
+                                            'current_index': current_index,
+                                            'current_item': current_item
+                                        })
                                 
                                 # Emit action_completed event for the parent loop to aggregate
-                                await event_service.emit({
+                                emit_data = {
                                     'execution_id': parent_execution_id,
                                     'event_type': 'action_completed',
                                     'status': 'COMPLETED',
@@ -530,8 +550,12 @@ async def create_event(
                                         'parent_step': parent_step,
                                         'return_step': None
                                     }
-                                })
-                                logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result}")
+                                }
+                                # Add loop metadata to the event if available
+                                emit_data.update(loop_metadata)
+                                
+                                await event_service.emit(emit_data)
+                                logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
             except Exception:
                 logger.debug("Failed to handle execution_complete event", exc_info=True)
         
@@ -921,6 +945,9 @@ class EventService:
                 output_result_dict = event_data.get("output_result")
             input_context = json.dumps(input_context_dict)
             output_result = json.dumps(output_result_dict)
+            
+            # DEBUG: Log what we're actually storing
+            logger.debug(f"EMIT_DEBUG: event_type={event_type}, input_context_dict={input_context_dict}, input_context_json_length={len(input_context)}")
             metadata_str = json.dumps(metadata)
             trace_component_str = json.dumps(trace_component) if trace_component is not None else None
 
@@ -948,6 +975,33 @@ class EventService:
                       iterator_val = event_data.get('iterator')
                       current_index_val = event_data.get('current_index')
                       current_item_val = json.dumps(event_data.get('current_item')) if event_data.get('current_item') is not None else None
+                      
+                      # Enhanced loop metadata extraction: check context and input_context for _loop metadata
+                      if not loop_id_val:
+                          # Try to extract from context
+                          context = event_data.get('context')
+                          if context and isinstance(context, dict):
+                              workload = context.get('workload')
+                              if workload and isinstance(workload, dict):
+                                  loop_data = workload.get('_loop')
+                                  if loop_data and isinstance(loop_data, dict):
+                                      loop_id_val = loop_data.get('loop_id')
+                                      loop_name_val = loop_data.get('loop_name')
+                                      iterator_val = loop_data.get('iterator')
+                                      current_index_val = loop_data.get('current_index')
+                                      current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
+                          
+                          # Try to extract from input_context if still not found
+                          if not loop_id_val:
+                              input_context_field = event_data.get('input_context')
+                              if input_context_field and isinstance(input_context_field, dict):
+                                  loop_data = input_context_field.get('_loop')
+                                  if loop_data and isinstance(loop_data, dict):
+                                      loop_id_val = loop_data.get('loop_id')
+                                      loop_name_val = loop_data.get('loop_name')
+                                      iterator_val = loop_data.get('iterator')
+                                      current_index_val = loop_data.get('current_index')
+                                      current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
                       
                       # Extract parent_execution_id from metadata or event_data
                       parent_execution_id = None
@@ -1000,6 +1054,9 @@ class EventService:
                               event_id
                           ))
                       else:
+                          # DEBUG: Log what we're about to insert
+                          logger.debug(f"EMIT_DB_INSERT: About to insert execution_id={execution_id}, event_id={event_id}, input_context_length={len(input_context)}, input_context_preview={input_context[:100] if input_context else 'None'}")
+                          
                           await cursor.execute("""
                               INSERT INTO event_log (
                                   execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type,
@@ -2212,7 +2269,13 @@ async def evaluate_broker_for_execution(
                             'node_id': iter_node_id,
                             'node_name': step_nm,
                             'node_type': 'iteration',
-                            'context': {'workload': rendered_work, 'iterator': iterator, 'index': i, 'child_execution_id': child_execution_id}
+                            'context': {'workload': rendered_work, 'iterator': iterator, 'index': i, 'child_execution_id': child_execution_id},
+                            # Populate loop metadata fields for proper tracking
+                            'loop_id': f"{execution_id}:{step_nm}",
+                            'loop_name': step_nm,
+                            'iterator': iterator,
+                            'current_index': i,
+                            'current_item': it
                         })
                         loop_iter_event_id = evt.get('event_id')
                     except Exception:
@@ -3086,7 +3149,46 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                         # Emit per-iteration 'result' event for the parent loop to aggregate
                         try:
                             event_service = get_event_service()
-                            await event_service.emit({
+                            
+                            # Get loop metadata from loop_iteration event if available
+                            loop_metadata = {}
+                            try:
+                                await cur.execute(
+                                    """
+                                    SELECT loop_id, loop_name, iterator, current_index, current_item 
+                                    FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND event_type = 'loop_iteration'
+                                      AND node_name = %s
+                                      AND input_context LIKE %s
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (parent_execution_id, parent_step, f'%"child_execution_id": "{child_exec_id}"%')
+                                )
+                                metadata_row = await cur.fetchone()
+                                if metadata_row:
+                                    if isinstance(metadata_row, tuple):
+                                        loop_id, loop_name, iterator, current_index, current_item = metadata_row
+                                    else:
+                                        loop_id = metadata_row.get('loop_id')
+                                        loop_name = metadata_row.get('loop_name')
+                                        iterator = metadata_row.get('iterator')
+                                        current_index = metadata_row.get('current_index')
+                                        current_item = metadata_row.get('current_item')
+                                    
+                                    if loop_id:
+                                        loop_metadata = {
+                                            'loop_id': loop_id,
+                                            'loop_name': loop_name,
+                                            'iterator': iterator,
+                                            'current_index': current_index,
+                                            'current_item': current_item
+                                        }
+                            except Exception:
+                                pass
+                            
+                            emit_data = {
                                 'execution_id': parent_execution_id,
                                 'event_type': 'result',
                                 'status': 'COMPLETED',
@@ -3099,8 +3201,12 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                                     'parent_step': parent_step,
                                     'return_step': None
                                 }
-                            })
-                            logger.info(f"PROACTIVE_COMPLETION_CHECK: Emitted result for parent {parent_execution_id} step {parent_step} from child {child_exec_id} with result: {child_result}")
+                            }
+                            # Add loop metadata if available
+                            emit_data.update(loop_metadata)
+                            
+                            await event_service.emit(emit_data)
+                            logger.info(f"PROACTIVE_COMPLETION_CHECK: Emitted result for parent {parent_execution_id} step {parent_step} from child {child_exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
                         except Exception as e:
                             logger.error(f"PROACTIVE_COMPLETION_CHECK: Error emitting result event: {e}")
                     else:
@@ -3449,7 +3555,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                         
                         # All children completed -> emit a loop_completed marker and schedule aggregation job; actual aggregation runs in worker
                         # Emit loop_completed marker first
-                        await event_service.emit({
+                        loop_final_data = {
                             'execution_id': parent_execution_id,
                             'event_type': 'action_completed',
                             'node_name': loop_step_name,
@@ -3469,8 +3575,12 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                 'loop_completed': True,
                                 'total_iterations': len(final_results),
                                 'aggregated_results': final_results
-                            }
-                        })
+                            },
+                            # Add loop metadata for final aggregation event
+                            'loop_id': f"{parent_execution_id}:{loop_step_name}",
+                            'loop_name': loop_step_name
+                        }
+                        await event_service.emit(loop_final_data)
                         # Also emit a 'result' marker for easy querying
                         await event_service.emit({
                             'execution_id': parent_execution_id,
@@ -3492,7 +3602,10 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                 'loop_completed': True,
                                 'total_iterations': len(final_results),
                                 'aggregated_results': final_results
-                            }
+                            },
+                            # Add loop metadata
+                            'loop_id': f"{parent_execution_id}:{loop_step_name}",
+                            'loop_name': loop_step_name
                         })
                         logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} completed! Final aggregated results: {final_results}")
                         # Emit an explicit loop_completed marker event too
@@ -3517,7 +3630,10 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                     'loop_completed': True,
                                     'total_iterations': len(final_results),
                                     'aggregated_results': final_results
-                                }
+                                },
+                                # Add loop metadata
+                                'loop_id': f"{parent_execution_id}:{loop_step_name}",
+                                'loop_name': loop_step_name
                             })
                         except Exception:
                             logger.debug("LOOP_COMPLETION_CHECK: Failed to emit loop_completed marker", exc_info=True)

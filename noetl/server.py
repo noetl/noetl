@@ -251,6 +251,10 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
         @app.get("/{catchall:path}", include_in_schema=False)
         async def spa_catchall(catchall: str):
+            # Don't serve UI for API paths
+            if catchall.startswith("api/"):
+                from fastapi import HTTPException
+                raise HTTPException(status_code=404, detail="API endpoint not found")
             return FileResponse(ui_build_path / "index.html")
 
         @app.get("/", include_in_schema=False)
