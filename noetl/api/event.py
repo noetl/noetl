@@ -1081,10 +1081,17 @@ class EventService:
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
 
+            # Notify central BrokerService that an event has been persisted (non-blocking)
+            try:
+                from noetl.broker import get_broker_service
+                get_broker_service().on_event_persisted(event_data)
+            except Exception:
+                logger.debug("Failed to notify BrokerService.on_event_persisted", exc_info=True)
+
             try:
                 evt_l = (str(event_type) if event_type is not None else '').lower()
-                # Re-evaluate broker on key lifecycle events, including task completion/errors
-                if evt_l in {"execution_start", "action_completed", "action_error", "task_complete", "task_error", "loop_iteration", "loop_completed"}:
+                # Re-evaluate broker on key lifecycle events, including task completion/errors (legacy fast path)
+                if evt_l in {"execution_start", "action_completed", "action_error", "task_complete", "task_error", "loop_iteration", "loop_completed", "result"}:
                     try:
                         if asyncio.get_event_loop().is_running():
                             asyncio.create_task(evaluate_broker_for_execution(execution_id))
@@ -1924,35 +1931,38 @@ async def evaluate_broker_for_execution(
                 logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}, step_type={step_type_lower}")
                 logger.debug(f"INLINE LOOP AGGREGATION CONDITIONS: expected > 0? {expected > 0}, done_count >= expected? {done_count >= expected}, not done_evt? {not done_evt}")
 
-                # Check for completed loop iterations (action_completed events with iter- in node_id)
-                iter_complete_count = 0
-                try:
-                    async with get_async_db_connection() as conn:
-                        async with conn.cursor(row_factory=dict_row) as cur:
-                            await cur.execute(
-                                """
-                                SELECT COUNT(*) as iter_count FROM noetl.event_log
-                                WHERE execution_id = %s
-                                  AND node_name = %s
-                                  AND event_type = 'action_completed'
-                                  AND node_id LIKE %s
-                                  AND lower(status) IN ('completed','success')
-                                  AND output_result IS NOT NULL AND output_result != '{}'
-                                  AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                  AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
-                                  AND output_result::text LIKE '%%"alert":%%'
-                                """,
-                                (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
-                            )
-                            result = await cur.fetchone()
-                            iter_complete_count = result['iter_count'] if result else 0
-                except Exception:
-                    pass
+                # Only steps explicitly configured with a loop are eligible for aggregation
+                is_loop_step = bool(next_step.get('loop'))
 
-                logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, iter_complete_count={iter_complete_count}, done_evt={done_evt}, step_type={step_type_lower}")
+                # Check for completed loop iterations (action_completed/result events with iter- in node_id)
+                iter_complete_count = 0
+                if is_loop_step:
+                    try:
+                        async with get_async_db_connection() as conn:
+                            async with conn.cursor(row_factory=dict_row) as cur:
+                                await cur.execute(
+                                    """
+                                    SELECT COUNT(*) as iter_count FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND node_name = %s
+                                      AND event_type IN ('result','action_completed')
+                                      AND node_id LIKE %s
+                                      AND lower(status) IN ('completed','success')
+                                      AND output_result IS NOT NULL AND output_result != '{}'
+                                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
+                                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                    """,
+                                    (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
+                                )
+                                result = await cur.fetchone()
+                                iter_complete_count = result['iter_count'] if result else 0
+                    except Exception:
+                        pass
+
+                logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, iter_complete_count={iter_complete_count}, done_evt={done_evt}, step_type={step_type_lower}, is_loop_step={is_loop_step}")
 
                 # If all items completed and no aggregate completion emitted, emit aggregate completion
-                if expected > 0 and iter_complete_count >= expected and not done_evt:
+                if is_loop_step and expected > 0 and iter_complete_count >= expected and not done_evt:
                     logger.debug(f"INLINE LOOP AGGREGATION: Starting aggregation for {step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}")
                     # Build aggregated result as list of outputs for this node
                     agg_list = []
@@ -1966,13 +1976,12 @@ async def evaluate_broker_for_execution(
                                         SELECT output_result FROM noetl.event_log
                                         WHERE execution_id = %s
                                           AND node_name = %s
-                                          AND event_type = 'action_completed'
+                                          AND event_type IN ('result','action_completed')
                                           AND node_id LIKE %s
                                           AND lower(status) IN ('completed','success')
                                           AND output_result IS NOT NULL AND output_result != '{}'
                                           AND NOT (output_result::text LIKE '%%"skipped": true%%')
                                           AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
-                                          AND output_result::text LIKE '%%"alert":%%'
                                         ORDER BY timestamp
                                         """,
                                         (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
@@ -2055,7 +2064,7 @@ async def evaluate_broker_for_execution(
                     loop_completed_advance = True
 
                 # If aggregate already exists and all iterations are complete, advance to the next step
-                if expected > 0 and iter_complete_count >= expected and done_evt:
+                if is_loop_step and expected > 0 and iter_complete_count >= expected and done_evt:
                     try:
                         nxt_list = next_step.get('next') or []
                         target_after_loop = None
@@ -3063,13 +3072,23 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                             except Exception:
                                 pass
                     
-                    if child_result:
-                        # Emit action_completed event for the parent loop to aggregate
+                    # Consider any non-empty result meaningful (playbook-agnostic)
+                    def _is_meaningful(res: Any) -> bool:
+                        if res is None:
+                            return False
+                        if isinstance(res, (list, str)):
+                            return len(res) > 0
+                        if isinstance(res, dict):
+                            return len(res) > 0
+                        return True
+
+                    if child_result and _is_meaningful(child_result):
+                        # Emit per-iteration 'result' event for the parent loop to aggregate
                         try:
                             event_service = get_event_service()
                             await event_service.emit({
                                 'execution_id': parent_execution_id,
-                                'event_type': 'action_completed',
+                                'event_type': 'result',
                                 'status': 'COMPLETED',
                                 'node_id': iter_node_id or f'{parent_execution_id}-step-X-iter-{child_exec_id}',
                                 'node_name': parent_step,
@@ -3081,11 +3100,11 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                                     'return_step': None
                                 }
                             })
-                            logger.info(f"PROACTIVE_COMPLETION_CHECK: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {child_exec_id} with result: {child_result}")
+                            logger.info(f"PROACTIVE_COMPLETION_CHECK: Emitted result for parent {parent_execution_id} step {parent_step} from child {child_exec_id} with result: {child_result}")
                         except Exception as e:
-                            logger.error(f"PROACTIVE_COMPLETION_CHECK: Error emitting action_completed event: {e}")
+                            logger.error(f"PROACTIVE_COMPLETION_CHECK: Error emitting result event: {e}")
                     else:
-                        logger.debug(f"PROACTIVE_COMPLETION_CHECK: No meaningful result found for child execution {child_exec_id}")
+                        logger.debug(f"PROACTIVE_COMPLETION_CHECK: No meaningful result found for child execution {child_exec_id}; will not emit mapping yet")
                         
     except Exception as e:
         logger.error(f"PROACTIVE_COMPLETION_CHECK: Error checking completed child executions: {e}")
@@ -3428,10 +3447,34 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                         
                         logger.info(f"LOOP_COMPLETION_CHECK: All children completed for {loop_step_name}: {new_completed_count}/{len(child_executions_data)} total children")
                         
-                        # Create final loop result event with aggregated data
+                        # All children completed -> emit a loop_completed marker and schedule aggregation job; actual aggregation runs in worker
+                        # Emit loop_completed marker first
                         await event_service.emit({
                             'execution_id': parent_execution_id,
                             'event_type': 'action_completed',
+                            'node_name': loop_step_name,
+                            'node_type': 'loop',
+                            'status': 'COMPLETED',
+                            'result': {
+                                'data': {
+                                    'results': final_results,
+                                    'result': final_results,
+                                    'count': len(final_results)
+                                },
+                                'results': final_results,
+                                'result': final_results,
+                                'count': len(final_results)
+                            },
+                            'context': {
+                                'loop_completed': True,
+                                'total_iterations': len(final_results),
+                                'aggregated_results': final_results
+                            }
+                        })
+                        # Also emit a 'result' marker for easy querying
+                        await event_service.emit({
+                            'execution_id': parent_execution_id,
+                            'event_type': 'result',
                             'node_name': loop_step_name,
                             'node_type': 'loop',
                             'status': 'COMPLETED',

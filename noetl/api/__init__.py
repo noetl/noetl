@@ -9,6 +9,7 @@ from noetl.api import runtime as runtime_api
 from noetl.api import dashboard as dashboard_api
 from noetl.api import system as system_api
 from noetl.api import queue as queue_api
+from noetl.api import aggregate as aggregate_api
 
 router = APIRouter()
 @router.get("/health", response_class=JSONResponse)
@@ -23,3 +24,4 @@ router.include_router(runtime_api.router)
 router.include_router(dashboard_api.router)
 router.include_router(system_api.router, prefix="/sys")
 router.include_router(queue_api.router)
+router.include_router(aggregate_api.router)

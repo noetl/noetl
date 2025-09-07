@@ -481,6 +481,38 @@ class QueueWorker:
             logger.debug("WORKER: Failed to merge original task config after server render", exc_info=True)
 
         if isinstance(action_cfg, dict):
+            # Handle broker/maintenance jobs that are not standard task executions
+            try:
+                act_type = str(action_cfg.get('type') or '').strip().lower()
+            except Exception:
+                act_type = ''
+            if act_type == 'result_aggregation':
+                # Process loop result aggregation job via worker-side coroutine
+                try:
+                    from noetl.job.result import process_loop_aggregation_job
+                    import asyncio as _a
+                    try:
+                        _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
+                    except Exception:
+                        # Compatible run for various environments
+                        try:
+                            _a.run(process_loop_aggregation_job(job))
+                        except Exception:
+                            loop = _a.new_event_loop()
+                            try:
+                                _a.set_event_loop(loop)
+                                loop.run_until_complete(process_loop_aggregation_job(job))
+                            finally:
+                                try:
+                                    loop.close()
+                                except Exception:
+                                    pass
+                    # Do not emit separate start/complete events here; the aggregation job emits its own
+                    return
+                except Exception:
+                    logger.exception("WORKER: Failed processing result_aggregation job")
+                    raise
+
             task_name = action_cfg.get("name") or node_id
 
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")

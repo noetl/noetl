@@ -252,17 +252,16 @@ async def complete_job(job_id: int):
                                 )
                                 result_row = await cur.fetchone()
 
-                            # 4) Prefer any result that looks like an evaluation result containing 'alert'
+                            # 4) Prefer explicit 'result' events if present
                             if not result_row:
                                 await cur.execute(
                                     """
                                     SELECT output_result FROM noetl.event_log
                                     WHERE execution_id = %s
-                                      AND event_type = 'action_completed'
+                                      AND event_type = 'result'
                                       AND lower(status) IN ('completed','success')
                                       AND output_result IS NOT NULL
                                       AND output_result != '{}'
-                                      AND output_result::text LIKE '%%"alert":%%'
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
@@ -343,15 +342,15 @@ async def complete_job(job_id: int):
                             if iter_row:
                                 iter_node_id = iter_row[0] if isinstance(iter_row, tuple) else iter_row.get('node_id')
                             
-                            # Emit action_completed event with iter- pattern for aggregation logic to detect
+                            # Emit per-iteration result event with iter- pattern for aggregation logic to detect
                             await get_event_service().emit({
                                 'execution_id': parent_execution_id,
-                                'event_type': 'action_completed',
+                                'event_type': 'result',
                                 'status': 'COMPLETED',
                                 'node_id': iter_node_id or f'{parent_execution_id}-step-X-iter-{exec_id}',
                                 'node_name': parent_step,
                                 'node_type': 'task',
-                                'output_result': child_result,
+                                'result': child_result,
                                 'context': {
                                     'child_execution_id': exec_id,
                                     'parent_step': parent_step,
@@ -378,12 +377,11 @@ async def complete_job(job_id: int):
                                     await cur.execute(
                                         """
                                         SELECT COUNT(*) FROM noetl.event_log
-                                        WHERE execution_id = %s AND node_name = %s AND event_type = 'action_completed'
+                                        WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
                                           AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
                                           AND output_result IS NOT NULL AND output_result != '{}'
                                           AND NOT (output_result::text LIKE '%%"skipped": true%%')
                                           AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
-                                          AND output_result::text LIKE '%%"alert":%%'
                                         """,
                                         (parent_execution_id, parent_step)
                                     )
@@ -405,12 +403,11 @@ async def complete_job(job_id: int):
                                         await cur.execute(
                                             """
                                             SELECT output_result FROM noetl.event_log
-                                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_completed'
+                                            WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
                                               AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
                                               AND output_result IS NOT NULL AND output_result != '{}'
                                               AND NOT (output_result::text LIKE '%%"skipped": true%%')
                                               AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
-                                              AND output_result::text LIKE '%%"alert":%%'
                                             ORDER BY timestamp
                                             """,
                                             (parent_execution_id, parent_step)
@@ -430,6 +427,28 @@ async def complete_job(job_id: int):
                                         await get_event_service().emit({
                                             'execution_id': parent_execution_id,
                                             'event_type': 'action_completed',
+                                            'node_name': parent_step,
+                                            'node_type': 'loop',
+                                            'status': 'COMPLETED',
+                                            'result': {
+                                                'data': {
+                                                    'results': final_results,
+                                                    'result': final_results,
+                                                    'count': len(final_results)
+                                                },
+                                                'results': final_results,
+                                                'result': final_results,
+                                                'count': len(final_results)
+                                            },
+                                            'context': {
+                                                'loop_completed': True,
+                                                'total_iterations': expected
+                                            }
+                                        })
+                                        # Also emit a 'result' marker event for robust detection
+                                        await get_event_service().emit({
+                                            'execution_id': parent_execution_id,
+                                            'event_type': 'result',
                                             'node_name': parent_step,
                                             'node_type': 'loop',
                                             'status': 'COMPLETED',

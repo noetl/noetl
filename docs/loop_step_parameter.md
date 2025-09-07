@@ -10,6 +10,7 @@ This feature is especially powerful when used with **playbook action steps**. Wi
 ---
 
 ## How It Works
+Note: Aggregated results are produced only for steps that explicitly declare a loop attribute. Non-loop steps never receive an automatic aggregated result.
 1. You provide a array of input items.
    Example: `[{"name": "Anna", "age": 30}, {"name": "Bob", "age": 25}, {"name": "Charlie", "age": 18}]`
 
