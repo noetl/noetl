@@ -481,12 +481,12 @@ async def _check_distributed_loop_completion(execution_id: str, step_name: str) 
                 # Count completed child executions by counting unique child_execution_ids that have sent results
                 await cur.execute(
                     """
-                    SELECT COUNT(DISTINCT context::json->>'child_execution_id') FROM noetl.event_log
+                    SELECT COUNT(DISTINCT (context::json->>'child_execution_id')) FROM noetl.event_log
                     WHERE execution_id = %s
                       AND node_name = %s
                       AND event_type = 'result'
-                      AND context LIKE '%child_execution_id%'
-                      AND context::json->>'child_execution_id' IS NOT NULL
+                      AND context LIKE '%%child_execution_id%%'
+                      AND (context::json->>'child_execution_id') IS NOT NULL
                     """,
                     (execution_id, step_name)
                 )
@@ -503,7 +503,7 @@ async def _check_distributed_loop_completion(execution_id: str, step_name: str) 
                         WHERE execution_id = %s
                           AND node_name = %s
                           AND event_type IN ('action_completed', 'loop_completed')
-                          AND context LIKE '%loop_completed%true%'
+                          AND context LIKE '%%loop_completed%%true%%'
                         """,
                         (execution_id, step_name)
                     )
@@ -514,18 +514,18 @@ async def _check_distributed_loop_completion(execution_id: str, step_name: str) 
                         # Aggregate results from all child result events  
                         await cur.execute(
                             """
-                            SELECT DISTINCT ON (context::json->>'child_execution_id') 
+                            SELECT DISTINCT ON ((context::json->>'child_execution_id')) 
                                    result, 
-                                   context::json->>'child_execution_id' as child_id
+                                   (context::json->>'child_execution_id') as child_id
                             FROM noetl.event_log
                             WHERE execution_id = %s
                               AND node_name = %s
                               AND event_type = 'result'
-                              AND context LIKE '%child_execution_id%'
-                              AND context::json->>'child_execution_id' IS NOT NULL
+                              AND context LIKE '%%child_execution_id%%'
+                              AND (context::json->>'child_execution_id') IS NOT NULL
                               AND result IS NOT NULL
                               AND result != '{}'
-                            ORDER BY context::json->>'child_execution_id', timestamp DESC
+                            ORDER BY (context::json->>'child_execution_id'), timestamp DESC
                             """,
                             (execution_id, step_name)
                         )
@@ -775,7 +775,12 @@ async def create_event(
                         # Always check if this completes a distributed loop, regardless of whether we have results
                         print(f"completion handler: calling distributed loop completion check for parent {parent_execution_id} step {parent_step}")
                         logger.info(f"COMPLETION_HANDLER: Calling distributed loop completion check for parent {parent_execution_id} step {parent_step}")
-                        await _check_distributed_loop_completion(parent_execution_id, parent_step)
+                        try:
+                            await _check_distributed_loop_completion(parent_execution_id, parent_step)
+                            print(f"completion handler: distributed loop completion check completed for parent {parent_execution_id}")
+                        except Exception as e:
+                            print(f"completion handler: error in distributed loop completion check: {e}")
+                            logger.error(f"COMPLETION_HANDLER: Error in distributed loop completion check: {e}", exc_info=True)
                                 
             except Exception as e:
                 print(f"completion handler: Exception in completion handler: {e}")
