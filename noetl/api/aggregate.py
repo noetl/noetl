@@ -28,7 +28,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                 await cur.execute(
                     """
                     SELECT DISTINCT
-                        output_result,
+                        result,
                         current_index,
                         loop_id,
                         node_id,
@@ -38,12 +38,12 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                       AND loop_name = %s
                       AND event_type IN ('result','action_completed')
                       AND lower(status) IN ('completed','success')
-                      AND output_result IS NOT NULL 
-                      AND output_result != '{}'
+                      AND result IS NOT NULL 
+                      AND result != '{}' 
                       AND loop_id IS NOT NULL
                       AND current_index IS NOT NULL
-                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                      AND NOT (result::text LIKE '%%"skipped": true%%')
+                      AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                     ORDER BY current_index, timestamp
                     """,
                     (execution_id, step_name)
@@ -55,7 +55,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                     logger.info(f"AGGREGATE: Found {len(metadata_rows)} results using loop metadata for {execution_id}:{step_name}")
                     results = []
                     for rr in metadata_rows:
-                        val = rr.get('output_result')
+                        val = rr.get('result')
                         try:
                             import json
                             parsed = json.loads(val) if isinstance(val, str) else val
@@ -72,15 +72,15 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                 logger.warning(f"AGGREGATE: No results found using loop metadata, falling back to legacy filtering for {execution_id}:{step_name}")
                 await cur.execute(
                     """
-                    SELECT output_result FROM noetl.event_log
+                    SELECT result FROM noetl.event_log
                     WHERE execution_id = %s
                       AND node_name = %s
                       AND event_type IN ('result','action_completed')
                       AND node_id LIKE %s
                       AND lower(status) IN ('completed','success')
-                      AND output_result IS NOT NULL AND output_result != '{}'
-                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                      AND result IS NOT NULL AND result != '{}' 
+                      AND NOT (result::text LIKE '%%"skipped": true%%')
+                      AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                     ORDER BY timestamp
                     """,
                     (execution_id, step_name, f"{execution_id}-step-%-iter-%")
@@ -90,7 +90,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
         final_evaluation_results: List[Any] = []
         
         for rr in rows or []:
-            val = rr.get('output_result')
+            val = rr.get('result')
             try:
                 import json
                 parsed = json.loads(val) if isinstance(val, str) else val

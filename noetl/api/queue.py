@@ -14,14 +14,16 @@ router = APIRouter(tags=["Queue"])
 @router.post("/queue/enqueue", response_class=JSONResponse)
 async def enqueue_job(request: Request):
     """Enqueue a job into the noetl.queue table.
-    Body: { execution_id, node_id, action, input_context?, priority?, max_attempts?, available_at? }
+    Body: { execution_id, node_id, action, context?, priority?, max_attempts?, available_at? } (input_context supported for backward compatibility)
     """
     try:
         body = await request.json()
         execution_id = body.get("execution_id")
         node_id = body.get("node_id")
         action = body.get("action")
-        input_context = body.get("input_context", {})
+        context = body.get("context")
+        if context is None:
+            context = body.get("input_context", {})
         priority = int(body.get("priority", 0))
         max_attempts = int(body.get("max_attempts", 5))
         available_at = body.get("available_at")
@@ -36,11 +38,11 @@ async def enqueue_job(request: Request):
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()))
                     RETURNING id
                     """,
-                    (execution_id_int, node_id, action, json.dumps(input_context), priority, max_attempts, available_at)
+                    (execution_id_int, node_id, action, json.dumps(context), priority, max_attempts, available_at)
                 )
                 row = await cur.fetchone()
                 await conn.commit()
@@ -96,8 +98,13 @@ async def lease_job(request: Request):
             return {"status": "empty"}
 
         # ensure JSON serializable
-        if row.get("input_context") is None:
-            row["input_context"] = {}
+        # Normalize context naming
+        if row.get("context") is None and row.get("input_context") is not None:
+            row["context"] = row.get("input_context")
+        if row.get("context") is None:
+            row["context"] = {}
+        # Remove legacy key to standardize responses
+        row.pop("input_context", None)
         return {"status": "ok", "job": row}
     except HTTPException:
         raise
@@ -113,7 +120,7 @@ async def complete_job(job_id: int):
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id, input_context",
+                    "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id, context",
                     (job_id,)
                 )
                 row = await cur.fetchone()
@@ -125,16 +132,16 @@ async def complete_job(job_id: int):
         # schedule broker evaluation best-effort
         try:
             exec_id = row[1] if isinstance(row, tuple) else row.get("execution_id")
-            input_context = row[2] if isinstance(row, tuple) else row.get("input_context")
+            context = row[2] if isinstance(row, tuple) else row.get("context")
             
             # Check if this job has parent execution metadata (indicating it's part of a loop)
             parent_execution_id = None
             parent_step = None
             return_step = None
-            if input_context:
+            if context:
                 try:
                     import json
-                    context_data = json.loads(input_context) if isinstance(input_context, str) else input_context
+                    context_data = json.loads(context) if isinstance(context, str) else context
                     if isinstance(context_data, dict):
                         meta = context_data.get('_meta', {})
                         parent_execution_id = meta.get('parent_execution_id')
@@ -182,7 +189,7 @@ async def complete_job(job_id: int):
                             # 0) Prefer execution_complete final result
                             await cur.execute(
                                 """
-                                SELECT output_result FROM noetl.event_log
+                                SELECT result FROM noetl.event_log
                                 WHERE execution_id = %s AND event_type = 'execution_complete'
                                 ORDER BY timestamp DESC
                                 LIMIT 1
@@ -194,15 +201,15 @@ async def complete_job(job_id: int):
                             if return_step:
                                 await cur.execute(
                                     """
-                                    SELECT output_result FROM noetl.event_log
+                                    SELECT result FROM noetl.event_log
                                     WHERE execution_id = %s
                                       AND node_name = %s
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
-                                      AND output_result IS NOT NULL
-                                      AND output_result != '{}'
-                                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                      AND result IS NOT NULL
+                                      AND result != '{}'
+                                              AND NOT (result::text LIKE '%%"skipped": true%%')
+                                              AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
@@ -215,15 +222,15 @@ async def complete_job(job_id: int):
                                 for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
                                     await cur.execute(
                                         """
-                                        SELECT output_result FROM noetl.event_log
+                                        SELECT result FROM noetl.event_log
                                         WHERE execution_id = %s
                                           AND node_name = %s
                                           AND event_type = 'action_completed'
                                           AND lower(status) IN ('completed','success')
-                                          AND output_result IS NOT NULL
-                                          AND output_result != '{}'
-                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                          AND result IS NOT NULL
+                                          AND result != '{}'
+                                          AND NOT (result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                         ORDER BY timestamp DESC
                                         LIMIT 1
                                         """,
@@ -237,14 +244,14 @@ async def complete_job(job_id: int):
                             if not result_row:
                                 await cur.execute(
                                     """
-                                    SELECT output_result FROM noetl.event_log
+                                    SELECT result FROM noetl.event_log
                                     WHERE execution_id = %s
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
-                                      AND output_result IS NOT NULL
-                                      AND output_result != '{}'
-                                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                      AND result IS NOT NULL
+                                      AND result != '{}'
+                                      AND NOT (result::text LIKE '%%"skipped": true%%')
+                                      AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
@@ -256,12 +263,12 @@ async def complete_job(job_id: int):
                             if not result_row:
                                 await cur.execute(
                                     """
-                                    SELECT output_result FROM noetl.event_log
+                                    SELECT result FROM noetl.event_log
                                     WHERE execution_id = %s
                                       AND event_type = 'result'
                                       AND lower(status) IN ('completed','success')
-                                      AND output_result IS NOT NULL
-                                      AND output_result != '{}'
+                                      AND result IS NOT NULL
+                                      AND result != '{}'
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
@@ -273,15 +280,15 @@ async def complete_job(job_id: int):
                             if not result_row:
                                 await cur.execute(
                                     """
-                                    SELECT output_result FROM noetl.event_log
+                                    SELECT result FROM noetl.event_log
                                     WHERE execution_id = %s
                                       AND node_name = 'end'
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
-                                      AND output_result IS NOT NULL
-                                      AND output_result != '{}'
-                                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                      AND result IS NOT NULL
+                                      AND result != '{}'
+                                      AND NOT (result::text LIKE '%%"skipped": true%%')
+                                      AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
@@ -291,7 +298,7 @@ async def complete_job(job_id: int):
                             
                             child_result = None
                             if result_row:
-                                result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                                result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('result')
                                 try:
                                     child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
                                     # Extract data if wrapped
@@ -304,7 +311,7 @@ async def complete_job(job_id: int):
                             if not child_result:
                                 await cur.execute(
                                     """
-                                    SELECT output_result FROM noetl.event_log
+                                    SELECT result FROM noetl.event_log
                                     WHERE execution_id = %s
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
@@ -315,7 +322,7 @@ async def complete_job(job_id: int):
                                 )
                                 result_row = await cur.fetchone()
                                 if result_row:
-                                    result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                                    result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('result')
                                     try:
                                         child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
                                         # Extract data if wrapped
@@ -324,14 +331,15 @@ async def complete_job(job_id: int):
                                     except Exception:
                                         pass
                             
-                            # Find the iteration node_id pattern by looking up the loop_iteration event for this child
+                            # Find the iteration details by looking up the loop_iteration event for this child
                             await cur.execute(
                                 """
-                                SELECT node_id FROM noetl.event_log
+                                SELECT node_id, iterator, current_index, current_item, loop_id, loop_name
+                                FROM noetl.event_log
                                 WHERE execution_id = %s
                                   AND event_type = 'loop_iteration'
                                   AND node_name = %s
-                                  AND input_context LIKE %s
+                                  AND context LIKE %s
                                 ORDER BY timestamp DESC
                                 LIMIT 1
                                 """,
@@ -339,10 +347,22 @@ async def complete_job(job_id: int):
                             )
                             iter_row = await cur.fetchone()
                             iter_node_id = None
+                            iterator_val = None
+                            current_index_val = None
+                            current_item_val = None
+                            loop_id_val = None
+                            loop_name_val = None
                             if iter_row:
-                                iter_node_id = iter_row[0] if isinstance(iter_row, tuple) else iter_row.get('node_id')
+                                # dict_row or tuple support
+                                getv = (lambda k: iter_row.get(k)) if isinstance(iter_row, dict) else None
+                                iter_node_id = (iter_row[0] if not isinstance(iter_row, dict) else getv('node_id'))
+                                iterator_val = (iter_row[1] if not isinstance(iter_row, dict) else getv('iterator'))
+                                current_index_val = (iter_row[2] if not isinstance(iter_row, dict) else getv('current_index'))
+                                current_item_val = (iter_row[3] if not isinstance(iter_row, dict) else getv('current_item'))
+                                loop_id_val = (iter_row[4] if not isinstance(iter_row, dict) else getv('loop_id'))
+                                loop_name_val = (iter_row[5] if not isinstance(iter_row, dict) else getv('loop_name'))
                             
-                            # Emit per-iteration result event with iter- pattern for aggregation logic to detect
+                            # Emit per-iteration result event with iter- pattern and loop metadata for aggregation logic to detect
                             await get_event_service().emit({
                                 'execution_id': parent_execution_id,
                                 'event_type': 'result',
@@ -351,6 +371,11 @@ async def complete_job(job_id: int):
                                 'node_name': parent_step,
                                 'node_type': 'task',
                                 'result': child_result,
+                                'iterator': iterator_val,
+                                'current_index': current_index_val,
+                                'current_item': current_item_val,
+                                'loop_id': loop_id_val,
+                                'loop_name': loop_name_val,
                                 'context': {
                                     'child_execution_id': exec_id,
                                     'parent_step': parent_step,
@@ -379,9 +404,9 @@ async def complete_job(job_id: int):
                                         SELECT COUNT(*) FROM noetl.event_log
                                         WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
                                           AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
-                                          AND output_result IS NOT NULL AND output_result != '{}'
-                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                          AND result IS NOT NULL AND result != '{}'
+                                          AND NOT (result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                         """,
                                         (parent_execution_id, parent_step)
                                     )
@@ -392,7 +417,7 @@ async def complete_job(job_id: int):
                                         """
                                         SELECT COUNT(*) FROM noetl.event_log
                                         WHERE execution_id = %s AND event_type = 'action_completed' AND node_name = %s
-                                          AND input_context::text LIKE '%%loop_completed%%' AND input_context::text LIKE '%%true%%'
+                                          AND context::text LIKE '%%loop_completed%%' AND context::text LIKE '%%true%%'
                                         """,
                                         (parent_execution_id, parent_step)
                                     )
@@ -402,12 +427,12 @@ async def complete_job(job_id: int):
                                         # Collect results from each iteration mapping event
                                         await cur.execute(
                                             """
-                                            SELECT output_result FROM noetl.event_log
+                                            SELECT result FROM noetl.event_log
                                             WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
                                               AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
-                                              AND output_result IS NOT NULL AND output_result != '{}'
-                                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                              AND result IS NOT NULL AND result != '{}'
+                                              AND NOT (result::text LIKE '%%"skipped": true%%')
+                                              AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                             ORDER BY timestamp
                                             """,
                                             (parent_execution_id, parent_step)
@@ -415,7 +440,7 @@ async def complete_job(job_id: int):
                                         rows_res = await cur.fetchall()
                                         final_results = []
                                         for rr in rows_res or []:
-                                            val = rr[0] if isinstance(rr, tuple) else rr.get('output_result')
+                                            val = rr[0] if isinstance(rr, tuple) else rr.get('result')
                                             try:
                                                 parsed = json.loads(val) if isinstance(val, str) else val
                                             except Exception:
@@ -443,7 +468,10 @@ async def complete_job(job_id: int):
                                             'context': {
                                                 'loop_completed': True,
                                                 'total_iterations': expected
-                                            }
+                                            },
+                                            # Attach loop metadata for downstream consumers
+                                            'loop_id': f"{parent_execution_id}:{parent_step}",
+                                            'loop_name': parent_step
                                         })
                                         # Also emit a 'result' marker event for robust detection
                                         await get_event_service().emit({
@@ -465,7 +493,9 @@ async def complete_job(job_id: int):
                                             'context': {
                                                 'loop_completed': True,
                                                 'total_iterations': expected
-                                            }
+                                            },
+                                            'loop_id': f"{parent_execution_id}:{parent_step}",
+                                            'loop_name': parent_step
                                         })
                                         # Emit an explicit loop_completed marker event for broker/control logic
                                         try:
@@ -489,7 +519,9 @@ async def complete_job(job_id: int):
                                                     'loop_completed': True,
                                                     'total_iterations': expected,
                                                     'aggregated_results': final_results
-                                                }
+                                                },
+                                                'loop_id': f"{parent_execution_id}:{parent_step}",
+                                                'loop_name': parent_step
                                             })
                                         except Exception:
                                             logger.debug("Failed to emit loop_completed marker event", exc_info=True)
@@ -617,8 +649,8 @@ async def list_queue(status: str = None, execution_id: str = None, worker_id: st
                 await cur.execute(f"SELECT * FROM noetl.queue {where} ORDER BY priority DESC, id LIMIT %s", params + [limit])
                 rows = await cur.fetchall()
         for r in rows:
-            if r.get('input_context') is None:
-                r['input_context'] = {}
+            if r.get('context') is None:
+                r['context'] = {}
         return {"status": "ok", "items": rows}
     except Exception as e:
         logger.exception(f"Error listing queue: {e}")
@@ -674,8 +706,8 @@ async def reserve_job(request: Request):
             await conn.commit()
     if not job:
         return {"job": None}
-    if job.get("input_context") is None:
-        job["input_context"] = {}
+    if job.get("context") is None:
+        job["context"] = {}
     return {"job": job}
 
 

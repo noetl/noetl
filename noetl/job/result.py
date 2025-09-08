@@ -13,13 +13,13 @@ async def process_loop_aggregation_job(job_row: Dict[str, Any]) -> Dict[str, Any
     Worker entry-point to aggregate per-iteration loop results for a step.
     Expects job_row to contain at least:
       - execution_id: parent execution id (int or str)
-      - input_context: dict with keys { step_name, total_iterations? }
+      - context: dict with keys { step_name, total_iterations? }
     The worker reads per-iteration events (event_type in ['result','action_completed'] with node_id like %-iter-%)
     and posts final aggregated result events back to server for the loop step.
     """
     try:
         execution_id = job_row.get('execution_id') or job_row.get('executionId')
-        input_ctx = job_row.get('input_context') or {}
+        input_ctx = job_row.get('context') or {}
         if isinstance(input_ctx, str):
             try:
                 input_ctx = json.loads(input_ctx)

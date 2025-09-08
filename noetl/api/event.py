@@ -92,8 +92,8 @@ async def render_context(request: Request):
     Body:
       { execution_id: str, template: any, extra_context?: dict, strict?: bool }
     Context composed from DB:
-      - work: workload (from earliest event input_context.workload, if present)
-      - results: map of node_name -> output_result for all prior events in execution
+      - work: workload (from earliest event context.workload, if present)
+      - results: map of node_name -> result for all prior events in execution
     """
     try:
         body = await request.json()
@@ -112,7 +112,7 @@ async def render_context(request: Request):
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
-                    SELECT input_context FROM event_log
+                    SELECT context FROM event_log
                     WHERE execution_id = %s
                     ORDER BY timestamp ASC
                     LIMIT 1
@@ -120,16 +120,19 @@ async def render_context(request: Request):
                     (execution_id,)
                 )
                 row = await cur.fetchone()
-                if row and row.get("input_context"):
+                if row:
                     try:
-                        ctx_first = json.loads(row["input_context"]) if isinstance(row["input_context"], str) else row["input_context"]
+                        ctx_val = row.get("context") if isinstance(row, dict) else None
+                        if ctx_val is None:
+                            ctx_val = row.get("input_context") if isinstance(row, dict) else None
+                        ctx_first = json.loads(ctx_val) if isinstance(ctx_val, str) else ctx_val
                         workload = ctx_first.get("workload", {}) if isinstance(ctx_first, dict) else {}
                     except Exception:
                         workload = {}
 
                 await cur.execute(
                     """
-                    SELECT node_name, output_result
+                    SELECT node_name, result
                     FROM event_log
                     WHERE execution_id = %s
                     ORDER BY timestamp
@@ -139,8 +142,10 @@ async def render_context(request: Request):
                 rows = await cur.fetchall()
                 for r in rows:
                     node_name = r.get("node_name")
-                    out = r.get("output_result")
-                    if node_name and out:
+                    out = r.get("result") if isinstance(r, dict) else None
+                    if out is None:
+                        out = r.get("output_result") if isinstance(r, dict) else None
+                    if node_name and out is not None:
                         try:
                             results[node_name] = json.loads(out) if isinstance(out, str) else out
                         except Exception:
@@ -156,7 +161,7 @@ async def render_context(request: Request):
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
-                    SELECT input_context, metadata FROM event_log
+                    SELECT context, metadata FROM event_log
                     WHERE execution_id = %s
                     ORDER BY timestamp ASC
                     LIMIT 1
@@ -166,9 +171,9 @@ async def render_context(request: Request):
                 row = await cur.fetchone()
                 if row:
                     try:
-                        input_context = json.loads(row["input_context"]) if row.get("input_context") else {}
+                        input_context = json.loads(row["context"]) if row.get("context") else {}
                     except Exception:
-                        input_context = row.get("input_context") or {}
+                        input_context = row.get("context") or {}
                     try:
                         metadata = json.loads(row["metadata"]) if row.get("metadata") else {}
                     except Exception:
@@ -379,7 +384,7 @@ async def get_execution_summary(request: Request, execution_id: str):
             async with conn.cursor() as cur2:
                 await cur2.execute(
                     """
-                    SELECT output_result FROM noetl.event_log
+                    SELECT result FROM noetl.event_log
                     WHERE execution_id = %s AND event_type = 'action_completed'
                     """,
                     (execution_id,)
@@ -467,15 +472,15 @@ async def create_event(
                                 for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
                                     await cur.execute(
                                         """
-                                        SELECT output_result FROM noetl.event_log
+                                        SELECT result FROM noetl.event_log
                                         WHERE execution_id = %s
                                           AND node_name = %s
                                           AND event_type = 'action_completed'
                                           AND lower(status) IN ('completed','success')
-                                          AND output_result IS NOT NULL
-                                          AND output_result != '{}'
-                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                          AND result IS NOT NULL
+                                          AND result != '{}'
+                                          AND NOT (result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                         ORDER BY timestamp DESC
                                         LIMIT 1
                                         """,
@@ -483,7 +488,7 @@ async def create_event(
                                     )
                                     result_row = await cur.fetchone()
                                     if result_row:
-                                        result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                                        result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('result')
                                         try:
                                             import json
                                             child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
@@ -506,7 +511,7 @@ async def create_event(
                                     WHERE execution_id = %s
                                       AND event_type = 'loop_iteration'
                                       AND node_name = %s
-                                      AND input_context LIKE %s
+                                      AND context LIKE %s
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
@@ -544,7 +549,7 @@ async def create_event(
                                     'node_id': iter_node_id or f'{parent_execution_id}-step-X-iter-{exec_id}',
                                     'node_name': parent_step,
                                     'node_type': 'task',
-                                    'output_result': child_result,
+                                    'result': child_result,
                                     'context': {
                                         'child_execution_id': exec_id,
                                         'parent_step': parent_step,
@@ -735,8 +740,8 @@ async def get_execution(execution_id: str):
             )
 
         metadata = latest_event.get("metadata", {})
-        input_context = latest_event.get("input_context", {})
-        output_result = latest_event.get("output_result", {})
+        input_context = latest_event.get("context", {})
+        output_result = latest_event.get("result", {})
 
         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
@@ -836,8 +841,8 @@ class EventService:
                             e.status,
                             e.timestamp,
                             e.metadata,
-                            e.input_context,
-                            e.output_result,
+                            e.context,
+                            e.result,
                             e.error
                         FROM event_log e
                         JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
@@ -1024,8 +1029,8 @@ class EventService:
                                   event_type = %s,
                                   status = %s,
                                   duration = %s,
-                                  input_context = %s,
-                                  output_result = %s,
+                                  context = %s,
+                                  result = %s,
                                   metadata = %s,
                                   error = %s,
                                   trace_component = %s::jsonb,
@@ -1061,7 +1066,7 @@ class EventService:
                               INSERT INTO event_log (
                                   execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type,
                                   node_id, node_name, node_type, status, duration,
-                                  input_context, output_result, metadata, error, trace_component,
+                                  context, result, metadata, error, trace_component,
                                   loop_id, loop_name, iterator, current_index, current_item
                               ) VALUES (
                                   %s, %s, %s, %s, CURRENT_TIMESTAMP, %s,
@@ -1191,8 +1196,8 @@ class EventService:
                             status, 
                             duration, 
                             timestamp, 
-                            input_context, 
-                            output_result, 
+                            context, 
+                            result, 
                             metadata, 
                             error
                         FROM event_log 
@@ -1213,8 +1218,9 @@ class EventService:
                                 "status": row[5],
                                 "duration": row[6],
                                 "timestamp": row[7].isoformat() if row[7] else None,
-                                "input_context": json.loads(row[8]) if row[8] else None,
-                                "output_result": json.loads(row[9]) if row[9] else None,
+                                # Store in canonical keys
+                                "context": json.loads(row[8]) if row[8] else None,
+                                "result": json.loads(row[9]) if row[9] else None,
                                 "metadata": json.loads(row[10]) if row[10] else None,
                                 "error": row[11],
                                 "execution_id": execution_id,
@@ -1222,15 +1228,21 @@ class EventService:
                                 "resource_version": None,
                                 "normalized_status": self._normalize_status(row[5])
                             }
+                            # Backward/consumer compatibility: also expose legacy alias keys
+                            try:
+                                event_data["input_context"] = event_data.get("context")
+                                event_data["output_result"] = event_data.get("result")
+                            except Exception:
+                                pass
 
                             if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
                                 event_data["resource_path"] = event_data["metadata"]["playbook_path"]
 
-                            if event_data["input_context"] and "path" in event_data["input_context"]:
-                                event_data["resource_path"] = event_data["input_context"]["path"]
+                            if event_data.get("context") and "path" in event_data["context"]:
+                                event_data["resource_path"] = event_data["context"]["path"]
 
-                            if event_data["input_context"] and "version" in event_data["input_context"]:
-                                event_data["resource_version"] = event_data["input_context"]["version"]
+                            if event_data.get("context") and "version" in event_data["context"]:
+                                event_data["resource_version"] = event_data["context"]["version"]
 
                             events.append(event_data)
 
@@ -1264,8 +1276,8 @@ class EventService:
                             status, 
                             duration, 
                             timestamp, 
-                            input_context, 
-                            output_result, 
+                            context, 
+                            result, 
                             metadata, 
                             error,
                             execution_id
@@ -1284,14 +1296,20 @@ class EventService:
                             "status": row[5],
                             "duration": row[6],
                             "timestamp": row[7].isoformat() if row[7] else None,
-                            "input_context": json.loads(row[8]) if row[8] else None,
-                            "output_result": json.loads(row[9]) if row[9] else None,
+                            "context": json.loads(row[8]) if row[8] else None,
+                            "result": json.loads(row[9]) if row[9] else None,
                             "metadata": json.loads(row[10]) if row[10] else None,
                             "error": row[11],
                             "execution_id": row[12],
                             "resource_path": None,
                             "resource_version": None
                         }
+                        # Backward/consumer compatibility: alias keys
+                        try:
+                            event_data["input_context"] = event_data.get("context")
+                            event_data["output_result"] = event_data.get("result")
+                        except Exception:
+                            pass
                         if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
                             event_data["resource_path"] = event_data["metadata"]["playbook_path"]
 
@@ -1400,7 +1418,7 @@ async def evaluate_broker_for_execution(
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
-                    SELECT input_context, metadata FROM event_log
+                    SELECT context, metadata FROM event_log
                     WHERE execution_id = %s
                     ORDER BY timestamp ASC
                     LIMIT 1
@@ -1410,9 +1428,9 @@ async def evaluate_broker_for_execution(
                 row = await cur.fetchone()
                 if row:
                     try:
-                        input_context = json.loads(row["input_context"]) if row.get("input_context") else {}
+                        input_context = json.loads(row["context"]) if row.get("context") else {}
                     except Exception:
-                        input_context = row.get("input_context") or {}
+                        input_context = row.get("context") or {}
                     try:
                         metadata = json.loads(row["metadata"]) if row.get("metadata") else {}
                     except Exception:
@@ -1423,9 +1441,9 @@ async def evaluate_broker_for_execution(
 
                 await cur.execute(
                     """
-                    SELECT node_name, output_result
+                    SELECT node_name, result
                     FROM event_log
-                    WHERE execution_id = %s AND output_result IS NOT NULL
+                    WHERE execution_id = %s AND result IS NOT NULL
                     ORDER BY timestamp
                     """,
                     (execution_id,)
@@ -1433,7 +1451,7 @@ async def evaluate_broker_for_execution(
                 rows = await cur.fetchall()
                 for r in rows:
                     node_name = r.get("node_name")
-                    out = r.get("output_result")
+                    out = r.get("result")
                     if not node_name:
                         continue
                     try:
@@ -1986,7 +2004,27 @@ async def evaluate_broker_for_execution(
                 step_type_lower = str(next_step.get('type') or '').strip().lower()
 
                 logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}, step_type={step_type_lower}")
-                logger.debug(f"INLINE LOOP AGGREGATION CONDITIONS: expected > 0? {expected > 0}, done_count >= expected? {done_count >= expected}, not done_evt? {not done_evt}")
+                # Hard guard: if a final aggregated completion already exists for this loop, skip inline aggregation entirely
+                already_final = False
+                try:
+                    async with get_async_db_connection() as _cfin:
+                        async with _cfin.cursor() as _curfin:
+                            await _curfin.execute(
+                                """
+                                SELECT COUNT(*) FROM noetl.event_log
+                                WHERE execution_id = %s
+                                  AND event_type = 'action_completed'
+                                  AND node_name = %s
+                                  AND context::text LIKE '%%loop_completed%%'
+                                  AND context::text LIKE '%%true%%'
+                                """,
+                                (execution_id, step_nm)
+                            )
+                            _rowfin = await _curfin.fetchone()
+                            already_final = (_rowfin[0] if _rowfin else 0) > 0
+                except Exception:
+                    pass
+                logger.debug(f"INLINE LOOP AGGREGATION CONDITIONS: expected > 0? {expected > 0}, done_count >= expected? {done_count >= expected}, not done_evt? {not done_evt}, not already_final? {not already_final}")
 
                 # Only steps explicitly configured with a loop are eligible for aggregation
                 is_loop_step = bool(next_step.get('loop'))
@@ -2005,9 +2043,9 @@ async def evaluate_broker_for_execution(
                                       AND event_type IN ('result','action_completed')
                                       AND node_id LIKE %s
                                       AND lower(status) IN ('completed','success')
-                                      AND output_result IS NOT NULL AND output_result != '{}'
-                                      AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                      AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                      AND result IS NOT NULL AND result != '{}'
+                                      AND NOT (result::text LIKE '%%"skipped": true%%')
+                                      AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                     """,
                                     (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
                                 )
@@ -2019,7 +2057,7 @@ async def evaluate_broker_for_execution(
                 logger.debug(f"INLINE LOOP CHECK: step={step_nm}, expected={expected}, done_count={done_count}, iter_complete_count={iter_complete_count}, done_evt={done_evt}, step_type={step_type_lower}, is_loop_step={is_loop_step}")
 
                 # If all items completed and no aggregate completion emitted, emit aggregate completion
-                if is_loop_step and expected > 0 and iter_complete_count >= expected and not done_evt:
+                if is_loop_step and expected > 0 and iter_complete_count >= expected and not done_evt and not already_final:
                     logger.debug(f"INLINE LOOP AGGREGATION: Starting aggregation for {step_nm}, expected={expected}, done_count={done_count}, done_evt={done_evt}")
                     # Build aggregated result as list of outputs for this node
                     agg_list = []
@@ -2030,28 +2068,28 @@ async def evaluate_broker_for_execution(
                                     # For playbook loops, aggregate iteration mapping events containing evaluation outputs ("alert")
                                     await cur.execute(
                                         """
-                                        SELECT output_result FROM noetl.event_log
+                                        SELECT result FROM noetl.event_log
                                         WHERE execution_id = %s
                                           AND node_name = %s
                                           AND event_type IN ('result','action_completed')
                                           AND node_id LIKE %s
                                           AND lower(status) IN ('completed','success')
-                                          AND output_result IS NOT NULL AND output_result != '{}'
-                                          AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                          AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                          AND result IS NOT NULL AND result != '{}'
+                                          AND NOT (result::text LIKE '%%"skipped": true%%')
+                                          AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                         ORDER BY timestamp
                                         """,
                                         (execution_id, step_nm, f"{execution_id}-step-%-iter-%")
                                     )
                                     rows = await cur.fetchall()
                                     for rr in rows:
-                                        output_result = rr.get('output_result')
+                                        res_val = rr.get('result')
                                         try:
-                                            # Parse the output_result which contains the execution info
-                                            if isinstance(output_result, str):
-                                                output_data = json.loads(output_result)
+                                            # Parse the result which may contain execution info
+                                            if isinstance(res_val, str):
+                                                output_data = json.loads(res_val)
                                             else:
-                                                output_data = output_result
+                                                output_data = res_val
                                             
                                             # Extract the actual result data from the child execution
                                             if isinstance(output_data, dict) and 'data' in output_data:
@@ -2068,13 +2106,13 @@ async def evaluate_broker_for_execution(
                                                 agg_list.append(output_data)
                                         except Exception:
                                             # If parsing fails, just include the raw output
-                                            if output_result is not None:
-                                                agg_list.append(output_result)
+                                            if res_val is not None:
+                                                agg_list.append(res_val)
                                 else:
                                     # For non-playbook loops, use the original logic
                                     await cur.execute(
                                         """
-                                        SELECT output_result FROM noetl.event_log
+                                        SELECT result FROM noetl.event_log
                                         WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success')
                                         ORDER BY timestamp
                                         """,
@@ -2082,7 +2120,7 @@ async def evaluate_broker_for_execution(
                                     )
                                     rows = await cur.fetchall()
                                     for rr in rows:
-                                        data = rr.get('output_result')
+                                        data = rr.get('result')
                                         try:
                                             data = json.loads(data) if isinstance(data, str) else data
                                             # Extract the actual data if it's wrapped
@@ -2302,7 +2340,7 @@ async def evaluate_broker_for_execution(
                             async with conn.cursor() as cur:
                                 await cur.execute(
                                     """
-                                    INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                     RETURNING id
                                     """,
@@ -2515,7 +2553,7 @@ async def evaluate_broker_for_execution(
                         if first_body:
                             await cur.execute(
                                 """
-                                SELECT node_id, output_result FROM noetl.event_log
+                                SELECT node_id, result FROM noetl.event_log
                                 WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success')
                                 ORDER BY timestamp
                                 """,
@@ -2523,7 +2561,7 @@ async def evaluate_broker_for_execution(
                             )
                             rows = await cur.fetchall()
                             for r in rows:
-                                data = r.get('output_result')
+                                data = r.get('result')
                                 try:
                                     data = json.loads(data) if isinstance(data, str) else data
                                 except Exception:
@@ -2549,7 +2587,7 @@ async def evaluate_broker_for_execution(
                                 if fallback_name:
                                     await cur.execute(
                                         """
-                                        SELECT node_id, output_result FROM noetl.event_log
+                                        SELECT node_id, result FROM noetl.event_log
                                         WHERE execution_id=%s AND node_name=%s AND lower(status) IN ('completed','success')
                                         ORDER BY timestamp
                                         """,
@@ -2558,7 +2596,7 @@ async def evaluate_broker_for_execution(
                                     rows = await cur.fetchall()
                                     tmp_results = []
                                     for r in rows:
-                                        data = r.get('output_result')
+                                        data = r.get('result')
                                         try:
                                             data = json.loads(data) if isinstance(data, str) else data
                                         except Exception:
@@ -3018,13 +3056,13 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                 await cur.execute(
                     """
                     SELECT DISTINCT 
-                        (input_context::json)->>'child_execution_id' as child_exec_id,
+                        (context::json)->>'child_execution_id' as child_exec_id,
                         node_name as parent_step,
                         node_id as iter_node_id
                     FROM noetl.event_log 
                     WHERE execution_id = %s 
                       AND event_type = 'loop_iteration'
-                      AND input_context::text LIKE '%%child_execution_id%%'
+                      AND context::text LIKE '%%child_execution_id%%'
                     """,
                     (parent_execution_id,)
                 )
@@ -3077,15 +3115,15 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                     for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
                         await cur.execute(
                             """
-                            SELECT output_result FROM noetl.event_log
+                            SELECT result FROM noetl.event_log
                             WHERE execution_id = %s
                               AND node_name = %s
                               AND event_type = 'action_completed'
                               AND lower(status) IN ('completed','success')
-                              AND output_result IS NOT NULL
-                              AND output_result != '{}'
-                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                              AND result IS NOT NULL
+                              AND result != '{}'
+                              AND NOT (result::text LIKE '%%"skipped": true%%')
+                              AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                             ORDER BY timestamp DESC
                             LIMIT 1
                             """,
@@ -3093,7 +3131,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                         )
                         result_row = await cur.fetchone()
                         if result_row:
-                            result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('output_result')
+                            result_data = result_row[0] if isinstance(result_row, tuple) else result_row.get('result')
                             try:
                                 import json
                                 child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
@@ -3110,14 +3148,14 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                     if child_result is None:
                         await cur.execute(
                             """
-                            SELECT output_result FROM noetl.event_log
+                            SELECT result FROM noetl.event_log
                             WHERE execution_id = %s
                               AND event_type = 'action_completed'
                               AND lower(status) IN ('completed','success')
-                              AND output_result IS NOT NULL
-                              AND output_result != '{}'
-                              AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                              AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                              AND result IS NOT NULL
+                              AND result != '{}'
+                              AND NOT (result::text LIKE '%%"skipped": true%%')
+                              AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                             ORDER BY timestamp DESC
                             LIMIT 1
                             """,
@@ -3127,7 +3165,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                         if row_any:
                             try:
                                 import json
-                                any_out = row_any[0] if isinstance(row_any, tuple) else row_any.get('output_result')
+                                any_out = row_any[0] if isinstance(row_any, tuple) else row_any.get('result')
                                 child_result = json.loads(any_out) if isinstance(any_out, str) else any_out
                                 if isinstance(child_result, dict) and 'data' in child_result:
                                     child_result = child_result['data']
@@ -3160,7 +3198,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                                     WHERE execution_id = %s
                                       AND event_type = 'loop_iteration'
                                       AND node_name = %s
-                                      AND input_context LIKE %s
+                                      AND context LIKE %s
                                     ORDER BY timestamp DESC
                                     LIMIT 1
                                     """,
@@ -3270,22 +3308,22 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                         SELECT * FROM (
                             -- Get child executions from loop_iteration events
                             SELECT 
-                                (input_context::json)->>'child_execution_id' as child_exec_id,
+                                (context::json)->>'child_execution_id' as child_exec_id,
                                 node_id as iter_node_id,
                                 event_id as iter_event_id,
-                                COALESCE((input_context::json)->>'index', '0') as iteration_index,
+                                COALESCE((context::json)->>'index', '0') as iteration_index,
                                 'loop_iteration' as source_event
                             FROM noetl.event_log 
                             WHERE execution_id = %s 
                               AND event_type = 'loop_iteration'
                               AND node_name = %s
-                              AND input_context::text LIKE '%%child_execution_id%%'
+                              AND context::text LIKE '%%child_execution_id%%'
                             
                             UNION ALL
                             
                             -- Get child executions from action_completed events (these contain the actual playbook results)
                             SELECT 
-                                (input_context::json)->>'child_execution_id' as child_exec_id,
+                                (context::json)->>'child_execution_id' as child_exec_id,
                                 node_id as iter_node_id,
                                 event_id as iter_event_id,
                                 '0' as iteration_index,
@@ -3294,7 +3332,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             WHERE execution_id = %s 
                               AND event_type = 'action_completed'
                               AND node_name = %s
-                              AND input_context::text LIKE '%%child_execution_id%%'
+                              AND context::text LIKE '%%child_execution_id%%'
                         ) AS combined_results
                         ORDER BY source_event, CAST(iteration_index AS INTEGER)
                         """,
@@ -3355,7 +3393,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                     # Step 3: Check completion status and aggregate results
                     await cur.execute(
                         """
-                        SELECT input_context FROM noetl.event_log 
+                        SELECT context FROM noetl.event_log 
                         WHERE execution_id = %s 
                           AND event_type = 'end_loop'
                           AND node_name = %s
@@ -3403,12 +3441,12 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                         # First check for execution_complete event which should have the final return value
                         await cur.execute(
                             """
-                            SELECT output_result FROM noetl.event_log
+                            SELECT result FROM noetl.event_log
                             WHERE execution_id = %s
                               AND event_type = 'execution_complete'
                               AND lower(status) IN ('completed','success')
-                              AND output_result IS NOT NULL
-                              AND output_result != '{}'
+                              AND result IS NOT NULL
+                              AND result != '{}'
                             ORDER BY timestamp DESC
                             LIMIT 1
                             """,
@@ -3417,7 +3455,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                         exec_complete_row = await cur.fetchone()
                         
                         if exec_complete_row:
-                            result_data = exec_complete_row[0] if isinstance(exec_complete_row, tuple) else exec_complete_row.get('output_result')
+                            result_data = exec_complete_row[0] if isinstance(exec_complete_row, tuple) else exec_complete_row.get('result')
                             try:
                                 child_result = json.loads(result_data) if isinstance(result_data, str) else result_data
                                 logger.info(f"LOOP_COMPLETION_CHECK: Found execution_complete result for child {child_exec_id}: {child_result}")
@@ -3427,14 +3465,14 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             # Fallback: Look for any meaningful step result from any completed action
                             await cur.execute(
                                 """
-                                SELECT node_name, output_result FROM noetl.event_log
+                                SELECT node_name, result FROM noetl.event_log
                                 WHERE execution_id = %s
                                   AND event_type = 'action_completed'
                                   AND lower(status) IN ('completed','success')
-                                  AND output_result IS NOT NULL
-                                  AND output_result != '{}'
-                                  AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                  AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                  AND result IS NOT NULL
+                                  AND result != '{}'
+                                  AND NOT (result::text LIKE '%%"skipped": true%%')
+                                  AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                 ORDER BY timestamp DESC
                                 """,
                                 (child_exec_id,)
@@ -3470,14 +3508,14 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             # Fallback: accept any non-empty action_completed result from the child
                             await cur.execute(
                                 """
-                                SELECT output_result FROM noetl.event_log
+                                SELECT result FROM noetl.event_log
                                 WHERE execution_id = %s
                                   AND event_type = 'action_completed'
                                   AND lower(status) IN ('completed','success')
-                                  AND output_result IS NOT NULL
-                                  AND output_result != '{}'
-                                  AND NOT (output_result::text LIKE '%%"skipped": true%%')
-                                  AND NOT (output_result::text LIKE '%%"reason": "control_step"%%')
+                                  AND result IS NOT NULL
+                                  AND result != '{}'
+                                  AND NOT (result::text LIKE '%%"skipped": true%%')
+                                  AND NOT (result::text LIKE '%%"reason": "control_step"%%')
                                 ORDER BY timestamp DESC
                                 LIMIT 1
                                 """,
@@ -3487,7 +3525,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             if row_any:
                                 try:
                                     import json
-                                    any_out = row_any[0] if isinstance(row_any, tuple) else row_any.get('output_result')
+                                    any_out = row_any[0] if isinstance(row_any, tuple) else row_any.get('result')
                                     any_res = json.loads(any_out) if isinstance(any_out, str) else any_out
                                     if isinstance(any_res, dict) and 'data' in any_res:
                                         any_res = any_res['data']
@@ -3535,8 +3573,8 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                               AND event_type = 'action_completed'
                               AND node_name = %s
                               AND lower(status) = 'completed'
-                              AND input_context::text LIKE '%%loop_completed%%'
-                              AND input_context::text LIKE '%%true%%'
+                              AND context::text LIKE '%%loop_completed%%'
+                              AND context::text LIKE '%%true%%'
                             """,
                             (parent_execution_id, loop_step_name)
                         )

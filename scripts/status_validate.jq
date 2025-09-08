@@ -34,8 +34,13 @@ def lastCityHasAggregate: (
   lastCity and (
     (
       (lastCity.event_type=="action_completed") and (
-        (lastCity.output_result|type=="object") and (
-          (lastCity.output_result.data.count?) or ((lastCity.output_result.data.results?|length) > 0)
+        (
+          (lastCity.output_result|type=="object") and (
+            (lastCity.output_result.data.count?) or ((lastCity.output_result.data.results?|length) > 0)
+          )
+        ) or (
+          # Compatibility: some generators emit aggregated results as a bare array
+          (lastCity.output_result|type=="array") and ((lastCity.output_result|length) > 0)
         )
       )
     ) or (
@@ -56,7 +61,12 @@ def lastCityHasAggregate: (
     (if lastCity.event_type=="loop_completed" then
       "city_loop.count: " + ((lastCity.result.data.count // (lastCity.result.data.results|length) // 0)|tostring)
      else
-      "city_loop.count: " + ((lastCity.output_result.data.count // (lastCity.output_result.data.results|length) // 0)|tostring)
+      # Prefer structured count, fallback to array length when output_result is a bare array
+      (if (lastCity.output_result|type=="object") then
+        "city_loop.count: " + ((lastCity.output_result.data.count // (lastCity.output_result.data.results|length) // 0)|tostring)
+       else
+        "city_loop.count: " + ((lastCity.output_result|length)|tostring)
+       end)
      end)
   else
     "city_loop.count: " + (cityLoopIterationCount|tostring)
@@ -67,7 +77,12 @@ def lastCityHasAggregate: (
     (if lastCity.event_type=="loop_completed" then
       "city_loop.results_len: " + ((lastCity.result.data.results|length // (lastCity.result.data.count // 0))|tostring)
      else
-      "city_loop.results_len: " + ((lastCity.output_result.data.results|length // (lastCity.output_result.data.count // 0))|tostring)
+      # Prefer structured results length, fallback to array length when output_result is a bare array
+      (if (lastCity.output_result|type=="object") then
+        "city_loop.results_len: " + ((lastCity.output_result.data.results|length // (lastCity.output_result.data.count // 0))|tostring)
+       else
+        "city_loop.results_len: " + ((lastCity.output_result|length)|tostring)
+       end)
      end)
   else
     "city_loop.results_len: " + (cityLoopIterationCount|tostring)

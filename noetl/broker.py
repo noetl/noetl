@@ -42,7 +42,7 @@ class Broker:
         return hasattr(self.agent, 'log_event') and callable(getattr(self.agent, 'log_event'))
 
     def write_event_log(self, event_type, node_id, node_name, node_type, status, duration,
-                        input_context, output_result, metadata=None, parent_event_id=None, **kwargs):
+                        context, result, metadata=None, parent_event_id=None, **kwargs):
         """
         The call of log_event on the agent if it exists.
 
@@ -76,7 +76,7 @@ class Broker:
                     parent_event_id = self._current_step_event_id
             eid = self.agent.log_event(
                 event_type, node_id, node_name, node_type, status, duration,
-                input_context, output_result, metadata, parent_event_id, **kwargs
+                context, result, metadata, parent_event_id, **kwargs
             )
             # Track lineage chain
             try:
@@ -110,8 +110,8 @@ class Broker:
                     'node_type': node_type,
                     'status': status,
                     'duration': duration,
-                    'context': input_context,
-                    'result': output_result,
+                    'context': context,
+                    'result': result,
                     'meta': metadata or {},
                 }
                 if parent_event_id:
@@ -2054,8 +2054,8 @@ class BrokerService:
                                     SELECT COUNT(*) FROM noetl.queue
                                     WHERE execution_id = %s
                                       AND (action->>'type') = 'result_aggregation'
-                                      AND (input_context::jsonb ->> 'step_name') = %s
-                                      AND status IN ('queued','leased','running')
+                                      AND (context::jsonb ->> 'step_name') = %s
+                                      AND status IN ('queued','leased','done')
                                     """,
                                     (execution_id, step_name)
                                 )
@@ -2067,8 +2067,8 @@ class BrokerService:
                                     WHERE execution_id = %s
                                       AND event_type = 'action_completed'
                                       AND node_name = %s
-                                      AND input_context::text LIKE '%%loop_completed%%'
-                                      AND input_context::text LIKE '%%true%%'
+                                      AND context::text LIKE '%%loop_completed%%'
+                                      AND context::text LIKE '%%true%%'
                                     """,
                                     (execution_id, step_name)
                                 )
@@ -2078,7 +2078,7 @@ class BrokerService:
                                     ic = {"step_name": step_name, "loop_step_name": step_name, "total_iterations": (ctx.get('total_iterations') if isinstance(ctx, dict) else None)}
                                     _cur.execute(
                                         """
-                                        INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                         VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                         RETURNING id
                                         """,
@@ -2088,6 +2088,23 @@ class BrokerService:
                                     logger.info(f"BROKER_SERVICE: Enqueued result_aggregation job for {execution_id}/{step_name}")
             except Exception:
                 logger.debug("BROKER_SERVICE: failed to enqueue result aggregation job", exc_info=True)
+            # If execution already completed, skip further analysis
+            try:
+                from noetl.common import get_pgdb_connection as _get_conn
+                with _get_conn() as __conn:
+                    with __conn.cursor() as __cur:
+                        __cur.execute(
+                            """
+                            SELECT 1 FROM noetl.event_log
+                            WHERE execution_id = %s AND event_type = 'execution_complete'
+                            LIMIT 1
+                            """,
+                            (execution_id,)
+                        )
+                        if __cur.fetchone():
+                            return
+            except Exception:
+                pass
             # Always schedule an analysis, non-blocking
             try:
                 loop = _asyncio.get_event_loop()

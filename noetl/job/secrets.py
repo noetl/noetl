@@ -21,14 +21,14 @@ def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, task_
         A dictionary of the task result
     """
     def log_event_wrapper(event_type, task_id, task_name, node_type, status, duration,
-                          context, output_result, metadata, parent_event_id):
+                          context, result, metadata, parent_event_id):
         if log_event_callback:
             if metadata is None:
                 metadata = {}
             metadata['with_params'] = task_with
             return log_event_callback(
                 event_type, task_id, task_name, node_type,
-                status, duration, context, output_result,
+                status, duration, context, result,
                 metadata, parent_event_id
             )
         return None

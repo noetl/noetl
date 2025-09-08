@@ -9,20 +9,20 @@ EVENT_LOG_INSERT_POSTGRES = """
 INSERT INTO event_log
 (execution_id, event_id, parent_event_id, timestamp, event_type,
  node_id, node_name, node_type, status, duration,
- input_context, output_result, metadata, error,
- loop_id, loop_name, iterator, items, current_index, current_item, results,
+ context, result, metadata, error,
+ loop_id, loop_name, iterator, items, current_index, current_item,
  worker_id, distributed_state, context_key, context_value)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 EVENT_LOG_INSERT_DUCKDB = """
 INSERT INTO event_log
 (execution_id, event_id, parent_event_id, timestamp, event_type,
  node_id, node_name, node_type, status, duration,
- input_context, output_result, metadata, error,
- loop_id, loop_name, iterator, items, current_index, current_item, results,
+ context, result, metadata, error,
+ loop_id, loop_name, iterator, items, current_index, current_item,
  worker_id, distributed_state, context_key, context_value)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 TRANSITION_INSERT_POSTGRES = """
@@ -36,7 +36,7 @@ VALUES (?, ?, ?, ?, ?)
 """
 
 LOOP_SELECT_POSTGRES = """
-SELECT loop_name, iterator, items, results
+SELECT loop_name, iterator, items
 FROM event_log
 WHERE execution_id = %s
   AND loop_id = %s
@@ -45,7 +45,7 @@ LIMIT 1
 """
 
 LOOP_SELECT_DUCKDB = """
-SELECT loop_name, iterator, items, results
+SELECT loop_name, iterator, items
 FROM event_log
 WHERE execution_id = ?
   AND loop_id = ?
@@ -54,7 +54,7 @@ LIMIT 1
 """
 
 LOOP_DETAILS_SELECT_POSTGRES = """
-SELECT loop_name, iterator, items, current_index, current_item, results
+SELECT loop_name, iterator, items, current_index, current_item
 FROM event_log
 WHERE execution_id = %s
   AND loop_id = %s
@@ -63,7 +63,7 @@ LIMIT 1
 """
 
 LOOP_DETAILS_SELECT_DUCKDB = """
-SELECT loop_name, iterator, items, current_index, current_item, results
+SELECT loop_name, iterator, items, current_index, current_item
 FROM event_log
 WHERE execution_id = ?
   AND loop_id = ?
@@ -72,7 +72,7 @@ LIMIT 1
 """
 
 LOOP_RESULTS_SELECT_POSTGRES = """
-SELECT results
+SELECT NULL::text as results
 FROM event_log
 WHERE execution_id = %s
   AND loop_id = %s
@@ -81,7 +81,7 @@ LIMIT 1
 """
 
 LOOP_RESULTS_SELECT_DUCKDB = """
-SELECT results
+SELECT NULL as results
 FROM event_log
 WHERE execution_id = ?
   AND loop_id = ?
@@ -106,7 +106,7 @@ WHERE execution_id = ?
 """
 
 GET_ACTIVE_LOOPS_POSTGRES = """
-SELECT el.loop_id, el.loop_name, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.loop_name, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -121,7 +121,7 @@ ORDER BY el.timestamp ASC
 """
 
 GET_ACTIVE_LOOPS_DUCKDB = """
-SELECT el.loop_id, el.loop_name, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.loop_name, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -136,7 +136,7 @@ ORDER BY el.timestamp ASC
 """
 
 FIND_LOOP_BY_NAME_POSTGRES = """
-SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -150,7 +150,7 @@ WHERE el.execution_id = %s
 """
 
 FIND_LOOP_BY_NAME_DUCKDB = """
-SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -164,7 +164,7 @@ WHERE el.execution_id = ?
 """
 
 FIND_LOOP_INCLUDE_COMPLETED_POSTGRES = """
-SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -181,7 +181,7 @@ LIMIT 1
 """
 
 FIND_LOOP_INCLUDE_COMPLETED_DUCKDB = """
-SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -198,7 +198,7 @@ LIMIT 1
 """
 
 FIND_LOOP_EXCLUDE_COMPLETED_POSTGRES = """
-SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -216,7 +216,7 @@ LIMIT 1
 """
 
 FIND_LOOP_EXCLUDE_COMPLETED_DUCKDB = """
-SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item, el.results
+SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
     SELECT loop_id, MAX(timestamp) as latest_timestamp
@@ -268,8 +268,8 @@ LIMIT 1
 EXPORT_EXECUTION_DATA_POSTGRES = """
 SELECT execution_id, event_id, parent_event_id, timestamp, event_type,
        node_id, node_name, node_type, status, duration,
-       input_context, output_result, metadata, error,
-       loop_id, loop_name, iterator, items, current_index, current_item, results,
+       context, result, metadata, error,
+       loop_id, loop_name, iterator, items, current_index, current_item,
        worker_id, distributed_state, context_key, context_value
 FROM event_log
 WHERE execution_id = %s
@@ -279,8 +279,8 @@ ORDER BY timestamp
 EXPORT_EXECUTION_DATA_DUCKDB = """
 SELECT execution_id, event_id, parent_event_id, timestamp, event_type,
        node_id, node_name, node_type, status, duration,
-       input_context, output_result, metadata, error,
-       loop_id, loop_name, iterator, items, current_index, current_item, results,
+       context, result, metadata, error,
+       loop_id, loop_name, iterator, items, current_index, current_item,
        worker_id, distributed_state, context_key, context_value
 FROM event_log
 WHERE execution_id = ?
@@ -288,7 +288,7 @@ ORDER BY timestamp
 """
 
 FIND_NODE_BY_NAME_POSTGRES = """
-SELECT node_name, output_result
+SELECT node_name, result
 FROM event_log
 WHERE execution_id = %s
   AND node_name = %s
@@ -298,7 +298,7 @@ LIMIT 1
 """
 
 FIND_NODE_BY_NAME_DUCKDB = """
-SELECT node_name, output_result
+SELECT node_name, result
 FROM event_log
 WHERE execution_id = ?
   AND node_name = ?
@@ -398,7 +398,7 @@ VALUES (?, ?, ?, ?, ?)
 """
 
 STEP_RESULTS_SELECT_POSTGRES = """
-SELECT node_name, output_result
+SELECT node_name, result
 FROM event_log
 WHERE execution_id = %s
   AND event_type = 'step_result'
@@ -406,7 +406,7 @@ WHERE execution_id = %s
 """
 
 STEP_RESULTS_SELECT_DUCKDB = """
-SELECT node_name, output_result
+SELECT node_name, result
 FROM event_log
 WHERE execution_id = ?
   AND event_type = 'step_result'
