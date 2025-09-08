@@ -31,7 +31,13 @@ export const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) =
   };
 
   const { updateNodeData } = useReactFlow();
-  const nodeType = nodeTypeMap[task?.type] || nodeTypeMap['default'];
+  const nodeType = nodeTypeMap[task?.type] || ({
+    type: task?.type || 'unknown',
+    label: 'Unknown',
+    icon: '❓',
+    color: '#8c8c8c',
+    description: 'Unknown node type',
+  } as any);
 
   const updateField = (field: keyof EditableTaskNode, value: any) => {
     if (readOnly) return;
@@ -42,7 +48,9 @@ export const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) =
     updateNodeData(id, { task: updatedTask });
   };
 
-  const nodeClass = `EditableNode flow-node ${task?.type || 'default'} ${selected ? 'selected' : 'unselected'}`;
+  const nodeClass = `EditableNode flow-node ${task?.type || 'unknown'} ${selected ? 'selected' : 'unselected'}`;
+
+  const EditorComponent = (nodeType as any).editor;
 
   return (
     <div className={nodeClass}>
@@ -53,7 +61,7 @@ export const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) =
         // Toolbar with type selector and delete button
         <div className="EditableNode__toolbar flow-node-toolbar nodrag" onClick={(e) => e.stopPropagation()}>
           <Select
-            value={task?.type || 'default'}
+            value={task?.type || 'start'}
             onChange={(val) => updateField('type', val)}
             size="small"
             className="flow-node-type-select flow-node-toolbar-type-select"
@@ -78,32 +86,17 @@ export const EditableNode: React.FC<NodeProps> = memo(({ data, id, selected }) =
       )}
 
       <div className="flow-node-header">
-        <span className="flow-node-icon" aria-hidden>{nodeType.icon}</span>
-        <div className={`flow-node-status inline ${task?.type || 'default'}`}>{task?.type ? task.type.charAt(0).toUpperCase() + task.type.slice(1) : 'Default'}</div>
+        <span className="flow-node-icon" aria-hidden>{(nodeType as any).icon}</span>
+        <div className={`flow-node-status inline ${task?.type || 'unknown'}`}>{task?.type ? task.type.charAt(0).toUpperCase() + task.type.slice(1) : 'Unknown'}</div>
       </div>
 
-      <div className="flow-node-name">
-        <span className="flow-node-field-label">Name</span>
-        <input
-          value={task?.name ?? ''}
-          onChange={(e) => updateField('name', e.target.value)}
-          placeholder="Task name"
-          className="xy-theme__input flow-node-name-input nodrag"
-          disabled={!!readOnly}
-          type="text"
-        />
-      </div>
-
-      <div className="flow-node-description">
-        <span className="flow-node-field-label">Description</span>
-        <textarea
-          value={task?.description || ''}
-          onChange={(e) => updateField('description', e.target.value)}
-          placeholder={readOnly ? '' : 'Description (optional)'}
-          rows={2}
-          className="xy-theme__input flow-node-description-input nodrag"
-          disabled={!!readOnly}
-        />
+      {/* Delegate node content rendering to the per-widget editor, if present */}
+      <div className="flow-node-editor">
+        {EditorComponent ? (
+          <EditorComponent task={task} readOnly={readOnly} updateField={updateField} />
+        ) : (
+          <div className="flow-node-editor-empty">No editor available for this node type.</div>
+        )}
       </div>
     </div>
   );

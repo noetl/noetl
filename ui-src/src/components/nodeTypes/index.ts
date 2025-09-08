@@ -1,39 +1,44 @@
 // Central export for all node type definitions
-// Each node category/type lives in its own file for clarity & future growth
+// Each node category/type now lives in its own folder under ../nodes/[type]/index.tsx
 
 import { NodeTypeMap } from './NodeType.ts';
-import { logNode } from './log.ts';
-import { httpNode } from './http.ts';
-import { sqlNode } from './sql.ts';
-import { scriptNode } from './script.ts';
-import { secretNode } from './secret.ts';
-import { exportNode } from './export.ts';
-import { pythonNode } from './python.ts';
-import { workbookNode } from './workbook.ts';
-import { defaultNode } from './default.ts';
+
+// Import node definitions from the new folder-based structure
+import { startNode } from '../nodes/start';
+import { endNode } from '../nodes/end';
+import { workbookNode } from '../nodes/workbook';
+import { pythonNode } from '../nodes/python';
+import { httpNode } from '../nodes/http';
+import { duckdbNode } from '../nodes/duckdb';
+import { postgresNode } from '../nodes/postgres';
+import { secretsNode } from '../nodes/secrets';
+import { playbooksNode } from '../nodes/playbooks';
+import { loopNode } from '../nodes/loop';
 
 export const nodeTypeMap: NodeTypeMap = {
-    [logNode.type]: logNode,
-    [httpNode.type]: httpNode,
-    [sqlNode.type]: sqlNode,
-    [scriptNode.type]: scriptNode,
-    [secretNode.type]: secretNode,
-    [exportNode.type]: exportNode,
-    [pythonNode.type]: pythonNode,
+    [startNode.type]: startNode,
+    [endNode.type]: endNode,
     [workbookNode.type]: workbookNode,
-    [defaultNode.type]: defaultNode,
+    [pythonNode.type]: pythonNode,
+    [httpNode.type]: httpNode,
+    [duckdbNode.type]: duckdbNode,
+    [postgresNode.type]: postgresNode,
+    [secretsNode.type]: secretsNode,
+    [playbooksNode.type]: playbooksNode,
+    [loopNode.type]: loopNode,
 };
 
 export const orderedNodeTypes = [
-    'log',
-    'http',
-    'sql',
-    'script',
-    'secret',
-    'export',
-    'python',
+    'start',
     'workbook',
-    'default'
+    'python',
+    'http',
+    'duckdb',
+    'postgres',
+    'secrets',
+    'playbooks',
+    'loop',
+    'end',
 ];
 
 export * from './NodeType.ts';

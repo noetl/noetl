@@ -86,6 +86,33 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     [setEdges]
   );
 
+  // Map legacy or unknown types to supported widget types
+  const mapType = (t?: string): EditableTaskNode['type'] => {
+    switch ((t || '').toLowerCase()) {
+      case 'script':
+        return 'python';
+      case 'sql':
+        return 'duckdb';
+      case 'export':
+        return 'workbook';
+      case 'log':
+        return 'start';
+      case 'http':
+      case 'python':
+      case 'workbook':
+      case 'duckdb':
+      case 'postgres':
+      case 'secrets':
+      case 'playbooks':
+      case 'loop':
+      case 'start':
+      case 'end':
+        return t as any;
+      default:
+        return 'workbook';
+    }
+  };
+
   // Handle task editing - simplified for direct updates
   const handleEditTask = useCallback(
     (updatedTask: EditableTaskNode) => {
@@ -198,16 +225,16 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     if (readOnly) return;
     const newTask: EditableTaskNode = {
       id: `task_${Date.now()}`,
-      name: "New Task",
-      type: "default",
-      description: "",
+      name: 'New Component',
+      type: 'workbook',
+      description: '',
       enabled: true,
       position: { x: 100 + tasks.length * 50, y: 100 + tasks.length * 50 },
     };
 
     setTasks((prev) => [...prev, newTask]);
     setHasChanges(true);
-    messageApi.success("New component added");
+    messageApi.success('New component added');
   }, [tasks, messageApi, readOnly]);
 
   // Re-enable automatic flow recreation for major changes
@@ -305,7 +332,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             currentTask = {
               id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
               name: taskName,
-              type: "default",
+              type: 'workbook',
             };
           } else if (
             (trimmed.startsWith("- name:") ||
@@ -327,7 +354,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             currentTask = {
               id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
               name: taskName,
-              type: "default",
+              type: 'workbook',
             };
           } else if (
             trimmed.startsWith("desc:") &&
@@ -362,7 +389,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               /type:\s*['"](.*?)['"]|type:\s*([^'"]+)/
             );
             if (typeMatch) {
-              currentTask.type = (typeMatch[1] || typeMatch[2] || "").trim();
+              currentTask.type = mapType((typeMatch[1] || typeMatch[2] || '').trim());
             }
           }
 
@@ -404,24 +431,24 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             playbookName.toLowerCase().includes("weather")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Fetch Weather Data", type: "http", enabled: true },
-              { id: "demo-2", name: "Process Weather Info", type: "script", enabled: true },
-              { id: "demo-3", name: "Generate Weather Report", type: "export", enabled: true },
+              { id: "demo-1", name: "Fetch Weather Data", type: 'http', enabled: true },
+              { id: "demo-2", name: "Process Weather Info", type: 'python', enabled: true },
+              { id: "demo-3", name: "Generate Weather Report", type: 'workbook', enabled: true },
             ];
           } else if (
             playbookId.toLowerCase().includes("database") ||
             playbookId.toLowerCase().includes("sql")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Connect to Database", type: "sql", enabled: true },
-              { id: "demo-2", name: "Query Data", type: "sql", enabled: true },
-              { id: "demo-3", name: "Export Results", type: "export", enabled: true },
+              { id: "demo-1", name: "Connect to Database", type: 'duckdb', enabled: true },
+              { id: "demo-2", name: "Query Data", type: 'duckdb', enabled: true },
+              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
             ];
           } else {
             demoTasks = [
-              { id: "demo-1", name: "Initialize Process", type: "log", enabled: true },
-              { id: "demo-2", name: "Process Data", type: "script", enabled: true },
-              { id: "demo-3", name: "Export Results", type: "export", enabled: true },
+              { id: "demo-1", name: "Initialize Process", type: 'start', enabled: true },
+              { id: "demo-2", name: "Process Data", type: 'python', enabled: true },
+              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
             ];
           }
 
@@ -433,6 +460,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         } else {
           const editableTasks: EditableTaskNode[] = parsedTasks.map((task) => ({
             ...task,
+            type: mapType(task.type),
             enabled: true,
           }));
           setTasks(editableTasks);
@@ -447,7 +475,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       } else {
         messageApi.warning(`No content found for playbook: ${playbookName}`);
         const demoTasks: EditableTaskNode[] = [
-          { id: "empty-1", name: "No Content Available", type: "log", enabled: true },
+          { id: "empty-1", name: "No Content Available", type: 'start', enabled: true },
         ];
         setTasks(demoTasks);
         const { nodes: flowNodes, edges: flowEdges } =
@@ -460,8 +488,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         `Failed to load playbook flow for ${playbookName}.`
       );
       const errorTasks: EditableTaskNode[] = [
-        { id: "error-1", name: "Failed to Load Playbook", type: "log", enabled: true },
-        { id: "error-2", name: "Check API Connection", type: "script", enabled: true },
+        { id: "error-1", name: "Failed to Load Playbook", type: 'start', enabled: true },
+        { id: "error-2", name: "Check API Connection", type: 'python', enabled: true },
       ];
       setTasks(errorTasks);
       const { nodes: flowNodes, edges: flowEdges } =
@@ -559,8 +587,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 <Controls />
                 <MiniMap
                   nodeColor={(node) => {
-                    const type = (node.data as any)?.task?.type ?? "default";
-                    return nodeTypeMap[type]?.color || nodeTypeMap['default'].color;
+                    const type = (node.data as any)?.task?.type ?? 'workbook';
+                    return nodeTypeMap[type]?.color || '#8c8c8c';
                   }}
                   pannable
                   zoomable
