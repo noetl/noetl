@@ -2235,8 +2235,70 @@ async def evaluate_broker_for_execution(
                                 
                                 logger.info(f"CHILD_EXECUTION_COMPLETE: Emitting execution_complete for child {execution_id} with result: {final_result}")
                                 await event_service.emit(completion_event)
+                        else:
+                            # This is a main execution (no parent) - also emit execution_completed
+                            logger.info(f"MAIN_EXECUTION_COMPLETE: Main execution {execution_id} completed all steps")
+                            
+                            # Check if we already emitted execution_complete for this main execution
+                            await cur.execute(
+                                "SELECT 1 FROM noetl.event_log WHERE execution_id = %s AND event_type IN ('execution_complete', 'execution_completed') LIMIT 1",
+                                (execution_id,)
+                            )
+                            completion_exists = await cur.fetchone()
+                            
+                            if not completion_exists:
+                                # Find the final return value from the last completed step with a return statement
+                                final_result = None
+                                try:
+                                    # Look for the end step with return statement and process its return template
+                                    for step in reversed(steps):
+                                        if isinstance(step, dict) and 'return' in step:
+                                            step_name = step.get('step') or step.get('task') or step.get('name')
+                                            return_template = step.get('return')
+                                            
+                                            if step_name and return_template:
+                                                # Build context for return template evaluation
+                                                try:
+                                                    from jinja2 import Environment, StrictUndefined, BaseLoader
+                                                    from noetl.render import render_template
+                                                    jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+                                                    
+                                                    # Build context with all completed step results
+                                                    return_ctx = {"work": workload, "workload": workload, "results": results_ctx}
+                                                    return_ctx.update(results_ctx)
+                                                    
+                                                    # Evaluate the return template
+                                                    final_result = render_template(jenv, return_template, return_ctx, rules=None, strict_keys=False)
+                                                    logger.info(f"MAIN_EXECUTION_COMPLETE: Evaluated return template '{return_template}' to: {final_result}")
+                                                    break
+                                                except Exception as e:
+                                                    logger.debug(f"Failed to evaluate return template: {e}", exc_info=True)
+                                                    # Fallback: try to get the direct result from the referenced step
+                                                    if isinstance(return_template, str) and return_template.startswith('{{') and return_template.endswith('}}'):
+                                                        # Extract step name from template like "{{ evaluate_weather_step }}"
+                                                        step_ref = return_template.strip('{}').strip()
+                                                        if step_ref in results_ctx:
+                                                            final_result = results_ctx[step_ref]
+                                                            break
+                                except Exception:
+                                    pass
+                                
+                                # Emit execution_completed event for main execution
+                                event_service = get_event_service()
+                                completion_event = {
+                                    "execution_id": execution_id,
+                                    "event_type": "execution_completed",
+                                    "status": "completed",
+                                    "node_name": playbook_path or "unknown",
+                                    "node_type": "playbook",
+                                    "result": final_result or {},
+                                    "context": {"execution_id": execution_id}
+                                }
+                                
+                                logger.info(f"MAIN_EXECUTION_COMPLETE: Emitting execution_complete for main execution {execution_id} with result: {final_result}")
+                                await event_service.emit(completion_event)
             except Exception as e:
-                logger.debug(f"Error handling child execution completion: {e}", exc_info=True)
+                logger.debug(f"Error handling execution completion: {e}", exc_info=True)
             
             return
 
