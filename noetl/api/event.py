@@ -1432,6 +1432,131 @@ class EventService:
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
 
+            # Check if this is a child execution completion event and handle completion logic
+            if event_type in ['execution_completed', 'execution_complete']:
+                print(f"[PRINT DEBUG] Processing completion event for execution {execution_id}")
+                logger.info(f"COMPLETION_HANDLER: Processing completion event for execution {execution_id}")
+                logger.info(f"COMPLETION_HANDLER: Event data: {event_data}")
+                try:
+                    meta = metadata if isinstance(metadata, dict) else {}
+                    logger.info(f"COMPLETION_HANDLER: Meta data: {meta}")
+                    parent_execution_id = meta.get('parent_execution_id') or event_data.get('parent_execution_id')
+                    parent_step = meta.get('parent_step')
+                    exec_id = execution_id
+                    logger.info(f"COMPLETION_HANDLER: parent_execution_id={parent_execution_id}, parent_step={parent_step}, exec_id={exec_id}")
+                    
+                    if parent_execution_id and exec_id and parent_execution_id != exec_id:
+                        # If parent_step is not in metadata, derive it from result events sent to parent
+                        if not parent_step:
+                            try:
+                                async with get_async_db_connection() as conn:
+                                    async with conn.cursor() as cur:
+                                        # Find parent_step from result events sent back to parent for this child
+                                        await cur.execute(
+                                            """
+                                            SELECT context::json->>'parent_step' as parent_step
+                                            FROM noetl.event_log
+                                            WHERE execution_id = %s
+                                              AND event_type = 'result'
+                                              AND context LIKE %s
+                                              AND context::json->>'parent_step' IS NOT NULL
+                                            LIMIT 1
+                                            """,
+                                            (parent_execution_id, f'%"child_execution_id": "{exec_id}"%')
+                                        )
+                                        row = await cur.fetchone()
+                                        if row and row[0]:
+                                            parent_step = row[0]
+                            except Exception:
+                                logger.debug("Failed to derive parent_step from result events", exc_info=True)
+                        
+                        if parent_step:
+                            logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
+                            print(f"completion handler: about to extract result for {exec_id}")
+                            
+                            # Extract the child execution result 
+                            try:
+                                async with get_async_db_connection() as conn:
+                                    async with conn.cursor() as cur:
+                                        # Get the final result from the most recent action_completed event
+                                        await cur.execute(
+                                            """
+                                            SELECT result, context
+                                            FROM noetl.event_log
+                                            WHERE execution_id = %s
+                                              AND event_type = 'action_completed'
+                                              AND result IS NOT NULL
+                                              AND result != '{}'
+                                              AND result != 'null'
+                                            ORDER BY timestamp DESC
+                                            LIMIT 1
+                                            """,
+                                            (exec_id,)
+                                        )
+                                        result_row = await cur.fetchone()
+                                        child_result = {}
+                                        if result_row and result_row[0]:
+                                            try:
+                                                child_result = json.loads(result_row[0])
+                                            except:
+                                                child_result = {"raw_result": result_row[0]}
+                                                
+                                        logger.info(f"COMPLETION_HANDLER: Extracted result for child {exec_id}: {child_result}")
+                                        
+                                        # Get loop metadata from workload
+                                        loop_metadata = {}
+                                        try:
+                                            await cur.execute(
+                                                "SELECT data FROM noetl.workload WHERE execution_id = %s",
+                                                (exec_id,)
+                                            )
+                                            workload_row = await cur.fetchone()
+                                            if workload_row and workload_row[0]:
+                                                workload_data = json.loads(workload_row[0])
+                                                loop_data = workload_data.get('_loop', {})
+                                                if loop_data:
+                                                    loop_metadata = {
+                                                        'loop_id': loop_data.get('loop_id'),
+                                                        'current_index': loop_data.get('current_index'),
+                                                        'current_item': loop_data.get('current_item')
+                                                    }
+                                        except Exception as e:
+                                            logger.debug(f"Failed to extract loop metadata: {e}")
+                                        
+                                        # Emit action_completed event to parent
+                                        await self.emit({
+                                            'event_type': 'action_completed',
+                                            'execution_id': parent_execution_id,
+                                            'node_id': parent_step,
+                                            'node_name': parent_step,
+                                            'node_type': 'distributed_task',
+                                            'status': 'completed',
+                                            'result': child_result,
+                                            'context': {
+                                                'child_execution_id': exec_id,
+                                                'distributed': True,
+                                                'parent_step': parent_step,
+                                                **loop_metadata
+                                            }
+                                        })
+                                        
+                                        logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
+                                        
+                                        logger.info(f"COMPLETION_HANDLER: Calling distributed loop completion check for parent {parent_execution_id} step {parent_step}")
+                                        
+                                        # Check if this completes a distributed loop
+                                        try:
+                                            await _check_distributed_loop_completion(parent_execution_id, parent_step)
+                                            logger.info(f"COMPLETION_HANDLER: Distributed loop completion check completed for parent {parent_execution_id} step {parent_step}")
+                                        except Exception as e:
+                                            logger.error(f"COMPLETION_HANDLER: Error in distributed loop completion check: {e}", exc_info=True)
+                                        
+                            except Exception as e:
+                                logger.error(f"COMPLETION_HANDLER: Error processing child completion: {e}", exc_info=True)
+                                
+                except Exception as e:
+                    logger.error(f"COMPLETION_HANDLER: Error in completion handler: {e}", exc_info=True)
+
             # Notify central BrokerService that an event has been persisted (non-blocking)
             try:
                 from noetl.broker import get_broker_service
@@ -2276,7 +2401,7 @@ async def evaluate_broker_for_execution(
                                             WHERE execution_id = %s
                                               AND node_name = %s
                                               AND event_type = 'result'
-                                              AND context LIKE '%child_execution_id%'
+                                              AND context LIKE '%%child_execution_id%%'
                                               AND context::json->>'child_execution_id' IS NOT NULL
                                             """,
                                             (execution_id, step_nm)
@@ -2294,7 +2419,7 @@ async def evaluate_broker_for_execution(
                                                 WHERE execution_id = %s
                                                   AND node_name = %s
                                                   AND event_type IN ('action_completed', 'loop_completed')
-                                                  AND context LIKE '%loop_completed%true%'
+                                                  AND context LIKE '%%loop_completed%%true%%'
                                                 """,
                                                 (execution_id, step_nm)
                                             )
