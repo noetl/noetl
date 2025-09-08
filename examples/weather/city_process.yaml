@@ -49,6 +49,27 @@ workflow:
       threshold: "{{ workload.temperature_threshold }}"
       forecast_data: "{{ get_forecast_http_step }}"
     next:
+      - step: fetch_and_evaluate
+
+  - step: fetch_and_evaluate
+    desc: "Combined fetch and evaluate result step"
+    type: python
+    code: |
+      def main(evaluation_result, city):
+          # This step combines and returns the evaluation result
+          # This is the step that the parent workflow expects for return_step
+          result = {
+              "city": city.get("name") if isinstance(city, dict) else city,
+              "evaluation": evaluation_result,
+              "alert": evaluation_result.get("alert", False) if isinstance(evaluation_result, dict) else False,
+              "max_temp": evaluation_result.get("max_temp", 0) if isinstance(evaluation_result, dict) else 0
+          }
+          print(f"FETCH_AND_EVALUATE: Combined result: {result}")
+          return result
+    with:
+      evaluation_result: "{{ evaluate_weather_step }}"
+      city: "{{ workload.city }}"
+    next:
       - step: decide
 
   - step: decide

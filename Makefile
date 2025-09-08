@@ -439,7 +439,20 @@ export-queue:
 	@set -a; [ -f .env ] && . .env; set +a; \
 	if [ -z "$(ID)" ]; then echo "Usage: make export-queue ID=<execution_id>"; exit 1; fi; \
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
-	psql -v ON_ERROR_STOP=1 -Atc "WITH q AS (SELECT id, created_at, available_at, lease_until, last_heartbeat, status, execution_id, node_id, action, context, priority, attempts, max_attempts, worker_id FROM noetl.queue WHERE execution_id = $(ID) ORDER BY id) SELECT coalesce(json_agg(row_to_json(q)),'[]'::json) FROM q;" > logs/queue.json; \
+	# Include queue rows for the parent execution and any child executions started with metadata.parent_execution_id = $(ID)
+	psql -v ON_ERROR_STOP=1 -Atc "WITH all_execs AS ( \
+	  SELECT $(ID)::bigint AS execution_id \
+	  UNION \
+	  SELECT DISTINCT execution_id \
+	  FROM noetl.event_log \
+	  WHERE event_type = 'execution_start' \
+	    AND metadata::text LIKE '%"parent_execution_id": "$(ID)"%' \
+	), q AS ( \
+	  SELECT id, created_at, available_at, lease_until, last_heartbeat, status, execution_id, node_id, action, context, priority, attempts, max_attempts, worker_id \
+	  FROM noetl.queue \
+	  WHERE execution_id IN (SELECT execution_id FROM all_execs) \
+	  ORDER BY id \
+	) SELECT coalesce(json_agg(row_to_json(q)),'[]'::json) FROM q;" > logs/queue.json; \
 	[ -s logs/queue.json ] && (jq . logs/queue.json >/dev/null 2>&1 && jq . logs/queue.json > logs/queue.json.tmp && mv logs/queue.json.tmp logs/queue.json || true) || true; \
 	echo "Wrote logs/queue.json"
 

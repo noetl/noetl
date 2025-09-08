@@ -1209,6 +1209,12 @@ class Broker:
                 'timestamp': datetime.datetime.now().isoformat()
             }, self.server_url)
 
+        # Check for distributed execution
+        distribution = loop_config.get('distribution', False)
+        if distribution and self.server_url:
+            logger.info(f"Delegating distributed loop '{loop_name}' to server queue with {len(items)} items")
+            return self.execute_distributed_loop(step_config, context, step_id, loop_id, items, iterator)
+
         all_results = []
 
         for idx, item in enumerate(items):
@@ -1458,6 +1464,96 @@ class Broker:
             'id': step_id,
             'status': 'success',
             'data': all_results
+        }
+
+    def execute_distributed_loop(self, step_config: Dict, context: Dict, step_id: str, loop_id: str, items: list, iterator: str) -> Dict:
+        """
+        Execute a distributed loop by queuing each iteration as a separate execution.
+        
+        Args:
+            step_config: The step configuration
+            context: The context to render templates
+            step_id: The ID of the step
+            loop_id: The ID of the loop
+            items: The list of items to iterate over
+            iterator: The iterator variable name
+            
+        Returns:
+            A dictionary of the step result
+        """
+        logger.info(f"Executing distributed loop with {len(items)} items")
+        
+        # Get playbook details
+        playbook_path = step_config.get('path')
+        playbook_with = step_config.get('with', {})
+        
+        if not playbook_path:
+            error_msg = "Distributed loop requires 'path' attribute"
+            return {
+                'id': step_id,
+                'status': 'error',
+                'error': error_msg
+            }
+        
+        # Create executions for each loop iteration
+        child_execution_ids = []
+        for idx, item in enumerate(items):
+            iter_context = dict(context)
+            iter_context[iterator] = item if isinstance(item, dict) else {"value": item}
+            
+            # Render iteration-specific parameters
+            rendered_with = render_template(self.agent.jinja_env, playbook_with, iter_context)
+            
+            # Create child execution via server API
+            try:
+                api_url = f"{self.server_url}/executions/run"
+                payload = {
+                    "path": playbook_path,
+                    "version": None,
+                    "input_payload": rendered_with,
+                    "sync_to_postgres": True,
+                    "merge": True,
+                    "parent_execution_id": self.agent.execution_id,
+                    "parent_step": step_config.get('step'),
+                }
+                
+                logger.debug(f"Creating distributed loop iteration {idx} with payload: {payload}")
+                
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.post(api_url, json=payload)
+                    resp.raise_for_status()
+                    result = resp.json()
+                    child_execution_id = result.get('execution_id')
+                    
+                    if child_execution_id:
+                        child_execution_ids.append(child_execution_id)
+                        logger.debug(f"Created child execution {child_execution_id} for loop iteration {idx}")
+                    else:
+                        logger.error(f"Failed to get execution_id from API response: {result}")
+                        
+            except Exception as e:
+                logger.error(f"Failed to create child execution for loop iteration {idx}: {e}")
+                continue
+        
+        logger.info(f"Created {len(child_execution_ids)} child executions for distributed loop")
+        
+        # Store child execution IDs for later aggregation
+        loop_info = {
+            'loop_id': loop_id,
+            'child_execution_ids': child_execution_ids,
+            'step_config': step_config,
+            'total_items': len(items),
+            'status': 'distributed'
+        }
+        
+        # Update context with distributed loop info
+        self.agent.update_context(f"{step_config.get('step')}_distributed", loop_info)
+        
+        # For distributed loops, we return success immediately and let the server handle aggregation
+        return {
+            'id': step_id,
+            'status': 'success',
+            'data': {'distributed_loop_id': loop_id, 'child_executions': child_execution_ids}
         }
 
     def get_next_steps(self, step_config: Dict, context: Dict) -> List[Tuple[str, Dict, str]]:
@@ -1806,9 +1902,28 @@ class Broker:
         execution_duration = (datetime.datetime.now() - datetime.datetime.fromisoformat(
             self.agent.context.get('execution_start'))).total_seconds()
 
-        # Get parent information from context if available
-        parent_execution_id = self.agent.context.get('parent_execution_id') if isinstance(self.agent.context, dict) else None
-        parent_step = self.agent.context.get('parent_step') if isinstance(self.agent.context, dict) else None
+        # Get parent information from execution_start event metadata if available
+        parent_execution_id = None
+        parent_step = None
+        try:
+            # Try to get parent info from the execution_start event metadata by querying database
+            from noetl.common import get_sync_db_connection
+            with get_sync_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT metadata FROM noetl.event_log WHERE execution_id = %s AND event_type = 'execution_start' LIMIT 1",
+                        (self.agent.execution_id,)
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        import json
+                        metadata = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                        parent_execution_id = metadata.get('parent_execution_id')
+                        parent_step = metadata.get('parent_step')
+        except Exception:
+            # Fallback to context (original behavior)
+            parent_execution_id = self.agent.context.get('parent_execution_id') if isinstance(self.agent.context, dict) else None
+            parent_step = self.agent.context.get('parent_step') if isinstance(self.agent.context, dict) else None
 
         self.write_event_log(
             'execution_complete',

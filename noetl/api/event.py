@@ -171,17 +171,17 @@ async def render_context(request: Request):
                 row = await cur.fetchone()
                 if row:
                     try:
-                        input_context = json.loads(row["context"]) if row.get("context") else {}
+                        context = json.loads(row["context"]) if row.get("context") else {}
                     except Exception:
-                        input_context = row.get("context") or {}
+                        context = row.get("context") or {}
                     try:
                         metadata = json.loads(row["metadata"]) if row.get("metadata") else {}
                     except Exception:
                         metadata = row.get("metadata") or {}
-                    playbook_path = (input_context.get('path') or
+                    playbook_path = (context.get('path') or
                                      (metadata.get('playbook_path') if isinstance(metadata, dict) else None) or
                                      (metadata.get('resource_path') if isinstance(metadata, dict) else None))
-                    playbook_version = (input_context.get('version') or
+                    playbook_version = (context.get('version') or
                                         (metadata.get('resource_version') if isinstance(metadata, dict) else None))
 
         if playbook_path:
@@ -435,6 +435,145 @@ async def get_execution_summary(request: Request, execution_id: str):
         logger.exception(f"Error summarizing execution: {e}.")
         return JSONResponse(content={"status": "error", "error": str(e)}, status_code=500)
 
+
+async def _check_distributed_loop_completion(execution_id: str, step_name: str) -> None:
+    """
+    Check if all child executions for a distributed loop have completed.
+    If so, emit the loop completion event to allow broker to advance to next step.
+    """
+    try:
+        from noetl.common import get_async_db_connection
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                # Get the expected number of children from the loop_started event
+                await cur.execute(
+                    """
+                    SELECT result FROM noetl.event_log
+                    WHERE execution_id = %s
+                      AND node_name = %s
+                      AND event_type = 'loop_started'
+                      AND node_type = 'distributed_loop'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    (execution_id, step_name)
+                )
+                loop_start_row = await cur.fetchone()
+                
+                if not loop_start_row:
+                    logger.debug(f"DISTRIBUTED_COMPLETION: No loop_started event found for {execution_id} step {step_name}")
+                    return
+                
+                try:
+                    loop_start_result = loop_start_row[0] if isinstance(loop_start_row, tuple) else loop_start_row.get('result')
+                    if isinstance(loop_start_result, str):
+                        loop_start_result = json.loads(loop_start_result)
+                    expected_children = loop_start_result.get('expected_children', 0)
+                    step_index = loop_start_result.get('step_index', 0)
+                except Exception as e:
+                    logger.error(f"DISTRIBUTED_COMPLETION: Failed to parse loop_started result: {e}")
+                    return
+                
+                if expected_children <= 0:
+                    logger.debug(f"DISTRIBUTED_COMPLETION: No children expected for {execution_id} step {step_name}")
+                    return
+                
+                # Count completed child executions by counting unique child_execution_ids that have sent results
+                await cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT context::json->>'child_execution_id') FROM noetl.event_log
+                    WHERE execution_id = %s
+                      AND node_name = %s
+                      AND event_type = 'result'
+                      AND context LIKE '%child_execution_id%'
+                      AND context::json->>'child_execution_id' IS NOT NULL
+                    """,
+                    (execution_id, step_name)
+                )
+                completed_row = await cur.fetchone()
+                completed_children = completed_row[0] if completed_row else 0
+                
+                logger.info(f"DISTRIBUTED_COMPLETION: {step_name} has {completed_children}/{expected_children} children completed")
+                
+                if completed_children >= expected_children:
+                    # All children completed - check if we already emitted completion
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) FROM noetl.event_log
+                        WHERE execution_id = %s
+                          AND node_name = %s
+                          AND event_type = 'action_completed'
+                          AND context LIKE '%loop_completed%true%'
+                        """,
+                        (execution_id, step_name)
+                    )
+                    completion_row = await cur.fetchone()
+                    already_completed = (completion_row[0] if completion_row else 0) > 0
+                    
+                    if not already_completed:
+                        # Aggregate results from all child result events  
+                        await cur.execute(
+                            """
+                            SELECT DISTINCT ON (context::json->>'child_execution_id') 
+                                   result, 
+                                   context::json->>'child_execution_id' as child_id
+                            FROM noetl.event_log
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type = 'result'
+                              AND context LIKE '%child_execution_id%'
+                              AND context::json->>'child_execution_id' IS NOT NULL
+                              AND result IS NOT NULL
+                              AND result != '{}'
+                            ORDER BY context::json->>'child_execution_id', timestamp DESC
+                            """,
+                            (execution_id, step_name)
+                        )
+                        result_rows = await cur.fetchall()
+                        
+                        aggregated_results = []
+                        for row in result_rows:
+                            try:
+                                result_data = row[0] if isinstance(row, tuple) else row.get('result')
+                                if isinstance(result_data, str):
+                                    result_data = json.loads(result_data)
+                                if result_data is not None:
+                                    aggregated_results.append(result_data)
+                            except Exception:
+                                pass
+                        
+                        # Emit loop completion event
+                        await get_event_service().emit({
+                            'execution_id': execution_id,
+                            'event_type': 'action_completed',
+                            'status': 'COMPLETED',
+                            'node_id': f'{execution_id}-step-{step_index+1}',
+                            'node_name': step_name,
+                            'node_type': 'distributed_loop',
+                            'result': {
+                                'data': {
+                                    'results': aggregated_results,
+                                    'result': aggregated_results,
+                                    'count': len(aggregated_results)
+                                },
+                                'results': aggregated_results,
+                                'result': aggregated_results,
+                                'count': len(aggregated_results)
+                            },
+                            'context': {
+                                'loop_completed': True,
+                                'distributed_loop': True,
+                                'total_iterations': len(aggregated_results),
+                                'completed_children': completed_children
+                            }
+                        })
+                        
+                        logger.info(f"DISTRIBUTED_COMPLETION: Emitted completion for distributed loop '{step_name}' with {len(aggregated_results)} results")
+                        
+    except Exception as e:
+        logger.error(f"DISTRIBUTED_COMPLETION: Error checking completion for {execution_id} step {step_name}: {e}")
+
+
 @router.post("/events", response_class=JSONResponse)
 async def create_event(
     request: Request,
@@ -458,8 +597,34 @@ async def create_event(
                 parent_step = meta.get('parent_step')
                 exec_id = body.get('execution_id')
                 
-                if parent_execution_id and parent_step and exec_id and parent_execution_id != exec_id:
-                    logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
+                if parent_execution_id and exec_id and parent_execution_id != exec_id:
+                    # If parent_step is not in metadata, derive it from result events sent to parent
+                    if not parent_step:
+                        try:
+                            from noetl.common import get_async_db_connection as get_db_conn
+                            async with get_db_conn() as conn:
+                                async with conn.cursor() as cur:
+                                    # Find parent_step from result events sent back to parent for this child
+                                    await cur.execute(
+                                        """
+                                        SELECT context::json->>'parent_step' as parent_step
+                                        FROM noetl.event_log
+                                        WHERE execution_id = %s
+                                          AND event_type = 'result'
+                                          AND context LIKE %s
+                                          AND context::json->>'parent_step' IS NOT NULL
+                                        LIMIT 1
+                                        """,
+                                        (parent_execution_id, f'%"child_execution_id": "{exec_id}"%')
+                                    )
+                                    row = await cur.fetchone()
+                                    if row and row[0]:
+                                        parent_step = row[0]
+                        except Exception:
+                            logger.debug("Failed to derive parent_step from result events", exc_info=True)
+                    
+                    if parent_step:
+                        logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
                     
                     # Extract result from the event
                     child_result = body.get('result')
@@ -561,6 +726,10 @@ async def create_event(
                                 
                                 await event_service.emit(emit_data)
                                 logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
+                                
+                                # Check if this completes a distributed loop
+                                await _check_distributed_loop_completion(parent_execution_id, parent_step)
+                                
             except Exception:
                 logger.debug("Failed to handle execution_complete event", exc_info=True)
         
@@ -740,10 +909,10 @@ async def get_execution(execution_id: str):
             )
 
         metadata = latest_event.get("metadata", {})
-        input_context = latest_event.get("context", {})
-        output_result = latest_event.get("result", {})
+        context = latest_event.get("context", {})
+        result = latest_event.get("result", {})
 
-        playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+        playbook_id = metadata.get('resource_path', context.get('path', ''))
         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
 
         raw_status = latest_event.get("status", "")
@@ -783,7 +952,7 @@ async def get_execution(execution_id: str):
             "end_time": end_time,
             "duration": duration,
             "progress": progress,
-            "result": output_result,
+            "result": result,
             "error": latest_event.get("error"),
             "events": events.get("events", [])
         }
@@ -920,6 +1089,7 @@ class EventService:
             return []
 
     async def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        logger.info(f"EVENT_SERVICE_EMIT: Called with event_type={event_data.get('event_type')} execution_id={event_data.get('execution_id')}")
         try:
             # Generate event_id using snowflake when not provided
             try:
@@ -942,22 +1112,25 @@ class EventService:
             metadata = event_data.get("meta", {})
             trace_component = event_data.get("trace_component")
             error = event_data.get("error")
+            if error and not isinstance(error, str):
+                error = json.dumps(error)
             traceback_text = event_data.get("traceback")
-            input_context_dict = event_data.get("context", {})
+            context_dict = event_data.get("context", {})
             # Accept either 'result' (preferred) or legacy 'output_result' key from callers
-            output_result_dict = event_data.get("result", {})
-            if (not output_result_dict) and (event_data.get("output_result") is not None):
-                output_result_dict = event_data.get("output_result")
-            input_context = json.dumps(input_context_dict)
-            output_result = json.dumps(output_result_dict)
+            result_dict = event_data.get("result", {})
+            if (not result_dict) and (event_data.get("output_result") is not None):
+                result_dict = event_data.get("output_result")
+            context = json.dumps(context_dict)
+            result = json.dumps(result_dict)
             
             # DEBUG: Log what we're actually storing
-            logger.debug(f"EMIT_DEBUG: event_type={event_type}, input_context_dict={input_context_dict}, input_context_json_length={len(input_context)}")
+            logger.debug(f"EMIT_DEBUG: event_type={event_type}, context_dict={context_dict}, context_json_length={len(context)}")
             metadata_str = json.dumps(metadata)
             trace_component_str = json.dumps(trace_component) if trace_component is not None else None
 
             async with get_async_db_connection() as conn:
-                  async with conn.cursor() as cursor:
+                try:
+                    async with conn.cursor() as cursor:
                       # Default parent_event_id if missing: link to previous event in the same execution
                       if not parent_event_id:
                           try:
@@ -976,24 +1149,57 @@ class EventService:
                       exists = row[0] > 0 if row else False
 
                       loop_id_val = event_data.get('loop_id')
+                      if loop_id_val is not None and not isinstance(loop_id_val, (str, int)):
+                          loop_id_val = json.dumps(loop_id_val)
+                      elif loop_id_val is not None:
+                          loop_id_val = str(loop_id_val)
+                      
                       loop_name_val = event_data.get('loop_name')
-                      iterator_val = event_data.get('iterator')
+                      if loop_name_val is not None and not isinstance(loop_name_val, str):
+                          loop_name_val = str(loop_name_val)
+                      
+                      iterator_val = json.dumps(event_data.get('iterator')) if event_data.get('iterator') is not None else None
+                      
                       current_index_val = event_data.get('current_index')
+                      if current_index_val is not None and not isinstance(current_index_val, (str, int)):
+                          current_index_val = json.dumps(current_index_val)
+                      elif current_index_val is not None:
+                          current_index_val = str(current_index_val)
+                      
                       current_item_val = json.dumps(event_data.get('current_item')) if event_data.get('current_item') is not None else None
                       
                       # Enhanced loop metadata extraction: check context and input_context for _loop metadata
                       if not loop_id_val:
-                          # Try to extract from context
-                          context = event_data.get('context')
-                          if context and isinstance(context, dict):
-                              workload = context.get('workload')
+                          # Try to extract from context (use context_dict, not context which is the JSON string)
+                          if context_dict and isinstance(context_dict, dict):
+                              workload = context_dict.get('workload')
                               if workload and isinstance(workload, dict):
                                   loop_data = workload.get('_loop')
                                   if loop_data and isinstance(loop_data, dict):
-                                      loop_id_val = loop_data.get('loop_id')
-                                      loop_name_val = loop_data.get('loop_name')
-                                      iterator_val = loop_data.get('iterator')
-                                      current_index_val = loop_data.get('current_index')
+                                      loop_id_extracted = loop_data.get('loop_id')
+                                      if loop_id_extracted is not None and not isinstance(loop_id_extracted, (str, int)):
+                                          loop_id_val = json.dumps(loop_id_extracted)
+                                      elif loop_id_extracted is not None:
+                                          loop_id_val = str(loop_id_extracted)
+                                      else:
+                                          loop_id_val = loop_id_extracted
+                                      
+                                      loop_name_extracted = loop_data.get('loop_name')
+                                      if loop_name_extracted is not None and not isinstance(loop_name_extracted, str):
+                                          loop_name_val = str(loop_name_extracted)
+                                      else:
+                                          loop_name_val = loop_name_extracted
+                                      
+                                      iterator_val = json.dumps(loop_data.get('iterator')) if loop_data.get('iterator') is not None else None
+                                      
+                                      current_index_extracted = loop_data.get('current_index')
+                                      if current_index_extracted is not None and not isinstance(current_index_extracted, (str, int)):
+                                          current_index_val = json.dumps(current_index_extracted)
+                                      elif current_index_extracted is not None:
+                                          current_index_val = str(current_index_extracted)
+                                      else:
+                                          current_index_val = current_index_extracted
+                                      
                                       current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
                           
                           # Try to extract from input_context if still not found
@@ -1002,10 +1208,30 @@ class EventService:
                               if input_context_field and isinstance(input_context_field, dict):
                                   loop_data = input_context_field.get('_loop')
                                   if loop_data and isinstance(loop_data, dict):
-                                      loop_id_val = loop_data.get('loop_id')
-                                      loop_name_val = loop_data.get('loop_name')
-                                      iterator_val = loop_data.get('iterator')
-                                      current_index_val = loop_data.get('current_index')
+                                      loop_id_extracted = loop_data.get('loop_id')
+                                      if loop_id_extracted is not None and not isinstance(loop_id_extracted, (str, int)):
+                                          loop_id_val = json.dumps(loop_id_extracted)
+                                      elif loop_id_extracted is not None:
+                                          loop_id_val = str(loop_id_extracted)
+                                      else:
+                                          loop_id_val = loop_id_extracted
+                                      
+                                      loop_name_extracted = loop_data.get('loop_name')
+                                      if loop_name_extracted is not None and not isinstance(loop_name_extracted, str):
+                                          loop_name_val = str(loop_name_extracted)
+                                      else:
+                                          loop_name_val = loop_name_extracted
+                                      
+                                      iterator_val = json.dumps(loop_data.get('iterator')) if loop_data.get('iterator') is not None else None
+                                      
+                                      current_index_extracted = loop_data.get('current_index')
+                                      if current_index_extracted is not None and not isinstance(current_index_extracted, (str, int)):
+                                          current_index_val = json.dumps(current_index_extracted)
+                                      elif current_index_extracted is not None:
+                                          current_index_val = str(current_index_extracted)
+                                      else:
+                                          current_index_val = current_index_extracted
+                                      
                                       current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
                       
                       # Extract parent_execution_id from metadata or event_data
@@ -1045,8 +1271,8 @@ class EventService:
                               event_type,
                               status,
                               duration,
-                              input_context,
-                              output_result,
+                              context,
+                              result,
                               metadata_str,
                               error,
                               trace_component_str,
@@ -1060,7 +1286,10 @@ class EventService:
                           ))
                       else:
                           # DEBUG: Log what we're about to insert
-                          logger.debug(f"EMIT_DB_INSERT: About to insert execution_id={execution_id}, event_id={event_id}, input_context_length={len(input_context)}, input_context_preview={input_context[:100] if input_context else 'None'}")
+                          logger.debug(f"EMIT_DB_INSERT: About to insert execution_id={execution_id}, event_id={event_id}, context_length={len(context) if context else 0}, context_preview={context[:100] if context and isinstance(context, str) else 'None'}")
+                          logger.debug(f"EMIT_DB_INSERT_PARAMS: execution_id={type(execution_id)}, event_id={type(event_id)}, parent_event_id={type(parent_event_id)}, event_type={type(event_type)}")
+                          logger.debug(f"EMIT_DB_INSERT_PARAMS: context={type(context)}, result={type(result)}, metadata_str={type(metadata_str)}, error={type(error)}")
+                          logger.debug(f"EMIT_DB_INSERT_PARAMS: iterator_val={type(iterator_val)}, current_index_val={type(current_index_val)}, current_item_val={type(current_item_val)}")
                           
                           await cursor.execute("""
                               INSERT INTO event_log (
@@ -1086,8 +1315,8 @@ class EventService:
                               node_type,
                               status,
                               duration,
-                              input_context,
-                              output_result,
+                              context,
+                              result,
                               metadata_str,
                               error,
                               trace_component_str,
@@ -1114,10 +1343,10 @@ class EventService:
                                   step_id=node_id,
                                   step_name=node_name,
                                   template_string=None,
-                                  context_data=input_context_dict,
+                                  context_data=context_dict,
                                   stack_trace=traceback_text,
-                                  input_data=input_context_dict,
-                                  output_data=output_result_dict,
+                                  input_data=context_dict,
+                                  output_data=result_dict,
                                   severity='error'
                               )
                       except Exception:
@@ -1132,7 +1361,7 @@ class EventService:
                                       VALUES (%s, %s)
                                       ON CONFLICT (execution_id) DO UPDATE SET data = EXCLUDED.data
                                       """,
-                                      (execution_id, input_context)
+                                      (execution_id, context)
                                   )
                               except Exception:
                                   pass
@@ -1140,6 +1369,13 @@ class EventService:
                           pass
 
                       await conn.commit()
+                except Exception as db_error:
+                    logger.error(f"Database error in emit: {db_error}", exc_info=True)
+                    try:
+                        await conn.rollback()
+                    except Exception:
+                        pass
+                    raise
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
 
@@ -1154,6 +1390,7 @@ class EventService:
                 evt_l = (str(event_type) if event_type is not None else '').lower()
                 # Re-evaluate broker on key lifecycle events, including task completion/errors (legacy fast path)
                 if evt_l in {"execution_start", "action_completed", "action_error", "task_complete", "task_error", "loop_iteration", "loop_completed", "result"}:
+                    logger.info(f"EVENT_EMIT: Triggering broker evaluation for execution {execution_id} due to event_type: {evt_l}")
                     try:
                         if asyncio.get_event_loop().is_running():
                             asyncio.create_task(evaluate_broker_for_execution(execution_id))
@@ -1401,8 +1638,10 @@ async def evaluate_broker_for_execution(
     - Emits skip-complete events for skipped steps
     - Enqueues the first actionable step to the queue for workers
     """
+    print(f"!!! BROKER EVALUATION CALLED FOR {execution_id} !!!")
     logger.info(f"=== EVALUATE_BROKER_FOR_EXECUTION: Starting for execution_id={execution_id} ===")
     try:
+        print(f"!!! STEP 1: Inside try block for {execution_id} !!!")
         # Guard to prevent re-enqueuing post-loop steps per-item immediately
         # after an end_loop aggregation. Without this, steps following a loop
         # can be incorrectly treated as loop bodies, preventing final steps
@@ -1479,6 +1718,7 @@ async def evaluate_broker_for_execution(
             pb = yaml.safe_load(entry.get('content') or '') or {}
             workflow = pb.get('workflow', [])
             steps = pb.get('steps') or pb.get('tasks') or workflow
+            print(f"!!! STEP 3: Workflow parsed for {execution_id}, steps count: {len(steps) if steps else 0} !!!")
             tasks_def_list = pb.get('workbook') or pb.get('tasks') or []
             tasks_def_map: Dict[str, Any] = {}
             if isinstance(tasks_def_list, list):
@@ -1736,14 +1976,14 @@ async def evaluate_broker_for_execution(
             completed = 0
             async with get_async_db_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute("SELECT status FROM event_log WHERE execution_id = %s ORDER BY timestamp", (execution_id,))
+                    await cur.execute(
+                        "SELECT event_type FROM event_log WHERE execution_id = %s AND event_type = 'action_completed' ORDER BY timestamp", 
+                        (execution_id,)
+                    )
                     rows = await cur.fetchall()
-                    for r in rows:
-                        s = (r[0] or '').lower()
-                        if 'completed' in s or 'success' in s:
-                            completed += 1
+                    completed = len(rows)
             idx = completed
-            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Fallback next index={idx}")
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Fallback next index={idx} (action_completed events: {completed})")
         if idx is None or idx >= len(steps):
             logger.info("EVALUATE_BROKER_FOR_EXECUTION: No further steps to schedule")
             
@@ -1925,6 +2165,221 @@ async def evaluate_broker_for_execution(
                 # Build loop spec from attribute
                 lspec = next_step.get('loop') or {}
                 iterator = (lspec.get('iterator') or 'item').strip()
+                
+                # Check for distributed execution (default true for playbook loops)
+                distribution = lspec.get('distribution', True)  # Default to true for distributed execution
+                step_type_for_dist = str(next_step.get('type') or '').strip().lower()
+                
+                # For distributed playbook loops, create direct child executions instead of Python tasks
+                if distribution and step_type_for_dist == 'playbook':
+                    logger.info(f"DISTRIBUTED LOOP: Processing distributed playbook loop '{step_nm}' with distribution=true")
+                    
+                    # Check if this loop has already been started
+                    from noetl.common import get_async_db_connection
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                SELECT COUNT(*) FROM noetl.event_log
+                                WHERE execution_id = %s
+                                  AND node_name = %s
+                                  AND event_type = 'loop_started'
+                                  AND node_type = 'distributed_loop'
+                                """,
+                                (execution_id, step_nm)
+                            )
+                            loop_started_row = await cur.fetchone()
+                            loop_already_started = (loop_started_row[0] if loop_started_row else 0) > 0
+                            
+                            if loop_already_started:
+                                logger.info(f"DISTRIBUTED LOOP: Loop '{step_nm}' already started, checking completion...")
+                                
+                                # Check if all children are complete
+                                await cur.execute(
+                                    """
+                                    SELECT result FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND node_name = %s
+                                      AND event_type = 'loop_started'
+                                      AND node_type = 'distributed_loop'
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                    """,
+                                    (execution_id, step_nm)
+                                )
+                                loop_start_row = await cur.fetchone()
+                                
+                                if loop_start_row:
+                                    try:
+                                        loop_start_result = loop_start_row[0] if isinstance(loop_start_row, tuple) else loop_start_row.get('result')
+                                        if isinstance(loop_start_result, str):
+                                            loop_start_result = json.loads(loop_start_result)
+                                        expected_children = loop_start_result.get('expected_children', 0)
+                                        
+                                        # Count completed children
+                                        await cur.execute(
+                                            """
+                                            SELECT COUNT(*) FROM noetl.event_log
+                                            WHERE execution_id = %s
+                                              AND node_name = %s
+                                              AND event_type = 'action_completed'
+                                              AND lower(status) = 'completed'
+                                              AND context LIKE '%child_execution_id%'
+                                            """,
+                                            (execution_id, step_nm)
+                                        )
+                                        completed_row = await cur.fetchone()
+                                        completed_children = completed_row[0] if completed_row else 0
+                                        
+                                        logger.info(f"DISTRIBUTED LOOP: Loop '{step_nm}' progress: {completed_children}/{expected_children} children completed")
+                                        
+                                        if completed_children >= expected_children:
+                                            # Check if completion already emitted
+                                            await cur.execute(
+                                                """
+                                                SELECT COUNT(*) FROM noetl.event_log
+                                                WHERE execution_id = %s
+                                                  AND node_name = %s
+                                                  AND event_type = 'action_completed'
+                                                  AND context LIKE '%loop_completed%true%'
+                                                """,
+                                                (execution_id, step_nm)
+                                            )
+                                            completion_row = await cur.fetchone()
+                                            already_completed = (completion_row[0] if completion_row else 0) > 0
+                                            
+                                            if already_completed:
+                                                logger.info(f"DISTRIBUTED LOOP: Loop '{step_nm}' already completed, advancing...")
+                                                return  # Loop is complete, let broker advance
+                                            else:
+                                                logger.info(f"DISTRIBUTED LOOP: All children complete, emitting completion...")
+                                                await _check_distributed_loop_completion(execution_id, step_nm)
+                                                return
+                                        else:
+                                            logger.info(f"DISTRIBUTED LOOP: Waiting for remaining children to complete...")
+                                            return  # Still waiting for children
+                                    except Exception as e:
+                                        logger.error(f"DISTRIBUTED LOOP: Error checking completion: {e}")
+                                else:
+                                    logger.error(f"DISTRIBUTED LOOP: Could not find loop_started result for {step_nm}")
+                                return  # Exit to avoid re-creating children
+                    
+                    try:
+                        playbook_path = next_step.get('path')
+                        if not playbook_path:
+                            logger.error(f"DISTRIBUTED LOOP: Missing 'path' for distributed playbook loop '{step_nm}'")
+                            return
+                        
+                        items = render_template(jenv, lspec.get('in', []), base_ctx, strict_keys=False)
+                        if isinstance(items, str):
+                            try:
+                                items = json.loads(items)
+                            except Exception:
+                                items = [items]
+                        if not isinstance(items, list):
+                            items = []
+                        
+                        # Apply filter if specified
+                        fexpr = lspec.get('filter')
+                        def _accept(it):
+                            if not fexpr:
+                                return True
+                            try:
+                                fctx = dict(base_ctx)
+                                fctx[iterator] = it
+                                val = render_template(jenv, fexpr, fctx, strict_keys=False)
+                                return bool(val) if val is not None else True
+                            except Exception:
+                                return True
+                        items_f = [it for it in items if _accept(it)]
+                        
+                        # Create direct child executions for each item
+                        for i, item in enumerate(items_f):
+                            iter_context = dict(base_ctx)
+                            iter_context[iterator] = item
+                            
+                            # Render step parameters for this iteration
+                            step_with = next_step.get('with', {})
+                            rendered_with = render_template(jenv, step_with, iter_context, strict_keys=False)
+                            
+                            # Create child execution directly via execute_playbook_via_broker
+                            try:
+                                from noetl.broker import execute_playbook_via_broker
+                                from noetl.api.catalog import get_catalog_service
+                                
+                                # Get playbook content
+                                catalog = get_catalog_service()
+                                # Get latest version if none specified
+                                playbook_version = await catalog.get_latest_version(playbook_path)
+                                entry = await catalog.fetch_entry(playbook_path, playbook_version)
+                                if not entry:
+                                    logger.error(f"DISTRIBUTED LOOP: Playbook not found: {playbook_path} version {playbook_version}")
+                                    continue
+                                
+                                playbook_content = entry.get('content', '')
+                                if not playbook_content:
+                                    logger.error(f"DISTRIBUTED LOOP: Empty playbook content for: {playbook_path}")
+                                    continue
+                                
+                                # Generate child execution ID
+                                try:
+                                    child_execution_id = get_snowflake_id_str()
+                                except Exception:
+                                    child_execution_id = str(get_snowflake_id())
+                                
+                                logger.info(f"DISTRIBUTED LOOP: Creating child execution {child_execution_id} for item {i}: {item}")
+                                
+                                # Execute child playbook directly
+                                result = execute_playbook_via_broker(
+                                    playbook_content=playbook_content,
+                                    playbook_path=playbook_path,
+                                    playbook_version=entry.get('resource_version', 'latest'),
+                                    input_payload=rendered_with,
+                                    sync_to_postgres=True,
+                                    merge=True,
+                                    parent_execution_id=execution_id,
+                                    parent_event_id=None,
+                                    parent_step=step_nm
+                                )
+                                
+                                logger.debug(f"DISTRIBUTED LOOP: Child execution {child_execution_id} created with result: {result}")
+                                
+                            except Exception as e:
+                                logger.error(f"DISTRIBUTED LOOP: Failed to create child execution for item {i}: {e}")
+                                continue
+                        
+                        logger.info(f"DISTRIBUTED LOOP: Created {len(items_f)} child executions for distributed loop '{step_nm}'")
+                        
+                        # Emit a tracking event to record the expected number of child completions
+                        try:
+                            await get_event_service().emit({
+                                'execution_id': execution_id,
+                                'event_type': 'loop_started',
+                                'status': 'IN_PROGRESS',
+                                'node_id': f'{execution_id}-step-{idx+1}',
+                                'node_name': step_nm,
+                                'node_type': 'distributed_loop',
+                                'result': {
+                                    'expected_children': len(items_f),
+                                    'loop_type': 'distributed_playbook',
+                                    'step_index': idx
+                                },
+                                'context': {
+                                    'workload': workload,
+                                    'distributed_loop': True,
+                                    'expected_children': len(items_f)
+                                }
+                            })
+                            logger.info(f"DISTRIBUTED LOOP: Emitted loop_started event for '{step_nm}' expecting {len(items_f)} children")
+                        except Exception as e:
+                            logger.error(f"DISTRIBUTED LOOP: Failed to emit loop_started event: {e}")
+                        
+                        return  # Exit early - distributed executions are handled
+                        
+                    except Exception as e:
+                        logger.error(f"DISTRIBUTED LOOP: Error in distributed loop processing: {e}")
+                        # Fall back to normal loop processing
+                
                 try:
                     items = render_template(jenv, lspec.get('in', []), base_ctx, strict_keys=False)
                     if isinstance(items, str):
@@ -2186,25 +2641,23 @@ async def evaluate_broker_for_execution(
                     sub_path = next_step.get('path') or ''
                     return_step = next_step.get('return', 'fetch_and_evaluate')  # Use return attribute or default
                     task_code = (
-                        "def main(playbook_id, parameters, parent_execution_id=None, parent_event_id=None, parent_step=None, return_step='fetch_and_evaluate'):\n"
+                        "def main(playbook_id, parent_execution_id=None, parent_event_id=None, parent_step=None, return_step='fetch_and_evaluate', **kwargs):\n"
                         "    import os, httpx, time\n"
                         "    host = os.environ.get('NOETL_HOST','localhost')\n"
                         "    port = os.environ.get('NOETL_PORT','8082')\n"
                         "    base = f'http://{host}:{port}/api'\n"
                         "    try:\n"
-                        "        # Normalize parameters\n"
-                        "        params = parameters.get('parameters', parameters) if isinstance(parameters, dict) else parameters\n"
-                        "        payload = {'playbook_id': playbook_id, 'parameters': params, 'merge': True}\n"
-                        "        # Parent linkage if provided (explicit args take precedence)\n"
-                        "        peid = parent_execution_id or (params.get('parent_execution_id') if isinstance(params, dict) else None)\n"
-                        "        pveid = parent_event_id or (params.get('parent_event_id') if isinstance(params, dict) else None)\n"
-                        "        if peid: payload['parent_execution_id'] = peid\n"
-                        "        if pveid: payload['parent_event_id'] = pveid\n"
+                        "        # Use kwargs as parameters (these come from the step's with template)\n"
+                        "        params = kwargs\n"
+                        "        payload = {'playbook_id': playbook_id, 'input_payload': params, 'merge': True}\n"
+                        "        # Parent linkage if provided\n"
+                        "        if parent_execution_id: payload['parent_execution_id'] = parent_execution_id\n"
+                        "        if parent_event_id: payload['parent_event_id'] = parent_event_id\n"
                         "        if parent_step: payload['parent_step'] = parent_step\n"
                         "        r = httpx.post(f'{base}/executions/run', json=payload, timeout=30.0)\n"
                         "        r.raise_for_status()\n"
                         "        data = r.json(); eid = data.get('id') or data.get('execution_id')\n"
-                        "        for _ in range(300):\n"
+                        "        for _ in range(600):  # Increased timeout to 120 seconds (600 * 0.2)\n"
                         "            s = httpx.get(f'{base}/executions/{eid}', timeout=30.0)\n"
                         "            if s.status_code == 200:\n"
                         "                js = s.json(); st = str(js.get('status','')).lower()\n"
@@ -2231,18 +2684,21 @@ async def evaluate_broker_for_execution(
                     
                     # Render per-item parameters at worker from context; pass the step's with-template as a mapping
                     step_with_tpl = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
+                    # Create a combined parameters dict that includes the step with template directly
+                    # This ensures the parameters are passed correctly to the child playbook
+                    combined_params = {
+                        'playbook_id': sub_path,
+                        'parent_execution_id': '{{ _meta.parent_execution_id }}',
+                        'parent_event_id': '{{ _meta.parent_event_id }}',
+                        'parent_step': step_nm,
+                        'return_step': return_step,
+                        **step_with_tpl  # Merge the step with template directly
+                    }
                     task_cfg = {
                         'type': 'python',
                         'name': step_nm,
                         'code_b64': encoded_code,  # Use base64 encoded code instead of raw code
-                        'with': {
-                            'playbook_id': sub_path,
-                            'parameters': step_with_tpl,
-                            'parent_execution_id': '{{ _meta.parent_execution_id }}',
-                            'parent_event_id': '{{ _meta.parent_event_id }}',
-                            'parent_step': step_nm,
-                            'return_step': return_step,
-                        }
+                        'with': combined_params
                     }
                 elif 'call' in next_step:
                     task_cfg = next_step['call']
@@ -2490,7 +2946,7 @@ async def evaluate_broker_for_execution(
                         async with conn.cursor() as cur:
                             await cur.execute(
                                 """
-                                INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                 RETURNING id
                                 """,
@@ -2803,7 +3259,7 @@ async def evaluate_broker_for_execution(
                         async with conn.cursor() as cur:
                             await cur.execute(
                                 """
-                                INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                 RETURNING id
                                 """,
@@ -2985,7 +3441,7 @@ async def evaluate_broker_for_execution(
                         async with conn.cursor() as cur:
                             await cur.execute(
                                 """
-                                INSERT INTO noetl.queue (execution_id, node_id, action, input_context, priority, max_attempts, available_at)
+                                INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
                                 RETURNING id
                                 """,
@@ -3677,6 +4133,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             logger.debug("LOOP_COMPLETION_CHECK: Failed to emit loop_completed marker", exc_info=True)
                         
     except Exception as e:
-        logger.error(f"LOOP_COMPLETION_CHECK: Error processing loop completion: {e}")
+        print(f"!!! BROKER EVALUATION EXCEPTION: {e} !!!")
+        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Exception in broker evaluation: {e}")
         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Unhandled exception", exc_info=True)
         return

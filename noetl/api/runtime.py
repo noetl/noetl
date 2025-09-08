@@ -280,7 +280,55 @@ async def heartbeat_worker_pool(request: Request):
 
 @router.get("/worker/pools", response_class=JSONResponse)
 async def list_worker_pools(request: Request, runtime: Optional[str] = None, status: Optional[str] = None):
-    return JSONResponse(content={"items": [], "runtime": runtime, "status": status})
+    """List all registered worker pools from the runtime table."""
+    try:
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # Build query with optional filters
+                where_clauses = ["component_type = 'worker_pool'"]
+                params = []
+                
+                if runtime:
+                    where_clauses.append("(runtime::json->>'type' = %s)")
+                    params.append(runtime.lower())
+                
+                if status:
+                    where_clauses.append("status = %s")
+                    params.append(status.lower())
+                
+                query = f"""
+                    SELECT name, runtime, status, capacity, labels, last_heartbeat, created_at, updated_at
+                    FROM noetl.runtime 
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY name
+                """
+                
+                await cursor.execute(query, params)
+                rows = await cursor.fetchall()
+                
+                items = []
+                for row in rows:
+                    name, runtime_data, status, capacity, labels, last_heartbeat, created_at, updated_at = row
+                    items.append({
+                        "name": name,
+                        "runtime": runtime_data,
+                        "status": status,
+                        "capacity": capacity,
+                        "labels": labels,
+                        "last_heartbeat": last_heartbeat.isoformat() if last_heartbeat else None,
+                        "created_at": created_at.isoformat() if created_at else None,
+                        "updated_at": updated_at.isoformat() if updated_at else None
+                    })
+                
+                return JSONResponse(content={
+                    "items": items, 
+                    "runtime": runtime, 
+                    "status": status,
+                    "count": len(items)
+                })
+    except Exception as e:
+        logger.exception(f"Error listing worker pools: {e}")
+        return JSONResponse(content={"items": [], "runtime": runtime, "status": status, "error": str(e)})
 
 
 @router.post("/broker/register", response_class=JSONResponse)
