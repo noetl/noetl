@@ -70,9 +70,9 @@ class Broker:
                     parent_event_id = self._last_step_complete_event_id or self._execution_start_event_id
                 elif pet == 'task_start':
                     parent_event_id = self._current_step_event_id
-                elif pet in ('task_complete','task_error'):
+                elif pet in ('task_completed','task_error'):
                     parent_event_id = self._last_task_start_event_id or self._current_step_event_id
-                elif pet in ('step_complete','action_completed','action_error'):
+                elif pet in ('step_completed','action_completed','action_error'):
                     parent_event_id = self._current_step_event_id
             eid = self.agent.log_event(
                 event_type, node_id, node_name, node_type, status, duration,
@@ -97,9 +97,9 @@ class Broker:
                         parent_event_id = self._last_step_complete_event_id or self._execution_start_event_id
                     elif pet == 'task_start':
                         parent_event_id = self._current_step_event_id
-                    elif pet in ('task_complete','task_error'):
+                    elif pet in ('task_completed','task_error'):
                         parent_event_id = self._last_task_start_event_id or self._current_step_event_id
-                    elif pet in ('step_complete','action_completed','action_error'):
+                    elif pet in ('step_completed','action_completed','action_error'):
                         parent_event_id = self._current_step_event_id
 
                 payload: Dict[str, Any] = {
@@ -1907,8 +1907,8 @@ class Broker:
         parent_step = None
         try:
             # Try to get parent info from the execution_start event metadata by querying database
-            from noetl.common import get_sync_db_connection
-            with get_sync_db_connection() as conn:
+            from noetl.common import get_db_connection
+            with get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT metadata FROM noetl.event_log WHERE execution_id = %s AND event_type = 'execution_start' LIMIT 1",
@@ -1926,7 +1926,7 @@ class Broker:
             parent_step = self.agent.context.get('parent_step') if isinstance(self.agent.context, dict) else None
 
         self.write_event_log(
-            'execution_complete',
+            'execution_completed',
             f"{self.agent.execution_id}_complete", self.agent.playbook.get('name', 'Unnamed'),
             'playbook',
             'success', execution_duration, self.agent.context, None,
@@ -1967,7 +1967,7 @@ class Broker:
 
         if self.server_url and self.event_reporting_enabled:
             report_event({
-                'event_type': 'execution_complete',
+                'event_type': 'execution_completed',
                 'execution_id': self.agent.execution_id,
                 'playbook_name': self.agent.playbook.get('name', 'Unnamed'),
                 'status': 'success',
@@ -2211,7 +2211,7 @@ class BrokerService:
                         __cur.execute(
                             """
                             SELECT 1 FROM noetl.event_log
-                            WHERE execution_id = %s AND event_type = 'execution_complete'
+                            WHERE execution_id = %s AND event_type = 'execution_completed'
                             LIMIT 1
                             """,
                             (execution_id,)

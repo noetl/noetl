@@ -37,6 +37,8 @@ workflow:
     task: get_forecast
     with:
       debug_data: "{{ get_forecast_step }}"
+      lat: "{{ get_forecast_step.lat }}"
+      lon: "{{ get_forecast_step.lon }}"
     next:
       - step: evaluate_weather_step
 
@@ -182,11 +184,12 @@ workbook:
     method: GET
     endpoint: "https://api.open-meteo.com/v1/forecast"
     with:
-      debug_data: "{{ get_forecast_step }}"
-      base_url: "{{ base_url }}"
+      debug_data: "{{ debug_data }}"
+      lat: "{{ lat }}"
+      lon: "{{ lon }}"
     params:
-      latitude: "{{ get_forecast_step.lat }}"
-      longitude: "{{ get_forecast_step.lon }}"
+      latitude: "{{ lat }}"
+      longitude: "{{ lon }}"
       hourly: "temperature_2m"
       forecast_days: 1
     timeout: 10
