@@ -18,16 +18,7 @@ import {
   MarkerType,
   useReactFlow,
 } from "@xyflow/react";
-import {
-  Modal,
-  Button,
-  Spin,
-  message,
-  Select,
-  Space,
-  Popconfirm,
-  Tag,
-} from "antd";
+import { Modal, Button, Spin, message, Select, Space, Popconfirm, Tag } from "antd";
 import {
   CloseOutlined,
   FullscreenOutlined,
@@ -42,6 +33,7 @@ import { apiService } from "../services/api";
 import { nodeTypeMap, orderedNodeTypes } from './nodeTypes';
 import { EditableTaskNode, TaskNode } from "./types";
 import { EditableNode } from "./EditableNode";
+import MonacoEditor from '@monaco-editor/react';
 
 interface FlowVisualizationProps {
   visible: boolean;
@@ -68,6 +60,9 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // Modal/editor state
+  const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
+  const [editorTab, setEditorTab] = useState<'config' | 'code' | 'json' | 'raw'>('config');
 
   // antd message with context (avoid static API)
   const [messageApi, contextHolder] = message.useMessage();
@@ -117,20 +112,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const handleEditTask = useCallback(
     (updatedTask: EditableTaskNode) => {
       if (readOnly) return; // prevent edits in read-only
-      setTasks((prev) =>
-        prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
-      );
-
-      // Update nodes directly using ReactFlow's setNodes
-      setNodes((currentNodes) =>
-        currentNodes.map((node) =>
-          node.id === updatedTask.id
-            ? { ...node, data: { ...node.data, task: updatedTask } }
-            : node
-        )
-      );
-
+      setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
+      setNodes((currentNodes) => currentNodes.map((node) => node.id === updatedTask.id ? { ...node, data: { ...node.data, task: updatedTask } } : node));
       setHasChanges(true);
+      setActiveTask(updatedTask); // keep modal in sync while open
     },
     [setNodes, readOnly]
   );
@@ -166,6 +151,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             onEdit: handleEditTask,
             onDelete: handleDeleteTask,
             label: null,
+            readOnly,
+            onOpen: () => setActiveTask(task),
           },
           className: "react-flow__node",
         });
@@ -569,20 +556,25 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             </div>
             <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '500px' }}>
               <ReactFlow
-                nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
+                nodes={nodes.map(n => ({
+                  ...n,
+                  data: { ...n.data, readOnly },
+                }))}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                onNodeClick={(e, node) => {
+                  const task = (node.data as any)?.task;
+                  if (task) setActiveTask(task);
+                }}
                 nodeTypes={customNodeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
                 connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
                 fitView
                 fitViewOptions={{ padding: 0.18 }}
                 attributionPosition="bottom-left"
-                key={`flow-${tasks.length}-${tasks
-                  .map((t) => `${t.id}-${t.type}`)
-                  .join("-")}-${readOnly ? 'ro' : 'rw'}`}
+                key={`flow-${tasks.length}-${tasks.map((t) => `${t.id}-${t.type}`).join("-")}-${readOnly ? 'ro' : 'rw'}`}
               >
                 <Controls />
                 <MiniMap
@@ -612,7 +604,114 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     </div>
   );
   if (!visible) return null;
-  return flowInner;
+  return <>
+    {flowInner}
+    <Modal
+      open={!!activeTask}
+      onCancel={() => setActiveTask(null)}
+      onOk={() => setActiveTask(null)}
+      width={900}
+      title={activeTask ? `Edit: ${activeTask.name}` : ''}
+      okText="Close"
+      cancelButtonProps={{ style: { display: 'none' } }}
+    >
+      {activeTask && (
+        <div className="node-modal-body">
+          <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+            <Select
+              disabled={!!readOnly}
+              value={activeTask.type}
+              onChange={(val) => handleEditTask({ ...activeTask, type: val })}
+              options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeTypeMap[t].icon} ${nodeTypeMap[t].label}` }))}
+              style={{ width: 180 }}
+            />
+            <Select
+              value={editorTab}
+              onChange={(v) => setEditorTab(v as any)}
+              options={[
+                { value: 'config', label: 'Config Fields' },
+                { value: 'code', label: 'Code' },
+                { value: 'json', label: 'Config JSON' },
+                { value: 'raw', label: 'Raw Task' },
+              ]}
+              style={{ width: 160 }}
+            />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <input
+              disabled={!!readOnly}
+              value={activeTask.name}
+              onChange={(e) => handleEditTask({ ...activeTask, name: e.target.value })}
+              placeholder="Step name"
+              className="xy-theme__input"
+              style={{ width: '100%', padding: '6px 8px' }}
+            />
+          </div>
+          {editorTab === 'config' && (() => {
+            const nodeDef = nodeTypeMap[activeTask.type];
+            const EditorComp = nodeDef.editor;
+            if (!EditorComp) return <div>No editor for this type.</div>;
+            const updateField = (field: keyof EditableTaskNode, value: any) => handleEditTask({ ...activeTask, [field]: value });
+            return <EditorComp task={activeTask} readOnly={readOnly} updateField={updateField} />;
+          })()}
+          {editorTab === 'code' && (
+            <div style={{ height: 300 }}>
+              <MonacoEditor
+                height="300px"
+                defaultLanguage={activeTask.type === 'python' ? 'python' : (activeTask.type === 'duckdb' || activeTask.type === 'postgres') ? 'sql' : 'javascript'}
+                value={(activeTask.config?.code) || activeTask.config?.sql || ''}
+                onChange={(val) => {
+                  if (readOnly) return;
+                  const cfg = { ...(activeTask.config || {}) };
+                  if (activeTask.type === 'python') cfg.code = val || '';
+                  if (activeTask.type === 'duckdb' || activeTask.type === 'postgres') cfg.sql = val || '';
+                  handleEditTask({ ...activeTask, config: cfg });
+                }}
+                theme="vs-dark"
+                options={{ minimap: { enabled: false }, fontSize: 13 }}
+              />
+            </div>
+          )}
+          {editorTab === 'json' && (
+            <div style={{ height: 300 }}>
+              <MonacoEditor
+                height="300px"
+                defaultLanguage="json"
+                value={JSON.stringify(activeTask.config || {}, null, 2)}
+                onChange={(val) => {
+                  if (readOnly) return;
+                  try {
+                    const parsed = JSON.parse(val || '{}');
+                    handleEditTask({ ...activeTask, config: parsed });
+                  } catch { /* ignore parse errors live */ }
+                }}
+                theme="vs-dark"
+                options={{ minimap: { enabled: false }, fontSize: 13 }}
+              />
+            </div>
+          )}
+          {editorTab === 'raw' && (
+            <div style={{ height: 300 }}>
+              <MonacoEditor
+                height="300px"
+                defaultLanguage="json"
+                value={JSON.stringify(activeTask, null, 2)}
+                onChange={(val) => {
+                  if (readOnly) return;
+                  try {
+                    const parsed = JSON.parse(val || '{}');
+                    handleEditTask(parsed as any);
+                  } catch { }
+                }}
+                theme="vs-dark"
+                options={{ minimap: { enabled: false }, fontSize: 13 }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  </>;
 };
 
 export default FlowVisualization;

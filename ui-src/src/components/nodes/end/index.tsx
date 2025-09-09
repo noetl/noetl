@@ -3,7 +3,6 @@ import { NodeTypeDef } from '../../nodeTypes/NodeType';
 
 const EndEditor: React.FC = () => (
     <div className="node-editor end-editor">
-        <div className="flow-node-field-label">End node. No fields.</div>
     </div>
 );
 

@@ -38,10 +38,12 @@
    ========================================================================== */
 
 .flow-node {
-    padding: 4px 12px 12px;
+    /* restore prior uniform padding */
+    padding: 12px;
     border-radius: 8px;
     background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
     min-width: 280px;
+    /* original width */
     position: relative;
     transition: box-shadow .15s ease, border-color .15s ease, transform .15s ease;
     border: 1px solid #e2e8f0;
@@ -110,20 +112,13 @@
     position: relative;
     width: 100%;
     /* ensure separator spans full node width */
+    justify-content: center;
+    flex-direction: column;
 }
 
-/* subtle separator line under header now positioned just below header block */
 .flow-node-header::after {
-    content: "";
-    position: absolute;
-    left: -12px;
-    /* extend through node horizontal padding */
-    right: -12px;
-    /* extend through node horizontal padding */
-    bottom: -6px;
-    height: 1px;
-    background: #e2e8f0;
-    pointer-events: none;
+    content: none !important;
+    display: none !important;
 }
 
 /* add spacing to content that follows header so it clears the separator */
@@ -132,12 +127,23 @@
     /* ensures clear visual gap after line */
 }
 
+/* Center the node name specifically for end nodes */
+.flow-node.end .flow-node-header {
+    justify-content: center;
+}
+
+.flow-node-header .flow-node-status {
+    flex: 1;
+    text-align: center;
+}
+
 /* Icon chip */
 .flow-node-icon {
     width: 20px;
     height: 20px;
     display: inline-flex;
-    font-size: 14px;
+    font-size: 18px;
+    margin: 0 0 4px 0;
 }
 
 /* Select tweaks */
