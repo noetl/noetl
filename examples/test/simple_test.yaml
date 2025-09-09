@@ -29,4 +29,4 @@ workflow:
   - step: end
     desc: "End simple test"
     result:
-      test_step: "{{ test_step.result }}"
+      hello_world_respose: "{{ test_step.result }}"

@@ -2327,6 +2327,86 @@ async def evaluate_broker_for_execution(
                                                     
                                                     # Evaluate the return template
                                                     final_result = render_template(jenv, return_template, return_ctx, rules=None, strict_keys=False)
+                                                    # If still empty, re-fetch freshest results and retry
+                                                    if final_result in (None, "", {}):
+                                                        _fresh: Dict[str, Any] = {}
+                                                        try:
+                                                            async with get_async_db_connection() as __c:
+                                                                async with __c.cursor(row_factory=dict_row) as __cr:
+                                                                    await __cr.execute(
+                                                                        """
+                                                                        SELECT node_name, result
+                                                                        FROM noetl.event_log
+                                                                        WHERE execution_id = %s AND event_type = 'action_completed'
+                                                                        ORDER BY timestamp
+                                                                        """,
+                                                                        (execution_id,)
+                                                                    )
+                                                                    __rows = await __cr.fetchall() or []
+                                                                    for __r in __rows:
+                                                                        __n = __r.get('node_name')
+                                                                        __out = __r.get('result')
+                                                                        if not __n:
+                                                                            continue
+                                                                        try:
+                                                                            _fresh[__n] = json.loads(__out) if isinstance(__out, str) else __out
+                                                                        except Exception:
+                                                                            _fresh[__n] = __out
+                                                        except Exception:
+                                                            pass
+                                                        __ctx = {"work": workload, "workload": workload, "results": _fresh}
+                                                        try:
+                                                            for __k, __v in list(_fresh.items()):
+                                                                try:
+                                                                    if isinstance(__v, dict) and 'data' in __v:
+                                                                        dd = __v.get('data')
+                                                                        if isinstance(dd, dict):
+                                                                            oo = dict(dd)
+                                                                            if 'result' not in oo:
+                                                                                oo['result'] = dict(dd)
+                                                                        else:
+                                                                            oo = {'result': dd, 'value': dd}
+                                                                    else:
+                                                                        if isinstance(__v, dict):
+                                                                            oo = dict(__v)
+                                                                            if 'result' not in oo:
+                                                                                oo['result'] = dict(oo)
+                                                                        else:
+                                                                            oo = {'result': __v, 'value': __v}
+                                                                    __ctx[__k] = oo
+                                                                except Exception:
+                                                                    __ctx[__k] = __v
+                                                        except Exception:
+                                                            pass
+                                                        __ctx.update(_fresh)
+                                                        final_result = render_template(jenv, return_template, __ctx, rules=None, strict_keys=False)
+                                                        # If mapping values are empty, resolve directly
+                                                        try:
+                                                            if isinstance(return_template, dict) and isinstance(final_result, dict):
+                                                                def _resolve_expr(expr: str, ctx: Dict[str, Any]):
+                                                                    try:
+                                                                        s = expr.strip()
+                                                                        if s.startswith('{{') and s.endswith('}}'):
+                                                                            var = s[2:-2].strip()
+                                                                            parts = [p.strip() for p in var.split('.') if p.strip()]
+                                                                            val = ctx
+                                                                            for p in parts:
+                                                                                if isinstance(val, dict) and p in val:
+                                                                                    val = val[p]
+                                                                                else:
+                                                                                    return ""
+                                                                            return val
+                                                                    except Exception:
+                                                                        return ""
+                                                                    return expr
+                                                                for ___k, ___tpl in return_template.items():
+                                                                    try:
+                                                                        if (___k in final_result) and (final_result.get(___k) in (None, "")) and isinstance(___tpl, str):
+                                                                            final_result[___k] = _resolve_expr(___tpl, __ctx)
+                                                                    except Exception:
+                                                                        pass
+                                                        except Exception:
+                                                            pass
                                                     logger.info(f"CHILD_EXECUTION_COMPLETE: Evaluated return template '{return_template}' to: {final_result}")
                                                     break
                                                 except Exception as e:
@@ -2422,6 +2502,85 @@ async def evaluate_broker_for_execution(
                                                     
                                                     # Evaluate the return template
                                                     final_result = render_template(jenv, return_template, return_ctx, rules=None, strict_keys=False)
+                                                    if final_result in (None, "", {}):
+                                                        _fresh2: Dict[str, Any] = {}
+                                                        try:
+                                                            async with get_async_db_connection() as __c2:
+                                                                async with __c2.cursor(row_factory=dict_row) as __cr2:
+                                                                    await __cr2.execute(
+                                                                        """
+                                                                        SELECT node_name, result
+                                                                        FROM noetl.event_log
+                                                                        WHERE execution_id = %s AND event_type = 'action_completed'
+                                                                        ORDER BY timestamp
+                                                                        """,
+                                                                        (execution_id,)
+                                                                    )
+                                                                    __rows2 = await __cr2.fetchall() or []
+                                                                    for __r2 in __rows2:
+                                                                        __n2 = __r2.get('node_name')
+                                                                        __out2 = __r2.get('result')
+                                                                        if not __n2:
+                                                                            continue
+                                                                        try:
+                                                                            _fresh2[__n2] = json.loads(__out2) if isinstance(__out2, str) else __out2
+                                                                        except Exception:
+                                                                            _fresh2[__n2] = __out2
+                                                        except Exception:
+                                                            pass
+                                                        __ctx2 = {"work": workload, "workload": workload, "results": _fresh2}
+                                                        try:
+                                                            for __k2, __v2 in list(_fresh2.items()):
+                                                                try:
+                                                                    if isinstance(__v2, dict) and 'data' in __v2:
+                                                                        dd2 = __v2.get('data')
+                                                                        if isinstance(dd2, dict):
+                                                                            oo2 = dict(dd2)
+                                                                            if 'result' not in oo2:
+                                                                                oo2['result'] = dict(dd2)
+                                                                        else:
+                                                                            oo2 = {'result': dd2, 'value': dd2}
+                                                                    else:
+                                                                        if isinstance(__v2, dict):
+                                                                            oo2 = dict(__v2)
+                                                                            if 'result' not in oo2:
+                                                                                oo2['result'] = dict(oo2)
+                                                                        else:
+                                                                            oo2 = {'result': __v2, 'value': __v2}
+                                                                    __ctx2[__k2] = oo2
+                                                                except Exception:
+                                                                    __ctx2[__k2] = __v2
+                                                        except Exception:
+                                                            pass
+                                                        __ctx2.update(_fresh2)
+                                                        final_result = render_template(jenv, return_template, __ctx2, rules=None, strict_keys=False)
+                                                        # If mapping values are empty, resolve directly
+                                                        try:
+                                                            if isinstance(return_template, dict) and isinstance(final_result, dict):
+                                                                def _resolve_expr(expr: str, ctx: Dict[str, Any]):
+                                                                    try:
+                                                                        s = expr.strip()
+                                                                        if s.startswith('{{') and s.endswith('}}'):
+                                                                            var = s[2:-2].strip()
+                                                                            parts = [p.strip() for p in var.split('.') if p.strip()]
+                                                                            val = ctx
+                                                                            for p in parts:
+                                                                                if isinstance(val, dict) and p in val:
+                                                                                    val = val[p]
+                                                                                else:
+                                                                                    return ""
+                                                                            return val
+                                                                    except Exception:
+                                                                        return ""
+                                                                    return expr
+                                                                for ___k2, ___tpl2 in return_template.items():
+                                                                    try:
+                                                                        if (___k2 in final_result) and (final_result.get(___k2) in (None, "")) and isinstance(___tpl2, str):
+                                                                            final_result[___k2] = _resolve_expr(___tpl2, __ctx2)
+                                                                    except Exception:
+                                                                        pass
+                                                        except Exception:
+                                                            pass
                                                     logger.info(f"MAIN_EXECUTION_COMPLETE: Evaluated return template '{return_template}' to: {final_result}")
                                                     break
                                                 except Exception as e:
@@ -3247,36 +3406,89 @@ async def evaluate_broker_for_execution(
                                 if _ret_tmpl is None:
                                     _ret_tmpl = next_step.get('result') if isinstance(next_step, dict) else None
                                 if _ret_tmpl is not None:
+                                    # First attempt with current base_ctx
                                     final_result = render_template(jenv, _ret_tmpl, base_ctx, strict_keys=False)
-                                    # Fallback: enrich context with result aliases if missing
                                     if final_result in (None, "", {}):
-                                        ret_ctx = {"work": workload, "workload": workload, "results": results_ctx}
+                                        # Build freshest results directly from event_log to avoid race/alias gaps
+                                        latest_results: Dict[str, Any] = {}
                                         try:
-                                            if isinstance(results_ctx, dict):
-                                                for _k, _v in results_ctx.items():
-                                                    try:
-                                                        if isinstance(_v, dict) and 'data' in _v:
-                                                            d = _v.get('data')
-                                                            if isinstance(d, dict):
-                                                                obj = dict(d)
-                                                                if 'result' not in obj:
-                                                                    obj['result'] = dict(d)
-                                                            else:
-                                                                obj = {'result': d, 'value': d}
-                                                        else:
-                                                            if isinstance(_v, dict):
-                                                                obj = dict(_v)
-                                                                if 'result' not in obj:
-                                                                    obj['result'] = dict(obj)
-                                                            else:
-                                                                obj = {'result': _v, 'value': _v}
-                                                        ret_ctx[_k] = obj
-                                                    except Exception:
-                                                        ret_ctx[_k] = _v
+                                            async with get_async_db_connection() as _conn:
+                                                async with _conn.cursor(row_factory=dict_row) as _cur:
+                                                    await _cur.execute(
+                                                        """
+                                                        SELECT node_name, result
+                                                        FROM noetl.event_log
+                                                        WHERE execution_id = %s AND event_type = 'action_completed'
+                                                        ORDER BY timestamp
+                                                        """,
+                                                        (execution_id,)
+                                                    )
+                                                    _rows = await _cur.fetchall()
+                                                    for _r in (_rows or []):
+                                                        _n = _r.get('node_name')
+                                                        _out = _r.get('result')
+                                                        if not _n:
+                                                            continue
+                                                        try:
+                                                            latest_results[_n] = json.loads(_out) if isinstance(_out, str) else _out
+                                                        except Exception:
+                                                            latest_results[_n] = _out
                                         except Exception:
                                             pass
-                                        ret_ctx.update(results_ctx)
+                                        # Create alias-enriched context
+                                        ret_ctx = {"work": workload, "workload": workload, "results": latest_results}
+                                        try:
+                                            for _k, _v in list(latest_results.items()):
+                                                try:
+                                                    if isinstance(_v, dict) and 'data' in _v:
+                                                        d = _v.get('data')
+                                                        if isinstance(d, dict):
+                                                            obj = dict(d)
+                                                            if 'result' not in obj:
+                                                                obj['result'] = dict(d)
+                                                        else:
+                                                            obj = {'result': d, 'value': d}
+                                                    else:
+                                                        if isinstance(_v, dict):
+                                                            obj = dict(_v)
+                                                            if 'result' not in obj:
+                                                                obj['result'] = dict(obj)
+                                                        else:
+                                                            obj = {'result': _v, 'value': _v}
+                                                    ret_ctx[_k] = obj
+                                                except Exception:
+                                                    ret_ctx[_k] = _v
+                                        except Exception:
+                                            pass
+                                        ret_ctx.update(latest_results)
                                         final_result = render_template(jenv, _ret_tmpl, ret_ctx, strict_keys=False)
+                                        # If template is a mapping and any values are empty, resolve directly from ret_ctx
+                                        try:
+                                            if isinstance(_ret_tmpl, dict) and isinstance(final_result, dict):
+                                                def _resolve_expr(expr: str, ctx: Dict[str, Any]):
+                                                    try:
+                                                        s = expr.strip()
+                                                        if s.startswith('{{') and s.endswith('}}'):
+                                                            var = s[2:-2].strip()
+                                                            parts = [p.strip() for p in var.split('.') if p.strip()]
+                                                            val = ctx
+                                                            for p in parts:
+                                                                if isinstance(val, dict) and p in val:
+                                                                    val = val[p]
+                                                                else:
+                                                                    return ""
+                                                            return val
+                                                    except Exception:
+                                                        return ""
+                                                    return expr
+                                                for __k, __tpl in _ret_tmpl.items():
+                                                    try:
+                                                        if (__k in final_result) and (final_result.get(__k) in (None, "")) and isinstance(__tpl, str):
+                                                            final_result[__k] = _resolve_expr(__tpl, ret_ctx)
+                                                    except Exception:
+                                                        pass
+                                        except Exception:
+                                            pass
                             except Exception:
                                 logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render end step return/result", exc_info=True)
                                 final_result = None
