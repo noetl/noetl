@@ -28,4 +28,5 @@ workflow:
 
   - step: end
     desc: "End simple test"
-    return: "{{ test_step.result }}"
+    result:
+      test_step: "{{ test_step.result }}"

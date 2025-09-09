@@ -2117,20 +2117,38 @@ async def evaluate_broker_for_execution(
             "execution_id": execution_id,
         }
         # Promote step results and workload fields to top-level for direct Jinja access
+        # For each step result, expose a convenient object under base_ctx[step_name]
+        # - If result has a 'data' wrapper, use that value.
+        # - If that value is a dict and lacks 'result', alias 'result' to a shallow copy of the whole dict.
+        # - If that value is scalar/list, expose {'result': value, 'value': value} so step_name.result works.
+        # - If no 'data' wrapper and the result is a dict, expose it and alias 'result' if missing.
+        # - If no 'data' wrapper and result is scalar/list, expose {'result': value, 'value': value}.
         try:
             if isinstance(results_ctx, dict):
-                base_ctx.update(results_ctx)
-                # Flatten common wrappers (id/status/data) to expose fields directly
                 for _k, _v in list(results_ctx.items()):
                     try:
                         if isinstance(_v, dict) and 'data' in _v:
-                            base_ctx[_k] = _v.get('data')
+                            d = _v.get('data')
+                            if isinstance(d, dict):
+                                obj = dict(d)
+                                if 'result' not in obj:
+                                    obj['result'] = dict(d)
+                            else:
+                                obj = {'result': d, 'value': d}
+                        else:
+                            if isinstance(_v, dict):
+                                obj = dict(_v)
+                                if 'result' not in obj:
+                                    obj['result'] = dict(obj)
+                            else:
+                                obj = {'result': _v, 'value': _v}
+                        base_ctx[_k] = obj
                     except Exception:
-                        pass
-                # Promote keys from control-step results (e.g., end_loop aggregations like alerts)
+                        base_ctx[_k] = _v
+                # Promote keys from step objects for convenience (keep original behavior)
                 try:
-                    for _k, _v in list(results_ctx.items()):
-                        if isinstance(_v, dict):
+                    for _k, _v in list(base_ctx.items()):
+                        if _k in results_ctx and isinstance(_v, dict):
                             for _ck, _cv in _v.items():
                                 if _ck not in base_ctx:
                                     base_ctx[_ck] = _cv
@@ -2267,9 +2285,9 @@ async def evaluate_broker_for_execution(
                                 try:
                                     # Look for the end step with return statement and process its return template
                                     for step in reversed(steps):
-                                        if isinstance(step, dict) and 'return' in step:
+                                        if isinstance(step, dict) and ('return' in step or 'result' in step):
                                             step_name = step.get('step') or step.get('task') or step.get('name')
-                                            return_template = step.get('return')
+                                            return_template = step.get('return') if 'return' in step else step.get('result')
                                             
                                             if step_name and return_template:
                                                 # Build context for return template evaluation
@@ -2280,6 +2298,31 @@ async def evaluate_broker_for_execution(
                                                     
                                                     # Build context with all completed step results
                                                     return_ctx = {"work": workload, "workload": workload, "results": results_ctx}
+                                                    # Add alias objects so {{ step.result }} always works
+                                                    try:
+                                                        if isinstance(results_ctx, dict):
+                                                            for _k, _v in results_ctx.items():
+                                                                try:
+                                                                    if isinstance(_v, dict) and 'data' in _v:
+                                                                        d = _v.get('data')
+                                                                        if isinstance(d, dict):
+                                                                            obj = dict(d)
+                                                                            if 'result' not in obj:
+                                                                                obj['result'] = dict(d)
+                                                                        else:
+                                                                            obj = {'result': d, 'value': d}
+                                                                    else:
+                                                                        if isinstance(_v, dict):
+                                                                            obj = dict(_v)
+                                                                            if 'result' not in obj:
+                                                                                obj['result'] = dict(obj)
+                                                                        else:
+                                                                            obj = {'result': _v, 'value': _v}
+                                                                    return_ctx[_k] = obj
+                                                                except Exception:
+                                                                    return_ctx[_k] = _v
+                                                    except Exception:
+                                                        pass
                                                     return_ctx.update(results_ctx)
                                                     
                                                     # Evaluate the return template
@@ -2310,7 +2353,7 @@ async def evaluate_broker_for_execution(
                                     **({"event_id": _eid_child_complete} if _eid_child_complete is not None else {}),
                                     "execution_id": execution_id,
                                     "event_type": "execution_completed",
-                                    "status": "completed",
+                                    "status": "COMPLETED",
                                     "node_name": playbook_path or "unknown",
                                     "node_type": "playbook",
                                     "result": final_result or {},
@@ -2337,9 +2380,9 @@ async def evaluate_broker_for_execution(
                                 try:
                                     # Look for the end step with return statement and process its return template
                                     for step in reversed(steps):
-                                        if isinstance(step, dict) and 'return' in step:
+                                        if isinstance(step, dict) and ('return' in step or 'result' in step):
                                             step_name = step.get('step') or step.get('task') or step.get('name')
-                                            return_template = step.get('return')
+                                            return_template = step.get('return') if 'return' in step else step.get('result')
                                             
                                             if step_name and return_template:
                                                 # Build context for return template evaluation
@@ -2350,6 +2393,31 @@ async def evaluate_broker_for_execution(
                                                     
                                                     # Build context with all completed step results
                                                     return_ctx = {"work": workload, "workload": workload, "results": results_ctx}
+                                                    # Add alias objects so {{ step.result }} always works
+                                                    try:
+                                                        if isinstance(results_ctx, dict):
+                                                            for _k, _v in results_ctx.items():
+                                                                try:
+                                                                    if isinstance(_v, dict) and 'data' in _v:
+                                                                        d = _v.get('data')
+                                                                        if isinstance(d, dict):
+                                                                            obj = dict(d)
+                                                                            if 'result' not in obj:
+                                                                                obj['result'] = dict(d)
+                                                                        else:
+                                                                            obj = {'result': d, 'value': d}
+                                                                    else:
+                                                                        if isinstance(_v, dict):
+                                                                            obj = dict(_v)
+                                                                            if 'result' not in obj:
+                                                                                obj['result'] = dict(obj)
+                                                                        else:
+                                                                            obj = {'result': _v, 'value': _v}
+                                                                    return_ctx[_k] = obj
+                                                                except Exception:
+                                                                    return_ctx[_k] = _v
+                                                    except Exception:
+                                                        pass
                                                     return_ctx.update(results_ctx)
                                                     
                                                     # Evaluate the return template
@@ -2381,7 +2449,7 @@ async def evaluate_broker_for_execution(
                                     **({"event_id": _eid_complete} if _eid_complete is not None else {}),
                                     "execution_id": execution_id,
                                     "event_type": "execution_completed",
-                                    "status": "completed",
+                                    "status": "COMPLETED",
                                     "node_name": playbook_path or "unknown",
                                     "node_type": "playbook",
                                     "result": final_result or {},
@@ -3172,17 +3240,69 @@ async def evaluate_broker_for_execution(
                         ctrl_event_key = f"{execution_id}-ctrl-{_sname or f'step-{idx+1}'}-completed"
                         _h = hashlib.sha1(ctrl_event_key.encode('utf-8')).digest()
                         ctrl_event_id = int.from_bytes(_h[-8:], byteorder='big', signed=False) & ((1 << 63) - 1)
-                        await get_event_service().emit({
-                            'event_id': ctrl_event_id,
-                            'execution_id': execution_id,
-                            'event_type': 'action_completed',
-                            'status': 'COMPLETED',
-                            'node_id': f'{execution_id}-step-{idx+1}',
-                            'node_name': _sname or f'step-{idx+1}',
-                            'node_type': 'task',
-                            'result': {'skipped': True, 'reason': 'control_step'},
-                            'context': {'workload': workload}
-                        })
+                        if (_sname or '').lower() == 'end':
+                            final_result = None
+                            try:
+                                _ret_tmpl = next_step.get('return') if isinstance(next_step, dict) else None
+                                if _ret_tmpl is None:
+                                    _ret_tmpl = next_step.get('result') if isinstance(next_step, dict) else None
+                                if _ret_tmpl is not None:
+                                    final_result = render_template(jenv, _ret_tmpl, base_ctx, strict_keys=False)
+                                    # Fallback: enrich context with result aliases if missing
+                                    if final_result in (None, "", {}):
+                                        ret_ctx = {"work": workload, "workload": workload, "results": results_ctx}
+                                        try:
+                                            if isinstance(results_ctx, dict):
+                                                for _k, _v in results_ctx.items():
+                                                    try:
+                                                        if isinstance(_v, dict) and 'data' in _v:
+                                                            d = _v.get('data')
+                                                            if isinstance(d, dict):
+                                                                obj = dict(d)
+                                                                if 'result' not in obj:
+                                                                    obj['result'] = dict(d)
+                                                            else:
+                                                                obj = {'result': d, 'value': d}
+                                                        else:
+                                                            if isinstance(_v, dict):
+                                                                obj = dict(_v)
+                                                                if 'result' not in obj:
+                                                                    obj['result'] = dict(obj)
+                                                            else:
+                                                                obj = {'result': _v, 'value': _v}
+                                                        ret_ctx[_k] = obj
+                                                    except Exception:
+                                                        ret_ctx[_k] = _v
+                                        except Exception:
+                                            pass
+                                        ret_ctx.update(results_ctx)
+                                        final_result = render_template(jenv, _ret_tmpl, ret_ctx, strict_keys=False)
+                            except Exception:
+                                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render end step return/result", exc_info=True)
+                                final_result = None
+                            await get_event_service().emit({
+                                'event_id': ctrl_event_id,
+                                'execution_id': execution_id,
+                                'event_type': 'action_completed',
+                                'status': 'COMPLETED',
+                                'node_id': f'{execution_id}-step-{idx+1}',
+                                'node_name': _sname or f'step-{idx+1}',
+                                'node_type': 'task',
+                                'result': final_result if final_result is not None else {},
+                                'context': {'workload': workload}
+                            })
+                        else:
+                            await get_event_service().emit({
+                                'event_id': ctrl_event_id,
+                                'execution_id': execution_id,
+                                'event_type': 'action_completed',
+                                'status': 'COMPLETED',
+                                'node_id': f'{execution_id}-step-{idx+1}',
+                                'node_name': _sname or f'step-{idx+1}',
+                                'node_type': 'task',
+                                'result': {'skipped': True, 'reason': 'control_step'},
+                                'context': {'workload': workload}
+                            })
                     except Exception:
                         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit control step completion", exc_info=True)
                 # Also best-effort record a transition from this control step to its configured next step
