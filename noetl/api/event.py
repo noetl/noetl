@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 import json
 import os
+import hashlib
 from noetl.common import (
     deep_merge,
     get_pgdb_connection,
@@ -1357,6 +1358,7 @@ class EventService:
                                   %s,
                                   %s, %s, %s, %s, %s
                               )
+                              ON CONFLICT (execution_id, event_id) DO NOTHING
                           """, (
                               execution_id,
                               event_id,
@@ -1887,6 +1889,19 @@ async def evaluate_broker_for_execution(
             entry = await catalog.fetch_entry(playbook_path, playbook_version or '')
         else:
             entry = catalog.fetch_entry(playbook_path, playbook_version or '')
+        # Fallback: try the basename (last path segment) if the full path lookup failed
+        if not entry and playbook_path:
+            try:
+                base_name = playbook_path.split('/')[-1]
+                if base_name and base_name != playbook_path:
+                    if asyncio.iscoroutinefunction(getattr(catalog, 'fetch_entry', None)):
+                        entry = await catalog.fetch_entry(base_name, playbook_version or '')
+                    else:
+                        entry = catalog.fetch_entry(base_name, playbook_version or '')
+                    if entry:
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Resolved playbook via basename fallback: {base_name}")
+            except Exception:
+                pass
         if not entry:
             logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No entry found for playbook {playbook_path}")
             return
@@ -2011,6 +2026,50 @@ async def evaluate_broker_for_execution(
 
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
+                # Ensure metadata tables exist for materialization (best-effort)
+                try:
+                    await cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS noetl.workflow (
+                            id BIGSERIAL PRIMARY KEY,
+                            execution_id TEXT NOT NULL,
+                            step_id TEXT,
+                            step_name TEXT,
+                            step_type TEXT,
+                            description TEXT,
+                            raw_config JSONB,
+                            created_at TIMESTAMPTZ DEFAULT now()
+                        )
+                        """
+                    )
+                    await cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS noetl.transition (
+                            id BIGSERIAL PRIMARY KEY,
+                            execution_id TEXT NOT NULL,
+                            from_step TEXT,
+                            to_step TEXT,
+                            condition TEXT,
+                            with_params JSONB,
+                            created_at TIMESTAMPTZ DEFAULT now()
+                        )
+                        """
+                    )
+                    await cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS noetl.workbook (
+                            id BIGSERIAL PRIMARY KEY,
+                            execution_id TEXT NOT NULL,
+                            task_id TEXT,
+                            task_name TEXT,
+                            task_type TEXT,
+                            raw_config JSONB,
+                            created_at TIMESTAMPTZ DEFAULT now()
+                        )
+                        """
+                    )
+                except Exception:
+                    pass
                 await cur.execute(
                     "SELECT status FROM event_log WHERE execution_id = %s ORDER BY timestamp",
                     (execution_id,)
@@ -2222,7 +2281,14 @@ async def evaluate_broker_for_execution(
                                 
                                 # Emit execution_completed event
                                 event_service = get_event_service()
+                                _key_child = f"{execution_id}-completed"
+                                try:
+                                    _h_child = hashlib.sha1(_key_child.encode('utf-8')).digest()
+                                    _eid_child_complete = int.from_bytes(_h_child[-8:], byteorder='big', signed=False) & ((1 << 63) - 1)
+                                except Exception:
+                                    _eid_child_complete = None
                                 completion_event = {
+                                    **({"event_id": _eid_child_complete} if _eid_child_complete is not None else {}),
                                     "execution_id": execution_id,
                                     "event_type": "execution_completed",
                                     "status": "completed",
@@ -2285,7 +2351,15 @@ async def evaluate_broker_for_execution(
                                 
                                 # Emit execution_completed event for main execution
                                 event_service = get_event_service()
+                                # Deterministic numeric event_id for completion to satisfy BIGINT column
+                                _key = f"{execution_id}-completed"
+                                try:
+                                    _h = hashlib.sha1(_key.encode('utf-8')).digest()
+                                    _eid_complete = int.from_bytes(_h[-8:], byteorder='big', signed=False) & ((1 << 63) - 1)
+                                except Exception:
+                                    _eid_complete = None
                                 completion_event = {
+                                    **({"event_id": _eid_complete} if _eid_complete is not None else {}),
                                     "execution_id": execution_id,
                                     "event_type": "execution_completed",
                                     "status": "completed",
@@ -3038,6 +3112,7 @@ async def evaluate_broker_for_execution(
                                     """
                                     INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                    ON CONFLICT (execution_id, node_id) DO NOTHING
                                     RETURNING id
                                     """,
                                     (child_execution_id, iter_node_id, json.dumps(encode_task_for_queue(task_cfg)), json.dumps(rendered_work), 0, 5)
@@ -3059,19 +3134,82 @@ async def evaluate_broker_for_execution(
             _sname = next_step.get('step') or next_step.get('name')
             _stype = (next_step.get('type') or '').lower()
             if (_sname in {'start', 'end'} or (_stype == '' and not any(k in next_step for k in ('task','action','call','loop')))) and ('loop' not in next_step):
+                # Idempotent emit for control steps to avoid duplicate records when concurrent evaluations run
+                done = None
                 try:
-                    await get_event_service().emit({
-                        'execution_id': execution_id,
-                        'event_type': 'action_completed',
-                        'status': 'COMPLETED',
-                        'node_id': f'{execution_id}-step-{idx+1}',
-                        'node_name': _sname or f'step-{idx+1}',
-                        'node_type': 'task',
-                        'result': {'skipped': True, 'reason': 'control_step'},
-                        'context': {'workload': workload}
-                    })
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                "SELECT 1 FROM noetl.event_log WHERE execution_id=%s AND node_name=%s AND event_type='action_completed' AND lower(status) IN ('completed','success') LIMIT 1",
+                                (execution_id, _sname or f'step-{idx+1}')
+                            )
+                            done = await cur.fetchone()
                 except Exception:
-                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit control step completion", exc_info=True)
+                    done = None
+                if not done:
+                    try:
+                        # Use a deterministic numeric event_id (BIGINT) for idempotency across concurrent evaluators
+                        # Derive a stable 64-bit positive integer from a hash of a unique key
+                        ctrl_event_key = f"{execution_id}-ctrl-{_sname or f'step-{idx+1}'}-completed"
+                        _h = hashlib.sha1(ctrl_event_key.encode('utf-8')).digest()
+                        ctrl_event_id = int.from_bytes(_h[-8:], byteorder='big', signed=False) & ((1 << 63) - 1)
+                        await get_event_service().emit({
+                            'event_id': ctrl_event_id,
+                            'execution_id': execution_id,
+                            'event_type': 'action_completed',
+                            'status': 'COMPLETED',
+                            'node_id': f'{execution_id}-step-{idx+1}',
+                            'node_name': _sname or f'step-{idx+1}',
+                            'node_type': 'task',
+                            'result': {'skipped': True, 'reason': 'control_step'},
+                            'context': {'workload': workload}
+                        })
+                    except Exception:
+                        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit control step completion", exc_info=True)
+                # Also best-effort record a transition from this control step to its configured next step
+                try:
+                    nxt_cfg = None
+                    if isinstance(next_step, dict):
+                        nxt_cfg = next_step.get('next')
+                    to_name = None
+                    if isinstance(nxt_cfg, list) and nxt_cfg:
+                        tgt = nxt_cfg[0]
+                        if isinstance(tgt, dict):
+                            to_name = tgt.get('step') or tgt.get('name') or tgt.get('task')
+                        else:
+                            to_name = str(tgt)
+                    if to_name:
+                        async with get_async_db_connection() as conn:
+                            async with conn.cursor() as cur:
+                                # Ensure transition table exists (best-effort)
+                                try:
+                                    await cur.execute(
+                                        """
+                                        CREATE TABLE IF NOT EXISTS noetl.transition (
+                                            id BIGSERIAL PRIMARY KEY,
+                                            execution_id TEXT NOT NULL,
+                                            from_step TEXT,
+                                            to_step TEXT,
+                                            condition TEXT,
+                                            with_params JSONB,
+                                            created_at TIMESTAMPTZ DEFAULT now()
+                                        )
+                                        """
+                                    )
+                                except Exception:
+                                    pass
+                                await cur.execute(
+                                    """
+                                    INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                                    VALUES (%s, %s, %s, %s, %s)
+                                    ON CONFLICT DO NOTHING
+                                    """,
+                                    (execution_id, _sname or f'step-{idx+1}', to_name, 'evaluated:direct', None)
+                                )
+                                await conn.commit()
+                except Exception:
+                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to insert transition for control step", exc_info=True)
+                # Return and let the emit-triggered evaluation continue to the next actionable step
                 return
 
         if isinstance(next_step, dict) and 'loop' in next_step:
@@ -3188,6 +3326,7 @@ async def evaluate_broker_for_execution(
                                 """
                                 INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                ON CONFLICT (execution_id, node_id) DO NOTHING
                                 RETURNING id
                                 """,
                                 (execution_id, iter_node_id, json.dumps(encode_task_for_queue(body_task_cfg)), json.dumps(rendered_work), 0, 5)
@@ -3200,6 +3339,23 @@ async def evaluate_broker_for_execution(
                 try:
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
+                            # Ensure transition table exists (best-effort)
+                            try:
+                                await cur.execute(
+                                    """
+                                    CREATE TABLE IF NOT EXISTS noetl.transition (
+                                        id BIGSERIAL PRIMARY KEY,
+                                        execution_id TEXT NOT NULL,
+                                        from_step TEXT,
+                                        to_step TEXT,
+                                        condition TEXT,
+                                        with_params JSONB,
+                                        created_at TIMESTAMPTZ DEFAULT now()
+                                    )
+                                    """
+                                )
+                            except Exception:
+                                pass
                             await cur.execute(
                                 """
                                 INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
@@ -3513,6 +3669,23 @@ async def evaluate_broker_for_execution(
                 try:
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
+                            # Ensure transition table exists (best-effort)
+                            try:
+                                await cur.execute(
+                                    """
+                                    CREATE TABLE IF NOT EXISTS noetl.transition (
+                                        id BIGSERIAL PRIMARY KEY,
+                                        execution_id TEXT NOT NULL,
+                                        from_step TEXT,
+                                        to_step TEXT,
+                                        condition TEXT,
+                                        with_params JSONB,
+                                        created_at TIMESTAMPTZ DEFAULT now()
+                                    )
+                                    """
+                                )
+                            except Exception:
+                                pass
                             await cur.execute(
                                 """
                                 INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
@@ -3683,6 +3856,7 @@ async def evaluate_broker_for_execution(
                                 """
                                 INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                ON CONFLICT (execution_id, node_id) DO NOTHING
                                 RETURNING id
                                 """,
                                 (
@@ -3699,20 +3873,37 @@ async def evaluate_broker_for_execution(
                                 if locals().get('last_step_name') and (locals().get('chosen_target_name') or step_name_guard):
                                     to_name = (locals().get('chosen_target_name') or step_name_guard)
                                     cond_val = 'evaluated:' + (locals().get('transition_cond_text') or 'direct')
+                                    # Ensure transition table exists (best-effort)
+                                try:
                                     await cur.execute(
                                         """
-                                        INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
-                                        VALUES (%s, %s, %s, %s, %s)
-                                        ON CONFLICT DO NOTHING
-                                        """,
-                                        (
-                                            execution_id,
-                                            locals().get('last_step_name'),
-                                            to_name,
-                                            cond_val,
-                                            json.dumps(locals().get('transition_vars')) if locals().get('transition_vars') is not None else None
+                                        CREATE TABLE IF NOT EXISTS noetl.transition (
+                                            id BIGSERIAL PRIMARY KEY,
+                                            execution_id TEXT NOT NULL,
+                                            from_step TEXT,
+                                            to_step TEXT,
+                                            condition TEXT,
+                                            with_params JSONB,
+                                            created_at TIMESTAMPTZ DEFAULT now()
                                         )
+                                        """
                                     )
+                                except Exception:
+                                    pass
+                                await cur.execute(
+                                    """
+                                    INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                                    VALUES (%s, %s, %s, %s, %s)
+                                    ON CONFLICT DO NOTHING
+                                    """,
+                                    (
+                                        execution_id,
+                                        locals().get('last_step_name'),
+                                        to_name,
+                                        cond_val,
+                                        json.dumps(locals().get('transition_vars')) if locals().get('transition_vars') is not None else None
+                                    )
+                                )
                             except Exception:
                                 pass
                             await conn.commit()

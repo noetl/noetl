@@ -91,7 +91,7 @@ def register_server_from_env() -> None:
 
 
 def deregister_server_from_env() -> None:
-    """Deregister server using stored name (best-effort)."""
+    """Deregister server using stored name via HTTP (no DB fallback)."""
     try:
         name: Optional[str] = None
         if os.path.exists('/tmp/noetl_server_name'):
@@ -104,25 +104,19 @@ def deregister_server_from_env() -> None:
             name = os.environ.get('NOETL_SERVER_NAME')
         if not name:
             return
-            
-        logger.info(f"Attempting to deregister server {name} from database")
+
+        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
         try:
-            from noetl.common import get_db_connection
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        UPDATE runtime
-                        SET status = 'offline', updated_at = now()
-                        WHERE component_type = 'server_api' AND name = %s
-                        """,
-                        (name,)
-                    )
-                    conn.commit()
-                    logger.info(f"Server {name} marked as offline in database")
-        except Exception as db_e:
-            logger.error(f"Database error during server deregistration: {db_e}")
-        
+            resp = httpx.request(
+                "DELETE",
+                f"{server_url}/runtime/deregister",
+                json={"name": name, "component_type": "server_api"},
+                timeout=5.0,
+            )
+            logger.info(f"Server deregister response: {resp.status_code} - {resp.text}")
+        except Exception as e:
+            logger.error(f"Server deregister HTTP error: {e}")
+
         try:
             os.remove('/tmp/noetl_server_name')
         except Exception:
@@ -189,7 +183,7 @@ def register_worker_pool_from_env() -> None:
 
 
 def deregister_worker_pool_from_env() -> None:
-    """Attempt to deregister worker pool using stored name (best-effort)."""
+    """Attempt to deregister worker pool using stored name (HTTP only)."""
     logger.info("Worker deregistration starting...")
     try:
         name: Optional[str] = None
@@ -221,55 +215,16 @@ def deregister_worker_pool_from_env() -> None:
         server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
         logger.info(f"Attempting to deregister worker {name} via {server_url}")
 
-        server_reachable = False
         try:
-            health_url = server_url.replace('/api', '/health') if server_url.endswith('/api') else server_url + '/health'
-            with httpx.Client(timeout=2.0) as client:
-                resp = client.get(health_url)
-                if resp.status_code == 200:
-                    server_reachable = True
-                    logger.info("Server is reachable, attempting HTTP deregistration")
-                else:
-                    logger.warning(f"Server health check failed with status {resp.status_code}")
+            resp = httpx.request(
+                "DELETE",
+                f"{server_url}/worker/pool/deregister",
+                json={"name": name},
+                timeout=5.0,
+            )
+            logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
         except Exception as e:
-            logger.warning(f"Server health check failed: {e}")
-
-        if server_reachable:
-            try:
-                import json
-                resp = httpx.request(
-                    "DELETE",
-                    f"{server_url}/worker/pool/deregister",
-                    data=json.dumps({"name": name}),
-                    headers={"Content-Type": "application/json"},
-                    timeout=5.0
-                )
-                logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
-                if resp.status_code == 200:
-                    logger.info(f"HTTP deregistration successful for worker: {name}")
-                else:
-                    logger.warning(f"HTTP deregistration failed with status {resp.status_code}: {resp.text}")
-            except Exception as e:
-                logger.error(f"Worker deregister HTTP error: {e}")
-        else:
-            logger.info("Server not reachable, attempting direct database deregistration")
-            # Fallback to direct database deregistration like the server does
-            try:
-                from noetl.common import get_db_connection
-                with get_db_connection() as conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute(
-                            """
-                            UPDATE noetl.runtime
-                            SET status = 'offline', updated_at = now()
-                            WHERE component_type = 'worker_pool' AND name = %s
-                            """,
-                            (name,)
-                        )
-                        conn.commit()
-                        logger.info(f"Worker {name} marked as offline in database (direct)")
-            except Exception as db_e:
-                logger.error(f"Direct database deregistration failed: {db_e}")
+            logger.error(f"Worker deregister HTTP error: {e}")
 
         try:
             worker_file = f'/tmp/noetl_worker_pool_name_{name}'

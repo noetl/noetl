@@ -40,13 +40,14 @@ async def enqueue_job(request: Request):
                     """
                     INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()))
+                    ON CONFLICT (execution_id, node_id) DO NOTHING
                     RETURNING id
                     """,
                     (execution_id_int, node_id, action, json.dumps(context), priority, max_attempts, available_at)
                 )
                 row = await cur.fetchone()
                 await conn.commit()
-        return {"status": "ok", "id": row[0]}
+        return {"status": "ok", "id": row[0] if row else None}
     except HTTPException:
         raise
     except Exception as e:

@@ -2195,6 +2195,7 @@ class BrokerService:
                                         """
                                         INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                         VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                        ON CONFLICT (execution_id, node_id) DO NOTHING
                                         RETURNING id
                                         """,
                                         (execution_id, f"{execution_id}-result-agg-{step_name}", _json.dumps(action), _json.dumps(ic), 5, 3)

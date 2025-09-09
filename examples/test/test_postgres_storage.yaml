@@ -1,0 +1,64 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: test_postgres_storage
+version: "0.1.0"
+path: examples/test/test_postgres_storage
+
+workload:
+  pg_host: "localhost"
+  pg_port: "30543"
+  pg_user: "demo"
+  pg_password: "demo"
+  pg_db: "demo_noetl"
+
+workflow:
+  - step: start
+    desc: "Start test"
+    next:
+      - step: test_postgres_insert
+
+  - step: test_postgres_insert
+    desc: "Test postgres insertion"
+    type: workbook
+    name: store_summary_postgres_task
+    with:
+      alert_cities: "[]"
+      alert_count: 0
+      db_host: "{{ workload.pg_host }}"
+      db_port: "{{ workload.pg_port }}"
+      db_user: "{{ workload.pg_user }}"
+      db_password: "{{ workload.pg_password }}"
+      db_name: "{{ workload.pg_db }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End test"
+
+workbook:
+  - name: store_summary_postgres_task
+    type: postgres
+    with:
+      alert_cities: "{{ alert_cities }}"
+      alert_count: "{{ alert_count }}"
+      db_host: "{{ db_host }}"
+      db_port: "{{ db_port }}"
+      db_user: "{{ db_user }}"
+      db_password: "{{ db_password }}"
+      db_name: "{{ db_name }}"
+    command: |
+      -- Insert aggregated weather alert summary into Postgres
+      -- Ensure target table exists
+      CREATE TABLE IF NOT EXISTS weather_alert_summary (
+        id SERIAL PRIMARY KEY,
+        alert_cities TEXT,
+        alert_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Insert aggregated summary
+      INSERT INTO weather_alert_summary (alert_cities, alert_count)
+        VALUES ('{{ alert_cities | tojson }}', {{ alert_count }});
+
+      -- Return a small result preview
+      SELECT * FROM weather_alert_summary ORDER BY id DESC LIMIT 5;

@@ -483,6 +483,12 @@ class DatabaseSchema:
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_exec ON {self.noetl_schema}.queue (execution_id)
                 """)
+                try:
+                    cursor.execute(f"""
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_exec_node ON {self.noetl_schema}.queue (execution_id, node_id)
+                    """)
+                except Exception as e:
+                    logger.warning(f"Skipping unique index creation idx_queue_exec_node (possible duplicates present): {e}")
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_worker ON {self.noetl_schema}.queue (worker_id)
                 """)
@@ -1090,6 +1096,12 @@ class DatabaseSchema:
                 await cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_exec ON {self.noetl_schema}.queue (execution_id)
                 """)
+                try:
+                    await cursor.execute(f"""
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_exec_node ON {self.noetl_schema}.queue (execution_id, node_id)
+                    """)
+                except Exception as e:
+                    logger.warning(f"Skipping unique index creation idx_queue_exec_node (async) (possible duplicates present): {e}")
                 await cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_queue_worker ON {self.noetl_schema}.queue (worker_id)
                 """)

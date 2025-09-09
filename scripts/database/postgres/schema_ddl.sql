@@ -188,6 +188,10 @@ CREATE INDEX IF NOT EXISTS idx_queue_status ON noetl.queue (status);
 CREATE INDEX IF NOT EXISTS idx_queue_priority ON noetl.queue (priority);
 CREATE INDEX IF NOT EXISTS idx_queue_available_at ON noetl.queue (available_at);
 CREATE INDEX IF NOT EXISTS idx_queue_worker ON noetl.queue (worker_id);
+-- Prevent duplicate jobs for the same execution and node
+DO $$ BEGIN
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_exec_node ON noetl.queue (execution_id, node_id);
+EXCEPTION WHEN others THEN NULL; END $$;
 
 -- Schedule
 CREATE TABLE IF NOT EXISTS noetl.schedule (

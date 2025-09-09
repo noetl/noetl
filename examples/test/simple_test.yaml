@@ -1,7 +1,7 @@
 apiVersion: noetl.io/v1
 kind: Playbook
 name: simple_test
-path: simple_test
+path: examples/test/simple_test
 
 workload:
   message: "Hello World"
@@ -11,6 +11,8 @@ workflow:
     desc: "Start simple test"
     next:
       - step: test_step
+        with:
+          message: "{{ workload.message }}"
 
   - step: test_step
     desc: "Simple test step"
