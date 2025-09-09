@@ -466,6 +466,38 @@ export-runtime:
 
 export-execution-logs: export-event-log export-queue export-runtime
 
+export-transition:
+	@mkdir -p logs
+	@set -a; [ -f .env ] && . .env; set +a; \
+	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	psql -v ON_ERROR_STOP=1 -Atc "SELECT coalesce(json_agg(row_to_json(t)),'[]'::json) FROM noetl.transition t WHERE execution_id = $(ID)" > logs/transition.json; \
+	[ -s logs/transition.json ] && (jq . logs/transition.json >/dev/null 2>&1 && jq . logs/transition.json > logs/transition.json.tmp && mv logs/transition.json.tmp logs/transition.json || true) || true; \
+	echo "Wrote logs/transition.json"
+
+export-workflow:
+	@mkdir -p logs
+	@set -a; [ -f .env ] && . .env; set +a; \
+	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	psql -v ON_ERROR_STOP=1 -Atc "SELECT coalesce(json_agg(row_to_json(w)),'[]'::json) FROM noetl.workflow w WHERE execution_id = $(ID)" > logs/workflow.json; \
+	[ -s logs/workflow.json ] && (jq . logs/workflow.json >/dev/null 2>&1 && jq . logs/workflow.json > logs/workflow.json.tmp && mv logs/workflow.json.tmp logs/workflow.json || true) || true; \
+	echo "Wrote logs/workflow.json"
+
+export-workbook:
+	@mkdir -p logs
+	@set -a; [ -f .env ] && . .env; set +a; \
+	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	psql -v ON_ERROR_STOP=1 -Atc "SELECT coalesce(json_agg(row_to_json(wb)),'[]'::json) FROM noetl.workbook wb WHERE execution_id = $(ID)" > logs/workbook.json; \
+	[ -s logs/workbook.json ] && (jq . logs/workbook.json >/dev/null 2>&1 && jq . logs/workbook.json > logs/workbook.json.tmp && mv logs/workbook.json.tmp logs/workbook.json || true) || true; \
+	echo "Wrote logs/workbook.json"
+
+export-all-event-log:
+	@mkdir -p logs
+	@set -a; [ -f .env ] && . .env; set +a; \
+	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, metadata, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value FROM noetl.event_log ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event_log.json; \
+	[ -s logs/event_log.json ] && (jq . logs/event_log.json >/dev/null 2>&1 && jq . logs/event_log.json > logs/event_log.json.tmp && mv logs/event_log.json.tmp logs/event_log.json || true) || true; \
+	echo "Wrote logs/event_log.json"
+
 noetl-dump-lineage:
 	@if [ -z "$(ID)" ]; then \
 	  echo "Usage: make noetl-dump-lineage ID=<parent_execution_id> [HOST=localhost] [PORT=8082]"; \
