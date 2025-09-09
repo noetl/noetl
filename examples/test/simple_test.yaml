@@ -1,0 +1,29 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: simple_test
+path: simple_test
+
+workload:
+  message: "Hello World"
+
+workflow:
+  - step: start
+    desc: "Start simple test"
+    next:
+      - step: test_step
+
+  - step: test_step
+    desc: "Simple test step"
+    type: python
+    code: |
+      def main(message):
+          print(f"TEST_STEP: {message}")
+          return {"result": "success", "message": message}
+    with:
+      message: "{{ workload.message }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End simple test"
+    return: "{{ test_step.result }}"
