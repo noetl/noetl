@@ -25,6 +25,7 @@ PLAYBOOKS=(
   "examples/amadeus/amadeus_api_playbook.yaml"
   "examples/wikipedia/wikipedia_duckdb_postgres_example.yaml"
   "examples/github/github_metrics_example.yaml"
+  "examples/test/simple_test.yaml"
 )
 
 for playbooks in "${PLAYBOOKS[@]}"; do

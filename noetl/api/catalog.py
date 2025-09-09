@@ -424,17 +424,6 @@ class CatalogService:
                         (path, version)
                     )
                     result = await cursor.fetchone()
-                    if not result and '/' in path:
-                        filename = path.split('/')[-1]
-                        await cursor.execute(
-                            """
-                            SELECT resource_path, resource_type, resource_version, content, payload, meta
-                            FROM catalog
-                            WHERE resource_path = %s AND resource_version = %s
-                            """,
-                            (filename, version)
-                        )
-                        result = await cursor.fetchone()
                     if result:
                         return dict(result)
                     return None
