@@ -21,8 +21,6 @@ workflow:
       def main(message):
           print(f"TEST_STEP: {message}")
           return {"result": "success", "message": message}
-    with:
-      message: "{{ workload.message }}"
     next:
       - step: end
 
