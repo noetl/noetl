@@ -227,9 +227,9 @@ start-server:
 	cli="$(VENV)/bin/noetl"; \
 	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
 	if command -v setsid >/dev/null 2>&1; then \
-	  setsid nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
+	  setsid nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & \
 	else \
-	  nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & echo $$! > ~/.noetl/noetl_server.pid; \
+	  nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & \
 	fi; \
 	sleep 3; \
 	if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \

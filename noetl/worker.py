@@ -345,7 +345,7 @@ class QueueWorker:
     # ------------------------------------------------------------------
     def _execute_job_sync(self, job: Dict[str, Any]) -> None:
         action_cfg_raw = job.get("action")
-        raw_context = job.get("input_context") or {}
+        raw_context = job.get("context") or job.get("input_context") or {}
         # Server-side rendering: call server to render input context and task config
         # Worker must not render locally; prefer server-evaluated values
         context = raw_context

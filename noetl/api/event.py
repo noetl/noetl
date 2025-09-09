@@ -1430,6 +1430,25 @@ class EventService:
                         await conn.rollback()
                     except Exception:
                         pass
+                    # Best-effort error_log entry even if event insert failed
+                    try:
+                        from noetl.schema import DatabaseSchema
+                        ds = DatabaseSchema(auto_setup=False)
+                        await ds.log_error_async(
+                            error_type='event_emit_error',
+                            error_message=str(db_error),
+                            execution_id=str(event_data.get('execution_id') or ''),
+                            step_id=str(event_data.get('node_id') or ''),
+                            step_name=str(event_data.get('node_name') or ''),
+                            template_string=None,
+                            context_data=event_data.get('context'),
+                            stack_trace=None,
+                            input_data=event_data,
+                            output_data=None,
+                            severity='error'
+                        )
+                    except Exception:
+                        pass
                     raise
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
@@ -3750,7 +3769,15 @@ async def evaluate_broker_for_execution(
                         except Exception:
                             pass
                     if not isinstance(base_task, dict) or not base_task:
-                        task_cfg = {'type': 'python', 'name': tname or step_name, 'code': 'def main(**kwargs):\n    return {}'}
+                        # Use the inline step definition when no base task exists
+                        # Preserve actionable fields like type/code/code_b64/command/commands/with
+                        inline_keys = ('type','task','name','code','code_b64','command','commands','with')
+                        inline_cfg = {k: v for k, v in next_step.items() if k in inline_keys}
+                        if inline_cfg:
+                            task_cfg = dict(inline_cfg)
+                            task_cfg['name'] = tname or step_name
+                        else:
+                            task_cfg = {'type': 'python', 'name': tname or step_name, 'code': 'def main(**kwargs):\n    return {}'}
                     else:
                         step_with = next_step.get('with', {}) if isinstance(next_step.get('with'), dict) else {}
                         merged_with = {}
