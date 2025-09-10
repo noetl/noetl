@@ -383,18 +383,29 @@ class QueueWorker:
         """Lease a job from the queue."""
         try:
             response = requests.post(
-                f"{self.server_url}/jobs/lease",
+                f"{self.server_url}/queue/lease",
                 json={
                     "worker_id": self.worker_id,
-                    "lease_duration_seconds": 300  # 5 minutes
+                    "lease_seconds": 300  # 5 minutes
                 },
                 timeout=10
             )
 
             if response.status_code == 200:
-                job_data = response.json()
-                logger.debug(f"Leased job {job_data.get('job_id')} for worker {self.worker_id}")
-                return job_data
+                response_data = response.json()
+                if response_data.get('status') == 'ok' and 'job' in response_data:
+                    job_data = response_data['job']
+                    # Normalize field names: database returns 'id' but worker expects 'job_id'
+                    if 'id' in job_data and 'job_id' not in job_data:
+                        job_data['job_id'] = job_data['id']
+                    logger.debug(f"Leased job {job_data.get('job_id')} for worker {self.worker_id}")
+                    return job_data
+                elif response_data.get('status') == 'empty':
+                    # No jobs available
+                    return None
+                else:
+                    logger.warning(f"Unexpected lease response: {response_data}")
+                    return None
             elif response.status_code == 204:
                 # No jobs available
                 return None
@@ -413,7 +424,7 @@ class QueueWorker:
         """Mark a job as completed."""
         try:
             response = requests.post(
-                f"{self.server_url}/jobs/{job_id}/complete",
+                f"{self.server_url}/queue/{job_id}/complete",
                 json={
                     "worker_id": self.worker_id,
                     "result": result
@@ -439,7 +450,7 @@ class QueueWorker:
         """Mark a job as failed."""
         try:
             response = requests.post(
-                f"{self.server_url}/jobs/{job_id}/fail",
+                f"{self.server_url}/queue/{job_id}/fail",
                 json={
                     "worker_id": self.worker_id,
                     "error": error
@@ -589,10 +600,10 @@ class ScalableQueueWorkerPool:
     async def _queue_size(self) -> int:
         """Get the current queue size from the server."""
         try:
-            response = requests.get(f"{self.server_url}/jobs/queue/size", timeout=5)
+            response = requests.get(f"{self.server_url}/queue/size", timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                return data.get('size', 0)
+                return data.get('count', data.get('size', 0))
             else:
                 logger.error(f"Failed to get queue size: {response.status_code}")
                 return 0
@@ -626,6 +637,13 @@ class ScalableQueueWorkerPool:
         """Scale workers based on queue size."""
         queue_size = await self._queue_size()
         current_workers = len([t for t in self._tasks if not t.done()])
+
+        if queue_size is None:
+            logger.warning("Queue size is None, defaulting to 0")
+            queue_size = 0
+        if self.max_workers is None:
+            logger.warning("max_workers is None, defaulting to 4")
+            self.max_workers = 4
 
         # Simple scaling logic: one worker per job, up to max_workers
         target_workers = min(queue_size, self.max_workers)

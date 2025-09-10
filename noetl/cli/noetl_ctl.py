@@ -54,7 +54,10 @@ def start_worker_service(
     logger.info(f"Worker PID {os.getpid()} saved to {worker_pid_path}")
 
     async def _run() -> None:
-        pool = ScalableQueueWorkerPool(max_workers=max_workers)
+        pool_kwargs = {}
+        if max_workers is not None:
+            pool_kwargs['max_workers'] = max_workers
+        pool = ScalableQueueWorkerPool(**pool_kwargs)
         loop = asyncio.get_running_loop()
 
         def _signal_handler(sig: int) -> None:
