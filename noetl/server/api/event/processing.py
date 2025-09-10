@@ -31,39 +31,39 @@ async def _check_distributed_loop_completion(execution_id: str, step_name: str) 
         expected_iterations = await dao.count_loop_iterations(execution_id, step_name)
         completed_iterations = await dao.count_completed_iterations_with_child(execution_id, step_name)
                 
-                logger.info(f"DISTRIBUTED_COMPLETION: Step {step_name} has {completed_iterations}/{expected_iterations} completed iterations")
-                
-                if expected_iterations > 0 and completed_iterations >= expected_iterations:
-                    # All iterations completed - aggregate results
-                    rows = await dao.fetch_action_completed_results_for_loop(execution_id, step_name)
-                    aggregated_results = []
-                    for val in rows:
-                        try:
-                            result_data = json.loads(val) if isinstance(val, str) else val
-                        except Exception:
-                            result_data = val
-                        aggregated_results.append(result_data)
-                    
-                    # Emit aggregated result
-                    from .service import get_event_service
-                    event_service = get_event_service()
-                    await event_service.emit({
-                        'execution_id': execution_id,
-                        'event_type': 'action_completed',
-                        'status': 'COMPLETED',
-                        'node_name': step_name,
-                        'node_type': 'distributed_loop',
-                        'result': {
-                            'results': aggregated_results,
-                            'count': len(aggregated_results)
-                        },
-                        'context': {
-                            'distributed_loop_completed': True,
-                            'total_iterations': expected_iterations
-                        }
-                    })
-                    
-                    logger.info(f"DISTRIBUTED_COMPLETION: Completed distributed loop {step_name} with {len(aggregated_results)} aggregated results")
+        logger.info(f"DISTRIBUTED_COMPLETION: Step {step_name} has {completed_iterations}/{expected_iterations} completed iterations")
+        
+        if expected_iterations > 0 and completed_iterations >= expected_iterations:
+            # All iterations completed - aggregate results
+            rows = await dao.fetch_action_completed_results_for_loop(execution_id, step_name)
+            aggregated_results = []
+            for val in rows:
+                try:
+                    result_data = json.loads(val) if isinstance(val, str) else val
+                except Exception:
+                    result_data = val
+                aggregated_results.append(result_data)
+            
+            # Emit aggregated result
+            from .service import get_event_service
+            event_service = get_event_service()
+            await event_service.emit({
+                'execution_id': execution_id,
+                'event_type': 'action_completed',
+                'status': 'COMPLETED',
+                'node_name': step_name,
+                'node_type': 'distributed_loop',
+                'result': {
+                    'results': aggregated_results,
+                    'count': len(aggregated_results)
+                },
+                'context': {
+                    'distributed_loop_completed': True,
+                    'total_iterations': expected_iterations
+                }
+            })
+            
+            logger.info(f"DISTRIBUTED_COMPLETION: Completed distributed loop {step_name} with {len(aggregated_results)} aggregated results")
                     
     except Exception as e:
         logger.error(f"DISTRIBUTED_COMPLETION: Error checking completion for {execution_id} step {step_name}: {e}")
