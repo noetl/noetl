@@ -1,5 +1,5 @@
 """
-Core Broker class (moved from legacy noetl/broker.py).
+Broker class module (renamed from core.py).
 
 This is a lightweight client used primarily by server code paths; most
 server-side orchestration now runs through the event-driven evaluator in

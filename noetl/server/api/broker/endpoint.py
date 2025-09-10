@@ -1,10 +1,16 @@
 """
-Broker and loop management endpoints for event processing.
+Broker API endpoints and helper utilities for broker operations.
+Renamed from routes.py to endpoint.py to better reflect purpose and avoid defining endpoints in __init__.
 """
-
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
 from noetl.core.logger import setup_logger
+
+# Processing functions live in the event processing module
+from noetl.server.api.event.processing import (
+    evaluate_broker_for_execution,
+    check_and_process_completed_loops,
+)
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
@@ -14,7 +20,6 @@ router = APIRouter()
 async def trigger_broker_evaluation(execution_id: str):
     """Manually trigger broker evaluation for an execution, including loop completion checks."""
     try:
-        from .processing import evaluate_broker_for_execution
         await evaluate_broker_for_execution(execution_id)
         return {"status": "success", "message": f"Broker evaluation triggered for execution {execution_id}"}
     except Exception as e:
@@ -26,7 +31,6 @@ async def trigger_broker_evaluation(execution_id: str):
 async def trigger_loop_completion(execution_id: str):
     """Manually trigger loop completion check for an execution."""
     try:
-        from .processing import check_and_process_completed_loops
         await check_and_process_completed_loops(execution_id)
         return {"status": "success", "message": f"Loop completion check triggered for execution {execution_id}"}
     except Exception as e:
@@ -72,3 +76,8 @@ def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug("ENCODE_TASK_FOR_QUEUE: Failed to encode task fields with base64", exc_info=True)
         
     return encoded_task
+
+__all__ = [
+    'router',
+    'encode_task_for_queue',
+]

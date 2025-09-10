@@ -15,6 +15,7 @@ from . import dashboard as dashboard_api
 from . import system as system_api
 from . import queue as queue_api
 from . import aggregate as aggregate_api
+from . import broker as broker_api
 
 router = APIRouter()
 
@@ -33,5 +34,6 @@ router.include_router(dashboard_api.router)
 router.include_router(system_api.router, prefix="/sys")
 router.include_router(queue_api.router)
 router.include_router(aggregate_api.router)
+router.include_router(broker_api.router)
 
 __all__ = ["router"]

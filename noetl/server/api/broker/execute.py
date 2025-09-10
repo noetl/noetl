@@ -78,7 +78,7 @@ def execute_playbook_via_broker(
                 "workload": merged_workload,
             }
             try:
-                from noetl.api.event import get_event_service
+                from noetl.server.api.event import get_event_service
                 es = get_event_service()
                 import asyncio as _asyncio
                 if _asyncio.get_event_loop().is_running():
@@ -138,7 +138,7 @@ def execute_playbook_via_broker(
         }
         # Kick off broker evaluation for this execution id
         try:
-            from noetl.api.event import evaluate_broker_for_execution
+            from noetl.server.api.event import evaluate_broker_for_execution
             import asyncio as _asyncio
             if _asyncio.get_event_loop().is_running():
                 _asyncio.create_task(evaluate_broker_for_execution(execution_id))

@@ -1,5 +1,5 @@
 """
-Server wiring: FastAPI app creation, DI, and configuration (skeleton).
+Server wiring: FastAPI app creation, DI, and configuration skeleton.
 """
 
 from fastapi import FastAPI
