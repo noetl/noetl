@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
-from noetl.storage.catalog import get_catalog_service
+from noetl.server.api.catalog import get_catalog_service
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
