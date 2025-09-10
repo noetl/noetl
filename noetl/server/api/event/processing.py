@@ -9,7 +9,7 @@ from typing import Any, Dict
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.server.api.catalog import get_catalog_service
 from noetl.core.logger import setup_logger
-from noetl.storage.eventlog import EventLogDAO
+from noetl.server.api.event.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -27,7 +27,7 @@ async def _check_distributed_loop_completion(execution_id: str, step_name: str) 
     try:
         logger.info(f"DISTRIBUTED_COMPLETION: Checking if loop {step_name} in execution {execution_id} is complete")
         
-        dao = EventLogDAO()
+        dao = EventLog()
         expected_iterations = await dao.count_loop_iterations(execution_id, step_name)
         completed_iterations = await dao.count_completed_iterations_with_child(execution_id, step_name)
                 
@@ -734,7 +734,7 @@ async def evaluate_broker_for_execution(
         await asyncio.sleep(0.2)
         
         # Return early if execution has failed
-        dao = EventLogDAO()
+        dao = EventLog()
         rows = await dao.get_statuses(execution_id)
         for s in [str(x or '').lower() for x in rows]:
             if ('failed' in s) or ('error' in s):

@@ -38,8 +38,8 @@ async def render_context(request: Request):
 
         workload = {}
         results: Dict[str, Any] = {}
-        from noetl.storage.eventlog import EventLogDAO
-        dao = EventLogDAO()
+        from noetl.server.api.event.event_log import EventLog
+        dao = EventLog()
         first_ctx = await dao.get_earliest_context(execution_id)
         if first_ctx:
             try:

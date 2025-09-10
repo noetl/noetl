@@ -123,6 +123,11 @@ async def deregister_worker_pool(request: Request):
         logger.exception(f"Error deregistering worker pool: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Compatibility: some workers use POST instead of DELETE
+@router.post("/worker/pool/deregister", response_class=JSONResponse)
+async def deregister_worker_pool_post(request: Request):
+    return await deregister_worker_pool(request)
+
 
 @router.post("/runtime/register", response_class=JSONResponse)
 async def register_runtime_component(request: Request):

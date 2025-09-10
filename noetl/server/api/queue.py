@@ -181,7 +181,7 @@ async def complete_job(job_id: int):
                 logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
                 try:
                     # Get the final result from the child execution
-                    from noetl.api.event import get_event_service
+                    from noetl.server.api.event import get_event_service
                     from noetl.core.common import get_async_db_connection as get_db_conn
                     async with get_db_conn() as conn:
                         async with conn.cursor() as cur:
@@ -529,7 +529,7 @@ async def complete_job(job_id: int):
                                         logger.info(f"COMPLETION_HANDLER: Emitted final aggregated event for {parent_step} with {len(final_results)} results")
                                         # Trigger broker to advance the parent after aggregate
                                         try:
-                                            from noetl.api.event import evaluate_broker_for_execution
+                                            from noetl.server.api.event import evaluate_broker_for_execution
                                             import asyncio
                                             if asyncio.get_event_loop().is_running():
                                                 asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
@@ -545,7 +545,7 @@ async def complete_job(job_id: int):
             
             if exec_id:
                 import asyncio
-                from noetl.api.event import evaluate_broker_for_execution
+                from noetl.server.api.event import evaluate_broker_for_execution
                 try:
                     if asyncio.get_event_loop().is_running():
                         asyncio.create_task(evaluate_broker_for_execution(exec_id))
@@ -670,6 +670,12 @@ async def queue_size(status: str = "queued"):
     except Exception as e:
         logger.exception(f"Error fetching queue size: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Compatibility endpoint for legacy workers expecting /jobs/queue/size
+@router.get("/jobs/queue/size", response_class=JSONResponse)
+async def jobs_queue_size():
+    return await queue_size(status="queued")
 
 
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
-from noetl.storage.eventlog import EventLogDAO
+from noetl.server.api.event.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -337,8 +337,8 @@ class EventService:
                           logger.debug(f"EMIT_DB_INSERT_PARAMS: context={type(context)}, result={type(result)}, metadata_str={type(metadata_str)}, error={type(error)}")
                           logger.debug(f"EMIT_DB_INSERT_PARAMS: iterator_val={type(iterator_val)}, current_index_val={type(current_index_val)}, current_item_val={type(current_item_val)}")
 
-                          # Use storage DAO for event insertion
-                          await EventLogDAO().insert_event(
+                          # Insert event via storage layer
+                          await EventLog().insert_event(
                               execution_id=execution_id,
                               event_id=event_id,
                               parent_event_id=parent_event_id,
