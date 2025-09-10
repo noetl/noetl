@@ -7,9 +7,9 @@ import json
 from typing import Dict
 from decimal import Decimal
 from jinja2 import Environment
-from noetl.common import DateTimeEncoder, make_serializable
-from noetl.logger import setup_logger, log_error
-from noetl.render import render_template
+from noetl.core.common import DateTimeEncoder, make_serializable
+from noetl.core.logger import setup_logger, log_error
+from noetl.core.dsl.render import render_template
 
 logger = setup_logger(__name__, include_location=True)
 

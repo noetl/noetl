@@ -8,7 +8,7 @@ such as HTTP requests, database operations, Python code execution, etc.
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
-from noetl.logger import setup_logger
+from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

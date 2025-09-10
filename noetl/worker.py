@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, StrictUndefined, BaseLoader
 
-from noetl.logger import setup_logger
+from noetl.core.logger import setup_logger
 from noetl.job import execute_task, execute_task_resolved, report_event
 
 logger = setup_logger(__name__, include_location=True)

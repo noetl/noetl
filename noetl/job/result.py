@@ -4,7 +4,7 @@ Result processing worker: builds aggregated results for loop steps.
 from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
-from noetl.logger import setup_logger
+from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

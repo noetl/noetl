@@ -10,8 +10,8 @@ from urllib.parse import urlparse
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
-from noetl.render import render_template
-from noetl.logger import setup_logger
+from noetl.core.dsl.render import render_template
+from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

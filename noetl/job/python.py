@@ -9,7 +9,7 @@ import json
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
-from noetl.logger import setup_logger
+from noetl.core.logger import setup_logger
 import ast
 
 logger = setup_logger(__name__, include_location=True)
@@ -125,13 +125,38 @@ def execute_python_task(
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
 
         if 'main' in exec_locals and callable(exec_locals['main']):
+            # Render and normalize parameters from 'with' — ensure Jinja templates are resolved
+            def _render_value(obj: Any) -> Any:
+                try:
+                    if isinstance(obj, str):
+                        # Only render if looks like a template to avoid overhead
+                        if ('{{' in obj) or ('{%' in obj):
+                            return jinja_env.from_string(obj).render(context)
+                        return obj
+                    elif isinstance(obj, dict):
+                        return {k: _render_value(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [_render_value(i) for i in obj]
+                    else:
+                        return obj
+                except Exception:
+                    # Best-effort: return original if rendering fails
+                    return obj
+
+            rendered_with = _render_value(task_with or {})
+
             # Normalize parameters from 'with' — server may render objects as strings
             normalized_with = {}
             try:
-                for k, v in (task_with or {}).items():
-                    normalized_with[k] = _coerce_param(v)
+                if isinstance(rendered_with, dict):
+                    for k, v in rendered_with.items():
+                        normalized_with[k] = _coerce_param(v)
+                else:
+                    # Support non-dict values by passing as a single argument if needed
+                    normalized_with = {'value': _coerce_param(rendered_with)}
             except Exception:
-                normalized_with = task_with or {}
+                normalized_with = rendered_with if isinstance(rendered_with, dict) else {'value': rendered_with}
+
             result_data = exec_locals['main'](**normalized_with)
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

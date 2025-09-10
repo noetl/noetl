@@ -9,10 +9,10 @@ import signal
 import time
 import asyncio
 from noetl.worker import ScalableQueueWorkerPool
-from noetl.common import DateTimeEncoder
-from noetl.logger import setup_logger
+from noetl.core.common import DateTimeEncoder
+from noetl.core.logger import setup_logger
 from noetl.schema import DatabaseSchema
-from noetl.config import get_settings
+from noetl.core.config import get_settings
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -33,10 +33,10 @@ def start_worker_service(
 ):
     """Start the queue worker pool that polls the server queue API."""
 
-    from noetl.config import _settings
-    import noetl.config
-    noetl.config._settings = None
-    noetl.config._ENV_LOADED = False
+    from noetl.core.config import _settings
+    import noetl.core.config as core_config
+    core_config._settings = None
+    core_config._ENV_LOADED = False
     
     get_settings(reload=True)
 
@@ -170,7 +170,7 @@ def start_server():
     """
     global _enable_ui
 
-    from noetl.config import _settings
+    from noetl.core.config import _settings
     import noetl.config
     noetl.config._settings = None
     noetl.config._ENV_LOADED = False

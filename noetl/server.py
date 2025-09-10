@@ -15,27 +15,27 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection
-from noetl.logger import setup_logger
-from noetl.broker import Broker, execute_playbook_via_broker
-from noetl.api import router as api_router
+from noetl.core.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection
+from noetl.core.logger import setup_logger
+from noetl.server.api.broker import Broker, execute_playbook_via_broker
+from noetl.server.api import router as api_router
 logger = setup_logger(__name__, include_location=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from noetl.config import get_settings
+from noetl.core.config import get_settings
 
 router = APIRouter()
 router.include_router(api_router)
 
 
 def create_app() -> FastAPI:
-    from noetl.config import _settings
-    import noetl.config
-    noetl.config._settings = None
-    noetl.config._ENV_LOADED = False
+    from noetl.core.config import _settings
+    import noetl.core.config as core_config
+    core_config._settings = None
+    core_config._ENV_LOADED = False
 
     settings = get_settings(reload=True)
 
@@ -53,7 +53,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     from contextlib import asynccontextmanager
 
     def register_server_directly() -> None:
-        from noetl.common import get_db_connection, get_snowflake_id
+        from noetl.core.common import get_db_connection, get_snowflake_id
         import socket as _socket
 
         settings = get_settings()
@@ -111,7 +111,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
     def deregister_server_directly() -> None:
         try:
-            from noetl.common import get_db_connection
+            from noetl.core.common import get_db_connection
             name: Optional[str] = None
             if os.path.exists('/tmp/noetl_server_name'):
                 try:
@@ -266,4 +266,3 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             return {"message": "NoETL API is running, but UI is not available"}
 
     return app
-

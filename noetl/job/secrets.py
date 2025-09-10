@@ -1,7 +1,7 @@
 import uuid
 import datetime
 from typing import Dict
-from noetl.logger import setup_logger
+from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 

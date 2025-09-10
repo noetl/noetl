@@ -68,7 +68,7 @@ When a client submits a playbook for execution:
 
 ### 2. Broker Evaluation Process
 
-**File**: `noetl/api/event.py` - `evaluate_broker_for_execution()`
+**File**: `noetl/api/event/processing.py` - `evaluate_broker_for_execution()`
 
 The broker is the core orchestration engine that:
 
@@ -124,7 +124,7 @@ while idx < len(steps):
 
 ### 3. Job Queuing Process
 
-**File**: `noetl/api/event.py` - `evaluate_broker_for_execution()`
+**File**: `noetl/api/event/processing.py` - `evaluate_broker_for_execution()`
 
 When the broker finds an actionable step:
 
@@ -313,7 +313,7 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> None:
 
 ### 7. Event Processing
 
-**File**: `noetl/api/event.py` - `EventService.emit()`
+**File**: `noetl/api/event/service.py` - `EventService.emit()`
 
 The server processes incoming events:
 

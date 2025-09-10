@@ -25,9 +25,9 @@ from typing import Dict, Any, Optional, Callable
 from decimal import Decimal
 from jinja2 import Environment
 
-from noetl.render import render_template
-from noetl.common import DateTimeEncoder
-from noetl.logger import setup_logger
+from noetl.core.dsl.render import render_template
+from noetl.core.common import DateTimeEncoder
+from noetl.core.logger import setup_logger
 
 import duckdb
 
