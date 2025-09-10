@@ -16,16 +16,19 @@ from multiprocessing import Process, Queue as MPQueue
 from typing import Any, Dict, List, Optional
 
 import jinja2
-import psycopg
 import requests
-from psycopg.rows import dict_row
 
-from noetl.core.common import get_db_connection, get_snowflake_id
 from noetl.core.config import get_settings
 from noetl.core.logger import setup_logger
 from .plugin import execute_task
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def get_snowflake_id() -> int:
+    """Generate a snowflake ID without database dependency."""
+    import datetime as _dt
+    return int(_dt.datetime.now().timestamp() * 1000000)
 
 
 def _normalize_server_url(server_url: str) -> str:
@@ -46,7 +49,7 @@ def _normalize_server_url(server_url: str) -> str:
 
 
 def register_server_from_env() -> None:
-    """Register server runtime using environment variables."""
+    """Register server runtime using API calls."""
     server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
     if not server_url:
         raise RuntimeError("NOETL_SERVER_URL environment variable is required but not set")
@@ -61,56 +64,49 @@ def register_server_from_env() -> None:
     if labels_env:
         labels = [s.strip() for s in labels_env.split(',') if s.strip()]
     else:
-        labels = None
+        labels = []
 
     hostname = os.environ.get("HOSTNAME") or socket.gethostname()
 
-    try:
-        rid = get_snowflake_id()
-    except Exception:
-        import datetime as _dt
-        rid = int(_dt.datetime.now().timestamp() * 1000)
-
-    payload_runtime = {
-        "type": "server",
-        "pid": os.getpid(),
-        "hostname": hostname,
+    payload = {
+        "component_name": name,
+        "base_url": server_url,
+        "labels": labels,
+        "capabilities": {},
+        "capacity": None,
+        "runtime": {
+            "type": "server",
+            "pid": os.getpid(),
+            "hostname": hostname,
+        }
     }
 
-    labels_json = json.dumps(labels) if labels is not None else None
-    runtime_json = json.dumps(payload_runtime)
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
-                VALUES (%s, %s, 'server_api', %s, 'ready', %s, NULL, %s, now(), now(), now())
-                ON CONFLICT (component_type, name)
-                DO UPDATE SET
-                    base_url = EXCLUDED.base_url,
-                    status = EXCLUDED.status,
-                    labels = EXCLUDED.labels,
-                    runtime = EXCLUDED.runtime,
-                    last_heartbeat = now(),
-                    updated_at = now()
-                """,
-                (rid, name, server_url, labels_json, runtime_json)
-            )
-            conn.commit()
-
-    # Store server name for cleanup
     try:
-        with open('/tmp/noetl_server_name', 'w') as f:
-            f.write(name)
-    except Exception:
-        pass
+        response = requests.post(
+            f"{server_url}/runtime/register",
+            json=payload,
+            timeout=30
+        )
 
-    logger.info(f"Registered server runtime: {name} at {server_url}")
+        if response.status_code == 200:
+            logger.info(f"Registered server runtime: {name} at {server_url}")
+            # Store server name for cleanup
+            try:
+                with open('/tmp/noetl_server_name', 'w') as f:
+                    f.write(name)
+            except Exception:
+                pass
+        else:
+            logger.error(f"Failed to register server: {response.status_code} - {response.text}")
+            raise RuntimeError(f"Failed to register server: {response.status_code}")
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error while registering server: {e}")
+        raise RuntimeError(f"Failed to register server: {e}")
 
 
 def deregister_server_from_env() -> None:
-    """Deregister server runtime using environment variables."""
+    """Deregister server runtime using API calls."""
     name = os.environ.get("NOETL_SERVER_NAME", "").strip()
     if not name:
         # Try to read from temp file
@@ -124,20 +120,23 @@ def deregister_server_from_env() -> None:
         logger.warning("Cannot deregister server: NOETL_SERVER_NAME not set and no temp file found")
         return
 
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE runtime
-                    SET status = 'offline', updated_at = now()
-                    WHERE component_type = 'server_api' AND name = %s
-                    """,
-                    (name,)
-                )
-                conn.commit()
+    server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
+    if not server_url:
+        logger.warning("Cannot deregister server: NOETL_SERVER_URL not set")
+        return
 
-        logger.info(f"Deregistered server runtime: {name}")
+    server_url = _normalize_server_url(server_url)
+
+    try:
+        response = requests.post(
+            f"{server_url}/runtime/server/{name}/deregister",
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            logger.info(f"Deregistered server runtime: {name}")
+        else:
+            logger.error(f"Failed to deregister server: {response.status_code} - {response.text}")
 
         # Clean up temp file
         try:
@@ -145,12 +144,14 @@ def deregister_server_from_env() -> None:
         except Exception:
             pass
 
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error while deregistering server: {e}")
     except Exception as e:
         logger.error(f"Failed to deregister server runtime {name}: {e}")
 
 
 def register_worker_pool_from_env() -> None:
-    """Register worker pool runtime using environment variables."""
+    """Register worker pool runtime using API calls."""
     server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
     if not server_url:
         raise RuntimeError("NOETL_SERVER_URL environment variable is required but not set")
@@ -165,59 +166,52 @@ def register_worker_pool_from_env() -> None:
     if labels_env:
         labels = [s.strip() for s in labels_env.split(',') if s.strip()]
     else:
-        labels = None
+        labels = []
 
     capacity = int(os.environ.get("NOETL_WORKER_POOL_CAPACITY", "1"))
     hostname = os.environ.get("HOSTNAME") or socket.gethostname()
 
-    try:
-        rid = get_snowflake_id()
-    except Exception:
-        import datetime as _dt
-        rid = int(_dt.datetime.now().timestamp() * 1000)
-
-    payload_runtime = {
-        "type": "worker_pool",
+    payload = {
+        "name": name,
+        "runtime": os.environ.get("NOETL_WORKER_POOL_RUNTIME", "cpu"),
+        "base_url": server_url,
+        "status": "ready",
+        "capacity": capacity,
+        "labels": labels,
         "pid": os.getpid(),
         "hostname": hostname,
-        "capacity": capacity,
+        "meta": {
+            "type": "worker_pool",
+            "capacity": capacity,
+        }
     }
 
-    labels_json = json.dumps(labels) if labels is not None else None
-    runtime_json = json.dumps(payload_runtime)
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
-                VALUES (%s, %s, 'worker_pool', %s, 'ready', %s, %s, %s, now(), now(), now())
-                ON CONFLICT (component_type, name)
-                DO UPDATE SET
-                    base_url = EXCLUDED.base_url,
-                    status = EXCLUDED.status,
-                    labels = EXCLUDED.labels,
-                    capacity = EXCLUDED.capacity,
-                    runtime = EXCLUDED.runtime,
-                    last_heartbeat = now(),
-                    updated_at = now()
-                """,
-                (rid, name, server_url, labels_json, capacity, runtime_json)
-            )
-            conn.commit()
-
-    # Store worker pool name for cleanup
     try:
-        with open('/tmp/noetl_worker_pool_name', 'w') as f:
-            f.write(name)
-    except Exception:
-        pass
+        response = requests.post(
+            f"{server_url}/worker/pool/register",
+            json=payload,
+            timeout=30
+        )
 
-    logger.info(f"Registered worker pool runtime: {name} with capacity {capacity}")
+        if response.status_code == 200:
+            logger.info(f"Registered worker pool runtime: {name} with capacity {capacity}")
+            # Store worker pool name for cleanup
+            try:
+                with open('/tmp/noetl_worker_pool_name', 'w') as f:
+                    f.write(name)
+            except Exception:
+                pass
+        else:
+            logger.error(f"Failed to register worker pool: {response.status_code} - {response.text}")
+            raise RuntimeError(f"Failed to register worker pool: {response.status_code}")
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error while registering worker pool: {e}")
+        raise RuntimeError(f"Failed to register worker pool: {e}")
 
 
 def deregister_worker_pool_from_env() -> None:
-    """Deregister worker pool runtime using environment variables."""
+    """Deregister worker pool runtime using API calls."""
     name = os.environ.get("NOETL_WORKER_POOL_NAME", "").strip()
     if not name:
         # Try to read from temp file
@@ -231,32 +225,24 @@ def deregister_worker_pool_from_env() -> None:
         logger.warning("Cannot deregister worker pool: NOETL_WORKER_POOL_NAME not set and no temp file found")
         return
 
+    server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
+    if not server_url:
+        logger.warning("Cannot deregister worker pool: NOETL_SERVER_URL not set")
+        return
+
+    server_url = _normalize_server_url(server_url)
+
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                # Mark all workers in this pool as offline first
-                cursor.execute(
-                    """
-                    UPDATE runtime
-                    SET status = 'offline', updated_at = now()
-                    WHERE component_type = 'worker' 
-                    AND JSON_EXTRACT(runtime, '$.pool_name') = %s
-                    """,
-                    (name,)
-                )
+        response = requests.post(
+            f"{server_url}/worker/pool/deregister",
+            json={"name": name},
+            timeout=30
+        )
 
-                # Mark the pool itself as offline
-                cursor.execute(
-                    """
-                    UPDATE runtime
-                    SET status = 'offline', updated_at = now()
-                    WHERE component_type = 'worker_pool' AND name = %s
-                    """,
-                    (name,)
-                )
-                conn.commit()
-
-        logger.info(f"Deregistered worker pool runtime: {name}")
+        if response.status_code == 200:
+            logger.info(f"Deregistered worker pool runtime: {name}")
+        else:
+            logger.error(f"Failed to deregister worker pool: {response.status_code} - {response.text}")
 
         # Clean up temp file
         try:
@@ -264,25 +250,27 @@ def deregister_worker_pool_from_env() -> None:
         except Exception:
             pass
 
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error while deregistering worker pool: {e}")
     except Exception as e:
         logger.error(f"Failed to deregister worker pool runtime {name}: {e}")
 
 
 def _on_worker_terminate(worker_id: str, pool_name: str) -> None:
-    """Handle worker termination by updating its status in the database."""
+    """Handle worker termination by updating its status via API."""
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE runtime
-                    SET status = 'offline', updated_at = now()
-                    WHERE component_type = 'worker' AND name = %s
-                    """,
-                    (worker_id,)
-                )
-                conn.commit()
-        logger.debug(f"Marked worker {worker_id} as offline in pool {pool_name}")
+        server_url = _get_server_url()
+        response = requests.post(
+            f"{server_url}/runtime/deregister",
+            json={"component_name": worker_id},
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            logger.debug(f"Marked worker {worker_id} as offline in pool {pool_name}")
+        else:
+            logger.error(f"Failed to deregister worker {worker_id}: {response.status_code}")
+
     except Exception as e:
         logger.error(f"Failed to update worker {worker_id} status on termination: {e}")
 
@@ -354,40 +342,40 @@ class QueueWorker:
         os._exit(0)
 
     def _register_pool(self):
-        """Register this worker in the runtime table."""
+        """Register this worker via API."""
         pool_name = os.environ.get("NOETL_WORKER_POOL_NAME", "default")
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
 
-        payload_runtime = {
-            "type": "worker",
-            "pid": os.getpid(),
-            "hostname": hostname,
-            "pool_name": pool_name,
-            "max_workers": self.max_workers,
-            "max_processes": self.max_processes,
+        payload = {
+            "component_name": self.worker_id,
+            "base_url": self.server_url,
+            "labels": [],
+            "capabilities": {},
+            "capacity": 1,
+            "runtime": {
+                "type": "worker",
+                "pid": os.getpid(),
+                "hostname": hostname,
+                "pool_name": pool_name,
+                "max_workers": self.max_workers,
+                "max_processes": self.max_processes,
+            }
         }
 
-        runtime_json = json.dumps(payload_runtime)
-
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
-                        VALUES (%s, %s, 'worker', %s, 'ready', NULL, %s, %s, now(), now(), now())
-                        ON CONFLICT (component_type, name)
-                        DO UPDATE SET
-                            base_url = EXCLUDED.base_url,
-                            status = EXCLUDED.status,
-                            capacity = EXCLUDED.capacity,
-                            runtime = EXCLUDED.runtime,
-                            last_heartbeat = now(),
-                            updated_at = now()
-                        """,
-                        (get_snowflake_id(), self.worker_id, self.server_url, 1, runtime_json)
-                    )
-                    conn.commit()
+            response = requests.post(
+                f"{self.server_url}/runtime/register",
+                json=payload,
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                logger.debug(f"Registered worker {self.worker_id}")
+            else:
+                logger.error(f"Failed to register worker: {response.status_code} - {response.text}")
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error while registering worker {self.worker_id}: {e}")
         except Exception as e:
             logger.error(f"Failed to register worker {self.worker_id}: {e}")
 
