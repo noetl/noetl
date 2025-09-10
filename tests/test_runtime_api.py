@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from noetl.api import runtime
+from noetl.server.api import runtime
 
 
 def test_worker_pool_routes():
@@ -45,7 +45,7 @@ def test_worker_pool_routes():
                 pass
         yield Conn()
 
-    with patch("noetl.common.get_db_connection", _dummy_db):
+    with patch("noetl.core.common.get_db_connection", _dummy_db):
         resp = client.post("/api/worker/pool/register", json=payload)
         assert resp.status_code == 200
         assert resp.json().get("status") in {"registered", "ok"}

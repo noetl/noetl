@@ -12,7 +12,7 @@ import datetime
 from typing import Dict, Any, Optional
 
 from noetl.core.common import deep_merge
-from noetl.job import report_event
+from noetl.worker.plugin import report_event
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)

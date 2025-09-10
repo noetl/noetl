@@ -23,7 +23,7 @@ from psycopg.rows import dict_row
 from noetl.core.common import get_db_connection, get_snowflake_id
 from noetl.core.config import get_settings
 from noetl.core.logger import setup_logger
-from noetl.job.job import execute_job
+from .plugin import execute_task
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -492,7 +492,7 @@ class QueueWorker:
             logger.info(f"Executing job {job_id} with execution_id {execution_id}")
 
             # Execute the job using the job execution framework
-            result = execute_job(
+            result = execute_task(
                 playbook_content=playbook_content,
                 execution_id=execution_id,
                 params=params,

@@ -1,5 +1,5 @@
 """
-Job execution package for NoETL.
+Worker plugin execution package for NoETL.
 
 This package provides modular action types for executing various tasks
 such as HTTP requests, database operations, Python code execution, etc.
@@ -20,8 +20,6 @@ from .postgres import execute_postgres_task
 from .secrets import execute_secrets_task
 from .action import report_event, sql_split
 
-from .action import report_event, sql_split
-
 
 def execute_task(
     task_config: Dict[str, Any],
@@ -33,7 +31,7 @@ def execute_task(
 ) -> Dict[str, Any]:
     """
     Execute a task based on its type.
-    
+
     Args:
         task_config: The task configuration dictionary
         task_name: Name of the task
@@ -41,15 +39,15 @@ def execute_task(
         jinja_env: Jinja2 environment for template rendering
         task_with: Additional parameters from 'with' clause
         log_event_callback: Optional callback for logging events
-        
+
     Returns:
         Task execution result
     """
     raw_type = task_config.get('type', task_config.get('action', 'unknown'))
     task_type = str(raw_type).strip().lower()
-    
+
     logger.debug(f"Executing task '{task_name}' of type '{task_type}'")
-    
+
     # Dispatch to appropriate action handler
     if task_type == 'http':
         return execute_http_task(task_config, context, jinja_env, task_with or {}, log_event_callback)

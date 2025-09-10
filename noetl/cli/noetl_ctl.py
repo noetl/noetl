@@ -11,7 +11,7 @@ import asyncio
 from noetl.worker import ScalableQueueWorkerPool
 from noetl.core.common import DateTimeEncoder
 from noetl.core.logger import setup_logger
-from noetl.schema import DatabaseSchema
+from noetl.core.dsl.schema import DatabaseSchema
 from noetl.core.config import get_settings
 
 logger = setup_logger(__name__, include_location=True)
@@ -171,9 +171,9 @@ def start_server():
     global _enable_ui
 
     from noetl.core.config import _settings
-    import noetl.config
-    noetl.config._settings = None
-    noetl.config._ENV_LOADED = False
+    import noetl.core.config as core_config
+    core_config._settings = None
+    core_config._ENV_LOADED = False
     
     settings = get_settings(reload=True)
 
