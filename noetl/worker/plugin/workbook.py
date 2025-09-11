@@ -40,9 +40,12 @@ async def execute_workbook_task(
     logger.info(f"WORKBOOK: Looking up task '{task_name}' in workbook")
     
     # Get playbook path and version from context
-    workload = context.get('workload', {})
-    path = workload.get('path') or context.get('path')
-    version = workload.get('version') or context.get('version') or 'latest'
+    # Context can come in various shapes. Prefer 'work' wrapper if present (as emitted by worker events),
+    # then fall back to top-level and to nested 'workload' keys.
+    work_ctx = context.get('work') or {}
+    workload = work_ctx.get('workload') or context.get('workload') or {}
+    path = work_ctx.get('path') or context.get('path') or workload.get('path')
+    version = work_ctx.get('version') or context.get('version') or workload.get('version') or 'latest'
     
     if not path:
         raise ValueError("Workbook task requires 'path' in context to locate playbook")
