@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional
 from noetl.core.common import deep_merge
 from noetl.worker.plugin import report_event
 from noetl.core.logger import setup_logger
+from .broker import Broker
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -69,6 +70,54 @@ def execute_playbook_via_broker(
                 merged_workload = {**base_workload, **input_payload}
         else:
             merged_workload = base_workload
+
+        # Initialize broker and populate workflow data
+        try:
+            # Create a mock agent for the broker
+            class MockAgent:
+                def __init__(self, playbook_path):
+                    self.playbook_path = playbook_path
+                    self.execution_id = execution_id
+
+            broker = Broker(MockAgent(playbook_path))
+
+            # Populate default tables if specified in playbook
+            if pb and isinstance(pb, dict):
+                # Extract default tables configuration
+                default_tables_config = {}
+
+                # Check if playbook has workflow steps with table configurations
+                workflow_steps = pb.get('workflow', [])
+                if workflow_steps:
+                    broker.workflow(workflow_steps, execution_id=execution_id, playbook_path=playbook_path)
+                    logger.info(f"Populated workflow with {len(workflow_steps)} steps")
+
+                # Look for default tables in workload or metadata
+                if 'default_tables' in pb:
+                    default_tables_config = pb['default_tables']
+                elif 'tables' in base_workload:
+                    default_tables_config = base_workload['tables']
+
+                if default_tables_config:
+                    broker.default_tables(default_tables_config)
+                    logger.info(f"Populated default tables: {list(default_tables_config.keys())}")
+
+                # Set up transitions between workflow steps
+                for i, step in enumerate(workflow_steps):
+                    step_name = step.get('step', f'step_{i}')
+                    next_steps = step.get('next', [])
+                    for next_step in next_steps:
+                        if isinstance(next_step, dict) and 'step' in next_step:
+                            next_step_name = next_step['step']
+                            condition = next_step.get('when')
+                            broker.transition(step_name, next_step_name, condition)
+                        elif isinstance(next_step, str):
+                            broker.transition(step_name, next_step)
+
+            logger.info(f"Broker initialized and populated for execution {execution_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to initialize broker for execution {execution_id}: {e}")
 
         # Emit execution_start directly via EventService to avoid HTTP loop/timeout
         try:
