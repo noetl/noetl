@@ -1,54 +1,36 @@
-"""
-Secrets task executor for NoETL worker plugins.
-"""
-
-from typing import Dict, Any, Optional, Callable
-from jinja2 import Environment
+import uuid
+import datetime
+from typing import Dict
 from noetl.core.logger import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger(__name__, include_location=True)
 
 
-def execute_secrets_task(
-    task_config: Dict[str, Any],
-    context: Dict[str, Any],
-    secret_manager: Any = None,
-    task_with: Dict[str, Any] = None,
-    log_event_callback: Optional[Callable] = None
-) -> Dict[str, Any]:
+def execute_secrets_task(task_config: Dict, context: Dict, secret_manager, task_with: Dict, log_event_callback=None) -> Dict:
     """
-    Execute a secrets task.
+    Execute a secret's task.
 
     Args:
-        task_config: Task configuration
-        context: Execution context
-        secret_manager: Secret manager instance
-        task_with: Additional parameters
-        log_event_callback: Optional event callback
+        task_config: The task configuration
+        context: The context to use for rendering templates
+        secret_manager: The SecretManager instance
+        task_with: The rendered 'with' parameters dictionary
+        log_event_callback: A callback function to log events
 
     Returns:
-        Task execution result
+        A dictionary of the task result
     """
-    try:
-        secret_name = task_config.get('secret_name') or task_config.get('name')
-        if not secret_name:
-            raise ValueError("Secret name is required for secrets task")
+    def log_event_wrapper(event_type, task_id, task_name, node_type, status, duration,
+                          context, result, metadata, parent_event_id):
+        if log_event_callback:
+            if metadata is None:
+                metadata = {}
+            metadata['with_params'] = task_with
+            return log_event_callback(
+                event_type, task_id, task_name, node_type,
+                status, duration, context, result,
+                metadata, parent_event_id
+            )
+        return None
 
-        if not secret_manager:
-            raise ValueError("Secret manager not available")
-
-        # Get secret value
-        secret_value = secret_manager.get_secret(secret_name)
-
-        return {
-            'status': 'success',
-            'secret_name': secret_name,
-            'has_value': bool(secret_value)
-        }
-
-    except Exception as e:
-        logger.error(f"Secrets task failed: {e}")
-        return {
-            'status': 'error',
-            'error': str(e)
-        }
+    return secret_manager.get_secret(task_config, context, log_event_wrapper)
