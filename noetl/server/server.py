@@ -9,7 +9,8 @@ from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.common import deep_merge, get_pgdb_connection, get_db_connection
+from psycopg.types.json import Json
+from noetl.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.logger import setup_logger
 from noetl.worker import Worker
 from noetl.broker import Broker
@@ -18,34 +19,145 @@ logger = setup_logger(__name__, include_location=True)
 
 router = APIRouter()
 
+
+async def register_server_from_env() -> None:
+    """If NOETL_SELF_REGISTER_ENDPOINT is set, POST a registration payload to that URL.
+
+    Env:
+      - NOETL_SELF_REGISTER_ENDPOINT: full URL to POST registration payload (required to trigger)
+      - NOETL_SERVER_NAME: optional name to register (defaults to HOSTNAME)
+      - NOETL_SERVER_URL: optional server base URL (defaults to built host:port)
+      - NOETL_SERVER_LABELS: optional CSV string
+    """
+    try:
+        import httpx
+        endpoint = os.environ.get("NOETL_SELF_REGISTER_ENDPOINT", "").strip()
+        if not endpoint:
+            return
+
+        # Prepare common registration fields (useful for both HTTP and direct-DB flows)
+        name = os.environ.get("NOETL_SERVER_NAME") or os.environ.get("HOSTNAME")
+        base_url = os.environ.get("NOETL_SERVER_URL") or f"http://{os.environ.get('NOETL_HOST','localhost')}:{os.environ.get('NOETL_PORT','8080')}"
+        labels = os.environ.get("NOETL_SERVER_LABELS")
+        if labels:
+            labels = [s.strip() for s in labels.split(',') if s.strip()]
+        pid = os.getpid()
+        # build minimal runtime JSON similar to broker defaults
+        try:
+            import socket
+            host = os.environ.get("HOSTNAME") or socket.gethostname()
+            pod = os.environ.get("POD_NAME")
+            ip = os.environ.get("POD_IP")
+            node = os.environ.get("NODE_NAME")
+            svc = os.environ.get("SERVICE_NAME") or os.environ.get("NOETL_SERVICE_NAME")
+            ns = os.environ.get("NAMESPACE") or os.environ.get("POD_NAMESPACE")
+            runtime_json = {"type": "server_api", "host": host, "pod": pod, "ip": ip, "node": node, "service": svc, "namespace": ns}
+            runtime_json["pid"] = pid
+        except Exception:
+            runtime_json = {"type": "server_api", "pid": pid}
+
+        # Ensure we have a sensible name to insert (some environments don't set HOSTNAME)
+        if not name:
+            try:
+                import socket
+                fallback_host = os.environ.get("HOSTNAME") or socket.gethostname()
+            except Exception:
+                fallback_host = None
+            name = fallback_host or f"server-{get_snowflake_id_str()}"
+
+        # Support special value to register directly into the database (helpful for self-registration
+        # during startup when the HTTP server may not yet be accepting connections):
+        if endpoint.upper() in ("DB", "INTERNAL", "DIRECT"):
+            try:
+                logger.info(f"Attempting direct DB registration for server name='{name}' base_url='{base_url}' pid={pid}")
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor() as cursor:
+                        # Ensure runtime_id column exists for compatibility
+                        await cursor.execute("ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;")
+                        await cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);")
+                        sf_id = get_snowflake_id()
+                        logger.debug(f"Generated snowflake id {sf_id} for server registration")
+                        await cursor.execute(
+                            """
+                            INSERT INTO runtime (name, component_type, base_url, status, labels, capabilities, capacity, runtime, runtime_id, last_heartbeat, created_at, updated_at)
+                            VALUES (%s, 'server_api', %s, %s, %s::jsonb, NULL, NULL, %s::jsonb, %s, now(), now(), now())
+                            ON CONFLICT (component_type, name)
+                            DO UPDATE SET base_url=EXCLUDED.base_url, status=EXCLUDED.status, labels=EXCLUDED.labels,
+                                          runtime=EXCLUDED.runtime, last_heartbeat=now(), updated_at=now()
+                            """,
+                            (name, base_url, 'running', json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(runtime_json), sf_id)
+                        )
+                    try:
+                        await conn.commit()
+                        logger.info(f"Server self-registered directly in DB: {name} (id={sf_id})")
+                    except Exception as ce:
+                        logger.warning(f"Commit failed during server direct DB registration: {ce}")
+                        raise
+                try:
+                    with open('/tmp/noetl_server_name', 'w') as f:
+                        f.write(name or '')
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"Server direct DB registration failed: {e}")
+            return
+
+        payload = {
+            "name": name,
+            "base_url": base_url,
+            "status": "running",
+            "labels": labels,
+            "runtime": runtime_json,
+            "pid": pid,
+        }
+
+        try:
+            timeout = httpx.Timeout(5.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(endpoint, json=payload)
+            if resp.status_code == 200:
+                logger.info(f"Server self-registration succeeded: {name} -> {endpoint}")
+                try:
+                    with open('/tmp/noetl_server_name', 'w') as f:
+                        f.write(name or '')
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"Server self-registration failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Server self-registration exception: {e}")
+    except Exception:
+        logger.exception("Unexpected error during server self-registration")
+
 class CatalogService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
-    def get_latest_version(self, resource_path: str) -> str:
+    async def get_latest_version(self, resource_path: str) -> str:
         try:
-            with get_db_connection(optional=True) as conn:
+            async with get_async_db_connection(optional=True) as conn:
                 if conn is None:
                     logger.warning(f"Database not available, returning default version for '{resource_path}'")
                     return "0.1.0"
                 
-                with conn.cursor() as cursor:
-                    cursor.execute(
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
                         "SELECT COUNT(*) FROM catalog WHERE resource_path = %s",
                         (resource_path,)
                     )
-                    count = cursor.fetchone()[0]
+                    row = await cursor.fetchone()
+                    count = row[0] if row else 0
 
                     if count == 0:
                         return "0.1.0"
 
-                    cursor.execute(
+                    await cursor.execute(
                         "SELECT resource_version FROM catalog WHERE resource_path = %s",
                         (resource_path,)
                     )
-                    versions = [row[0] for row in cursor.fetchall()]
+                    _ = await cursor.fetchall()
 
-                    cursor.execute(
+                    await cursor.execute(
                         """
                         WITH parsed_versions AS (
                             SELECT 
@@ -63,7 +175,7 @@ class CatalogService:
                         """,
                         (resource_path,)
                     )
-                    result = cursor.fetchone()
+                    result = await cursor.fetchone()
 
                     if result:
                         latest_version = result[0]
@@ -74,11 +186,11 @@ class CatalogService:
             logger.exception(f"Error getting latest version for resource_path '{resource_path}': {e}")
             return "0.1.0"
 
-    def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
+    async def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
                         """
                         SELECT resource_path, resource_type, resource_version, content, payload, meta
                         FROM catalog
@@ -87,13 +199,13 @@ class CatalogService:
                         (path, version)
                     )
 
-                    result = cursor.fetchone()
+                    result = await cursor.fetchone()
 
                     if not result and '/' in path:
                         filename = path.split('/')[-1]
                         logger.info(f"Path not found. Trying to match filename: {filename}")
 
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta
                             FROM catalog
@@ -102,18 +214,18 @@ class CatalogService:
                             (filename, version)
                         )
 
-                        result = cursor.fetchone()
+                        result = await cursor.fetchone()
 
-                if result:
-                    return {
-                        "resource_path": result[0],
-                        "resource_type": result[1],
-                        "resource_version": result[2],
-                        "content": result[3],
-                        "payload": result[4],
-                        "meta": result[5]
-                    }
-                return None
+            if result:
+                return {
+                    "resource_path": result[0],
+                    "resource_type": result[1],
+                    "resource_version": result[2],
+                    "content": result[3],
+                    "payload": result[4],
+                    "meta": result[5]
+                }
+            return None
 
         except Exception as e:
             logger.exception(f"Error fetching catalog entry: {e}.")
@@ -132,15 +244,15 @@ class CatalogService:
             return f"{version}.1"
 
 
-    def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
+    async def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         try:
             resource_data = yaml.safe_load(content)
             resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
             resource_version = "0.1.0"
             
-            with get_db_connection(optional=True) as conn:
+            async with get_async_db_connection(optional=True) as conn:
                 if conn is not None:
-                    latest_version = self.get_latest_version(resource_path)
+                    latest_version = await self.get_latest_version(resource_path)
                     
                     if latest_version != '0.1.0':
                         resource_version = self.increment_version(latest_version)
@@ -149,13 +261,14 @@ class CatalogService:
 
                     attempt = 0
                     max_attempts = 5
-                    with conn.cursor() as cursor:
+                    async with conn.cursor() as cursor:
                         while attempt < max_attempts:
-                            cursor.execute(
+                            await cursor.execute(
                                 "SELECT COUNT(*) FROM catalog WHERE resource_path = %s AND resource_version = %s",
                                 (resource_path, resource_version)
                             )
-                            count = int(cursor.fetchone()[0])
+                            row = await cursor.fetchone()
+                            count = int(row[0]) if row else 0
                             if count == 0:
                                 break
                             resource_version = self.increment_version(resource_version)
@@ -171,12 +284,12 @@ class CatalogService:
                         logger.info(
                             f"Registering resource '{resource_path}' with version '{resource_version}' (previous: '{latest_version}')")
 
-                        cursor.execute(
+                        await cursor.execute(
                             "INSERT INTO resource (name) VALUES (%s) ON CONFLICT DO NOTHING",
                             (resource_type,)
                         )
                         
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             INSERT INTO catalog
                             (resource_path, resource_type, resource_version, content, payload, meta)
@@ -191,7 +304,7 @@ class CatalogService:
                                 json.dumps({"registered_at": "now()"})
                             )
                         )
-                        conn.commit()
+                        await conn.commit()
                 else:
                     logger.warning(f"Database not available, registering resource '{resource_path}' in memory only")
                     logger.warning("The resource will not be persisted and will be lost when the server restarts")
@@ -211,12 +324,12 @@ class CatalogService:
                 status_code=500,
                 detail=f"Error registering resource: {e}."
             )
-    def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
                     if resource_type:
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog
@@ -226,7 +339,7 @@ class CatalogService:
                             (resource_type,)
                         )
                     else:
-                        cursor.execute(
+                        await cursor.execute(
                             """
                             SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
                             FROM catalog
@@ -234,21 +347,21 @@ class CatalogService:
                             """
                         )
 
-                    results = cursor.fetchall()
+                    results = await cursor.fetchall()
 
-                entries = []
-                for row in results:
-                    entries.append({
-                        "resource_path": row[0],
-                        "resource_type": row[1],
-                        "resource_version": row[2],
-                        "content": row[3],
-                        "payload": row[4],
-                        "meta": row[5],
-                        "timestamp": row[6]
-                    })
+            entries = []
+            for row in results:
+                entries.append({
+                    "resource_path": row[0],
+                    "resource_type": row[1],
+                    "resource_version": row[2],
+                    "content": row[3],
+                    "payload": row[4],
+                    "meta": row[5],
+                    "timestamp": row[6]
+                })
 
-                return entries
+            return entries
 
         except Exception as e:
             logger.exception(f"Error listing catalog entries: {e}")
@@ -272,10 +385,10 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
             logger.info(f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
 
     catalog_service = get_catalog_service()
-    latest_version = catalog_service.get_latest_version(path_to_lookup)
+    latest_version = await catalog_service.get_latest_version(path_to_lookup)
     logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
 
-    entry = catalog_service.fetch_entry(path_to_lookup, latest_version)
+    entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
     if not entry:
         raise HTTPException(
             status_code=404,
@@ -287,24 +400,75 @@ class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
-    # Added helper to normalize heterogeneous status values emitted by various components
-    def _normalize_status(self, raw: str | None) -> str:
-        if not raw:
-            return 'pending'
-        s = str(raw).strip().lower()
-        if s in {'completed', 'complete', 'success', 'succeeded', 'done'}:
-            return 'completed'
-        if s in {'error', 'failed', 'failure'}:
-            return 'failed'
-        if s in {'running', 'run', 'in_progress', 'in-progress', 'progress', 'started', 'start'}:
-            return 'running'
-        # treat created/queued/pending/default as pending
-        if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
-            return 'pending'
-        # fallback
-        return 'pending'
-
-    def get_all_executions(self) -> List[Dict[str, Any]]:
+    async def poll_events(self, event_type: Optional[str] = None, status: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Fetch recent events filtered by type and status from event_log.
+        Args:
+            event_type: optional filter for event_type
+            status: optional filter for status (e.g., REQUESTED)
+            limit: max number of events to return
+        Returns: list of event dicts
+        """
+        try:
+            conditions = []
+            params: List[Any] = []
+            if event_type:
+                conditions.append("event_type = %s")
+                params.append(event_type)
+            if status:
+                conditions.append("status = %s")
+                params.append(status)
+            where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+            sql = f"""
+                SELECT 
+                    execution_id,
+                    event_id,
+                    parent_event_id,
+                    timestamp,
+                    event_type,
+                    node_id,
+                    node_name,
+                    node_type,
+                    status,
+                    duration,
+                    input_context,
+                    output_result,
+                    metadata,
+                    error
+                FROM event_log
+                {where_clause}
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """
+            params.append(limit)
+            results: List[Dict[str, Any]] = []
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, params)
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        results.append({
+                            "execution_id": r[0],
+                            "event_id": r[1],
+                            "parent_event_id": r[2],
+                            "timestamp": r[3].isoformat() if r[3] else None,
+                            "event_type": r[4],
+                            "node_id": r[5],
+                            "node_name": r[6],
+                            "node_type": r[7],
+                            "status": r[8],
+                            "duration": r[9],
+                            "input_context": json.loads(r[10]) if r[10] else None,
+                            "output_result": json.loads(r[11]) if r[11] else None,
+                            "metadata": json.loads(r[12]) if r[12] else None,
+                            "error": r[13],
+                        })
+            return results
+        except Exception as e:
+            logger.exception(f"Error polling events: {e}")
+            return []
+    
+    async def get_all_executions(self) -> List[Dict[str, Any]]:
         """
         Get all executions from the event_log table.
         
@@ -312,9 +476,9 @@ class EventService:
             A list of execution data dictionaries
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         WITH latest_events AS (
                             SELECT 
                                 execution_id,
@@ -336,7 +500,7 @@ class EventService:
                         ORDER BY e.timestamp DESC
                     """)
 
-                    rows = cursor.fetchall()
+                    rows = await cursor.fetchall()
                     executions = []
 
                     for row in rows:
@@ -353,18 +517,18 @@ class EventService:
                         end_time = None
                         duration = None
 
-                        cursor.execute("""
+                        await cursor.execute("""
                             SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
                         """, (execution_id,))
-                        min_time_row = cursor.fetchone()
+                        min_time_row = await cursor.fetchone()
                         if min_time_row and min_time_row[0]:
                             start_time = min_time_row[0].isoformat()
 
                         if status in ['completed', 'failed']:
-                            cursor.execute("""
+                            await cursor.execute("""
                                 SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
                             """, (execution_id,))
-                            max_time_row = cursor.fetchone()
+                            max_time_row = await cursor.fetchone()
                             if max_time_row and max_time_row[0]:
                                 end_time = max_time_row[0].isoformat()
 
@@ -375,13 +539,17 @@ class EventService:
 
                         progress = 100 if status in ['completed', 'failed'] else 0
                         if status == 'running':
-                            # Count total events & those considered finished (completed/failed)
-                            cursor.execute("""
-                                SELECT status FROM event_log WHERE execution_id = %s
+                            await cursor.execute("""
+                                SELECT COUNT(*) FROM event_log WHERE execution_id = %s
                             """, (execution_id,))
-                            event_statuses = [self._normalize_status(r[0]) for r in cursor.fetchall()]
-                            total_steps = len(event_statuses)
-                            completed_steps = sum(1 for s in event_statuses if s in {'completed', 'failed'})
+                            total_steps = (await cursor.fetchone())[0]
+
+                            await cursor.execute("""
+                                SELECT COUNT(*) FROM event_log 
+                                WHERE execution_id = %s AND status IN ('COMPLETED', 'ERROR')
+                            """, (execution_id,))
+                            completed_steps = (await cursor.fetchone())[0]
+
                             if total_steps > 0:
                                 progress = int((completed_steps / total_steps) * 100)
 
@@ -406,9 +574,9 @@ class EventService:
             logger.exception(f"Error getting all executions: {e}")
             return []
 
-    def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def emit(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            event_id = event_data.get("event_id", f"evt_{os.urandom(16).hex()}")
+            event_id = event_data.get("event_id") or get_snowflake_id_str()
             event_data["event_id"] = event_id
             event_type = event_data.get("event_type", "UNKNOWN")
             status = event_data.get("status", "CREATED")
@@ -424,17 +592,38 @@ class EventService:
             output_result = json.dumps(event_data.get("result", {}))
             metadata_str = json.dumps(metadata)
 
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         SELECT COUNT(*) FROM event_log 
                         WHERE execution_id = %s AND event_id = %s
                     """, (execution_id, event_id))
 
-                    exists = cursor.fetchone()[0] > 0
+                    exists_row = await cursor.fetchone()
+                    exists = exists_row[0] > 0 if exists_row else False
+
+                    # Build trace_component JSON
+                    server_name = os.environ.get("NOETL_SERVER_NAME") or os.environ.get("HOSTNAME")
+                    shard_id = os.environ.get("NOETL_NODE_ID") or os.environ.get("NOETL_SHARD_ID")
+                    trace_component = {
+                        "server_api": {
+                            "name": server_name,
+                            "pid": os.getpid(),
+                            "shard_id": shard_id
+                        }
+                    }
+                    try:
+                        if isinstance(metadata, dict):
+                            if "worker" in metadata:
+                                trace_component["worker_pool"] = metadata.get("worker")
+                            if "broker" in metadata:
+                                trace_component["broker"] = metadata.get("broker")
+                    except Exception:
+                        pass
+                    trace_component_str = json.dumps(trace_component)
 
                     if exists:
-                        cursor.execute("""
+                        await cursor.execute("""
                             UPDATE event_log SET
                                 event_type = %s,
                                 status = %s,
@@ -443,6 +632,7 @@ class EventService:
                                 output_result = %s,
                                 metadata = %s,
                                 error = %s,
+                                trace_component = %s::jsonb,
                                 timestamp = CURRENT_TIMESTAMP
                             WHERE execution_id = %s AND event_id = %s
                         """, (
@@ -453,19 +643,20 @@ class EventService:
                             output_result,
                             metadata_str,
                             error,
+                            trace_component_str,
                             execution_id,
                             event_id
                         ))
                     else:
-                        cursor.execute("""
+                        await cursor.execute("""
                             INSERT INTO event_log (
                                 execution_id, event_id, parent_event_id, timestamp, event_type,
                                 node_id, node_name, node_type, status, duration,
-                                input_context, output_result, metadata, error
+                                input_context, output_result, metadata, error, trace_component
                             ) VALUES (
                                 %s, %s, %s, CURRENT_TIMESTAMP, %s,
                                 %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s
+                                %s, %s, %s, %s, %s::jsonb
                             )
                         """, (
                             execution_id,
@@ -480,10 +671,11 @@ class EventService:
                             input_context,
                             output_result,
                             metadata_str,
-                            error
+                            error,
+                            trace_component_str
                         ))
 
-                    conn.commit()
+                    await conn.commit()
 
             logger.info(f"Event emitted: {event_id} - {event_type} - {status}")
             return event_data
@@ -495,7 +687,7 @@ class EventService:
                 detail=f"Error emitting event: {e}"
             )
 
-    def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
+    async def get_events_by_execution_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
         """
         Get all events for a specific execution.
 
@@ -506,9 +698,9 @@ class EventService:
             A dictionary containing events or None if not found
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         SELECT 
                             event_id, 
                             event_type, 
@@ -527,7 +719,7 @@ class EventService:
                         ORDER BY timestamp
                     """, (execution_id,))
 
-                    rows = cursor.fetchall()
+                    rows = await cursor.fetchall()
                     if rows:
                         events = []
                         for row in rows:
@@ -568,7 +760,7 @@ class EventService:
             logger.exception(f"Error getting events by execution_id: {e}")
             return None
 
-    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+    async def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a single event by its ID.
 
@@ -579,9 +771,9 @@ class EventService:
             A dictionary containing the event or None if not found
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         SELECT 
                             event_id, 
                             event_type, 
@@ -600,7 +792,7 @@ class EventService:
                         WHERE event_id = %s
                     """, (event_id,))
 
-                    row = cursor.fetchone()
+                    row = await cursor.fetchone()
                     if row:
                         event_data = {
                             "event_id": row[0],
@@ -634,7 +826,7 @@ class EventService:
             logger.exception(f"Error getting event by ID: {e}")
             return None
 
-    def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
+    async def get_event(self, id_param: str) -> Optional[Dict[str, Any]]:
         """
         Get events by execution_id or event_id (legacy method for backward compatibility).
 
@@ -645,36 +837,37 @@ class EventService:
             A dictionary containing events or None if not found
         """
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
                         SELECT COUNT(*) FROM event_log WHERE execution_id = %s
                     """, (id_param,))
-                    count = cursor.fetchone()[0]
+                    count_row = await cursor.fetchone()
+                    count = count_row[0] if count_row else 0
 
                     if count > 0:
-                        events = self.get_events_by_execution_id(id_param)
+                        events = await self.get_events_by_execution_id(id_param)
                         if events:
                             return events
 
-                event = self.get_event_by_id(id_param)
-                if event:
-                    return event
+            event = await self.get_event_by_id(id_param)
+            if event:
+                return event
 
-                with get_db_connection() as conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute("""
-                            SELECT DISTINCT execution_id FROM event_log 
-                            WHERE event_id = %s
-                        """, (id_param,))
-                        execution_ids = [row[0] for row in cursor.fetchall()]
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                        SELECT DISTINCT execution_id FROM event_log 
+                        WHERE event_id = %s
+                    """, (id_param,))
+                    execution_ids = [row[0] for row in await cursor.fetchall()]
 
-                        if execution_ids:
-                            events = self.get_events_by_execution_id(execution_ids[0])
-                            if events:
-                                return events
+                    if execution_ids:
+                        events = await self.get_events_by_execution_id(execution_ids[0])
+                        if events:
+                            return events
 
-                return None
+            return None
         except Exception as e:
             logger.exception(f"Error in get_event: {e}")
             return None
@@ -851,7 +1044,7 @@ async def register_resource(
             )
 
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, resource_type)
+        result = await catalog_service.register_resource(content, resource_type)
         return result
 
     except Exception as e:
@@ -868,7 +1061,7 @@ async def list_resources(
 ):
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries(resource_type)
+        entries = await catalog_service.list_entries(resource_type)
         return {"entries": entries}
 
     except Exception as e:
@@ -888,7 +1081,7 @@ async def get_events_by_execution(
     """
     try:
         event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
+        events = await event_service.get_events_by_execution_id(execution_id)
         if not events:
             raise HTTPException(
                 status_code=404,
@@ -915,7 +1108,7 @@ async def get_event_by_id(
     """
     try:
         event_service = get_event_service()
-        event = event_service.get_event_by_id(event_id)
+        event = await event_service.get_event_by_id(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -943,7 +1136,7 @@ async def get_event(
     """
     try:
         event_service = get_event_service()
-        event = event_service.get_event(event_id)
+        event = await event_service.get_event(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -973,7 +1166,7 @@ async def get_event_by_query(
 
     try:
         event_service = get_event_service()
-        event = event_service.get_event(event_id)
+        event = await event_service.get_event(event_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -997,7 +1190,7 @@ async def get_execution_data(
 ):
     try:
         event_service = get_event_service()
-        event = event_service.get_event(execution_id)
+        event = await event_service.get_event(execution_id)
         if not event:
             raise HTTPException(
                 status_code=404,
@@ -1021,7 +1214,7 @@ async def create_event(
     try:
         body = await request.json()
         event_service = get_event_service()
-        result = event_service.emit(body)
+        result = await event_service.emit(body)
         return result
     except Exception as e:
         logger.exception(f"Error creating event: {e}.")
@@ -1029,6 +1222,21 @@ async def create_event(
             status_code=500,
             detail=f"Error creating event: {e}."
         )
+
+@router.get("/events/poll", response_class=JSONResponse)
+async def poll_events(
+    request: Request,
+    event_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 10
+):
+    try:
+        event_service = get_event_service()
+        items = await event_service.poll_events(event_type=event_type, status=status, limit=limit)
+        return {"items": items}
+    except Exception as e:
+        logger.exception(f"Error polling events: {e}.")
+        raise HTTPException(status_code=500, detail=f"Error polling events: {e}.")
 
 
 @router.post("/agent/execute", response_class=JSONResponse)
@@ -1067,11 +1275,11 @@ async def execute_agent(
         logger.debug(f"EXECUTE_AGENT: Getting catalog service")
         catalog_service = get_catalog_service()
         if not version:
-            version = catalog_service.get_latest_version(path)
+            version = await catalog_service.get_latest_version(path)
             logger.debug(f"EXECUTE_AGENT: Version not specified, using latest version: {version}")
 
         logger.debug(f"EXECUTE_AGENT: Fetching entry for path={path}, version={version}")
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry(path, version)
         if not entry:
             logger.error(f"EXECUTE_AGENT: Playbook '{path}' with version '{version}' not found")
             raise HTTPException(
@@ -1134,10 +1342,10 @@ async def execute_agent_async(
         catalog_service = get_catalog_service()
 
         if not version:
-            version = catalog_service.get_latest_version(path)
+            version = await catalog_service.get_latest_version(path)
             logger.info(f"Version not specified, using latest version: {version}")
 
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry(path, version)
         if not entry:
             raise HTTPException(
                 status_code=404,
@@ -1157,7 +1365,15 @@ async def execute_agent_async(
             "node_name": path
         }
 
-        initial_event = event_service.emit(initial_event_data)
+        initial_event = await event_service.emit(initial_event_data)
+
+        # If broker loop is enabled, do not execute locally; let broker pick this up.
+        try:
+            broker_mode = os.environ.get('NOETL_BROKER_MODE', 'false').lower() in ('1','true','yes','on')
+        except Exception:
+            broker_mode = False
+        if broker_mode:
+            return {"status": "accepted", "event": initial_event}
 
         def execute_agent_task():
             try:
@@ -1198,6 +1414,7 @@ async def execute_agent_async(
                         agent.store_workload(workload)
 
                     results = agent.run()
+                    import asyncio as _asyncio
                     event_id = initial_event.get("event_id")
                     update_event = {
                         "event_id": event_id,
@@ -1214,7 +1431,7 @@ async def execute_agent_async(
                         "node_name": path
                     }
 
-                    event_service.emit(update_event)
+                    _asyncio.run(event_service.emit(update_event))
                     logger.info(f"Event updated: {event_id} - agent_execution_completed - COMPLETED")
 
                 finally:
@@ -1241,7 +1458,7 @@ async def execute_agent_async(
                     "node_name": path
                 }
 
-                event_service.emit(error_event)
+                _asyncio.run(event_service.emit(error_event))
                 logger.info(f"Event updated: {event_id} - agent_execution_error - ERROR")
 
         background_tasks.add_task(execute_agent_task)
@@ -1294,7 +1511,7 @@ async def get_catalog_playbooks():
     """Get all playbooks"""
     try:
         catalog_service = get_catalog_service()
-        entries = catalog_service.list_entries('Playbook')
+        entries = await catalog_service.list_entries('Playbook')
 
         playbooks = []
         for entry in entries:
@@ -1355,7 +1572,7 @@ tasks:
 """
         
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource(content, "playbooks")
         
         playbook = {
             "id": result.get("resource_path", ""),
@@ -1448,27 +1665,28 @@ async def execute_playbook(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/catalog/playbooks/content", response_class=JSONResponse)
-async def get_catalog_playbook_content(playbook_id: str = Query(...)):
-    """Get playbook content"""
+async def get_catalog_playbook_content(playbook_id: str = Query(...), version: Optional[str] = Query(default=None)):
+    """Get playbook content. If version is omitted, latest is used."""
     try:
-        logger.info(f"Received playbook_id: '{playbook_id}'")
+        logger.info(f"Received playbook_id: '{playbook_id}', version: '{version}'")
         if playbook_id.startswith("playbooks/"):
             playbook_id = playbook_id[10:]
             logger.info(f"Fixed playbook_id: '{playbook_id}'")
         
         catalog_service = get_catalog_service()
-        latest_version = catalog_service.get_latest_version(playbook_id)
-        logger.info(f"Latest version for '{playbook_id}': '{latest_version}'")
+        if not version:
+            version = await catalog_service.get_latest_version(playbook_id)
+            logger.info(f"Latest version for '{playbook_id}': '{version}'")
         
-        entry = catalog_service.fetch_entry(playbook_id, latest_version)
+        entry = await catalog_service.fetch_entry(playbook_id, version)
         
         if not entry:
             raise HTTPException(
                 status_code=404,
-                detail=f"Playbook '{playbook_id}' not found."
+                detail=f"Playbook '{playbook_id}' version '{version}' not found."
             )
         
-        return {"content": entry.get('content', '')}
+        return {"content": entry.get('content', ''), "version": version}
     except HTTPException:
         raise
     except Exception as e:
@@ -1517,7 +1735,7 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 detail="Content is required."
             )
         catalog_service = get_catalog_service()
-        result = catalog_service.register_resource(content, "playbooks")
+        result = await catalog_service.register_resource(content, "playbooks")
         
         return {
             "status": "success",
@@ -1540,20 +1758,21 @@ async def get_catalog_widgets():
         draft_count = 0
         
         try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
                         "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
                     )
-                    playbook_count = cursor.fetchone()[0]
+                    row = await cursor.fetchone()
+                    playbook_count = row[0] if row else 0
                     
-                    cursor.execute(
+                    await cursor.execute(
                         """
                         SELECT meta FROM catalog 
                         WHERE resource_type = 'widget'
                         """
                     )
-                    results = cursor.fetchall()
+                    results = await cursor.fetchall()
                     
                     for row in results:
                         meta_str = row[0]
@@ -1620,7 +1839,7 @@ async def get_executions():
     """Get all executions"""
     try:
         event_service = get_event_service()
-        executions = event_service.get_all_executions()
+        executions = await event_service.get_all_executions()
         return executions
     except Exception as e:
         logger.error(f"Error getting executions: {e}")
@@ -1630,7 +1849,7 @@ async def get_executions():
 async def get_execution(execution_id: str):
     try:
         event_service = get_event_service()
-        events = event_service.get_events_by_execution_id(execution_id)
+        events = await event_service.get_events_by_execution_id(execution_id)
         
         if not events:
             raise HTTPException(
@@ -1710,6 +1929,253 @@ async def api_health():
     """API health check endpoint"""
     return {"status": "ok"}
 
+@router.post("/credentials", response_class=JSONResponse)
+async def create_or_update_credential(request: Request):
+    """
+    Create or update a credential.
+    Body JSON fields:
+      - name: unique credential name
+      - type: credential type (e.g., httpBearerAuth, googleServiceAccount)
+      - data: JSON object to encrypt and store
+      - meta: optional JSON metadata
+      - tags: optional list of strings
+      - description: optional string
+    Requires NOETL_ENCRYPTION_KEY.
+    """
+    try:
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        ctype = (body.get("type") or "").strip()
+        data = body.get("data")
+        meta = body.get("meta")
+        tags = body.get("tags")
+        description = body.get("description")
+        if not name or not ctype:
+            raise HTTPException(status_code=400, detail="'name' and 'type' are required")
+        try:
+            from noetl.secret import encrypt_json
+            enc = encrypt_json(data)
+        except Exception as enc_err:
+            raise HTTPException(status_code=500, detail=f"Encryption failed: {enc_err}")
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                meta_adapted = Json(meta) if meta is not None else None
+                tags_norm = None
+                if isinstance(tags, str):
+                    parts = [p.strip() for p in tags.split(',') if p.strip()]
+                    tags_norm = parts if parts else None
+                elif isinstance(tags, list):
+                    tags_norm = [str(x) for x in tags]
+                await cursor.execute(
+                    """
+                    INSERT INTO credential(name, type, data_encrypted, meta, tags, description)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT(name) DO UPDATE SET
+                      type=EXCLUDED.type,
+                      data_encrypted=EXCLUDED.data_encrypted,
+                      meta=EXCLUDED.meta,
+                      tags=EXCLUDED.tags,
+                      description=EXCLUDED.description,
+                      updated_at=now()
+                    RETURNING id, name, type, meta, tags, description, created_at, updated_at
+                    """,
+                    (name, ctype, enc, meta_adapted, tags_norm, description)
+                )
+                row = await cursor.fetchone()
+                await conn.commit()
+                return {
+                    "id": row[0],
+                    "name": row[1],
+                    "type": row[2],
+                    "meta": row[3],
+                    "tags": row[4],
+                    "description": row[5],
+                    "created_at": row[6],
+                    "updated_at": row[7]
+                }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error creating/updating credential: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/credentials", response_class=JSONResponse)
+async def list_credentials(ctype: Optional[str] = None, q: Optional[str] = None):
+    try:
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                sql = "SELECT id, name, type, meta, tags, description, created_at, updated_at FROM credential"
+                params = []
+                conds = []
+                if ctype:
+                    conds.append("type = %s")
+                    params.append(ctype)
+                if q:
+                    conds.append("name ILIKE %s")
+                    params.append(f"%{q}%")
+                if conds:
+                    sql += " WHERE " + " AND ".join(conds)
+                sql += " ORDER BY name"
+                await cursor.execute(sql, tuple(params))
+                rows = await cursor.fetchall()
+                return [
+                    {
+                        "id": r[0], "name": r[1], "type": r[2],
+                        "meta": r[3], "tags": r[4], "description": r[5],
+                        "created_at": r[6], "updated_at": r[7]
+                    } for r in rows
+                ]
+    except Exception as e:
+        logger.exception(f"Error listing credentials: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/credentials/{identifier}", response_class=JSONResponse)
+async def get_credential(identifier: str, include_data: bool = False):
+    try:
+        by_id = identifier.isdigit()
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                if by_id:
+                    await cursor.execute(
+                        "SELECT id, name, type, data_encrypted, meta, tags, description, created_at, updated_at FROM credential WHERE id = %s",
+                        (int(identifier),)
+                    )
+                else:
+                    await cursor.execute(
+                        "SELECT id, name, type, data_encrypted, meta, tags, description, created_at, updated_at FROM credential WHERE name = %s",
+                        (identifier,)
+                    )
+                row = await cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Credential not found")
+                result = {
+                    "id": row[0],
+                    "name": row[1],
+                    "type": row[2],
+                    "meta": row[4],
+                    "tags": row[5],
+                    "description": row[6],
+                    "created_at": row[7],
+                    "updated_at": row[8]
+                }
+                if include_data:
+                    try:
+                        from noetl.secret import decrypt_json
+                        result["data"] = decrypt_json(row[3])
+                    except Exception as dec_err:
+                        raise HTTPException(status_code=500, detail=f"Decryption failed: {dec_err}")
+                return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting credential: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/gcp/token", response_class=JSONResponse)
+async def get_gcp_token(request: Request):
+    """Obtain a GCP access token using service account credentials or ADC.
+    Body JSON fields:
+      - scopes: string or list of strings (default: https://www.googleapis.com/auth/cloud-platform)
+      - credentials_path: optional path to a service account JSON file
+      - use_metadata: optional bool; if true, try GCE metadata server first (not default)
+    """
+    import os as _os
+    if str(_os.getenv("NOETL_ENABLE_GCP_TOKEN_API", "true")).lower() not in ["1","true","yes","y","on"]:
+        raise HTTPException(status_code=404, detail="Not Found")
+    try:
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        scopes = body.get("scopes")
+        credentials_path = body.get("credentials_path")
+        use_metadata = body.get("use_metadata", False)
+        service_account_secret = body.get("service_account_secret")
+        credentials_info = body.get("credentials_info")
+
+        try:
+            if credentials_info is None:
+                cred_ref = body.get("credential") or body.get("credential_name") or body.get("credential_id")
+                if cred_ref is not None:
+                    async with get_async_db_connection(optional=True) as _conn:
+                        if _conn is not None:
+                            async with _conn.cursor() as _cur:
+                                if isinstance(cred_ref, (int,)) or (isinstance(cred_ref, str) and cred_ref.isdigit()):
+                                    await _cur.execute("SELECT data_encrypted FROM credential WHERE id = %s", (int(cred_ref),))
+                                else:
+                                    await _cur.execute("SELECT data_encrypted FROM credential WHERE name = %s", (str(cred_ref),))
+                                _row = await _cur.fetchone()
+                            if _row:
+                                from noetl.secret import decrypt_json
+                                try:
+                                    credentials_info = decrypt_json(_row[0])
+                                except Exception as _dec_err:
+                                    logger.warning(f"/gcp/token: Failed to decrypt credential '{cred_ref}': {_dec_err}")
+                        else:
+                            logger.warning("/gcp/token: Database not available to resolve stored credential")
+        except Exception as _cred_err:
+            logger.warning(f"/gcp/token: Error resolving stored credential: {_cred_err}")
+
+        import asyncio
+        from noetl.secret import obtain_gcp_token
+        async def _issue_token():
+            return await asyncio.to_thread(
+                obtain_gcp_token,
+                scopes,
+                credentials_path,
+                use_metadata,
+                service_account_secret,
+                credentials_info
+            )
+        result = await _issue_token()
+
+        try:
+            store_as = body.get("store_as")
+            if store_as and isinstance(store_as, str) and store_as.strip():
+                name = store_as.strip()
+                store_type = (body.get("store_type") or "httpBearerAuth").strip()
+                store_meta = body.get("store_meta")
+                store_description = body.get("store_description")
+                store_tags = body.get("store_tags")
+                tags_norm = None
+                if isinstance(store_tags, str):
+                    parts = [p.strip() for p in store_tags.split(',') if p.strip()]
+                    tags_norm = parts if parts else None
+                elif isinstance(store_tags, list):
+                    tags_norm = [str(x) for x in store_tags]
+                token_payload = {
+                    "access_token": result.get("access_token"),
+                    "token_expiry": result.get("token_expiry"),
+                    "scopes": result.get("scopes"),
+                }
+                from noetl.secret import encrypt_json
+                enc = encrypt_json(token_payload)
+                async with get_async_db_connection() as conn2:
+                    async with conn2.cursor() as cursor2:
+                        await cursor2.execute(
+                            """
+                            INSERT INTO credential(name, type, data_encrypted, meta, tags, description)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            ON CONFLICT(name) DO UPDATE SET
+                              type=EXCLUDED.type,
+                              data_encrypted=EXCLUDED.data_encrypted,
+                              meta=EXCLUDED.meta,
+                              tags=EXCLUDED.tags,
+                              description=EXCLUDED.description,
+                              updated_at=now()
+                            """,
+                            (name, store_type, enc, Json(store_meta) if store_meta is not None else None, tags_norm, store_description)
+                        )
+                        await conn2.commit()
+        except Exception as persist_err:
+            logger.warning(f"/gcp/token: Failed to persist token: {persist_err}")
+
+        return result
+    except Exception as e:
+        logger.exception(f"Error obtaining GCP token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/catalog/{path:path}/{version}", response_class=JSONResponse)
 async def get_resource(
     request: Request,
@@ -1718,7 +2184,7 @@ async def get_resource(
 ):
     try:
         catalog_service = get_catalog_service()
-        entry = catalog_service.fetch_entry(path, version)
+        entry = await catalog_service.fetch_entry(path, version)
         if not entry:
             raise HTTPException(
                 status_code=404,
@@ -1809,58 +2275,655 @@ async def execute_postgres(
         try:
             if connection_string:
                 logger.debug(f"EXECUTE_POSTGRES: Using custom connection string")
-                conn = psycopg.connect(connection_string)
+                conn = await psycopg.AsyncConnection.connect(connection_string)
+                async_conn_cm = None
             else:
-                logger.debug(f"EXECUTE_POSTGRES: Using default connection from pool")
-                return_conn = get_db_connection()
-                conn = return_conn.__enter__()
+                logger.debug(f"EXECUTE_POSTGRES: Using default connection from async pool")
+                async_conn_cm = get_async_db_connection()
+                conn = await async_conn_cm.__aenter__()
             
-            with conn.cursor(row_factory=dict_row) as cursor:
+            async with conn.cursor(row_factory=dict_row) as cursor:
                 if query:
                     logger.debug(f"EXECUTE_POSTGRES: Executing query: {query}")
                     if parameters:
-                        cursor.execute(query, parameters)
+                        await cursor.execute(query, parameters)
                     else:
-                        cursor.execute(query)
-                else:
-                    logger.debug(f"EXECUTE_POSTGRES: Calling procedure: {procedure}")
-                    if parameters:
-                        placeholders = ", ".join(["%s"] * len(parameters))
-                        call_sql = f"CALL {procedure}({placeholders})"
-                        cursor.execute(call_sql, parameters)
-                    else:
-                        call_sql = f"CALL {procedure}()"
-                        cursor.execute(call_sql)
-                
-                try:
-                    results = cursor.fetchall()
-                    logger.debug(f"EXECUTE_POSTGRES: Fetched {len(results)} rows")
-                except psycopg.ProgrammingError:
-                    results = []
-                    logger.debug("EXECUTE_POSTGRES: No results to fetch")
-                
+                        # runtime migrations are managed centrally; ensure compatibility
+                        await cursor.execute("""
+                            ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                        """)
+                        await cursor.execute("""
+                            CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);
+                        """)
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                
+                # Fetch results for select queries
+                if cursor.description:
+                    try:
+                        results = await cursor.fetchall()
+                    except Exception:
+                        results = []
+                else:
+                    results = []
+
                 response_data = {
                     "success": True,
                     "rows_affected": cursor.rowcount if cursor.rowcount >= 0 else 0,
                     "columns": columns,
                     "results": results
                 }
-                
+
                 logger.debug(f"EXECUTE_POSTGRES: Returning response with {len(results)} results")
                 logger.debug("=== EXECUTE_POSTGRES: Function exit ===")
                 return response_data
         finally:
             if connection_string and conn:
-                logger.debug("EXECUTE_POSTGRES: Closing custom connection")
-                conn.close()
-            elif conn and not connection_string:
-                logger.debug("EXECUTE_POSTGRES: Returning connection to pool")
-                return_conn.__exit__(None, None, None)
+                logger.debug("EXECUTE_POSTGRES: Closing custom async connection")
+                await conn.close()
+            elif conn and not connection_string and async_conn_cm is not None:
+                logger.debug("EXECUTE_POSTGRES: Returning async connection to pool")
+                await async_conn_cm.__aexit__(None, None, None)
     
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error executing PostgreSQL query or procedure: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Worker Pool Registry Endpoints ===
+# _OptStr alias removed; using Optional[str] directly
+
+@router.post("/worker/pool/register", response_class=JSONResponse)
+async def register_worker_pool(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("pool")
+        base_url = body.get("base_url")
+        status = (body.get("status") or "ready").lower()
+        capacity = body.get("capacity")
+        labels = body.get("labels")
+        meta = body.get("meta") or {}
+        pid = body.get("pid")
+        r = body.get("runtime")
+        # Support both string (type) and dict (details)
+        if isinstance(r, dict):
+            runtime_json = r
+            runtime_type = r.get("type") or (body.get("runtime_type") if body.get("runtime_type") else None)
+        else:
+            runtime_type = (r or body.get("runtime_type") or "cpu")
+            runtime_json = {"type": (runtime_type.lower() if isinstance(runtime_type, str) else runtime_type)}
+        # Ensure pid is embedded into runtime JSON (transient runtime info)
+        try:
+            if pid is not None:
+                if isinstance(runtime_json, dict):
+                    runtime_json = {**runtime_json, "pid": pid}
+        except Exception:
+            pass
+        if not name or not base_url:
+            raise HTTPException(status_code=400, detail="Missing required fields: name, base_url")
+
+        payload = {
+            "name": name,
+            "runtime": runtime_json,
+            "base_url": base_url,
+            "status": status,
+            "capacity": capacity,
+            "labels": labels,
+            "pid": pid,
+        }
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # runtime table is managed in server/schema.py migrations.
+                # Ensure runtime_id column and necessary indexes exist for compatibility.
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);
+                """)
+                sf_id = get_snowflake_id()
+                await cursor.execute(
+                    """
+                    INSERT INTO runtime (name, component_type, base_url, status, labels, capabilities, capacity, runtime, runtime_id, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, 'worker_pool', %s, %s, %s::jsonb, NULL, %s, %s::jsonb, %s, now(), now(), now())
+                    ON CONFLICT (component_type, name)
+                    DO UPDATE SET base_url=EXCLUDED.base_url, status=EXCLUDED.status,
+                                  labels=EXCLUDED.labels, capacity=EXCLUDED.capacity,
+                                  runtime=EXCLUDED.runtime, last_heartbeat=now(), updated_at=now()
+                    """,
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), capacity, json.dumps(runtime_json), sf_id)
+                )
+                # Backward-compat: also mirror to catalog for any existing consumers
+                await cursor.execute("""
+                    INSERT INTO resource(name) VALUES ('worker_pool')
+                    ON CONFLICT (name) DO NOTHING
+                """)
+                await cursor.execute(
+                    """
+                    INSERT INTO catalog (
+                        resource_path, resource_type, resource_version, source,
+                        resource_location, content, payload, meta, template, timestamp
+                    )
+                    VALUES (%s, 'worker_pool', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = EXCLUDED.meta, timestamp = CURRENT_TIMESTAMP
+                    """,
+                    (name, json.dumps(payload), json.dumps(meta))
+                )
+                await conn.commit()
+        return {"status": "ok", "pool": {**payload, "meta": meta}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error registering worker pool: {e}")
+        raise HTTPException(status_code=500, detail=f"Error registering worker pool: {e}")
+
+
+@router.post("/worker/pool/heartbeat", response_class=JSONResponse)
+async def heartbeat_worker_pool(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("pool")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        # Optional updates
+        r = body.get("runtime")
+        runtime_json = r if isinstance(r, dict) else ({"type": (r.lower() if isinstance(r, str) and r else None)} if r else None)
+        base_url = body.get("base_url")
+        status = (body.get("status") or "").lower() or None
+        capacity = body.get("capacity")
+        labels = body.get("labels")
+        pid = body.get("pid")
+        meta = body.get("meta")
+
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # Ensure table exists
+                # runtime table is managed by server/schema.py; ensure compatibility columns/indexes
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);
+                """)
+                # Upsert minimal record to ensure existence then update fields
+                sf_id = get_snowflake_id()
+                await cursor.execute(
+                    """
+                    INSERT INTO runtime (name, component_type, base_url, status, capacity, labels, runtime_id)
+                    VALUES (%s, 'worker_pool', COALESCE(%s,''), COALESCE(%s,'ready'), %s, %s::jsonb, %s)
+                    ON CONFLICT (component_type, name) DO NOTHING
+                    """,
+                    (name, base_url, status, capacity, json.dumps(labels) if labels is not None else json.dumps(None), sf_id)
+                )
+                # Apply updates and heartbeat
+                await cursor.execute(
+                    """
+                    UPDATE runtime
+                    SET
+                        base_url = COALESCE(%s, base_url),
+                        status = COALESCE(%s, status),
+                        capacity = COALESCE(%s, capacity),
+                        labels = COALESCE(%s::jsonb, labels),
+                        runtime = COALESCE(%s::jsonb, runtime),
+                        last_heartbeat = now(),
+                        updated_at = now()
+                    WHERE component_type = 'worker_pool' AND name = %s
+                    RETURNING name, runtime, base_url, status, capacity, labels, COALESCE((runtime->>'pid')::int, NULL) as pid, last_heartbeat, runtime_id
+                    """,
+                    (base_url, status, capacity, json.dumps(labels) if labels is not None else None, json.dumps(runtime_json) if runtime_json is not None else None, name)
+                )
+                row = await cursor.fetchone()
+                # Mirror to catalog (legacy) to avoid breaking older consumers
+                await cursor.execute("""
+                    INSERT INTO resource(name) VALUES ('worker_pool')
+                    ON CONFLICT (name) DO NOTHING
+                """)
+                await cursor.execute(
+                    """
+                    INSERT INTO catalog (resource_path, resource_type, resource_version, source, resource_location, content, payload, meta, template, timestamp)
+                    VALUES (%s, 'worker_pool', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = COALESCE(EXCLUDED.meta, catalog.meta), timestamp = CURRENT_TIMESTAMP
+                    """,
+                    (name, json.dumps({
+                        "name": row[0] if row else name,
+                        "runtime": row[1] if row else runtime_json,
+                        "base_url": row[2] if row else base_url,
+                        "status": row[3] if row else status,
+                        "capacity": row[4] if row else capacity,
+                        "labels": labels,
+                        "pid": pid,
+                    }), json.dumps(meta) if meta is not None else json.dumps(None))
+                )
+                await conn.commit()
+        return {"status": "ok", "pool": {
+            "name": row[0] if row else name,
+            "runtime": row[1] if row else runtime_json,
+            "base_url": row[2] if row else base_url,
+            "status": row[3] if row else status,
+            "capacity": row[4] if row else capacity,
+            "labels": labels,
+            "pid": pid,
+        }}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in worker pool heartbeat: {e}")
+        raise HTTPException(status_code=500, detail=f"Error in worker pool heartbeat: {e}")
+
+
+@router.get("/worker/pools", response_class=JSONResponse)
+async def list_worker_pools(request: Request, runtime: Optional[str] = None, status: Optional[str] = None):
+    try:
+        ttl_seconds = int(os.environ.get('NOETL_HEARTBEAT_TTL', '60'))
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # Mark stale worker pools as offline if heartbeat is older than TTL
+                await cursor.execute(
+                    f"""
+                    UPDATE runtime
+                    SET status = 'offline', updated_at = now()
+                    WHERE component_type='worker_pool' AND (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
+                    """
+                )
+                conditions = ["component_type='worker_pool'"]
+                params: List[Any] = []
+                if runtime:
+                    conditions.append("(runtime->>'type') = %s")
+                    params.append(runtime.lower())
+                if status:
+                    conditions.append("status = %s")
+                    params.append(status.lower())
+                where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+                await cursor.execute(
+                    f"""
+                    SELECT name, runtime, base_url, status, capacity, labels, COALESCE((runtime->>'pid')::int, NULL) as pid, last_heartbeat, updated_at, runtime_id
+                    FROM runtime
+                    {where_clause}
+                    ORDER BY updated_at DESC
+                    """,
+                    params
+                )
+                rows = await cursor.fetchall()
+        pools: List[Dict[str, Any]] = []
+        for r in rows or []:
+            pools.append({
+                "name": r[0],
+                "runtime": r[1],
+                "base_url": r[2],
+                "status": r[3],
+                "capacity": r[4],
+                "labels": r[5],
+                "pid": r[6],
+                "last_heartbeat": r[7].isoformat() if r[7] else None,
+                "runtime_id": r[9],
+            })
+        return {"items": pools}
+    except Exception as e:
+        logger.exception(f"Error listing worker pools: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing worker pools: {e}")
+
+
+# === Broker Registry Endpoints ===
+@router.post("/broker/register", response_class=JSONResponse)
+async def register_broker(request: Request):
+    """Register or update a broker instance with base_url and metadata using unified runtime."""
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("broker")
+        base_url = body.get("base_url") or body.get("url")
+        status = (body.get("status") or "ready").lower()
+        labels = body.get("labels")
+        capabilities = body.get("capabilities")
+        pid = body.get("pid")
+        meta = body.get("meta") or {}
+        r = body.get("runtime")
+        runtime_json = r if isinstance(r, dict) else ({"type": r} if isinstance(r, str) else None)
+        # Ensure pid is embedded inside runtime JSON when present
+        try:
+            if pid is not None:
+                if isinstance(runtime_json, dict):
+                    runtime_json = {**runtime_json, "pid": pid}
+        except Exception:
+            pass
+        # Provide a sensible default runtime JSON for broker if missing
+        if not runtime_json:
+            try:
+                import socket
+                host = os.environ.get("HOSTNAME") or socket.gethostname()
+                pod = os.environ.get("POD_NAME")
+                ip = os.environ.get("POD_IP")
+                node = os.environ.get("NODE_NAME")
+                svc = os.environ.get("SERVICE_NAME") or os.environ.get("NOETL_SERVICE_NAME")
+                ns = os.environ.get("NAMESPACE") or os.environ.get("POD_NAMESPACE")
+                runtime_json = {
+                    "type": "broker",
+                    "host": host,
+                    "pod": pod,
+                    "ip": ip,
+                    "node": node,
+                    "service": svc,
+                    "namespace": ns,
+                }
+                if pid is not None:
+                    runtime_json["pid"] = pid
+            except Exception:
+                runtime_json = {"type": "broker", "pid": pid} if pid is not None else {"type": "broker"}
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required fields: name")
+
+        payload = {
+            "name": name,
+            "base_url": base_url,
+            "status": status,
+            "labels": labels,
+            "capabilities": capabilities,
+            "pid": pid,
+            "runtime": runtime_json,
+        }
+
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # runtime table managed via migrations in server/schema.py
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);
+                """)
+                await cursor.execute(
+                    """
+                    INSERT INTO runtime (name, component_type, base_url, status, labels, capabilities, capacity, runtime, runtime_id, last_heartbeat, created_at, updated_at)
+                    VALUES (%s, 'broker', %s, %s, %s::jsonb, %s::jsonb, NULL, %s::jsonb, %s, now(), now(), now())
+                    ON CONFLICT (component_type, name)
+                    DO UPDATE SET base_url=EXCLUDED.base_url, status=EXCLUDED.status, labels=EXCLUDED.labels,
+                                  capabilities=EXCLUDED.capabilities, runtime=EXCLUDED.runtime,
+                                  last_heartbeat=now(), updated_at=now()
+                    """,
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), json.dumps(runtime_json) if runtime_json is not None else json.dumps(None), get_snowflake_id())
+                )
+                # Mirror to catalog for legacy consumers
+                await cursor.execute(
+                    """
+                    INSERT INTO resource(name) VALUES ('broker')
+                    ON CONFLICT (name) DO NOTHING
+                    """
+                )
+                await cursor.execute(
+                    """
+                    INSERT INTO catalog (
+                        resource_path, resource_type, resource_version, source,
+                        resource_location, content, payload, meta, template, timestamp
+                    )
+                    VALUES (%s, 'broker', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = EXCLUDED.meta, timestamp = CURRENT_TIMESTAMP
+                    """,
+                    (name, json.dumps(payload), json.dumps(meta))
+                )
+                await conn.commit()
+        return {"status": "ok", "broker": {**payload, "meta": meta}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error registering broker: {e}")
+        raise HTTPException(status_code=500, detail=f"Error registering broker: {e}")
+
+
+@router.post("/broker/heartbeat", response_class=JSONResponse)
+async def heartbeat_broker(request: Request):
+    """Heartbeat/update an existing broker record in the runtime table."""
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("broker")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        base_url = body.get("base_url") or body.get("url")
+        status = (body.get("status") or "").lower() or None
+        labels = body.get("labels")
+        capabilities = body.get("capabilities")
+        pid = body.get("pid")
+        meta = body.get("meta")
+        r = body.get("runtime")
+        runtime_json = r if isinstance(r, dict) else ({"type": r} if isinstance(r, str) else None)
+        # Ensure pid is embedded inside runtime JSON when present
+        try:
+            if pid is not None:
+                if isinstance(runtime_json, dict):
+                    runtime_json = {**runtime_json, "pid": pid}
+        except Exception:
+            pass
+
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # runtime table is created by schema migrations; ensure compatibility columns/indexes
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);
+                """)
+                await cursor.execute(
+                    """
+                    INSERT INTO runtime (name, component_type, base_url, status, labels, capabilities, runtime, runtime_id)
+                    VALUES (%s, 'broker', COALESCE(%s,''), COALESCE(%s,'ready'), %s::jsonb, %s::jsonb, %s::jsonb, %s)
+                    ON CONFLICT (component_type, name) DO NOTHING
+                    """,
+                    (name, base_url, status, json.dumps(labels) if labels is not None else json.dumps(None), json.dumps(capabilities) if capabilities is not None else json.dumps(None), json.dumps(runtime_json) if runtime_json is not None else json.dumps(None), get_snowflake_id())
+                )
+                await cursor.execute(
+                    """
+                    UPDATE runtime
+                    SET base_url = COALESCE(%s, base_url),
+                        status = COALESCE(%s, status),
+                        labels = COALESCE(%s::jsonb, labels),
+                        capabilities = COALESCE(%s::jsonb, capabilities),
+                        runtime = COALESCE(%s::jsonb, runtime),
+                        runtime_id = COALESCE(runtime_id, %s),
+                        last_heartbeat = now(),
+                        updated_at = now()
+                    WHERE component_type='broker' AND name = %s
+                    RETURNING name, base_url, status, labels, capabilities, COALESCE((runtime->>'pid')::int, NULL) as pid, runtime, last_heartbeat, runtime_id
+                    """,
+                    (base_url, status, json.dumps(labels) if labels is not None else None, json.dumps(capabilities) if capabilities is not None else None, json.dumps(runtime_json) if runtime_json is not None else None, get_snowflake_id(), name)
+                )
+                row = await cursor.fetchone()
+                # Mirror to catalog (legacy)
+                await cursor.execute(
+                    """
+                    INSERT INTO resource(name) VALUES ('broker')
+                    ON CONFLICT (name) DO NOTHING
+                    """
+                )
+                await cursor.execute(
+                    """
+                    INSERT INTO catalog (resource_path, resource_type, resource_version, source, resource_location, content, payload, meta, template, timestamp)
+                    VALUES (%s, 'broker', 'current', 'inline', NULL, NULL, %s::jsonb, %s::jsonb, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (resource_path, resource_version)
+                    DO UPDATE SET payload = EXCLUDED.payload, meta = COALESCE(EXCLUDED.meta, catalog.meta), timestamp = CURRENT_TIMESTAMP
+                    """,
+                    (name, json.dumps({
+                        "name": row[0] if row else name,
+                        "base_url": row[1] if row else base_url,
+                        "status": row[2] if row else status,
+                        "labels": labels,
+                        "capabilities": capabilities,
+                        "pid": pid,
+                        "runtime": (row[6] if row else runtime_json),
+                    }), json.dumps(meta) if meta is not None else json.dumps(None))
+                )
+                await conn.commit()
+        return {"status": "ok", "broker": {
+            "name": row[0] if row else name,
+            "base_url": row[1] if row else base_url,
+            "status": row[2] if row else status,
+            "labels": labels,
+            "capabilities": capabilities,
+            "pid": pid,
+            "runtime": (row[6] if row else runtime_json),
+        }}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in broker heartbeat: {e}")
+        raise HTTPException(status_code=500, detail=f"Error in broker heartbeat: {e}")
+
+
+@router.get("/brokers", response_class=JSONResponse)
+async def list_brokers(request: Request, status: Optional[str] = None):
+    try:
+        ttl_seconds = int(os.environ.get('NOETL_HEARTBEAT_TTL', '60'))
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # Mark stale brokers as offline
+                await cursor.execute(
+                    f"""
+                    UPDATE runtime
+                    SET status = 'offline', updated_at = now()
+                    WHERE component_type='broker' AND (now() - last_heartbeat) > INTERVAL '{ttl_seconds} seconds' AND status <> 'offline'
+                    """
+                )
+                conditions = ["component_type='broker'"]
+                params: List[Any] = []
+                if status:
+                    conditions.append("status = %s")
+                    params.append(status.lower())
+                where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+                await cursor.execute(
+                    f"""
+                    SELECT name, base_url, status, labels, capabilities, COALESCE((runtime->>'pid')::int, NULL) as pid, last_heartbeat, updated_at, runtime_id
+                    FROM runtime
+                    {where_clause}
+                    ORDER BY updated_at DESC
+                    """,
+                    params
+                )
+                rows = await cursor.fetchall()
+        items: List[Dict[str, Any]] = []
+        for r in rows or []:
+            items.append({
+                "name": r[0],
+                "base_url": r[1],
+                "status": r[2],
+                "labels": r[3],
+                "capabilities": r[4],
+                "pid": r[5],
+                "last_heartbeat": r[6].isoformat() if r[6] else None,
+                "runtime_id": r[8],
+            })
+        return {"items": items}
+    except Exception as e:
+        logger.exception(f"Error listing brokers: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing brokers: {e}")
+
+
+@router.get("/events", response_class=JSONResponse)
+async def poll_events_root(
+    request: Request,
+    event_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 10
+):
+    try:
+        event_service = get_event_service()
+        items = await event_service.poll_events(event_type=event_type, status=status, limit=limit)
+        return {"items": items}
+    except Exception as e:
+        logger.exception(f"Error polling events: {e}.")
+        raise HTTPException(status_code=500, detail=f"Error polling events: {e}.")
+
+
+@router.delete("/worker/pool/deregister", response_class=JSONResponse)
+async def deregister_worker_pool(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("pool")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        delete = bool(body.get("delete", False))
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # runtime table is created via migrations; ensure compatibility
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);
+                """)
+                if delete:
+                    await cursor.execute("DELETE FROM runtime WHERE component_type='worker_pool' AND name = %s", (name,))
+                else:
+                    await cursor.execute(
+                        """
+                        UPDATE runtime SET status='offline', updated_at=now() WHERE component_type='worker_pool' AND name = %s
+                        """,
+                        (name,)
+                    )
+                await conn.commit()
+        return {"status": "ok", "name": name, "deleted": delete}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deregistering worker pool: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deregistering worker pool: {e}")
+
+
+@router.delete("/broker/deregister", response_class=JSONResponse)
+async def deregister_broker(request: Request):
+    try:
+        body = await request.json()
+        name = body.get("name") or body.get("id") or body.get("broker")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing required field: name")
+        delete = bool(body.get("delete", False))
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cursor:
+                # runtime table created via migrations; ensure compatibility
+                await cursor.execute("""
+                    ALTER TABLE IF EXISTS runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT;
+                """)
+                await cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON runtime (component_type, name);
+                """)
+                if delete:
+                    await cursor.execute("DELETE FROM runtime WHERE component_type='broker' AND name = %s", (name,))
+                else:
+                    await cursor.execute(
+                        """
+                        UPDATE runtime SET status='offline', updated_at=now() WHERE component_type='broker' AND name = %s
+                        """,
+                        (name,)
+                    )
+                await conn.commit()
+        return {"status": "ok", "name": name, "deleted": delete}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deregistering broker: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deregistering broker: {e}")
+
+
+# === Legacy server module deactivation notice ===
+# The monolithic router and endpoints in this module have been superseded by:
+#   - noetl.server.router (which aggregates routers from noetl.server.api.*)
+#   - noetl.server.services (service-layer logic)
+# To avoid duplicated behavior and accidental imports, we intentionally shadow
+# any previously-declared `router` here with a new, empty APIRouter instance.
+# Only register_server_from_env and psycopg are intended to be imported from this module.
+try:
+    from fastapi import APIRouter as _APIRouter  # type: ignore
+    router = _APIRouter()
+except Exception:
+    # FastAPI may not be available in certain unit-test contexts; ignore.
+    pass
+
+# Limit what this module publicly exports to avoid legacy usage.
+try:
+    __all__  # type: ignore  # keep if already defined above
+except NameError:
+    __all__ = []
+
+for _name in ("register_server_from_env", "psycopg"):
+    if _name not in __all__:
+        __all__.append(_name)

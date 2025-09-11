@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import traceback
+import datetime
 from typing import List, Optional, Dict, Any, Union
 import psycopg
 from noetl.common import make_serializable
@@ -72,6 +73,19 @@ class DatabaseSchema:
                     logger.error(error_msg)
                     raise ValueError(error_msg)
                 
+                if 'POSTGRES_DB' not in os.environ:
+                    error_msg = "POSTGRES_DB environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_HOST' not in os.environ:
+                    error_msg = "POSTGRES_HOST environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_PORT' not in os.environ:
+                    error_msg = "POSTGRES_PORT environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                
                 postgres_user = os.environ.get('POSTGRES_USER')
                 postgres_password = os.environ.get('POSTGRES_PASSWORD')
                 db_name = os.environ.get('POSTGRES_DB')
@@ -83,6 +97,19 @@ class DatabaseSchema:
 
 
             if self.pgdb is None:
+                if 'POSTGRES_DB' not in os.environ:
+                    error_msg = "POSTGRES_DB environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_HOST' not in os.environ:
+                    error_msg = "POSTGRES_HOST environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if 'POSTGRES_PORT' not in os.environ:
+                    error_msg = "POSTGRES_PORT environment variable is required but not provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
                 db_name = os.environ.get('POSTGRES_DB')
                 host = os.environ.get('POSTGRES_HOST')
                 port = os.environ.get('POSTGRES_PORT')
@@ -320,9 +347,15 @@ class DatabaseSchema:
                     distributed_state VARCHAR,
                     context_key VARCHAR,
                     context_value TEXT,
+                    trace_component JSONB,
                     PRIMARY KEY (execution_id, event_id)
                 )
             """)
+            # Ensure trace_component exists (for upgrades)
+            try:
+                cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB")
+            except Exception:
+                pass
 
             logger.info("Creating workflow table.")
             cursor.execute(f"""
@@ -364,7 +397,7 @@ class DatabaseSchema:
             logger.info("Creating error_log table.")
             cursor.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.noetl_schema}.error_log (
-                    error_id SERIAL PRIMARY KEY,
+                    error_id BIGINT PRIMARY KEY,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     error_type VARCHAR(50),
                     error_message TEXT,
@@ -382,6 +415,11 @@ class DatabaseSchema:
                     resolution_timestamp TIMESTAMP
                 )
             """)
+            # Attempt to migrate existing error_log.error_id to BIGINT if previously SERIAL
+            try:
+                cursor.execute(f"ALTER TABLE {self.noetl_schema}.error_log ALTER COLUMN error_id TYPE BIGINT")
+            except Exception:
+                pass
             
             cursor.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON {self.noetl_schema}.error_log (timestamp);
@@ -390,7 +428,109 @@ class DatabaseSchema:
                 CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON {self.noetl_schema}.error_log (resolved);
             """)
 
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.credential (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    type TEXT NOT NULL,
+                    data_encrypted TEXT NOT NULL,
+                    meta JSONB,
+                    tags TEXT[],
+                    description TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_credential_type ON {self.noetl_schema}.credential (type);
+            """)
+            
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE {self.noetl_schema}.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
+                """)
+            except Exception:
+                pass
+
             self.conn.commit()
+            logger.info("Creating runtime table with runtime_id primary key.")
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self.noetl_schema}.runtime (
+                    runtime_id BIGINT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
+                    base_url TEXT,
+                    status TEXT NOT NULL,
+                    labels JSONB,
+                    capabilities JSONB,
+                    capacity INTEGER,
+                    runtime JSONB,
+                    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            # Ensure compatibility: ensure runtime_id column exists (for older deployments)
+            try:
+                cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime ADD COLUMN IF NOT EXISTS runtime_id BIGINT")
+            except Exception:
+                pass
+            # Ensure composite uniqueness on (component_type, name) and indexes for queries
+            cursor.execute(f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON {self.noetl_schema}.runtime (component_type, name);
+            """)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_runtime_type ON {self.noetl_schema}.runtime (component_type);
+            """)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_runtime_status ON {self.noetl_schema}.runtime (status);
+            """)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON {self.noetl_schema}.runtime ((runtime->>'type'));
+            """)
+
+            self.conn.commit()
+            # --- Migration: populate runtime_id for existing rows and make it primary key if safe ---
+            try:
+                try:
+                    from noetl.common import get_snowflake_id
+                except Exception:
+                    get_snowflake_id = lambda: int(datetime.now().timestamp() * 1000)
+
+                # Fill missing runtime_id values with unique snowflake ids
+                cursor.execute(f"SELECT component_type, name FROM {self.noetl_schema}.runtime WHERE runtime_id IS NULL")
+                rows_to_update = cursor.fetchall()
+                for comp, name in rows_to_update:
+                    sf = get_snowflake_id()
+                    cursor.execute(f"UPDATE {self.noetl_schema}.runtime SET runtime_id = %s WHERE component_type = %s AND name = %s AND runtime_id IS NULL", (sf, comp, name))
+
+                # Ensure runtime_id has a unique index
+                cursor.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_runtime_id ON {self.noetl_schema}.runtime (runtime_id);")
+
+                # Inspect current primary key; if it's not runtime_id, replace it with runtime_id PK
+                cursor.execute("""
+                    SELECT tc.constraint_name, kc.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kc ON kc.constraint_name = tc.constraint_name
+                    WHERE tc.table_schema = %s AND tc.table_name = 'runtime' AND tc.constraint_type = 'PRIMARY KEY'
+                """, (self.noetl_schema,))
+                pk_info = cursor.fetchall()
+                pk_columns = [r[1] for r in pk_info] if pk_info else []
+                if pk_columns and not (len(pk_columns) == 1 and pk_columns[0] == 'runtime_id'):
+                    # Drop existing primary key constraint and set runtime_id as primary key
+                    constraint_name = pk_info[0][0]
+                    try:
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime DROP CONSTRAINT {constraint_name}")
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.runtime ADD PRIMARY KEY (runtime_id)")
+                    except Exception:
+                        # If we cannot change PK, leave indices in place and continue
+                            logger.info("Could not replace primary key on runtime automatically; leaving existing PK in place.")
+
+                self.conn.commit()
+            except Exception:
+                # Non-fatal: log and continue
+                logger.exception("Runtime registry migration to runtime_id primary key encountered an issue; manual migration may be required.")
             logger.info("Postgres database tables initialized in noetl schema.")
 
     def test_workload_table(self):
@@ -531,15 +671,21 @@ class DatabaseSchema:
                 self.initialize_connection()
                 
             with self.conn.cursor() as cursor:
+                # Use snowflake-based error_id for natural ordering
+                try:
+                    from noetl.common import get_snowflake_id
+                except Exception:
+                    get_snowflake_id = lambda: int(datetime.now().timestamp() * 1000)
+                sf_id = get_snowflake_id()
                 cursor.execute(f"""
                     INSERT INTO {self.noetl_schema}.error_log (
-                        error_type, error_message, execution_id, step_id, step_name,
+                        error_id, error_type, error_message, execution_id, step_id, step_name,
                         template_string, context_data, stack_trace, input_data, output_data, severity
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
                     ) RETURNING error_id
                 """, (
-                    error_type, error_message, execution_id, step_id, step_name,
+                    sf_id, error_type, error_message, execution_id, step_id, step_name,
                     template_string, context_data_json, stack_trace, input_data_json, output_data_json, severity
                 ))
                 

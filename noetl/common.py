@@ -5,6 +5,8 @@ import logging
 import yaml
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone, date
+import time
+import threading
 import random
 import string
 from decimal import Decimal
@@ -18,7 +20,10 @@ logger = setup_logger(__name__, include_location=True)
 
 
 try:
-    from psycopg_pool import ConnectionPool
+    from psycopg_pool import ConnectionPool, AsyncConnectionPool
+except Exception:
+    ConnectionPool = None
+    AsyncConnectionPool = None
 except ImportError:
     ConnectionPool = None
 
@@ -26,6 +31,42 @@ except ImportError:
 #===================================
 #  time calendar
 #===================================
+
+# Snowflake ID generator (41-bit ms timestamp, 10-bit node id, 12-bit sequence)
+_SNOWFLAKE_EPOCH_MS = int(os.environ.get("NOETL_SNOWFLAKE_EPOCH_MS", str(int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000))))
+_SNOWFLAKE_NODE_ID = int(os.environ.get("NOETL_NODE_ID", os.environ.get("NOETL_SHARD_ID", "0"))) & 0x3FF  # 10 bits
+_SNOWFLAKE_LOCK = threading.Lock()
+_SNOWFLAKE_LAST_TS = 0
+_SNOWFLAKE_SEQ = 0
+
+
+def get_snowflake_id() -> int:
+    global _SNOWFLAKE_LAST_TS, _SNOWFLAKE_SEQ
+    with _SNOWFLAKE_LOCK:
+        ts = int(time.time() * 1000)
+        if ts < _SNOWFLAKE_LAST_TS:
+            # clock moved backwards; wait until last ts
+            ts = _SNOWFLAKE_LAST_TS
+        if ts == _SNOWFLAKE_LAST_TS:
+            _SNOWFLAKE_SEQ = (_SNOWFLAKE_SEQ + 1) & 0xFFF  # 12 bits
+            if _SNOWFLAKE_SEQ == 0:
+                # sequence overflow within same ms; wait next ms
+                while True:
+                    ts = int(time.time() * 1000)
+                    if ts > _SNOWFLAKE_LAST_TS:
+                        break
+        else:
+            _SNOWFLAKE_SEQ = 0
+        _SNOWFLAKE_LAST_TS = ts
+        elapsed = ts - _SNOWFLAKE_EPOCH_MS
+        if elapsed < 0:
+            elapsed = 0
+        # Compose 64-bit id
+        return ((elapsed & ((1 << 41) - 1)) << (10 + 12)) | ((_SNOWFLAKE_NODE_ID & 0x3FF) << 12) | (_SNOWFLAKE_SEQ & 0xFFF)
+
+
+def get_snowflake_id_str() -> str:
+    return str(get_snowflake_id())
 
 def generate_id() -> str:
     start_date_time = datetime.now()
@@ -254,30 +295,48 @@ def get_pgdb_connection(
     host = host or os.environ.get('POSTGRES_HOST')
     port = port or os.environ.get('POSTGRES_PORT')
     schema = schema or os.environ.get('NOETL_SCHEMA')
-    logger.debug(f"Database connection parameters: db={db_name}, user={user}, host={host}, port={port}, schema={schema}")
+    # logger.debug(f"Database connection parameters: db={db_name}, user={user}, host={host}, port={port}, schema={schema}")
     return f"dbname={db_name} user={user} password={password} host={host} port={port} hostaddr='' gssencmode=disable options='-c search_path={schema}'"
 
 #===================================
-# postgres pool
+# postgres pool (sync and async)
 #===================================
+
 db_pool = None
+
+async_db_pool = None
+
 
 def initialize_db_pool():
     global db_pool
     if db_pool is None and ConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10)
+            db_pool = ConnectionPool(conninfo=connection_string, min_size=1, max_size=10, open=False)
+            db_pool.open()
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
             db_pool = None
     return db_pool
 
+async def initialize_async_db_pool():
+    global async_db_pool
+    if async_db_pool is None and AsyncConnectionPool:
+        try:
+            connection_string = get_pgdb_connection()
+            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=1, max_size=10, open=False)
+            await async_db_pool.open()
+            logger.info("Async database connection pool initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize async connection pool: {e}. Falling back to direct async connection.")
+            async_db_pool = None
+    return async_db_pool
+
 @contextmanager
 def get_db_connection(optional=False):
     """
-    Get a database connection from the pool or create a new one.
+    Get a database connection from the sync pool or create a new one.
     
     Args:
         optional (bool): If True, return None instead of raising an exception when the connection fails.
@@ -309,3 +368,36 @@ def get_db_connection(optional=False):
     finally:
         if conn:
             conn.close()
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def get_async_db_connection(optional: bool = False):
+    """
+    Get an async database connection from the async pool or create a direct async connection.
+
+    Args:
+        optional (bool): If True, yields None instead of raising an exception when connection fails.
+    """
+    pool = await initialize_async_db_pool()
+    if pool:
+        async with pool.connection() as conn:
+            try:
+                yield conn
+                return
+            except Exception:
+                raise
+    conn = None
+    try:
+        conn = await psycopg.AsyncConnection.connect(get_pgdb_connection())
+        try:
+            yield conn
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.error(f"Async connection failed: {e}")
+        if optional:
+            logger.warning("Database connection is optional, continuing without it.")
+            yield None
+        else:
+            raise

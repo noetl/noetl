@@ -27,6 +27,7 @@ workload:  # Input parameters section accessible throughout the workflow
 
 workflow:  # Workflow steps and transitions
   - step: start  # Entry point of the workflow
+    when: "{{ workload.state == 'ready' }}"
     desc: "Start Weather Analysis Workflow"
     next:  # Transition rules based on condition
       - when: "{{ workload.state == 'ready' }}"  # Condition for transition

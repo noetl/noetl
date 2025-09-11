@@ -1,16 +1,17 @@
 import json
 import os
+import signal
 import uuid
 import datetime
 import tempfile
 import httpx
-import traceback
 from typing import Dict, List, Any, Tuple, Optional
-from noetl.action import execute_task, report_event
+from noetl.worker.action import execute_task, report_event
 from noetl.render import render_template
 from noetl.common import deep_merge, get_bool
 from noetl.logger import setup_logger, log_error
 from noetl.worker import Worker
+from jinja2 import Environment, StrictUndefined, BaseLoader
 logger = setup_logger(__name__, include_location=True)
 
 class Broker:
@@ -27,6 +28,15 @@ class Broker:
         self.server_url = server_url or os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082')
         self.event_reporting_enabled = True
         self.validate_server_url()
+        # graceful shutdown flag
+        self._shutdown_requested = False
+        # install signal handlers for graceful deregister (SIGTERM and SIGINT)
+        try:
+            signal.signal(signal.SIGTERM, self._on_sigterm)
+            signal.signal(signal.SIGINT, self._on_sigterm)
+        except Exception:
+            # signal may not be available in some environments
+            pass
 
     def has_log_event(self):
         """
@@ -90,6 +100,211 @@ class Broker:
             logger.warning(f"Server at {self.server_url} is not reachable: {e}")
             logger.warning("Disabling event reporting to prevent hanging")
             self.event_reporting_enabled = False
+
+    @property
+    def execution_id(self) -> str:
+        return getattr(self, "_execution_id", getattr(self.agent, "execution_id", None) or str(uuid.uuid4()))
+
+    @execution_id.setter
+    def execution_id(self, value: str) -> None:
+        self._execution_id = value
+
+    @property
+    def context(self) -> Dict[str, Any]:
+        return getattr(self, "_context", getattr(self.agent, "context", {"job": {"uuid": self.execution_id}}))
+
+    @context.setter
+    def context(self, value: Dict[str, Any]) -> None:
+        self._context = value or {"job": {"uuid": self.execution_id}}
+
+    @property
+    def playbook(self) -> Dict[str, Any]:
+        return getattr(self, "_playbook", getattr(self.agent, "playbook", {}))
+
+    @playbook.setter
+    def playbook(self, value: Dict[str, Any]) -> None:
+        self._playbook = value or {}
+
+    @property
+    def playbook_path(self) -> Optional[str]:
+        return getattr(self, "_playbook_path", getattr(self.agent, "playbook_path", None))
+
+    @playbook_path.setter
+    def playbook_path(self, value: Optional[str]) -> None:
+        self._playbook_path = value
+
+    @property
+    def jinja_env(self):
+        env = getattr(self, "_jinja_env", None)
+        if env is None:
+            env = getattr(self.agent, "jinja_env", None)
+        if env is None:
+            env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+        self._jinja_env = env
+        return env
+
+    @jinja_env.setter
+    def jinja_env(self, value) -> None:
+        self._jinja_env = value
+
+    @property
+    def next_step_with(self) -> Optional[Dict[str, Any]]:
+        return getattr(self, "_next_step_with", None)
+
+    @next_step_with.setter
+    def next_step_with(self, value: Optional[Dict[str, Any]]) -> None:
+        self._next_step_with = value
+
+    def update_context(self, key: str, value: Any) -> None:
+        ctx = self.context
+        ctx[key] = value
+        self.context = ctx
+
+    def get_context(self) -> Dict[str, Any]:
+        return self.context
+
+    def find_step(self, step_name: str) -> Optional[Dict[str, Any]]:
+        for step in self.playbook.get('workflow', []) or []:
+            if step.get('step') == step_name:
+                return step
+        return None
+
+    def find_task(self, task_name: str) -> Optional[Dict[str, Any]]:
+        for task in self.playbook.get('workbook', []) or []:
+            if task.get('name') == task_name or task.get('task') == task_name:
+                if 'call' in task:
+                    call_config = task['call'].copy()
+                    for k, v in task.items():
+                        if k != 'call' and k not in call_config:
+                            call_config[k] = v
+                    return call_config
+                return task
+        return None
+
+    def _get_worker_base_url(self, runtime: str) -> str:
+        """Resolve worker base URL for a given runtime (cpu|gpu|qpu).
+        Preference order:
+        1) Server registry /api/worker/pools?runtime=...&status=ready (if server_url configured)
+        2) Environment variables NOETL_WORKER_CPU_URL | NOETL_WORKER_GPU_URL | NOETL_WORKER_QPU_URL
+        3) NOETL_WORKER_DEFAULT_URL or broker.server_url
+        """
+        rt = (runtime or '').lower()
+        # 1) Try registry
+        try:
+            if self.server_url:
+                url = self.server_url.rstrip('/') + f"/api/worker/pools?runtime={rt}&status=ready"
+                with httpx.Client(timeout=3.0) as client:
+                    resp = client.get(url)
+                    if resp.status_code == 200:
+                        items = (resp.json() or {}).get('items', [])
+                        if items:
+                            pool = items[0]  # naive: pick first
+                            base = pool.get('base_url') or pool.get('url')
+                            if base:
+                                return base
+        except Exception as e:
+            logger.debug(f"Broker: registry lookup failed for runtime={rt}: {e}")
+
+        # 2) Env vars
+        cpu = os.environ.get('NOETL_WORKER_CPU_URL')
+        gpu = os.environ.get('NOETL_WORKER_GPU_URL')
+        qpu = os.environ.get('NOETL_WORKER_QPU_URL')
+        if rt == 'qpu' and qpu:
+            return qpu
+        if rt == 'gpu' and gpu:
+            return gpu
+        if rt == 'cpu' and cpu:
+            return cpu
+
+        # 3) Fallback
+        return os.environ.get('NOETL_WORKER_DEFAULT_URL') or self.server_url
+
+    def _select_runtime(self, step_name: str, step_config: Dict, task_name: str, task_config: Dict) -> str:
+        """Decide runtime ('cpu' | 'gpu' | 'qpu') for a given step/task.
+        Priority:
+          1) Explicit step_config['runtime'] or step_config['with']['runtime']
+          2) Heuristic: 'qpu'/'quantum' => qpu; 'gpu'/'cuda' => gpu
+          3) Default: 'cpu'
+        Special cases handled by caller (e.g., 'secrets' kept local).
+        """
+        explicit = step_config.get('runtime')
+        if not explicit:
+            with_params = step_config.get('with') or {}
+            explicit = with_params.get('runtime')
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip().lower()
+
+        composite = f"{step_name or ''}::{task_name or ''}".lower()
+        if 'qpu' in composite or 'quantum' in composite:
+            return 'qpu'
+        if 'gpu' in composite or 'cuda' in composite:
+            return 'gpu'
+
+        return 'cpu'
+
+    def _dispatch_to_worker(self, task_config: Dict, task_name: str, context: Dict, runtime: str) -> Dict:
+        """Send a single task to the appropriate worker runtime and return a normalized result.
+        Returns a dict like execute_task: {'id','status','data','error'}
+        """
+        try:
+            base = self._get_worker_base_url(runtime)
+            endpoint = base.rstrip('/') + '/api/worker/task/execute'
+            payload = {
+                'task': task_config,
+                'context': context,
+                'execution_id': self.agent.execution_id,
+                'callback_url': (self.server_url.rstrip('/') + '/api/events') if self.event_reporting_enabled else None,
+            }
+            if 'requirements' in task_config and isinstance(task_config['requirements'], list):
+                payload['requirements'] = task_config['requirements']
+
+            with httpx.Client(timeout=float(os.environ.get('NOETL_WORKER_HTTP_TIMEOUT', '60'))) as client:
+                resp = client.post(endpoint, json=payload)
+                if resp.status_code != 200:
+                    return {
+                        'id': str(uuid.uuid4()),
+                        'status': 'error',
+                        'error': f"Worker dispatch failed ({resp.status_code}): {resp.text}"
+                    }
+                body = resp.json()
+        except Exception as e:
+            return {
+                'id': str(uuid.uuid4()),
+                'status': 'error',
+                'error': f"Worker dispatch exception: {e}"
+            }
+
+    def _on_sigterm(self, signum, frame):
+        """Signal handler: request graceful shutdown and attempt deregister with retries."""
+        logger.info(f"Broker: received signal {signum}, initiating graceful shutdown")
+        self._shutdown_requested = True
+        # attempt to deregister synchronously with retries/backoff
+        try:
+            import socket, os as _os, time
+            name = _os.environ.get('NOETL_BROKER_NAME') or f"broker-{socket.gethostname()}-{_os.getpid()}"
+            retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
+            backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
+            success = False
+            for attempt in range(1, retries + 1):
+                try:
+                    with httpx.Client(timeout=5.0) as client:
+                        resp = client.delete(f"{self.server_url.rstrip('/')}/api/broker/deregister", json={"name": name})
+                        if resp.status_code == 200:
+                            logger.info(f"Broker: deregister succeeded for {name} (attempt {attempt})")
+                            success = True
+                            break
+                        else:
+                            logger.warning(f"Broker: deregister returned {resp.status_code} on attempt {attempt}: {resp.text}")
+                except Exception as _dereg_err:
+                    logger.debug(f"Broker: deregister attempt {attempt} failed: {_dereg_err}")
+                # backoff before next try
+                if attempt < retries:
+                    sleep_for = backoff_base * (2 ** (attempt - 1))
+                    time.sleep(sleep_for)
+            if not success:
+                logger.warning(f"Broker: all deregister attempts failed for {name}")
+        except Exception as _dereg_err:
+            logger.exception(f"Broker: unexpected error during deregister attempt: {_dereg_err}")
 
     def execute_playbook_call(self, path: str, version: str = None, input_payload: Dict = None, merge: bool = True) -> Dict:
         """
@@ -194,7 +409,7 @@ class Broker:
         logger.debug(f"BROKER.EXECUTE_STEP: Start time={start_time.isoformat()}")
 
         logger.debug(f"BROKER.EXECUTE_STEP: Finding step configuration for step_name={step_name}")
-        step_config = self.agent.find_step(step_name)
+        step_config = self.find_step(step_name)
         logger.debug(f"BROKER.EXECUTE_STEP: Step configuration: {step_config}")
         
         if not step_config:
@@ -210,7 +425,7 @@ class Broker:
             logger.debug(f"BROKER.EXECUTE_STEP: Writing step_error event log")
             self.write_event_log(
                 'step_error', step_id, step_name, 'step',
-                'error', 0, self.agent.get_context(), None,
+                'error', 0, self.get_context(), None,
                 {'error': error_msg}, None
             )
 
@@ -229,7 +444,7 @@ class Broker:
         
         if isinstance(pass_value, str):
             logger.debug(f"BROKER.EXECUTE_STEP: Pass value is a string, rendering template")
-            pass_value = render_template(self.agent.jinja_env, pass_value, self.agent.get_context(), strict_keys=True)
+            pass_value = render_template(self.jinja_env, pass_value, self.get_context(), strict_keys=True)
             logger.debug(f"BROKER.EXECUTE_STEP: Rendered pass value: {pass_value}")
             
         pass_flag = get_bool(pass_value)
@@ -300,14 +515,14 @@ class Broker:
 
         logger.info(f"BROKER.EXECUTE_STEP: Executing step: {step_name}")
         logger.debug(f"BROKER.EXECUTE_STEP: Step details - step_name={step_name}, step_with={step_with}")
-        logger.debug(f"BROKER.EXECUTE_STEP: Context before update: {self.agent.context}")
+        logger.debug(f"BROKER.EXECUTE_STEP: Context before update: {self.context}")
         
-        step_context = self.agent.get_context()
+        step_context = self.get_context()
         logger.debug(f"BROKER.EXECUTE_STEP: Got step context")
         
         if step_with:
             logger.debug(f"BROKER.EXECUTE_STEP: Rendering step_with template: {step_with}")
-            rendered_with = render_template(self.agent.jinja_env, step_with, step_context)
+            rendered_with = render_template(self.jinja_env, step_with, step_context)
             logger.debug(f"BROKER.EXECUTE_STEP: Rendered step_with: {rendered_with}")
             
             if rendered_with:
@@ -489,22 +704,29 @@ class Broker:
                     execution_task_config = {}
                     logger.debug(f"BROKER.EXECUTE_STEP: Using empty execution_task_config")
 
-                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with execution_task_config={execution_task_config}, task_name={task_name}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Preparing to execute workbook task via worker dispatch when applicable")
                 merged_context = {**step_context}
                 if 'with' in execution_task_config:
                     task_with = render_template(self.agent.jinja_env, execution_task_config.get('with', {}), step_context, strict_keys=False)
                     merged_context.update(task_with)
                     logger.debug(f"BROKER.EXECUTE_STEP: Created merged_context by combining step_context and rendered task_with: {task_with}")
-                
-                result = execute_task(
-                    execution_task_config,
-                    task_name,
-                    merged_context,
-                    self.agent.jinja_env,
-                    self.agent.secret_manager,
-                    self.write_event_log if self.has_log_event() else None
-                )
-                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+
+                if (execution_task_config or {}).get('type') == 'secrets':
+                    logger.debug("BROKER.EXECUTE_STEP: Executing secrets task locally (requires SecretManager)")
+                    result = execute_task(
+                        execution_task_config,
+                        task_name,
+                        merged_context,
+                        self.agent.jinja_env,
+                        self.agent.secret_manager,
+                        self.write_event_log if self.has_log_event() else None
+                    )
+                else:
+                    runtime = self._select_runtime(step_name, step_config, task_name, execution_task_config)
+                    logger.debug(f"BROKER.EXECUTE_STEP: Dispatching workbook task to runtime={runtime}")
+                    result = self._dispatch_to_worker(execution_task_config, task_name, merged_context, runtime)
+
+                logger.debug(f"BROKER.EXECUTE_STEP: Task execution returned result={result}")
                 logger.info(f"BROKER.EXECUTE_STEP: EXECUTED workbook task: {task_name} with status: {result.get('status', 'unknown')}")
                 
             elif call_type == 'Playbook':
@@ -570,16 +792,23 @@ class Broker:
                 task_name_to_use = task_name or f"step_{call_type}_task"
                 logger.debug(f"BROKER.EXECUTE_STEP: Using task_name: {task_name_to_use}")
                 
-                logger.debug(f"BROKER.EXECUTE_STEP: Calling execute_task with task_config={task_config}, task_name={task_name_to_use}")
-                result = execute_task(
-                    task_config,
-                    task_name_to_use,
-                    task_context,
-                    self.agent.jinja_env,
-                    self.agent.secret_manager,
-                    self.write_event_log if self.has_log_event() else None
-                )
-                logger.debug(f"BROKER.EXECUTE_STEP: execute_task returned result={result}")
+                logger.debug(f"BROKER.EXECUTE_STEP: Preparing to execute {call_type} task via worker dispatch when applicable")
+                if (task_config or {}).get('type') == 'secrets':
+                    logger.debug("BROKER.EXECUTE_STEP: Executing secrets task locally (requires SecretManager)")
+                    result = execute_task(
+                        task_config,
+                        task_name_to_use,
+                        task_context,
+                        self.agent.jinja_env,
+                        self.agent.secret_manager,
+                        self.write_event_log if self.has_log_event() else None
+                    )
+                else:
+                    runtime = self._select_runtime(step_name, step_config, task_name_to_use, task_config)
+                    logger.debug(f"BROKER.EXECUTE_STEP: Dispatching {call_type} task to runtime={runtime}")
+                    result = self._dispatch_to_worker(task_config, task_name_to_use, task_context, runtime)
+
+                logger.debug(f"BROKER.EXECUTE_STEP: Task execution returned result={result}")
                 logger.info(f"BROKER.EXECUTE_STEP: EXECUTED {call_type} task: {task_name_to_use} with status: {result.get('status', 'unknown')}")
                 
             else:
@@ -1531,3 +1760,207 @@ class Broker:
 
         step_result = self.agent.get_step_results()
         return step_result
+
+
+
+# === Broker control loop ===
+import time as _time
+from typing import Optional as _Optional
+
+
+def run_control_loop(server_url: str, poll_interval: float = 2.0, stop_after: _Optional[int] = None) -> None:
+    """
+    Continuous control loop that:
+      1) polls the server for AgentExecutionRequested events in REQUESTED status,
+      2) claims each event (set status RUNNING),
+      3) fetches the referenced playbook content,
+      4) orchestrates execution via Broker (which dispatches tasks to worker pools),
+      5) reports final COMPLETED/ERROR event back to the server.
+    This function is intended to be executed as a separate broker process.
+    """
+    server_url = (server_url or '').rstrip('/')
+    processed = 0
+
+    try:
+        logger.info(f"BrokerLoop: starting; server_url={server_url}, poll_interval={poll_interval}, stop_after={stop_after}")
+    except Exception:
+        pass
+
+    # Register this broker instance
+    try:
+        import socket, os as _os
+        broker_name = _os.environ.get('NOETL_BROKER_NAME') or f"broker-{socket.gethostname()}-{_os.getpid()}"
+        payload = {
+            "name": broker_name,
+            "base_url": None,
+            "status": "running",
+            "labels": ["local"],
+            "capabilities": {"control_loop": True},
+            "pid": _os.getpid(),
+        }
+        with httpx.Client(timeout=5.0) as client:
+            client.post(f"{server_url}/api/broker/register", json=payload)
+    except Exception as _reg_err:
+        logger.debug(f"BrokerLoop: register error: {_reg_err}")
+
+    while True:
+        # Heartbeat this broker
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                client.post(f"{server_url}/api/broker/heartbeat", json={"name": payload.get("name"), "status": "running", "pid": payload.get("pid")})
+        except Exception as _hb_err:
+            logger.debug(f"BrokerLoop: heartbeat error: {_hb_err}")
+        try:
+            # Step 1: poll for pending agent execution requests
+            params = {"event_type": "AgentExecutionRequested", "status": "REQUESTED", "limit": 10}
+            primary_url = f"{server_url}/api/events"
+            fallback_url = f"{server_url}/api/events/poll"
+            with httpx.Client(timeout=float(os.environ.get('NOETL_BROKER_HTTP_TIMEOUT', '15'))) as client:
+                resp = client.get(primary_url, params=params)
+                if resp.status_code != 200:
+                    logger.debug(f"BrokerLoop: poll primary error {resp.status_code}: {resp.text}")
+                    resp2 = client.get(fallback_url, params=params)
+                    if resp2.status_code != 200:
+                        logger.debug(f"BrokerLoop: poll fallback error {resp2.status_code}: {resp2.text}")
+                        _time.sleep(poll_interval)
+                        continue
+                    resp = resp2
+                items = (resp.json() or {}).get('items', [])
+
+            if not items:
+                _time.sleep(poll_interval)
+                continue
+
+            for evt in items:
+                try:
+                    event_id = evt.get('event_id')
+                    metadata = evt.get('metadata') or {}
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except Exception:
+                            metadata = {}
+                    input_payload = evt.get('output_result')
+                    if input_payload is None:
+                        input_payload = {}
+
+                    path = metadata.get('resource_path') or (evt.get('input_context') or {}).get('path')
+                    version = metadata.get('resource_version') or (evt.get('input_context') or {}).get('version')
+                    if not path:
+                        logger.warning(f"BrokerLoop: event {event_id} missing resource_path, skipping")
+                        continue
+
+                    # Step 2: claim event (RUNNING)
+                    try:
+                        claim_body = {"event_id": event_id, "status": "RUNNING", "event_type": evt.get('event_type')}
+                        with httpx.Client(timeout=7.5) as client:
+                            client.post(f"{server_url}/api/events", json=claim_body)
+                    except Exception as ce:
+                        logger.debug(f"BrokerLoop: failed to claim event {event_id}: {ce}")
+
+                    # Step 3: fetch playbook content
+                    try:
+                        with httpx.Client(timeout=10.0) as client:
+                            content_resp = client.get(
+                                f"{server_url}/api/catalog/playbooks/content",
+                                params={"playbook_id": path, "version": version}
+                            )
+                            if content_resp.status_code != 200:
+                                raise RuntimeError(f"fetch content {content_resp.status_code}: {content_resp.text}")
+                            content_json = content_resp.json() or {}
+                            content_text = content_json.get('content')
+                            version = content_json.get('version') or version
+                    except Exception as fe:
+                        try:
+                            err_body = {
+                                "event_id": event_id,
+                                "execution_id": event_id,
+                                "event_type": "agent_execution_error",
+                                "status": "ERROR",
+                                "error": str(fe),
+                                "result": {"error": str(fe)},
+                                "meta": {"resource_path": path, "resource_version": version},
+                                "node_type": "playbooks",
+                                "node_name": path,
+                            }
+                            with httpx.Client(timeout=7.5) as client:
+                                client.post(f"{server_url}/api/events", json=err_body)
+                        except Exception:
+                            pass
+                        continue
+
+                    # Step 4: write temp YAML and orchestrate
+                    temp_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tf:
+                            tf.write((content_text or '').encode('utf-8'))
+                            temp_path = tf.name
+
+                        # Build Worker and Broker
+                        agent = Worker(temp_path, mock_mode=False, pgdb=None)
+
+                        # Apply input payload (deep merge)
+                        workload = agent.playbook.get('workload', {}) or {}
+                        merged = deep_merge(workload, input_payload or {})
+                        for k, v in merged.items():
+                            agent.update_context(k, v)
+                        agent.update_context('workload', merged)
+                        agent.store_workload(merged)
+
+                        child_broker = Broker(agent, server_url=server_url)
+                        results = child_broker.run()
+
+                        # Step 5: report completion
+                        try:
+                            done_body = {
+                                "event_id": event_id,
+                                "execution_id": agent.execution_id,
+                                "event_type": "agent_execution_completed",
+                                "status": "COMPLETED",
+                                "result": results,
+                                "meta": {
+                                    "resource_path": path,
+                                    "resource_version": version,
+                                    "execution_id": agent.execution_id,
+                                },
+                                "node_type": "playbooks",
+                                "node_name": path,
+                            }
+                            with httpx.Client(timeout=10.0) as client:
+                                client.post(f"{server_url}/api/events", json=done_body)
+                        except Exception as re:
+                            logger.debug(f"BrokerLoop: failed to report completion for {event_id}: {re}")
+
+                    except Exception as ex:
+                        try:
+                            err_body = {
+                                "event_id": event_id,
+                                "execution_id": event_id,
+                                "event_type": "agent_execution_error",
+                                "status": "ERROR",
+                                "error": str(ex),
+                                "result": {"error": str(ex)},
+                                "meta": {"resource_path": path, "resource_version": version},
+                                "node_type": "playbooks",
+                                "node_name": path,
+                            }
+                            with httpx.Client(timeout=7.5) as client:
+                                client.post(f"{server_url}/api/events", json=err_body)
+                        except Exception:
+                            pass
+                    finally:
+                        if temp_path and os.path.exists(temp_path):
+                            try:
+                                os.unlink(temp_path)
+                            except Exception:
+                                pass
+
+                    processed += 1
+                    if stop_after is not None and processed >= stop_after:
+                        return
+                except Exception as per_evt:
+                    logger.debug(f"BrokerLoop: per-event error: {per_evt}")
+
+        except Exception as loop_err:
+            logger.debug(f"BrokerLoop: loop error: {loop_err}")
+            _time.sleep(poll_interval)

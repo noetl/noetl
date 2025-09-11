@@ -1,0 +1,456 @@
+# NoETL Playbook: Healthcare Rare-Pattern Search with Grover (CPU vs QPU)
+#
+# Overview
+#   This playbook frames Grover’s Algorithm in a healthcare context: finding a rare
+#   patient genotype/signature among many candidate records. It demonstrates how
+#   NoETL orchestrates classical (CPU) baselines and quantum attempts (QPU) in one
+#   reproducible workflow, with graceful fallback if Qiskit/IBM Runtime isn't available.
+#
+# Why it matters (Healthcare Benefit)
+#   - Many healthcare tasks resemble search over large spaces (e.g., rare variant
+#     combinations, phenotype signatures, high-dimensional EHR feature patterns).
+#   - Grover can find a marked item in O(sqrt(N)) vs classical O(N), offering a
+#     quadratic speedup as problem sizes grow.
+#   - This playbook codifies the experiment so teams can compare CPU vs QPU, track
+#     results, and extend to real data sources using NoETL tasks.
+#
+# Requirements
+#   - Optional: Qiskit for CPU simulation (statevector) and qiskit-ibm-runtime for QPU.
+#     pip install "qiskit>=1.0" "qiskit-ibm-runtime>=0.23"
+#   - For IBM QPU/Runtime:
+#       export QISKIT_IBM_TOKEN=<your_token>
+#       export QISKIT_IBM_INSTANCE=<"ibm-q/open/main"> # or your instance
+#       # optional
+#       export QISKIT_IBM_BACKEND=<backend_name>
+#
+# Usage
+#   Register:
+#     noetl register examples/quantum/healthcare_grover_playbook.yaml --port 8080
+#   Execute locally (latest registered):
+#     noetl execute --path "quantum/healthcare_grover" --payload '{}'
+#   With custom params:
+#     noetl execute --path "quantum/healthcare_grover" --payload '{
+#       "n_qubits": 10,
+#       "target_bitstring": "1010101010",
+#       "shots": 1024
+#     }'
+#
+apiVersion: noetl.io/v1
+kind: Playbook
+name: healthcare_grover
+path: quantum/healthcare_grover
+
+workload:
+  jobId: "{{ job.uuid }}"
+  # Problem size (N = 2^n_qubits). Default 10 => 1024 records, lightweight for demos.
+  n_qubits: 10
+  # Target healthcare "signature" bitstring (e.g., presence/absence of genetic markers/features)
+  target_bitstring: "1010101010"  # must match n_qubits length
+  # Number of Grover iterations; null => auto floor(pi/4 * sqrt(2^n))
+  iterations: null
+  shots: 1024
+  ibm_channel: "ibm_cloud"  # or "ibm_quantum"
+  timeout_s: 300
+
+workflow:
+  - step: start
+    desc: "Start Healthcare Grover demo"
+    next:
+      - step: define_problem
+
+  - step: define_problem
+    desc: "Define synthetic healthcare search problem"
+    type: workbook
+    task: define_problem_task
+    with:
+      n_qubits: "{{ workload.n_qubits }}"
+      target_bitstring: "{{ workload.target_bitstring }}"
+    next:
+      - step: cpu_baseline
+
+  - step: cpu_baseline
+    desc: "Classical baseline: linear scan for the signature"
+    type: workbook
+    task: cpu_baseline_task
+    with:
+      n_qubits: "{{ workload.n_qubits }}"
+      target_bitstring: "{{ workload.target_bitstring }}"
+    next:
+      - step: quantum_cpu
+
+  - step: quantum_cpu
+    desc: "Run Grover on CPU (statevector-based sampling)"
+    type: workbook
+    task: quantum_cpu_task
+    with:
+      n_qubits: "{{ workload.n_qubits }}"
+      target_bitstring: "{{ workload.target_bitstring }}"
+      iterations: "{{ workload.iterations }}"
+      shots: "{{ workload.shots }}"
+    next:
+      - step: quantum_qpu
+
+  - step: quantum_qpu
+    desc: "Run Grover via IBM Runtime (QPU/managed simulator) if available"
+    type: workbook
+    task: quantum_qpu_task
+    with:
+      n_qubits: "{{ workload.n_qubits }}"
+      target_bitstring: "{{ workload.target_bitstring }}"
+      iterations: "{{ workload.iterations }}"
+      shots: "{{ workload.shots }}"
+      ibm_channel: "{{ workload.ibm_channel }}"
+      timeout_s: "{{ workload.timeout_s }}"
+    next:
+      - step: compare_and_report
+        with:
+          baseline: "{{ cpu_baseline.data }}"
+          qc_cpu: "{{ quantum_cpu.data }}"
+          qc_qpu: "{{ quantum_qpu.data }}"
+
+  - step: compare_and_report
+    desc: "Compare classical vs quantum (CPU/QPU) and summarize healthcare benefit"
+    type: workbook
+    task: compare_task
+    with:
+      baseline: "{{ baseline }}"
+      qc_cpu: "{{ qc_cpu }}"
+      qc_qpu: "{{ qc_qpu }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of workflow"
+
+workbook:
+  - name: define_problem_task
+    type: python
+    with:
+      n_qubits: "{{ n_qubits }}"
+      target_bitstring: "{{ target_bitstring }}"
+    code: |
+      def main(n_qubits, target_bitstring):
+          import math
+          # Validate
+          if not isinstance(n_qubits, int) or n_qubits < 1:
+              return {"status": "error", "message": "n_qubits must be positive int"}
+          if not isinstance(target_bitstring, str) or len(target_bitstring) != n_qubits:
+              return {"status": "error", "message": "target_bitstring length must equal n_qubits"}
+          N = 2 ** n_qubits
+          theoretical_grover_iters = max(1, int(math.floor(math.pi / 4 * math.sqrt(N))))
+          return {
+              "status": "success",
+              "domain": "healthcare",
+              "problem": "Find rare patient signature among N candidates",
+              "n_qubits": n_qubits,
+              "N": N,
+              "target": target_bitstring,
+              "classical_complexity": "O(N)",
+              "quantum_complexity": "O(sqrt(N))",
+              "theoretical_grover_iters": theoretical_grover_iters
+          }
+
+  - name: cpu_baseline_task
+    type: python
+    with:
+      n_qubits: "{{ n_qubits }}"
+      target_bitstring: "{{ target_bitstring }}"
+    code: |
+      def main(n_qubits, target_bitstring):
+          import time, random
+          start = time.time()
+          N = 2 ** int(n_qubits)
+          # Build a tiny synthetic dataset of patient signatures; place target once
+          # For demo sizes (N<=4096) this is fine. For larger, switch to streaming generation.
+          population = ["".join(random.choice("01") for _ in range(n_qubits)) for _ in range(N-1)]
+          # Insert the target at a random position
+          idx = random.randrange(0, N)
+          if idx < len(population):
+              population.insert(idx, target_bitstring)
+          else:
+              population.append(target_bitstring)
+
+          # Linear scan (classical baseline)
+          found_index = None
+          checks = 0
+          for i, sig in enumerate(population):
+              checks += 1
+              if sig == target_bitstring:
+                  found_index = i
+                  break
+
+          duration = time.time() - start
+          return {
+              "status": "success",
+              "backend": "cpu_linear_scan",
+              "n_qubits": n_qubits,
+              "N": N,
+              "checks": checks,
+              "found_index": found_index,
+              "duration_s": duration
+          }
+
+  - name: quantum_cpu_task
+    type: python
+    with:
+      n_qubits: "{{ n_qubits }}"
+      target_bitstring: "{{ target_bitstring }}"
+      iterations: "{{ iterations }}"
+      shots: "{{ shots }}"
+    code: |
+      def main(n_qubits, target_bitstring, iterations=None, shots=1024):
+          import time, math
+          start = time.time()
+
+          try:
+              from qiskit import QuantumCircuit
+              from qiskit.quantum_info import Statevector
+          except Exception as e:
+              return {"status": "skipped", "reason": f"Qiskit not available: {e}"}
+
+          if not isinstance(n_qubits, int) or n_qubits < 1:
+              return {"status": "error", "message": "n_qubits must be positive int"}
+          if not isinstance(target_bitstring, str) or len(target_bitstring) != n_qubits:
+              return {"status": "error", "message": "target_bitstring length must equal n_qubits"}
+
+          N = 2 ** n_qubits
+          if iterations is None or iterations == "" or iterations == "null":
+              iters = max(1, int(math.floor(math.pi / 4 * math.sqrt(N))))
+          else:
+              iters = int(iterations)
+
+          def build_grover_core(n, target_bs, r):
+              qc = QuantumCircuit(n, n)
+              qc.h(range(n))
+              def oracle():
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+              def diffusion():
+                  qc.h(range(n))
+                  qc.x(range(n))
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  qc.x(range(n))
+                  qc.h(range(n))
+              for _ in range(r):
+                  oracle()
+                  diffusion()
+              return qc
+
+          qc = build_grover_core(n_qubits, target_bitstring, iters)
+
+          try:
+              sv = Statevector.from_instruction(qc)
+              probs = sv.probabilities_dict()
+          except Exception as e:
+              return {"status": "error", "message": f"Statevector simulation failed: {e}"}
+
+          import random
+          keys = list(probs.keys())
+          weights = [probs[k] for k in keys]
+          s = sum(weights) or 1.0
+          weights = [w/s for w in weights]
+          samples = random.choices(keys, weights=weights, k=int(shots))
+          counts = {}
+          for sbit in samples:
+              counts[sbit] = counts.get(sbit, 0) + 1
+
+          duration = time.time() - start
+          target_prob = probs.get(target_bitstring, 0.0)
+
+          return {
+              "status": "success",
+              "backend": "cpu_statevector",
+              "n_qubits": n_qubits,
+              "iterations": iters,
+              "shots": int(shots),
+              "target": target_bitstring,
+              "target_probability": target_prob,
+              "counts": counts,
+              "duration_s": duration,
+          }
+
+  - name: quantum_qpu_task
+    type: python
+    with:
+      n_qubits: "{{ n_qubits }}"
+      target_bitstring: "{{ target_bitstring }}"
+      iterations: "{{ iterations }}"
+      shots: "{{ shots }}"
+      ibm_channel: "{{ ibm_channel }}"
+      timeout_s: "{{ timeout_s }}"
+    code: |
+      def main(n_qubits, target_bitstring, iterations=None, shots=1024, ibm_channel="ibm_cloud", timeout_s=300):
+          import time, math, os
+          start = time.time()
+
+          try:
+              from qiskit import QuantumCircuit
+              from qiskit_ibm_runtime import QiskitRuntimeService, Sampler
+          except Exception as e:
+              return {"status": "skipped", "reason": f"qiskit-ibm-runtime not available or import failed: {e}"}
+
+          if not isinstance(n_qubits, int) or n_qubits < 1:
+              return {"status": "error", "message": "n_qubits must be positive int"}
+          if not isinstance(target_bitstring, str) or len(target_bitstring) != n_qubits:
+              return {"status": "error", "message": "target_bitstring length must equal n_qubits"}
+
+          N = 2 ** n_qubits
+          if iterations is None or iterations == "" or iterations == "null":
+              iters = max(1, int(math.floor(math.pi / 4 * math.sqrt(N))))
+          else:
+              iters = int(iterations)
+
+          def build_grover(n, target_bs, r):
+              qc = QuantumCircuit(n)
+              qc.h(range(n))
+              def oracle():
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  for i, bit in enumerate(reversed(target_bs)):
+                      if bit == '0':
+                          qc.x(i)
+              def diffusion():
+                  qc.h(range(n))
+                  qc.x(range(n))
+                  qc.h(n-1)
+                  if n == 1:
+                      qc.z(0)
+                  else:
+                      qc.mcx(list(range(n-1)), n-1)
+                  qc.h(n-1)
+                  qc.x(range(n))
+                  qc.h(range(n))
+              for _ in range(r):
+                  oracle()
+                  diffusion()
+              return qc
+
+          qc = build_grover(n_qubits, target_bitstring, iters)
+
+          token = os.getenv("QISKIT_IBM_TOKEN")
+          instance = os.getenv("QISKIT_IBM_INSTANCE")
+          backend_name = os.getenv("QISKIT_IBM_BACKEND")
+          if not token or not instance:
+              return {"status": "skipped", "reason": "IBM credentials not configured (QISKIT_IBM_TOKEN and QISKIT_IBM_INSTANCE)"}
+
+          try:
+              service = QiskitRuntimeService(channel=ibm_channel, token=token, instance=instance)
+          except Exception as e:
+              return {"status": "skipped", "reason": f"Failed to create runtime service: {e}"}
+
+          try:
+              if backend_name:
+                  backend = service.backend(backend_name)
+              else:
+                  cands = [b for b in service.backends(simulator=False) if getattr(b, 'num_qubits', 0) >= n_qubits]
+                  backend = cands[0] if cands else None
+              if backend is None:
+                  return {"status": "skipped", "reason": "No suitable IBM backend found"}
+          except Exception as e:
+              return {"status": "skipped", "reason": f"Backend selection failed: {e}"}
+
+          try:
+              sampler = Sampler(backend=backend)
+              job = sampler.run([qc], shots=int(shots))
+              result = job.result(timeout=timeout_s)
+              quasi = result.quasi_dists[0]
+              def fmt_key(k):
+                  if isinstance(k, str):
+                      return k.zfill(n_qubits)
+                  return format(int(k), f"0{n_qubits}b")
+              counts = {fmt_key(k): int(round(v * int(shots))) for k, v in quasi.items()}
+              duration = time.time() - start
+              return {
+                  "status": "success",
+                  "backend": getattr(backend, 'name', lambda: str(backend))() if hasattr(backend, 'name') else str(backend),
+                  "n_qubits": n_qubits,
+                  "iterations": iters,
+                  "shots": int(shots),
+                  "target": target_bitstring,
+                  "counts": counts,
+                  "duration_s": duration,
+              }
+          except Exception as e:
+              return {"status": "skipped", "reason": f"Runtime execution failed: {e}"}
+
+  - name: compare_task
+    type: python
+    with:
+      baseline: "{{ baseline }}"
+      qc_cpu: "{{ qc_cpu }}"
+      qc_qpu: "{{ qc_qpu }}"
+    code: |
+      def main(baseline, qc_cpu=None, qc_qpu=None):
+          import math
+          def summarize(res):
+              if not isinstance(res, dict):
+                  return {"status": "unknown"}
+              keys = list((res.get("counts") or {}).keys())
+              top = None
+              if keys:
+                  top = max(res["counts"].items(), key=lambda kv: kv[1])[0]
+              return {
+                  "status": res.get("status"),
+                  "backend": res.get("backend"),
+                  "n_qubits": res.get("n_qubits"),
+                  "iterations": res.get("iterations"),
+                  "shots": res.get("shots"),
+                  "target": res.get("target"),
+                  "top_bitstring": top,
+                  "target_probability": res.get("target_probability"),
+                  "duration_s": res.get("duration_s"),
+                  "checks": res.get("checks"),
+                  "N": res.get("N"),
+              }
+
+          out = {
+              "classical": summarize(baseline),
+              "quantum_cpu": summarize(qc_cpu),
+              "quantum_qpu": summarize(qc_qpu),
+              "notes": {
+                  "domain": "healthcare",
+                  "problem": "rare signature search",
+              }
+          }
+
+          # Compute theoretical step counts and speedup
+          N = out["classical"].get("N") or (2 ** int(out["quantum_cpu"].get("n_qubits") or 0)) or None
+          if N:
+              classical_steps = N / 2.0  # avg linear search
+              quantum_steps = (math.pi / 4.0) * math.sqrt(N)
+              out["complexity_comparison"] = {
+                  "N": int(N),
+                  "classical_expected_steps": classical_steps,
+                  "quantum_expected_steps": quantum_steps,
+                  "expected_speedup_x": (classical_steps / quantum_steps) if quantum_steps else None
+              }
+
+          # Empirical durations if both available
+          c_dur = out["classical"].get("duration_s")
+          qc_dur = out["quantum_cpu"].get("duration_s")
+          if isinstance(c_dur, (int, float)) and isinstance(qc_dur, (int, float)) and qc_dur > 0:
+              out["empirical_ratio_cpu_over_quantum"] = c_dur / qc_dur
+
+          return out
