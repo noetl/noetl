@@ -186,15 +186,28 @@ def execute_playbook_via_broker(
             "export_path": None,
         }
         # Kick off broker evaluation for this execution id
+        logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Attempting to start broker evaluation for execution_id={execution_id}")
         try:
             from noetl.server.api.event import evaluate_broker_for_execution
             import asyncio as _asyncio
+
+            logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: evaluate_broker_for_execution imported successfully")
+
             if _asyncio.get_event_loop().is_running():
-                _asyncio.create_task(evaluate_broker_for_execution(execution_id))
+                logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Running in async context, creating task for execution_id={execution_id}")
+                task = _asyncio.create_task(evaluate_broker_for_execution(execution_id))
+                logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Task created: {task}")
             else:
+                logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Running in sync context, using asyncio.run for execution_id={execution_id}")
                 _asyncio.run(evaluate_broker_for_execution(execution_id))
+
+            logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Broker evaluation initiated successfully for execution_id={execution_id}")
+
         except Exception as _ev:
-            logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to start broker evaluation: {_ev}")
+            logger.error(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to start broker evaluation for execution_id={execution_id}: {_ev}")
+            import traceback
+            logger.error(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Traceback: {traceback.format_exc()}")
+
         logger.debug(
             f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Returning accepted result for execution_id={execution_id}"
         )

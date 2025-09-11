@@ -47,13 +47,37 @@ async def render_context(request: Request):
                 workload = ctx_first.get("workload", {}) if isinstance(ctx_first, dict) else {}
             except Exception:
                 workload = {}
-        for node_name, out in (await dao.get_all_node_results(execution_id)):
-            if not node_name or out is None:
-                continue
+        node_results = await dao.get_all_node_results(execution_id)
+        # get_all_node_results returns a dict mapping node_name -> result
+        if isinstance(node_results, dict):
+            for node_name, out in node_results.items():
+                if not node_name or out is None:
+                    continue
+                try:
+                    results[node_name] = json.loads(out) if isinstance(out, str) else out
+                except Exception:
+                    results[node_name] = out
+        else:
+            # Fallback in case of unexpected return type (e.g., list of tuples)
             try:
-                results[node_name] = json.loads(out) if isinstance(out, str) else out
+                for row in node_results or []:
+                    try:
+                        node_name, out = row
+                    except Exception:
+                        # Try dict-style access
+                        try:
+                            node_name = row.get('node_name')
+                            out = row.get('result')
+                        except Exception:
+                            continue
+                    if not node_name or out is None:
+                        continue
+                    try:
+                        results[node_name] = json.loads(out) if isinstance(out, str) else out
+                    except Exception:
+                        results[node_name] = out
             except Exception:
-                results[node_name] = out
+                pass
 
         # Fetch playbook to get step aliases
         playbook_path = None

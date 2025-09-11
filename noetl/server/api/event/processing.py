@@ -847,9 +847,21 @@ async def evaluate_broker_for_execution(
                                         'type': _def.get('type') or 'python',
                                     }
                                     # Copy key fields into task config for worker
-                                    for _fld in ('code','command','commands','sql','url','method','headers','params','data','payload'):
+                                    for _fld in ('code','command','commands','sql','url','method','headers','params','data','payload','with'):
                                         if _def.get(_fld) is not None:
                                             _task[_fld] = _def.get(_fld)
+                                    # Merge 'with' from start->next transition into task config so workers receive kwargs
+                                    if _next_with:
+                                        try:
+                                            existing_with = _task.get('with') or {}
+                                            if isinstance(existing_with, dict):
+                                                merged_with = {**existing_with, **_next_with}
+                                            else:
+                                                # If step.with is not a dict, prefer transition with
+                                                merged_with = dict(_next_with)
+                                            _task['with'] = merged_with
+                                        except Exception:
+                                            _task['with'] = _next_with
                                     # Additional 'with' parameters merged into context for templating
                                     _ctx = {
                                         'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
