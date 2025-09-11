@@ -89,7 +89,13 @@ def execute_playbook_via_broker(
                     async with _get_async_db_connection() as _conn:
                         async with _conn.cursor() as _cur:
                             try:
-                                await _cur.execute(_sqlcmd.WORKLOAD_INSERT_POSTGRES, (_exec_id, data))
+                                _sql = _sqlcmd.WORKLOAD_INSERT_POSTGRES
+                                try:
+                                    if "INSERT INTO workload" in _sql:
+                                        _sql = _sql.replace("INSERT INTO workload", "INSERT INTO noetl.workload")
+                                except Exception:
+                                    pass
+                                await _cur.execute(_sql, (_exec_id, data))
                             except Exception:
                                 try:
                                     await _cur.execute(_sqlcmd.WORKLOAD_INSERT_DUCKDB, (_exec_id, data))
@@ -190,8 +196,14 @@ def execute_playbook_via_broker(
                                                 with_params = {}
                                             if from_step and to_step:
                                                 try:
+                                                    _sql = _sqlcmd.TRANSITION_INSERT_POSTGRES
+                                                    try:
+                                                        if "INSERT INTO transition" in _sql:
+                                                            _sql = _sql.replace("INSERT INTO transition", "INSERT INTO noetl.transition")
+                                                    except Exception:
+                                                        pass
                                                     await cur.execute(
-                                                        _sqlcmd.TRANSITION_INSERT_POSTGRES,
+                                                        _sql,
                                                         (
                                                             _exec_id,
                                                             from_step,
@@ -236,7 +248,13 @@ def execute_playbook_via_broker(
                                         raw,
                                     )
                                     try:
-                                        await cur.execute(_sqlcmd.WORKFLOW_INSERT_POSTGRES, vals6)
+                                        _sql = _sqlcmd.WORKFLOW_INSERT_POSTGRES
+                                        try:
+                                            if "INSERT INTO workflow" in _sql:
+                                                _sql = _sql.replace("INSERT INTO workflow", "INSERT INTO noetl.workflow")
+                                        except Exception:
+                                            pass
+                                        await cur.execute(_sql, vals6)
                                     except Exception:
                                         try:
                                             await cur.execute(_sqlcmd.WORKFLOW_INSERT_DUCKDB, vals6)

@@ -924,11 +924,11 @@ async def evaluate_broker_for_execution(
                                     # Encode task payload for safe transport
                                     _encoded = _encode_task(_task)
                                     # Insert into queue (avoid duplicate on conflict)
+                                    # Insert into queue; rely on evaluator-level guards (has_pending/has_progress) to avoid duplicates
                                     await _cur.execute(
                                         """
                                         INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                         VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                        ON CONFLICT (execution_id, node_id) DO NOTHING
                                         RETURNING id
                                         """,
                                         (
