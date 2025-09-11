@@ -115,8 +115,21 @@ def execute_playbook_via_broker(
             try:
                 _asyncio.run(_persist_workload_row(execution_id, playbook_path, playbook_version, merged_workload))
             except RuntimeError:
-                loop = _asyncio.get_event_loop()
-                loop.create_task(_persist_workload_row(execution_id, playbook_path, playbook_version, merged_workload))
+                # If already in an async loop, we need to schedule the task properly
+                # Check if we can access the current event loop
+                try:
+                    loop = _asyncio.get_running_loop()
+                    # Schedule the task and store the task object
+                    task = loop.create_task(_persist_workload_row(execution_id, playbook_path, playbook_version, merged_workload))
+                    # Don't await here as this function is synchronous, but ensure task runs
+                    def _handle_task_result(task_obj):
+                        try:
+                            task_obj.result()  # This will raise any exceptions that occurred
+                        except Exception:
+                            logger.debug("EXECUTE: _persist_workload_row task completed with exception", exc_info=True)
+                    task.add_done_callback(_handle_task_result)
+                except Exception:
+                    logger.debug("EXECUTE: Failed to properly schedule _persist_workload_row task", exc_info=True)
         except Exception:
             logger.debug("EXECUTE: Skipped workload persistence", exc_info=True)
 
@@ -195,6 +208,8 @@ def execute_playbook_via_broker(
                                                 condition = None
                                                 with_params = {}
                                             if from_step and to_step:
+                                                # Ensure condition is not None since it's part of the primary key
+                                                condition_value = condition or ""
                                                 try:
                                                     _sql = _sqlcmd.TRANSITION_INSERT_POSTGRES
                                                     try:
@@ -208,7 +223,7 @@ def execute_playbook_via_broker(
                                                             _exec_id,
                                                             from_step,
                                                             to_step,
-                                                            condition,
+                                                            condition_value,
                                                             _json.dumps(with_params) if with_params is not None else None,
                                                         ),
                                                     )
@@ -220,7 +235,7 @@ def execute_playbook_via_broker(
                                                                 _exec_id,
                                                                 from_step,
                                                                 to_step,
-                                                                condition,
+                                                                condition_value,
                                                                 _json.dumps(with_params) if with_params is not None else None,
                                                             ),
                                                         )
@@ -237,11 +252,12 @@ def execute_playbook_via_broker(
                                     step_name = st.get("step") or st.get("name") or ""
                                     step_type = st.get("type") or st.get("kind") or st.get("task_type") or ""
                                     desc = st.get("desc") or st.get("description") or ""
-                                    task_ref = st.get("task") or st.get("action") or st.get("name") or ""
                                     raw = _json.dumps(st)
+                                    # Use step_name as step_id since it should be unique within the workflow
+                                    step_id = step_name or f"step_{len(_steps)}"
                                     vals6 = (
                                         _exec_id,
-                                        _pb_path or "",
+                                        step_id,
                                         step_name,
                                         step_type,
                                         desc,
@@ -303,9 +319,20 @@ def execute_playbook_via_broker(
                 try:
                     _asyncio.run(_persist_workflow(_workflow_steps, execution_id, playbook_path))
                 except RuntimeError:
-                    # If already in loop
-                    loop = _asyncio.get_event_loop()
-                    loop.create_task(_persist_workflow(_workflow_steps, execution_id, playbook_path))
+                    # If already in an async loop, we need to schedule the task properly
+                    try:
+                        loop = _asyncio.get_running_loop()
+                        # Schedule the task and store the task object
+                        task = loop.create_task(_persist_workflow(_workflow_steps, execution_id, playbook_path))
+                        # Don't await here as this function is synchronous, but ensure task runs
+                        def _handle_workflow_task_result(task_obj):
+                            try:
+                                task_obj.result()  # This will raise any exceptions that occurred
+                            except Exception:
+                                logger.debug("EXECUTE: _persist_workflow task completed with exception", exc_info=True)
+                        task.add_done_callback(_handle_workflow_task_result)
+                    except Exception:
+                        logger.debug("EXECUTE: Failed to properly schedule _persist_workflow task", exc_info=True)
         except Exception:
             logger.debug("EXECUTE: Skipped direct workflow persistence", exc_info=True)
 

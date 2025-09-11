@@ -414,12 +414,12 @@ WHERE execution_id = ?
 """
 
 WORKFLOW_INSERT_POSTGRES = """
-INSERT INTO workflow
+INSERT INTO workflow (execution_id, step_id, step_name, step_type, description, raw_config)
 VALUES (%s, %s, %s, %s, %s, %s)
 """
 
 WORKFLOW_INSERT_DUCKDB = """
-INSERT INTO workflow
+INSERT INTO workflow (execution_id, step_id, step_name, step_type, description, raw_config)
 VALUES (?, ?, ?, ?, ?, ?)
 """
 

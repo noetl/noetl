@@ -121,6 +121,8 @@ async def persist_workflow_config(request: Request):
                                     condition = None
                                     with_params = {}
                                 if from_step and to_step:
+                                    # Ensure condition is not None since it's part of the primary key
+                                    condition_value = condition or ""
                                     try:
                                         await cur.execute(
                                             sqlcmd.TRANSITION_INSERT_POSTGRES,
@@ -128,7 +130,7 @@ async def persist_workflow_config(request: Request):
                                                 execution_id,
                                                 from_step,
                                                 to_step,
-                                                condition,
+                                                condition_value,
                                                 _json.dumps(with_params) if with_params is not None else None,
                                             ),
                                         )
@@ -141,7 +143,7 @@ async def persist_workflow_config(request: Request):
                                                     execution_id,
                                                     from_step,
                                                     to_step,
-                                                    condition,
+                                                    condition_value,
                                                     _json.dumps(with_params) if with_params is not None else None,
                                                 ),
                                             )
@@ -158,11 +160,12 @@ async def persist_workflow_config(request: Request):
                         step_name = st.get("step") or st.get("name") or ""
                         step_type = st.get("type") or st.get("kind") or st.get("task_type") or ""
                         desc = st.get("desc") or st.get("description") or ""
-                        task_ref = st.get("task") or st.get("action") or st.get("name") or ""
                         raw = _json.dumps(st)
+                        # Use step_name as step_id since it should be unique within the workflow
+                        step_id = step_name or f"step_{len(steps)}"
                         vals6 = (
                             execution_id,
-                            playbook_path or "",
+                            step_id,
                             step_name,
                             step_type,
                             desc,
