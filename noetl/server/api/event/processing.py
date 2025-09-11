@@ -1044,7 +1044,7 @@ async def evaluate_broker_for_execution(
                                     }
                                     logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task base config: {_task}")
                                     # Copy key fields into task config for worker
-                                    for _fld in ('code','command','commands','sql','url','method','headers','params','data','payload','with','resource_path','content','path'):
+                                    for _fld in ('task','code','command','commands','sql','url','method','headers','params','data','payload','with','resource_path','content','path'):
                                         if _def.get(_fld) is not None:
                                             _task[_fld] = _def.get(_fld)
                                     logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task after field copy: {_task}")
@@ -1065,6 +1065,8 @@ async def evaluate_broker_for_execution(
                                     _ctx = {
                                         'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
                                         'step_name': _next_step_name,
+                                        'path': _pb_path,
+                                        'version': _pb_ver or 'latest',
                                     }
                                     if _next_with:
                                         _ctx.update(_next_with)
