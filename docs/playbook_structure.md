@@ -125,16 +125,20 @@ Below are examples for each widget.
   next: end
 ```
 
-### duckdb
+Tip (exact-match OR): to match any of several exact values (complete match), prefer list membership:
+
 ```yaml
-- step: transform_duck
-  type: duckdb
-  script: |
-    CREATE OR REPLACE TABLE t AS SELECT 1 AS id;
-    SELECT * FROM t;
-  as: rows
-  next: end
+- step: choose_file_branch
+  next:
+    - when: "{{ workload.filename in ['error_log.json', 'event_log.json', 'queue.json'] }}"
+      then:
+        - step: handle_known_file
+    - else:
+        - step: handle_other_file
 ```
+
+See also: [Query Conditions: Exact/Complete Match with OR](query_conditions.md)
+
 
 ### postgres
 ```yaml

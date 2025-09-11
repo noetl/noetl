@@ -14,6 +14,6 @@ RUN apt-get update && \
 
 ENV TZ=America/Chicago
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-COPY database/postgres/postgresql.conf /etc/postgresql/postgresql.conf
-COPY database/postgres/init_database.sh /docker-entrypoint-initdb.d/init_database.sh
-COPY database/postgres/schema_ddl.sql /schema_ddl.sql
+COPY scripts/database/postgres/postgresql.conf /etc/postgresql/postgresql.conf
+COPY scripts/database/postgres/init_database.sh /docker-entrypoint-initdb.d/init_database.sh
+COPY scripts/database/postgres/schema_ddl.sql /schema_ddl.sql

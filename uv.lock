@@ -1981,7 +1981,7 @@ wheels = [
 
 [[package]]
 name = "noetl"
-version = "0.1.37"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -2001,13 +2001,9 @@ dependencies = [
     { name = "greenlet" },
     { name = "httpx" },
     { name = "jinja2" },
-    { name = "jupysql" },
-    { name = "jupyterlab" },
     { name = "lark" },
-    { name = "matplotlib" },
     { name = "memray" },
     { name = "networkx" },
-    { name = "pandas" },
     { name = "polars", extra = ["pyarrow"] },
     { name = "psutil" },
     { name = "psycopg", extra = ["binary", "pool"] },
@@ -2028,6 +2024,12 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
+]
+notebook = [
+    { name = "jupysql" },
+    { name = "jupyterlab" },
+    { name = "matplotlib" },
+    { name = "pandas" },
 ]
 publish = [
     { name = "build" },
@@ -2054,13 +2056,13 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.2.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "jupysql", specifier = ">=0.11.1" },
-    { name = "jupyterlab", specifier = ">=4.4.3" },
+    { name = "jupysql", marker = "extra == 'notebook'", specifier = ">=0.11.1" },
+    { name = "jupyterlab", marker = "extra == 'notebook'", specifier = ">=4.4.3" },
     { name = "lark", specifier = ">=1.2.2" },
-    { name = "matplotlib", specifier = ">=3.10.3" },
+    { name = "matplotlib", marker = "extra == 'notebook'", specifier = ">=3.10.3" },
     { name = "memray", specifier = ">=1.17.2" },
     { name = "networkx", specifier = ">=3.5" },
-    { name = "pandas", specifier = ">=2.2.3" },
+    { name = "pandas", marker = "extra == 'notebook'", specifier = ">=2.2.3" },
     { name = "polars", extras = ["pyarrow"], specifier = ">=1.30.0" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2.7" },
@@ -2079,7 +2081,7 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.3" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
-provides-extras = ["dev", "publish"]
+provides-extras = ["dev", "publish", "notebook"]
 
 [[package]]
 name = "notebook-shim"

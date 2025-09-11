@@ -14,6 +14,7 @@ clusterManagement/out
 clusterManagement/clients
 build/
 dist/
+logs/
 *.egg-info/
 .env.prod
 .env.local
@@ -24,13 +25,16 @@ data/noetldb/
 .vscode-test/
 .env.tradetrend
 examples/tradetrend
-
+.*
 # Virtual environments
 publish_env/
 test_env/
 *.venv/
 venv/
 env/
-
+.vscode/launch.json
 # Terraform
 .terraform*
+/.vscode/
+/status.json.clean
+/status.json

@@ -71,7 +71,26 @@ noetl server stop --force
 
 The server starts on http://localhost:8080 by default. You can customize the host, port, number of workers, and enable debug mode using command options.
 
-### 2. Using the Command Line
+### 2. Running Workers (Optional)
+
+For distributed execution, you can run worker processes that execute playbooks:
+
+```bash
+# Start a worker
+make worker-start
+
+# Start multiple workers with different configurations
+NOETL_WORKER_POOL_NAME=worker-cpu-01 NOETL_WORKER_POOL_RUNTIME=cpu make worker-start
+NOETL_WORKER_POOL_NAME=worker-gpu-01 NOETL_WORKER_POOL_RUNTIME=gpu make worker-start
+
+# Quick start multiple workers using provided scripts
+./bin/start_multiple_workers.sh
+
+# Stop workers
+./bin/stop_multiple_workers.sh
+```
+
+See [Multiple Workers Guide](docs/multiple_workers.md) for detailed instructions on running and managing multiple worker instances.
 
 NoETL provides a streamlined command-line interface for managing and executing playbooks:
 
@@ -182,6 +201,7 @@ For more detailed information, please refer to the following documentation:
 ### Getting Started
 - [Installation Guide](https://github.com/noetl/noetl/blob/master/docs/installation.md) - Installation instructions
 - [CLI Usage Guide](https://github.com/noetl/noetl/blob/master/docs/cli_usage.md) - Commandline interface usage
+- [Multiple Workers Guide](https://github.com/noetl/noetl/blob/master/docs/multiple_workers.md) - Running multiple worker instances
 - [API Usage Guide](https://github.com/noetl/noetl/blob/master/docs/api_usage.md) - REST API usage
 - [Docker Usage Guide](https://github.com/noetl/noetl/blob/master/docs/docker_usage.md) - Docker deployment
 

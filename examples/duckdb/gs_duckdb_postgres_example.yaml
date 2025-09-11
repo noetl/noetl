@@ -212,7 +212,7 @@ workbook:
           return {
               'status': 'success',
               'directory_created': duckdb_dir,
-              'message': 'DuckDB directory structure created. Action.py will handle execution-specific database files.'
+              'message': 'DuckDB directory structure created. The job package will handle execution-specific database files.'
           }
 
   - name: create_pg_secret_task

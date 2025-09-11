@@ -1,0 +1,317 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: city_process
+path: examples/weather/city_process
+
+workload:
+  # Input parameters - these will be provided by the calling playbook
+  city:
+    name: ""
+    lat: 0
+    lon: 0
+  base_url: ""
+  temperature_threshold: 0
+
+workflow:
+  - step: start
+    desc: "Start city processing"
+    next:
+      - step: get_forecast_step
+        with:
+          city: "{{ workload.city }}"
+          base_url: "{{ workload.base_url }}"
+
+  - step: get_forecast_step
+    desc: "Debug city format and extract coordinates"
+    type: workbook
+    task: debug_city_format
+    with:
+      city: "{{ workload.city }}"
+      base_url: "{{ workload.base_url }}"
+    next:
+      - step: get_forecast_http_step
+
+  - step: get_forecast_http_step
+    desc: "Fetch forecast via HTTP API"
+    type: workbook
+    task: get_forecast
+    with:
+      debug_data: "{{ get_forecast_step }}"
+      lat: "{{ get_forecast_step.lat }}"
+      lon: "{{ get_forecast_step.lon }}"
+    next:
+      - step: evaluate_weather_step
+
+  - step: evaluate_weather_step
+    desc: "Evaluate weather using fetched forecast"
+    type: workbook
+    task: evaluate_weather
+    with:
+      city: "{{ workload.city }}"
+      threshold: "{{ workload.temperature_threshold }}"
+      forecast_data: "{{ get_forecast_http_step }}"
+    next:
+      - step: fetch_and_evaluate
+
+  - step: fetch_and_evaluate
+    desc: "Combined fetch and evaluate result step"
+    type: python
+    code: |
+      def main(evaluation_result, city):
+          # This step combines and returns the evaluation result
+          # This is the step that the parent workflow expects for return_step
+          result = {
+              "city": city.get("name") if isinstance(city, dict) else city,
+              "evaluation": evaluation_result,
+              "alert": evaluation_result.get("alert", False) if isinstance(evaluation_result, dict) else False,
+              "max_temp": evaluation_result.get("max_temp", 0) if isinstance(evaluation_result, dict) else 0
+          }
+          print(f"FETCH_AND_EVALUATE: Combined result: {result}")
+          return result
+    with:
+      evaluation_result: "{{ evaluate_weather_step }}"
+      city: "{{ workload.city }}"
+    next:
+      - step: decide
+
+  - step: decide
+    desc: "Decide alert vs log"
+    type: python
+    code: |
+      def main(city, result):
+          print(f"DECIDE_STEP: Received city: {city}")
+          print(f"DECIDE_STEP: Received result: {result}")
+          if isinstance(result, dict) and result.get("alert"):
+              decision = {"action": "alert", "city": city.get("name") if isinstance(city, dict) else city, "max_temp": result.get("max_temp", 0)}
+          else:
+              decision = {"action": "log", "city": city.get("name") if isinstance(city, dict) else city}
+          print(f"DECIDE_STEP: Decision: {decision}")
+          return decision
+    with:
+      city: "{{ workload.city }}"
+      result: "{{ evaluate_weather_step }}"
+    next:
+      - when: "{{ decide.action == 'alert' }}"
+        then:
+          - step: alert_step
+            with:
+              city: "{{ workload.city.name }}"
+              max_temp: "{{ decide.max_temp }}"
+      - else:
+          - step: log_step
+            with:
+              city: "{{ workload.city.name }}"
+
+  - step: alert_step
+    desc: "Send alert if threshold exceeded"
+    type: python
+    code: |
+      def main(city, temperature, evaluation_result):
+          # Note: This would call the alert_task workbook task
+          # For now, just return the alert info
+          result = {
+              "action": "alert", 
+              "city": city, 
+              "temperature": temperature,
+              "max_temp": evaluation_result.get("max_temp", 0),
+              "alert": True
+          }
+          print(f"ALERT_STEP: Returning result: {result}")
+          return result
+    with:
+      city: "{{ workload.city.name }}"
+      temperature: "{{ decide.max_temp }}"
+      evaluation_result: "{{ evaluate_weather_step }}"
+
+  - step: log_step
+    desc: "Log result if no alert"
+    type: python
+    code: |
+      def main(city, evaluation_result):
+          # Note: This would call the log_task workbook task
+          # For now, just return the log info
+          result = {
+              "action": "log", 
+              "city": city,
+              "max_temp": evaluation_result.get("max_temp", 0),
+              "alert": False
+          }
+          print(f"LOG_STEP: Returning result: {result}")
+          return result
+    with:
+      city: "{{ workload.city.name }}"
+      evaluation_result: "{{ evaluate_weather_step }}"
+
+  - step: end
+    desc: "End of city processing"
+    result: "{{ evaluate_weather_step.result }}"
+
+workbook:
+  - name: debug_city_format
+    type: python
+    with:
+      city: "{{ city }}"
+      base_url: "{{ base_url }}"
+    code: |
+      def main(city, base_url):
+          print(f"DEBUG_CITY_FORMAT: city = {city}")
+          print(f"DEBUG_CITY_FORMAT: city type = {type(city)}")
+          print(f"DEBUG_CITY_FORMAT: base_url = {base_url}")
+          
+          # Try to extract lat/lon
+          if isinstance(city, dict):
+              lat = city.get("lat")
+              lon = city.get("lon")
+              name = city.get("name")
+          elif isinstance(city, str):
+              # If it's a string, try to parse it
+              try:
+                  import ast
+                  city_dict = ast.literal_eval(city)
+                  lat = city_dict.get("lat")
+                  lon = city_dict.get("lon")  
+                  name = city_dict.get("name")
+              except:
+                  lat = lon = name = None
+          else:
+              lat = lon = name = None
+              
+          print(f"DEBUG_CITY_FORMAT: extracted lat={lat}, lon={lon}, name={name}")
+          return {"lat": lat, "lon": lon, "name": name, "original": city}
+
+  - name: get_forecast
+    type: http
+    method: GET
+    endpoint: "https://api.open-meteo.com/v1/forecast"
+    with:
+      debug_data: "{{ debug_data }}"
+      lat: "{{ lat }}"
+      lon: "{{ lon }}"
+    params:
+      latitude: "{{ lat }}"
+      longitude: "{{ lon }}"
+      hourly: "temperature_2m"
+      forecast_days: 1
+    timeout: 10
+
+  - name: process_forecast
+    type: python
+    with:
+      forecast_response: "{{ get_forecast }}"
+      city_name: "{{ debug_data.name }}"
+    code: |
+      import json
+      
+      def main(forecast_response, city_name):
+          print(f"PROCESS_FORECAST: Processing weather data for {city_name}")
+          print(f"PROCESS_FORECAST: Forecast response type: {type(forecast_response)}")
+          print(f"PROCESS_FORECAST: Forecast response: {forecast_response}")
+          
+          # Extract data from HTTP response
+          forecast_data = None
+          if isinstance(forecast_response, dict):
+              if 'data' in forecast_response:
+                  # This is our Python task format: {"data": {...}, "city": "...", "status_code": 200}
+                  forecast_data = forecast_response['data']
+              elif 'hourly' in forecast_response:
+                  # This is direct HTTP response format
+                  forecast_data = forecast_response
+              else:
+                  print(f"PROCESS_FORECAST: Unexpected response format: {forecast_response}")
+          
+          if isinstance(forecast_data, dict) and "hourly" in forecast_data:
+              temperatures = forecast_data["hourly"]["temperature_2m"]
+              max_temp = max(temperatures)
+              min_temp = min(temperatures)
+              avg_temp = sum(temperatures) / len(temperatures)
+              
+              # Generate alert based on max temperature
+              alert_level = "LOW"
+              alert_message = f"Normal temperatures for {city_name}"
+              
+              if max_temp > 25:
+                  alert_level = "HIGH"
+                  alert_message = f"High temperatures in {city_name}: {max_temp:.1f}°C"
+              elif max_temp > 20:
+                  alert_level = "MEDIUM" 
+                  alert_message = f"Warm temperatures in {city_name}: {max_temp:.1f}°C"
+              
+              print(f"PROCESS_FORECAST: {city_name} - Max: {max_temp:.1f}°C, Alert: {alert_level}")
+              
+              result = {
+                  "city": city_name,
+                  "lat": forecast_data.get("latitude"),
+                  "lon": forecast_data.get("longitude"),
+                  "max_temp": max_temp,
+                  "min_temp": min_temp,
+                  "avg_temp": avg_temp,
+                  "alert_level": alert_level,
+                  "alert_message": alert_message,
+                  "timestamp": "2025-09-05T12:00:00Z"
+              }
+              
+              return result
+          else:
+              print(f"PROCESS_FORECAST: Invalid forecast data structure for {city_name}")
+              print(f"PROCESS_FORECAST: Data: {forecast_data}")
+              return {
+                  "city": city_name,
+                  "error": "Invalid forecast data",
+                  "timestamp": "2025-09-05T12:00:00Z"
+              }
+
+  # Added evaluate_weather task (was missing causing empty results returned to parent loop)
+  - name: evaluate_weather
+    type: python
+    with:
+      city: "{{ workload.city }}"
+      threshold: "{{ workload.temperature_threshold }}"
+      forecast_data: "{{ get_forecast }}"
+    code: |
+      def main(city, threshold, forecast_data):
+        print(f"EVALUATE_WEATHER: city={city}")
+        print(f"EVALUATE_WEATHER: threshold raw={threshold}")
+        print(f"EVALUATE_WEATHER: forecast_data type={type(forecast_data)}")
+        try:
+          threshold_val = float(threshold) if threshold not in (None, "") else 5.0
+        except Exception:
+          threshold_val = 5.0
+        temps = []
+        if isinstance(forecast_data, dict):
+          hourly = forecast_data.get('hourly', {})
+          if isinstance(hourly, dict) and 'temperature_2m' in hourly:
+            temps = hourly['temperature_2m']
+          elif 'data' in forecast_data and isinstance(forecast_data['data'], dict):
+            data_hourly = forecast_data['data'].get('hourly', {})
+            if isinstance(data_hourly, dict) and 'temperature_2m' in data_hourly:
+              temps = data_hourly['temperature_2m']
+        max_temp = max(temps) if temps else 0
+        alert = max_temp > threshold_val
+        result = {
+          "city": city.get("name") if isinstance(city, dict) else city,
+          "max_temp": max_temp,
+          "alert": alert
+        }
+        print(f"EVALUATE_WEATHER: result={result}")
+        return result
+
+  - name: alert_task
+    type: http
+    method: POST
+    endpoint: "https://postman-echo.com/post"
+    payload:
+      kind: "city_alert"
+      city: "{{ city }}"
+      temperature: "{{ temperature }}"
+      message: "High temperature alert."
+    timeout: 10
+
+  - name: log_task
+    type: http
+    method: POST
+    endpoint: "https://postman-echo.com/post"
+    payload:
+      kind: "city_log"
+      city: "{{ city }}"
+      message: "No alert needed."
+    timeout: 10

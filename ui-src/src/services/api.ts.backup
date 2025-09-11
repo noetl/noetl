@@ -1,31 +1,40 @@
-import axios from 'axios';
-import {DashboardStats, ExecutionData, PlaybookData, ServerStatus, VisualizationWidget} from '../types';
- const getApiBaseUrl = () => {
-   if (import.meta.env.VITE_API_BASE_URL) {
-     return import.meta.env.VITE_API_BASE_URL;
-   }
-   if (import.meta.env.MODE === 'development') {
-     return 'http://localhost:8081/api';
-   }
-   return '/api';
- };
+import axios from "axios";
+import {
+  DashboardStats,
+  ExecutionData,
+  PlaybookData,
+  ServerStatus,
+  VisualizationWidget,
+} from "../types";
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  if (import.meta.env.MODE === "development") {
+    if ((window as any).__API_BASE_URL__) {
+      return (window as any).__API_BASE_URL__;
+    }
+    return "http://localhost:8081/api";
+  }
+  return "/api";
+};
 
- const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL = getApiBaseUrl();
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
 });
 
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    console.error('API Error:', error);
+    console.error("API Error:", error);
     return Promise.reject(error);
-  }
+  },
 );
 
 // export interface ServerStatus {
@@ -99,22 +108,22 @@ apiClient.interceptors.response.use(
 
 class APIService {
   async getHealth(): Promise<ServerStatus> {
-    const response = await apiClient.get('/health');
+    const response = await apiClient.get("/health");
     return response.data;
   }
 
   async getDashboardStats(): Promise<DashboardStats> {
-    const response = await apiClient.get('/dashboard/stats');
+    const response = await apiClient.get("/dashboard/stats");
     return response.data;
   }
 
   async getDashboardWidgets(): Promise<VisualizationWidget[]> {
-    const response = await apiClient.get('/dashboard/widgets');
+    const response = await apiClient.get("/dashboard/widgets");
     return response.data;
   }
 
   async getPlaybooks(): Promise<PlaybookData[]> {
-    const response = await apiClient.get('/catalog/playbooks');
+    const response = await apiClient.get("/catalog/playbooks");
     return response.data;
   }
 
@@ -124,11 +133,14 @@ class APIService {
   }
 
   async createPlaybook(data: Partial<PlaybookData>): Promise<PlaybookData> {
-    const response = await apiClient.post('/catalog/playbooks', data);
+    const response = await apiClient.post("/catalog/playbooks", data);
     return response.data;
   }
 
-  async updatePlaybook(id: string, data: Partial<PlaybookData>): Promise<PlaybookData> {
+  async updatePlaybook(
+    id: string,
+    data: Partial<PlaybookData>,
+  ): Promise<PlaybookData> {
     const response = await apiClient.put(`/catalog/playbooks/${id}`, data);
     return response.data;
   }
@@ -138,7 +150,7 @@ class APIService {
   }
 
   async getExecutions(): Promise<ExecutionData[]> {
-    const response = await apiClient.get('/executions');
+    const response = await apiClient.get("/executions");
     return response.data;
   }
 
@@ -147,16 +159,21 @@ class APIService {
     return response.data;
   }
 
-  async executePlaybook(playbookId: string, params?: any): Promise<ExecutionData> {
+  async executePlaybook(
+    playbookId: string,
+    params?: any,
+  ): Promise<ExecutionData> {
     const response = await apiClient.post(`/executions/run`, {
       playbook_id: playbookId,
-      parameters: params || {}
+      parameters: params || {},
     });
     return response.data;
   }
 
-  async executePlaybookWithPayload(requestBody: any): Promise<{ execution_id: string }> {
-    const response = await apiClient.post('/agent/execute', requestBody);
+  async executePlaybookWithPayload(
+    requestBody: any,
+  ): Promise<{ execution_id: string }> {
+    const response = await apiClient.post("/agent/execute", requestBody);
     return response.data;
   }
 
@@ -166,13 +183,15 @@ class APIService {
 
   async getPlaybookContent(id: string): Promise<string> {
     try {
-      const response = await apiClient.get(`/catalog/playbooks/content?playbook_id=${id}`);
+      const response = await apiClient.get(
+        `/catalog/playbooks/content?playbook_id=${id}`,
+      );
       return response.data.content;
     } catch (error) {
-      console.warn('API call failed, attempting fallback for testing:', error);
-      
+      console.warn("API call failed, attempting fallback for testing:", error);
+
       // Fallback for testing - try to use example YAML content
-      if (id.includes('weather') || id === 'weather_example') {
+      if (id.includes("weather") || id === "weather_example") {
         // Return a sample weather workflow for testing
         return `apiVersion: noetl.io/v1
 kind: Playbook
@@ -323,18 +342,24 @@ workflow:
     await apiClient.put(`/catalog/playbooks/${id}/content`, { content });
   }
 
-  async validatePlaybook(content: string): Promise<{ valid: boolean; errors?: string[] }> {
-    const response = await apiClient.post('/catalog/playbooks/validate', { content });
+  async validatePlaybook(
+    content: string,
+  ): Promise<{ valid: boolean; errors?: string[] }> {
+    const response = await apiClient.post("/catalog/playbooks/validate", {
+      content,
+    });
     return response.data;
   }
 
   async getCatalogWidgets(): Promise<VisualizationWidget[]> {
-    const response = await apiClient.get('/catalog/widgets');
+    const response = await apiClient.get("/catalog/widgets");
     return response.data;
   }
 
   async searchPlaybooks(query: string): Promise<PlaybookData[]> {
-    const response = await apiClient.get(`/catalog/playbooks/search?q=${encodeURIComponent(query)}`);
+    const response = await apiClient.get(
+      `/catalog/playbooks/search?q=${encodeURIComponent(query)}`,
+    );
     return response.data;
   }
 }
