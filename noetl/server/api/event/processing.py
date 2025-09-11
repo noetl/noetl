@@ -828,18 +828,70 @@ async def evaluate_broker_for_execution(
                                             _by_name[str(_nm)] = _s
                                     except Exception:
                                         continue
-                                # Determine first actionable step: follow start.next[0].step
+                                # Determine first actionable step from 'start' using conditional branches (when/then/else)
                                 _start = _by_name.get('start') or next((s for s in _steps if (s.get('step') == 'start')), None)
                                 _next_step_name = None
                                 _next_with = {}
                                 if _start:
                                     _nxt_list = _start.get('next') or []
                                     if isinstance(_nxt_list, list) and _nxt_list:
-                                        _first = _nxt_list[0] or {}
-                                        _next_step_name = _first.get('step') or _first.get('name')
-                                        _nw = _first.get('with') or {}
-                                        if isinstance(_nw, dict):
-                                            _next_with = _nw
+                                        try:
+                                            # Build minimal Jinja environment for evaluating conditions
+                                            from jinja2 import Environment, StrictUndefined
+                                            from noetl.core.dsl.render import render_template
+                                            jenv = Environment(undefined=StrictUndefined)
+                                            # Prepare context for evaluation
+                                            _ctx_for_when = {
+                                                'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
+                                            }
+                                            chosen = None
+                                            for _entry in _nxt_list:
+                                                if not isinstance(_entry, dict):
+                                                    # simple form: {step: 'name'} or string
+                                                    if isinstance(_entry, str):
+                                                        chosen = {'step': _entry}
+                                                    else:
+                                                        chosen = _entry
+                                                    break
+                                                _when_expr = _entry.get('when')
+                                                _then = _entry.get('then')
+                                                _else = _entry.get('else')
+                                                matched = False
+                                                if _when_expr is not None:
+                                                    try:
+                                                        res = render_template(jenv, str(_when_expr), _ctx_for_when)
+                                                        matched = bool(res)
+                                                    except Exception:
+                                                        matched = False
+                                                else:
+                                                    # No condition means default branch
+                                                    matched = True
+                                                if matched:
+                                                    if isinstance(_then, list) and _then:
+                                                        chosen = _then[0]
+                                                    elif isinstance(_then, dict):
+                                                        chosen = _then
+                                                    elif _entry.get('step'):
+                                                        chosen = _entry
+                                                    else:
+                                                        # fallback to first element
+                                                        chosen = _entry
+                                                    break
+                                            if chosen is None and isinstance(_else, (list, dict)):
+                                                # Pick from top-level else if defined (rare)
+                                                chosen = _else[0] if isinstance(_else, list) and _else else (_else or None)
+                                            if chosen:
+                                                _next_step_name = (chosen.get('step') if isinstance(chosen, dict) else None) or (chosen.get('name') if isinstance(chosen, dict) else None) or (str(chosen) if isinstance(chosen, str) else None)
+                                                _nw = (chosen.get('with') if isinstance(chosen, dict) else {}) or {}
+                                                if isinstance(_nw, dict):
+                                                    _next_with = _nw
+                                        except Exception:
+                                            # Fallback to previous naive behavior
+                                            _first = _nxt_list[0] or {}
+                                            _next_step_name = _first.get('step') or _first.get('name') or (str(_first) if isinstance(_first, str) else None)
+                                            _nw = _first.get('with') if isinstance(_first, dict) else {}
+                                            if isinstance(_nw, dict):
+                                                _next_with = _nw
                                 if _next_step_name and _next_step_name in _by_name:
                                     _def = _by_name[_next_step_name]
                                     _task = {

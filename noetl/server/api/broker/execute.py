@@ -71,6 +71,49 @@ def execute_playbook_via_broker(
         else:
             merged_workload = base_workload
 
+        # Best-effort: persist workload row immediately so evaluator can read it
+        try:
+            from noetl.core.common import get_async_db_connection as _get_async_db_connection
+            from noetl.database import sqlcmd as _sqlcmd
+            import asyncio as _asyncio
+            import json as _json
+
+            async def _persist_workload_row(_exec_id, _path, _version, _workload):
+                try:
+                    payload = {
+                        'path': _path,
+                        'version': _version,
+                        'workload': _workload or {},
+                    }
+                    data = _json.dumps(payload)
+                    async with _get_async_db_connection() as _conn:
+                        async with _conn.cursor() as _cur:
+                            try:
+                                await _cur.execute(_sqlcmd.WORKLOAD_INSERT_POSTGRES, (_exec_id, data))
+                            except Exception:
+                                try:
+                                    await _cur.execute(_sqlcmd.WORKLOAD_INSERT_DUCKDB, (_exec_id, data))
+                                except Exception:
+                                    # Try update as last resort for duckdb
+                                    try:
+                                        await _cur.execute(_sqlcmd.WORKLOAD_UPDATE_DUCKDB, (data, _exec_id))
+                                    except Exception:
+                                        pass
+                            try:
+                                await _conn.commit()
+                            except Exception:
+                                pass
+                except Exception:
+                    logger.debug("EXECUTE: Failed to persist workload row (best-effort)", exc_info=True)
+
+            try:
+                _asyncio.run(_persist_workload_row(execution_id, playbook_path, playbook_version, merged_workload))
+            except RuntimeError:
+                loop = _asyncio.get_event_loop()
+                loop.create_task(_persist_workload_row(execution_id, playbook_path, playbook_version, merged_workload))
+        except Exception:
+            logger.debug("EXECUTE: Skipped workload persistence", exc_info=True)
+
         # Initialize broker and populate workflow data
         try:
             # Create a mock agent for the broker
@@ -87,7 +130,7 @@ def execute_playbook_via_broker(
                 default_tables_config = {}
 
                 # Check if playbook has workflow steps with table configurations
-                workflow_steps = pb.get('workflow', [])
+                workflow_steps = (pb.get('workflow') or pb.get('steps') or [])
                 if workflow_steps:
                     broker.workflow(workflow_steps, execution_id=execution_id, playbook_path=playbook_path)
                     logger.info(f"Populated workflow with {len(workflow_steps)} steps")
@@ -234,16 +277,17 @@ def execute_playbook_via_broker(
                 except Exception:
                     logger.debug("EXECUTE: Direct workflow persistence failed", exc_info=True)
 
-            # Only run direct persistence if HTTP reporting is disabled or server unreachable
-            if not getattr(broker, 'event_reporting_enabled', True):
-                _workflow_steps = pb.get('workflow', []) if isinstance(pb, dict) else []
-                if _workflow_steps:
-                    try:
-                        _asyncio.run(_persist_workflow(_workflow_steps, execution_id, playbook_path))
-                    except RuntimeError:
-                        # If already in loop
-                        loop = _asyncio.get_event_loop()
-                        loop.create_task(_persist_workflow(_workflow_steps, execution_id, playbook_path))
+            # Run direct persistence as a best-effort backup regardless of HTTP reporting.
+            # This keeps transition/workflow tables updated even if the API endpoint is unreachable
+            # or disabled. Duplicate inserts are tolerated by catching exceptions.
+            _workflow_steps = (pb.get('workflow') or pb.get('steps') or []) if isinstance(pb, dict) else []
+            if _workflow_steps:
+                try:
+                    _asyncio.run(_persist_workflow(_workflow_steps, execution_id, playbook_path))
+                except RuntimeError:
+                    # If already in loop
+                    loop = _asyncio.get_event_loop()
+                    loop.create_task(_persist_workflow(_workflow_steps, execution_id, playbook_path))
         except Exception:
             logger.debug("EXECUTE: Skipped direct workflow persistence", exc_info=True)
 
