@@ -180,11 +180,118 @@ workflow:
 
         logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Executing nested playbook - path={playbook_path}, version={playbook_version}")
 
-        # Execute the playbook
+        # Execute the playbook (support loop expansion when provided)
         try:
             # Dynamic import to avoid circular dependency
             from noetl.server.api.broker.execute import execute_playbook_via_broker
-            
+
+            loop_cfg = task_config.get('loop') if isinstance(task_config.get('loop'), dict) else None
+            if loop_cfg and ('in' in loop_cfg):
+                # Evaluate items expression
+                items_expr = loop_cfg.get('in')
+                try:
+                    rendered_items = render_template(jinja_env, items_expr, context) if isinstance(items_expr, str) else items_expr
+                except Exception:
+                    rendered_items = items_expr
+                # Coerce rendered_items to Python list when possible
+                items = []
+                if isinstance(rendered_items, list):
+                    items = rendered_items
+                elif isinstance(rendered_items, str):
+                    try:
+                        import json as _json
+                        items = _json.loads(rendered_items)
+                    except Exception:
+                        try:
+                            import ast as _ast
+                            items = _ast.literal_eval(rendered_items)
+                        except Exception:
+                            # Fallback: treat as single item string
+                            items = [rendered_items]
+                else:
+                    items = [rendered_items]
+
+                iterator_name = loop_cfg.get('iterator') or 'item'
+                distribution = bool(loop_cfg.get('distribution'))
+
+                results = []
+                child_ids = []
+                for idx, item in enumerate(items or []):
+                    # Per-iteration render context
+                    iter_ctx = dict(context)
+                    try:
+                        # ensure nested dicts are preserved (e.g., 'work')
+                        if 'work' in context and isinstance(context['work'], dict):
+                            iter_ctx['work'] = dict(context['work'])
+                            iter_ctx['work'][iterator_name] = item
+                        iter_ctx[iterator_name] = item
+                    except Exception:
+                        iter_ctx[iterator_name] = item
+
+                    # Re-render 'with' parameters against the iter context
+                    per_with_raw = task_config.get('with') or {}
+                    per_with: Dict[str, Any] = {}
+                    for k, v in per_with_raw.items():
+                        try:
+                            per_with[k] = render_template(jinja_env, v, iter_ctx) if isinstance(v, str) else v
+                        except Exception:
+                            per_with[k] = v
+
+                    # Build input payload for child playbook
+                    iter_nested_ctx = dict(context)
+                    try:
+                        iter_nested_ctx.update(per_with)
+                    except Exception:
+                        pass
+
+                    # Execute child playbook via broker (sequentially)
+                    child_result = execute_playbook_via_broker(
+                        playbook_content=rendered_content,
+                        playbook_path=playbook_path or f"nested/{task_name}",
+                        playbook_version=playbook_version,
+                        input_payload=iter_nested_ctx,
+                        sync_to_postgres=True,
+                        merge=True,
+                        parent_execution_id=parent_execution_id,
+                        parent_event_id=parent_event_id,
+                        parent_step=parent_step
+                    )
+                    results.append(child_result)
+                    if isinstance(child_result, dict) and child_result.get('execution_id'):
+                        child_ids.append(child_result.get('execution_id'))
+
+                end_time = datetime.datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Loop executed for {len(items)} iterations (distribution={distribution})")
+
+                # Log success event
+                if log_event_callback:
+                    event_id = str(uuid.uuid4())
+                    log_event_callback(
+                        'task_end', task_id, task_name, 'playbook',
+                        'success', duration, context,
+                        {
+                            'results': results,
+                            'child_execution_ids': child_ids,
+                            'distributed': distribution,
+                            'count': len(results)
+                        },
+                        {'with_params': task_with}, event_id
+                    )
+
+                success_result = {
+                    'id': task_id,
+                    'status': 'success',
+                    'data': {
+                        'results': results,
+                        'child_execution_ids': child_ids,
+                        'distributed': distribution,
+                        'count': len(results)
+                    }
+                }
+                return success_result
+
+            # No loop: single execution
             result = execute_playbook_via_broker(
                 playbook_content=rendered_content,
                 playbook_path=playbook_path or f"nested/{task_name}",
