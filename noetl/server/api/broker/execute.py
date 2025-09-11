@@ -119,6 +119,134 @@ def execute_playbook_via_broker(
         except Exception as e:
             logger.warning(f"Failed to initialize broker for execution {execution_id}: {e}")
 
+        # Best-effort: persist workflow/transition config directly if HTTP event reporting is disabled
+        try:
+            from noetl.core.common import get_async_db_connection as _get_async_db_connection
+            from noetl.database import sqlcmd as _sqlcmd
+            import asyncio as _asyncio
+            import json as _json
+
+            async def _persist_workflow(_steps, _exec_id, _pb_path):
+                try:
+                    async with _get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            # Transitions
+                            for st in _steps or []:
+                                try:
+                                    from_step = st.get("step") or st.get("name")
+                                    next_list = st.get("next") or []
+                                    for nx in next_list:
+                                        try:
+                                            if isinstance(nx, dict):
+                                                to_step = nx.get("step") or nx.get("name")
+                                                condition = nx.get("when") or nx.get("condition")
+                                                with_params = nx.get("with") or {}
+                                            else:
+                                                to_step = str(nx)
+                                                condition = None
+                                                with_params = {}
+                                            if from_step and to_step:
+                                                try:
+                                                    await cur.execute(
+                                                        _sqlcmd.TRANSITION_INSERT_POSTGRES,
+                                                        (
+                                                            _exec_id,
+                                                            from_step,
+                                                            to_step,
+                                                            condition,
+                                                            _json.dumps(with_params) if with_params is not None else None,
+                                                        ),
+                                                    )
+                                                except Exception:
+                                                    try:
+                                                        await cur.execute(
+                                                            _sqlcmd.TRANSITION_INSERT_DUCKDB,
+                                                            (
+                                                                _exec_id,
+                                                                from_step,
+                                                                to_step,
+                                                                condition,
+                                                                _json.dumps(with_params) if with_params is not None else None,
+                                                            ),
+                                                        )
+                                                    except Exception:
+                                                        logger.debug("EXECUTE: Failed to insert transition (direct)", exc_info=True)
+                                        except Exception:
+                                            logger.debug("EXECUTE: Error processing next transition (direct)", exc_info=True)
+                                except Exception:
+                                    logger.debug("EXECUTE: Error processing step transitions (direct)", exc_info=True)
+
+                            # Workflow rows
+                            for st in _steps or []:
+                                try:
+                                    step_name = st.get("step") or st.get("name") or ""
+                                    step_type = st.get("type") or st.get("kind") or st.get("task_type") or ""
+                                    desc = st.get("desc") or st.get("description") or ""
+                                    task_ref = st.get("task") or st.get("action") or st.get("name") or ""
+                                    raw = _json.dumps(st)
+                                    vals6 = (
+                                        _exec_id,
+                                        _pb_path or "",
+                                        step_name,
+                                        step_type,
+                                        desc,
+                                        raw,
+                                    )
+                                    try:
+                                        await cur.execute(_sqlcmd.WORKFLOW_INSERT_POSTGRES, vals6)
+                                    except Exception:
+                                        try:
+                                            await cur.execute(_sqlcmd.WORKFLOW_INSERT_DUCKDB, vals6)
+                                        except Exception:
+                                            logger.debug("EXECUTE: Failed to insert workflow row (direct)", exc_info=True)
+                                except Exception:
+                                    logger.debug("EXECUTE: Error inserting workflow row (direct)", exc_info=True)
+
+                            # Workbook rows (subset)
+                            for st in _steps or []:
+                                try:
+                                    st_type = (st.get("type") or "").lower()
+                                    if st_type != "workbook":
+                                        continue
+                                    step_name = st.get("step") or st.get("name") or ""
+                                    task_name = st.get("task") or st.get("name") or ""
+                                    raw = _json.dumps(st)
+                                    vals5 = (
+                                        _exec_id,
+                                        _pb_path or "",
+                                        step_name,
+                                        task_name,
+                                        raw,
+                                    )
+                                    try:
+                                        await cur.execute(_sqlcmd.WORKBOOK_INSERT_POSTGRES, vals5)
+                                    except Exception:
+                                        try:
+                                            await cur.execute(_sqlcmd.WORKBOOK_INSERT_DUCKDB, vals5)
+                                        except Exception:
+                                            logger.debug("EXECUTE: Failed to insert workbook row (direct)", exc_info=True)
+                                except Exception:
+                                    logger.debug("EXECUTE: Error inserting workbook row (direct)", exc_info=True)
+                            try:
+                                await conn.commit()
+                            except Exception:
+                                pass
+                except Exception:
+                    logger.debug("EXECUTE: Direct workflow persistence failed", exc_info=True)
+
+            # Only run direct persistence if HTTP reporting is disabled or server unreachable
+            if not getattr(broker, 'event_reporting_enabled', True):
+                _workflow_steps = pb.get('workflow', []) if isinstance(pb, dict) else []
+                if _workflow_steps:
+                    try:
+                        _asyncio.run(_persist_workflow(_workflow_steps, execution_id, playbook_path))
+                    except RuntimeError:
+                        # If already in loop
+                        loop = _asyncio.get_event_loop()
+                        loop.create_task(_persist_workflow(_workflow_steps, execution_id, playbook_path))
+        except Exception:
+            logger.debug("EXECUTE: Skipped direct workflow persistence", exc_info=True)
+
         # Emit execution_start directly via EventService to avoid HTTP loop/timeout
         try:
             ctx = {

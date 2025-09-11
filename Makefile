@@ -353,8 +353,16 @@ noetl-execute:
 	  printf '%s\n' "$$out" | jq -C .; \
 	else \
 	  printf '%s\n' "$$out"; \
-	fi; \
-	exit $$rc
+	fi;
+	@if [ "$${rc:-1}" -eq 0 ]; then \
+		 eid="$$(printf '%s\n' "$$out" | jq -r '.result.execution_id // .execution_id // .id // empty' 2>/dev/null)"; \
+	  if [ -n "$$eid" ] && [ "$$eid" != "null" ]; then \
+	    echo "Detected execution_id=$$eid; exporting workflow and transition tables to logs/"; \
+	    $(MAKE) export-transition ID=$$eid >/dev/null 2>&1 || true; \
+	    $(MAKE) export-workflow ID=$$eid >/dev/null 2>&1 || true; \
+		  fi; \
+	fi;
+	@exit $$rc
 
 noetl-execute-status:
 	@cli="$(VENV)/bin/noetl"; if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
