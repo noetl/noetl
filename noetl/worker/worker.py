@@ -1,723 +1,794 @@
-import asyncio
-import concurrent.futures
-import copy
-import json
-import logging
 import os
-import queue
-import signal
-import socket
-import tempfile
-import threading
+import json
 import time
-from contextlib import contextmanager
-from datetime import datetime
-from multiprocessing import Process, Queue as MPQueue
-from typing import Any, Dict, List, Optional
+import signal
+import datetime
+import uuid
+import asyncio
+import httpx
+import socket
+import contextlib
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from typing import Any, Dict, List, Optional, Tuple
 
-import jinja2
-import requests
+from jinja2 import Environment, StrictUndefined, BaseLoader
 
-from noetl.core.config import get_settings
 from noetl.core.logger import setup_logger
-from .plugin import execute_task
+from noetl.worker.plugin import execute_task, execute_task_resolved, report_event
 
 logger = setup_logger(__name__, include_location=True)
 
 
-def get_snowflake_id() -> int:
-    """Generate a snowflake ID without database dependency."""
-    import datetime as _dt
-    return int(_dt.datetime.now().timestamp() * 1000000)
-
-
-def _normalize_server_url(server_url: str) -> str:
-    """Normalize server URL to ensure it ends with /api"""
-    server_url = server_url.strip()
-    if not server_url:
-        raise ValueError("Server URL cannot be empty")
-
-    # Remove trailing slash if present
-    if server_url.endswith('/'):
-        server_url = server_url[:-1]
-
-    # Add /api if not already present
-    if not server_url.endswith('/api'):
-        server_url = server_url + '/api'
-
-    return server_url
+def _normalize_server_url(url: Optional[str], ensure_api: bool = True) -> str:
+    """Ensure server URL has http(s) scheme and optional '/api' suffix."""
+    try:
+        base = (url or "").strip()
+        if not base:
+            base = "http://localhost:8082"
+        if not (base.startswith("http://") or base.startswith("https://")):
+            base = "http://" + base
+        base = base.rstrip('/')
+        if ensure_api and not base.endswith('/api'):
+            base = base + '/api'
+        return base
+    except Exception:
+        return "http://localhost:8082/api" if ensure_api else "http://localhost:8082"
 
 
 def register_server_from_env() -> None:
-    """Register server runtime using API calls."""
-    server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-    if not server_url:
-        raise RuntimeError("NOETL_SERVER_URL environment variable is required but not set")
-
-    server_url = _normalize_server_url(server_url)
-
-    name = os.environ.get("NOETL_SERVER_NAME", "").strip()
-    if not name:
-        raise RuntimeError("NOETL_SERVER_NAME environment variable is required but not set")
-
-    labels_env = os.environ.get("NOETL_SERVER_LABELS")
-    if labels_env:
-        labels = [s.strip() for s in labels_env.split(',') if s.strip()]
-    else:
-        labels = []
-
-    hostname = os.environ.get("HOSTNAME") or socket.gethostname()
-
-    payload = {
-        "component_name": name,
-        "base_url": server_url,
-        "labels": labels,
-        "capabilities": {},
-        "capacity": None,
-        "runtime": {
-            "type": "server",
-            "pid": os.getpid(),
-            "hostname": hostname,
-        }
-    }
-
+    """Register this server instance with the server registry using environment variables.
+    Required envs to trigger:
+      - NOETL_SERVER_URL: server URL (will be auto-detected if not set)
+    Optional:
+      - NOETL_SERVER_NAME
+      - NOETL_HOST (default localhost)
+      - NOETL_PORT (default 8082)
+      - NOETL_SERVER_LABELS (CSV)
+    """
     try:
-        response = requests.post(
-            f"{server_url}/runtime/register",
-            json=payload,
-            timeout=30
-        )
+        server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
+        if not server_url:
+            host = os.environ.get("NOETL_HOST", "localhost").strip()
+            port = os.environ.get("NOETL_PORT", "8082").strip()
+            server_url = f"http://{host}:{port}"
+        server_url = _normalize_server_url(server_url, ensure_api=True)
 
-        if response.status_code == 200:
-            logger.info(f"Registered server runtime: {name} at {server_url}")
-            # Store server name for cleanup
-            try:
-                with open('/tmp/noetl_server_name', 'w') as f:
-                    f.write(name)
-            except Exception:
-                pass
-        else:
-            logger.error(f"Failed to register server: {response.status_code} - {response.text}")
-            raise RuntimeError(f"Failed to register server: {response.status_code}")
+        name = os.environ.get("NOETL_SERVER_NAME") or f"server-{socket.gethostname()}"
+        labels = os.environ.get("NOETL_SERVER_LABELS")
+        if labels:
+            labels = [s.strip() for s in labels.split(',') if s.strip()]
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request error while registering server: {e}")
-        raise RuntimeError(f"Failed to register server: {e}")
-
-
-def deregister_server_from_env() -> None:
-    """Deregister server runtime using API calls."""
-    name = os.environ.get("NOETL_SERVER_NAME", "").strip()
-    if not name:
-        # Try to read from temp file
-        try:
-            with open('/tmp/noetl_server_name', 'r') as f:
-                name = f.read().strip()
-        except Exception:
-            name = None
-
-    if not name:
-        logger.warning("Cannot deregister server: NOETL_SERVER_NAME not set and no temp file found")
-        return
-
-    server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-    if not server_url:
-        logger.warning("Cannot deregister server: NOETL_SERVER_URL not set")
-        return
-
-    server_url = _normalize_server_url(server_url)
-
-    try:
-        response = requests.post(
-            f"{server_url}/runtime/server/{name}/deregister",
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            logger.info(f"Deregistered server runtime: {name}")
-        else:
-            logger.error(f"Failed to deregister server: {response.status_code} - {response.text}")
-
-        # Clean up temp file
-        try:
-            os.unlink('/tmp/noetl_server_name')
-        except Exception:
-            pass
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request error while deregistering server: {e}")
-    except Exception as e:
-        logger.error(f"Failed to deregister server runtime {name}: {e}")
-
-
-def register_worker_pool_from_env() -> None:
-    """Register worker pool runtime using API calls."""
-    server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-    if not server_url:
-        raise RuntimeError("NOETL_SERVER_URL environment variable is required but not set")
-
-    server_url = _normalize_server_url(server_url)
-
-    name = os.environ.get("NOETL_WORKER_POOL_NAME", "").strip()
-    if not name:
-        raise RuntimeError("NOETL_WORKER_POOL_NAME environment variable is required but not set")
-
-    labels_env = os.environ.get("NOETL_WORKER_POOL_LABELS")
-    if labels_env:
-        labels = [s.strip() for s in labels_env.split(',') if s.strip()]
-    else:
-        labels = []
-
-    capacity = int(os.environ.get("NOETL_WORKER_POOL_CAPACITY", "1"))
-    hostname = os.environ.get("HOSTNAME") or socket.gethostname()
-
-    payload = {
-        "name": name,
-        "runtime": os.environ.get("NOETL_WORKER_POOL_RUNTIME", "cpu"),
-        "base_url": server_url,
-        "status": "ready",
-        "capacity": capacity,
-        "labels": labels,
-        "pid": os.getpid(),
-        "hostname": hostname,
-        "meta": {
-            "type": "worker_pool",
-            "capacity": capacity,
-        }
-    }
-
-    try:
-        response = requests.post(
-            f"{server_url}/worker/pool/register",
-            json=payload,
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            logger.info(f"Registered worker pool runtime: {name} with capacity {capacity}")
-            # Store worker pool name for cleanup
-            try:
-                with open('/tmp/noetl_worker_pool_name', 'w') as f:
-                    f.write(name)
-            except Exception:
-                pass
-        else:
-            logger.error(f"Failed to register worker pool: {response.status_code} - {response.text}")
-            raise RuntimeError(f"Failed to register worker pool: {response.status_code}")
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request error while registering worker pool: {e}")
-        raise RuntimeError(f"Failed to register worker pool: {e}")
-
-
-def deregister_worker_pool_from_env() -> None:
-    """Deregister worker pool runtime using API calls."""
-    name = os.environ.get("NOETL_WORKER_POOL_NAME", "").strip()
-    if not name:
-        # Try to read from temp file
-        try:
-            with open('/tmp/noetl_worker_pool_name', 'r') as f:
-                name = f.read().strip()
-        except Exception:
-            name = None
-
-    if not name:
-        logger.warning("Cannot deregister worker pool: NOETL_WORKER_POOL_NAME not set and no temp file found")
-        return
-
-    server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-    if not server_url:
-        logger.warning("Cannot deregister worker pool: NOETL_SERVER_URL not set")
-        return
-
-    server_url = _normalize_server_url(server_url)
-
-    try:
-        response = requests.post(
-            f"{server_url}/worker/pool/deregister",
-            json={"name": name},
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            logger.info(f"Deregistered worker pool runtime: {name}")
-        else:
-            logger.error(f"Failed to deregister worker pool: {response.status_code} - {response.text}")
-
-        # Clean up temp file
-        try:
-            os.unlink('/tmp/noetl_worker_pool_name')
-        except Exception:
-            pass
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request error while deregistering worker pool: {e}")
-    except Exception as e:
-        logger.error(f"Failed to deregister worker pool runtime {name}: {e}")
-
-
-def _on_worker_terminate(worker_id: str, pool_name: str) -> None:
-    """Handle worker termination by updating its status via API."""
-    try:
-        server_url = _get_server_url()
-        response = requests.post(
-            f"{server_url}/runtime/deregister",
-            json={"component_name": worker_id},
-            timeout=10
-        )
-
-        if response.status_code == 200:
-            logger.debug(f"Marked worker {worker_id} as offline in pool {pool_name}")
-        else:
-            logger.error(f"Failed to deregister worker {worker_id}: {response.status_code}")
-
-    except Exception as e:
-        logger.error(f"Failed to update worker {worker_id} status on termination: {e}")
-
-
-def _get_server_url() -> str:
-    """Get server URL from environment or settings."""
-    server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-    if not server_url:
-        try:
-            settings = get_settings()
-            server_url = getattr(settings, 'server_url', '').strip()
-        except Exception:
-            pass
-
-    if not server_url:
-        raise RuntimeError("Server URL not found in environment or settings")
-
-    return _normalize_server_url(server_url)
-
-
-class QueueWorker:
-    """A worker that processes jobs from a queue."""
-
-    def __init__(
-        self, 
-        server_url: Optional[str] = None,
-        worker_id: Optional[str] = None,
-        max_workers: int = 4,
-        max_processes: int = 2,
-        poll_interval: float = 1.0,
-        deregister_on_exit: bool = True
-    ):
-        self.server_url = server_url or _get_server_url()
-        self.worker_id = worker_id or f"worker-{get_snowflake_id()}"
-        self.max_workers = max_workers
-        self.max_processes = max_processes
-        self.poll_interval = poll_interval
-        self._deregister_on_exit = deregister_on_exit
-
-        # Initialize Jinja2 environment
-        self._jinja = jinja2.Environment(
-            loader=jinja2.BaseLoader(),
-            undefined=jinja2.StrictUndefined
-        )
-
-        # Thread and process pools
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=self.max_workers,
-            thread_name_prefix=f"worker-{self.worker_id}"
-        )
-        self._process_pool = concurrent.futures.ProcessPoolExecutor(
-            max_workers=self.max_processes
-        )
-
-        # Register this worker
-        self._register_pool()
-
-        # Setup signal handlers for graceful shutdown
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
-
-        logger.info(f"Initialized worker {self.worker_id} with {self.max_workers} threads, {self.max_processes} processes")
-
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
-        logger.info(f"Worker {self.worker_id} received signal {signum}, shutting down...")
-        if self._deregister_on_exit:
-            _on_worker_terminate(self.worker_id, os.environ.get("NOETL_WORKER_POOL_NAME", "default"))
-        os._exit(0)
-
-    def _register_pool(self):
-        """Register this worker via API."""
-        pool_name = os.environ.get("NOETL_WORKER_POOL_NAME", "default")
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
 
         payload = {
-            "component_name": self.worker_id,
-            "base_url": self.server_url,
-            "labels": [],
-            "capabilities": {},
-            "capacity": 1,
-            "runtime": {
-                "type": "worker",
-                "pid": os.getpid(),
-                "hostname": hostname,
-                "pool_name": pool_name,
-                "max_workers": self.max_workers,
-                "max_processes": self.max_processes,
-            }
+            "name": name,
+            "component_type": "server_api",
+            "runtime": "server",
+            "base_url": server_url,
+            "status": "ready",
+            "capacity": None,
+            "labels": labels,
+            "pid": os.getpid(),
+            "hostname": hostname,
         }
 
+        url = f"{server_url}/runtime/register"
         try:
-            response = requests.post(
-                f"{self.server_url}/runtime/register",
-                json=payload,
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                logger.debug(f"Registered worker {self.worker_id}")
-            else:
-                logger.error(f"Failed to register worker: {response.status_code} - {response.text}")
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error while registering worker {self.worker_id}: {e}")
-        except Exception as e:
-            logger.error(f"Failed to register worker {self.worker_id}: {e}")
-
-    def _lease_job(self) -> Optional[Dict[str, Any]]:
-        """Lease a job from the queue."""
-        try:
-            response = requests.post(
-                f"{self.server_url}/queue/lease",
-                json={
-                    "worker_id": self.worker_id,
-                    "lease_seconds": 300  # 5 minutes
-                },
-                timeout=10
-            )
-
-            if response.status_code == 200:
-                response_data = response.json()
-                if response_data.get('status') == 'ok' and 'job' in response_data:
-                    job_data = response_data['job']
-                    # Normalize field names: database returns 'id' but worker expects 'job_id'
-                    if 'id' in job_data and 'job_id' not in job_data:
-                        job_data['job_id'] = job_data['id']
-                    logger.debug(f"Leased job {job_data.get('job_id')} for worker {self.worker_id}")
-                    return job_data
-                elif response_data.get('status') == 'empty':
-                    # No jobs available
-                    return None
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    logger.info(f"Server registered: {name} -> {server_url}")
+                    try:
+                        with open('/tmp/noetl_server_name', 'w') as f:
+                            f.write(name)
+                    except Exception:
+                        pass
                 else:
-                    logger.warning(f"Unexpected lease response: {response_data}")
-                    return None
-            elif response.status_code == 204:
-                # No jobs available
+                    logger.warning(f"Server register failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Server register exception: {e}")
+    except Exception:
+        logger.exception("Unexpected error during server registration")
+
+
+def deregister_server_from_env() -> None:
+    """Deregister server using stored name via HTTP (no DB fallback)."""
+    try:
+        name: Optional[str] = None
+        if os.path.exists('/tmp/noetl_server_name'):
+            try:
+                with open('/tmp/noetl_server_name', 'r') as f:
+                    name = f.read().strip()
+            except Exception:
+                name = None
+        if not name:
+            name = os.environ.get('NOETL_SERVER_NAME')
+        if not name:
+            return
+
+        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
+        try:
+            resp = httpx.request(
+                "DELETE",
+                f"{server_url}/runtime/deregister",
+                json={"name": name, "component_type": "server_api"},
+                timeout=5.0,
+            )
+            logger.info(f"Server deregister response: {resp.status_code} - {resp.text}")
+        except Exception as e:
+            logger.error(f"Server deregister HTTP error: {e}")
+
+        try:
+            os.remove('/tmp/noetl_server_name')
+        except Exception:
+            pass
+        logger.info(f"Deregistered server: {name}")
+    except Exception:
+        pass
+
+
+def register_worker_pool_from_env() -> None:
+    """Register this worker pool with the server registry using environment variables.
+    Required envs to trigger:
+      - NOETL_WORKER_POOL_RUNTIME: cpu|gpu|qpu
+    Optional:
+      - NOETL_WORKER_POOL_NAME
+      - NOETL_SERVER_URL (default http://localhost:8082)
+      - NOETL_WORKER_CAPACITY
+      - NOETL_WORKER_LABELS (CSV)
+      - NOETL_WORKER_BASE_URL (defaults to dummy value for queue-based workers)
+    """
+    try:
+        runtime = os.environ.get("NOETL_WORKER_POOL_RUNTIME", "").strip().lower()
+        if not runtime:
+            return
+        base_url = os.environ.get("NOETL_WORKER_BASE_URL", "http://queue-worker").strip()
+        name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
+        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+        if not server_url.endswith('/api'):
+            server_url = server_url + '/api'
+        capacity = os.environ.get("NOETL_WORKER_CAPACITY")
+        labels = os.environ.get("NOETL_WORKER_LABELS")
+        if labels:
+            labels = [s.strip() for s in labels.split(',') if s.strip()]
+
+        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+
+        payload = {
+            "name": name,
+            "runtime": runtime,
+            "base_url": base_url,
+            "status": "ready",
+            "capacity": int(capacity) if capacity and str(capacity).isdigit() else None,
+            "labels": labels,
+            "pid": os.getpid(),
+            "hostname": hostname,
+        }
+        url = f"{server_url}/worker/pool/register"
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    logger.info(f"Worker pool registered: {name} ({runtime}) -> {base_url}")
+                    try:
+                        with open(f'/tmp/noetl_worker_pool_name_{name}', 'w') as f:
+                            f.write(name)
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Worker pool register exception: {e}")
+    except Exception:
+        logger.exception("Unexpected error during worker pool registration")
+
+
+def deregister_worker_pool_from_env() -> None:
+    """Attempt to deregister worker pool using stored name (HTTP only)."""
+    logger.info("Worker deregistration starting...")
+    try:
+        name: Optional[str] = None
+
+        name = os.environ.get('NOETL_WORKER_POOL_NAME')
+        if name:
+            logger.info(f"Using worker name from env: {name}")
+            worker_file = f'/tmp/noetl_worker_pool_name_{name}'
+            if os.path.exists(worker_file):
+                try:
+                    with open(worker_file, 'r') as f:
+                        file_name = f.read().strip()
+                    logger.info(f"Found worker name from file: {file_name}")
+                    name = file_name
+                except Exception:
+                    pass
+
+        if not name and os.path.exists('/tmp/noetl_worker_pool_name'):
+            try:
+                with open('/tmp/noetl_worker_pool_name', 'r') as f:
+                    name = f.read().strip()
+                logger.info(f"Found worker name from legacy file: {name}")
+            except Exception:
+                name = None
+
+        if not name:
+            logger.warning("No worker name found for deregistration")
+            return
+        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
+        logger.info(f"Attempting to deregister worker {name} via {server_url}")
+
+        try:
+            resp = httpx.request(
+                "DELETE",
+                f"{server_url}/worker/pool/deregister",
+                json={"name": name},
+                timeout=5.0,
+            )
+            logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
+        except Exception as e:
+            logger.error(f"Worker deregister HTTP error: {e}")
+
+        try:
+            worker_file = f'/tmp/noetl_worker_pool_name_{name}'
+            if os.path.exists(worker_file):
+                os.remove(worker_file)
+                logger.info("Removed worker-specific name file")
+            elif os.path.exists('/tmp/noetl_worker_pool_name'):
+                os.remove('/tmp/noetl_worker_pool_name')
+                logger.info("Removed legacy worker name file")
+        except Exception:
+            pass
+        logger.info(f"Deregistered worker pool: {name}")
+    except Exception as e:
+        logger.error(f"Worker deregister general error: {e}")
+
+
+def _on_worker_terminate(signum, frame):
+    logger.info(f"Worker pool process received signal {signum}")
+    try:
+        retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
+        backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
+        for attempt in range(1, retries + 1):
+            try:
+                logger.info(f"Worker deregister attempt {attempt}")
+                deregister_worker_pool_from_env()
+                logger.info(f"Worker: deregister succeeded (attempt {attempt})")
+                break
+            except Exception as e:
+                logger.error(f"Worker: deregister attempt {attempt} failed: {e}")
+            if attempt < retries:
+                time.sleep(backoff_base * (2 ** (attempt - 1)))
+    finally:
+        logger.info("Worker termination signal handler completed")
+        pass
+
+
+try:
+    signal.signal(signal.SIGTERM, _on_worker_terminate)
+    signal.signal(signal.SIGINT, _on_worker_terminate)
+except Exception:
+    pass
+
+
+def _get_server_url() -> str:
+    return _normalize_server_url(os.environ.get("NOETL_SERVER_URL", "http://localhost:8082"), ensure_api=True)
+
+
+# ------------------------------------------------------------------
+# Queue worker pool
+# ------------------------------------------------------------------
+
+
+class QueueWorker:
+    """Async worker that polls the server queue API for actions."""
+
+    def __init__(
+            self,
+            server_url: Optional[str] = None,
+            worker_id: Optional[str] = None,
+            thread_pool: Optional[ThreadPoolExecutor] = None,
+            process_pool: Optional[ProcessPoolExecutor] = None,
+            deregister_on_exit: bool = True,
+            register_on_init: bool = True,
+    ) -> None:
+        self.server_url = _normalize_server_url(
+            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
+            ensure_api=True,
+        )
+        self.worker_id = worker_id or os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
+        self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+        self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
+        self._process_pool = process_pool or ProcessPoolExecutor()
+        self._deregister_on_exit = deregister_on_exit
+        if register_on_init:
+            self._register_pool()
+
+    # ------------------------------------------------------------------
+    # Queue interaction helpers
+    # ------------------------------------------------------------------
+    def _register_pool(self) -> None:
+        """Best-effort registration of this worker pool."""
+        try:
+            register_worker_pool_from_env()
+        except Exception:  # pragma: no cover - best effort
+            logger.debug("Worker registration failed", exc_info=True)
+
+    async def _lease_job(self, lease_seconds: int = 60) -> Optional[Dict[str, Any]]:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    f"{self.server_url}/queue/lease",
+                    json={"worker_id": self.worker_id, "lease_seconds": lease_seconds},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("status") == "ok":
+                    return data.get("job")
                 return None
-            else:
-                logger.error(f"Failed to lease job: {response.status_code} - {response.text}")
-                return None
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error while leasing job: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error while leasing job: {e}")
+        except Exception:
+            logger.debug("Failed to lease job", exc_info=True)
             return None
 
-    def _complete_job(self, job_id: str, result: Any) -> bool:
-        """Mark a job as completed."""
+    async def _complete_job(self, job_id: int) -> None:
         try:
-            response = requests.post(
-                f"{self.server_url}/queue/{job_id}/complete",
-                json={
-                    "worker_id": self.worker_id,
-                    "result": result
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{self.server_url}/queue/{job_id}/complete")
+        except Exception:  # pragma: no cover - network best effort
+            logger.debug("Failed to complete job %s", job_id, exc_info=True)
+
+    async def _fail_job(self, job_id: int) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{self.server_url}/queue/{job_id}/fail", json={})
+        except Exception:  # pragma: no cover - network best effort
+            logger.debug("Failed to mark job %s failed", job_id, exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Job execution
+    # ------------------------------------------------------------------
+    def _execute_job_sync(self, job: Dict[str, Any]) -> None:
+        action_cfg_raw = job.get("action")
+        raw_context = job.get("context") or job.get("input_context") or {}
+        # Server-side rendering: call server to render input context and task config
+        # Worker must not render locally; prefer server-evaluated values
+        context = raw_context
+        rendered_task = None
+        try:
+            payload = {
+                "execution_id": job.get("execution_id"),
+                "template": {"work": raw_context, "task": action_cfg_raw},
+                "extra_context": {
+                    "env": dict(os.environ),
+                    "job": {
+                        "id": job.get("id"),
+                        # Provide uuid alias for templates expecting {{ job.uuid }}
+                        "uuid": str(job.get("id")) if job.get("id") is not None else None,
+                        "execution_id": job.get("execution_id"),
+                        "node_id": job.get("node_id"),
+                        "worker_id": self.worker_id,
+                    }
                 },
-                timeout=30
-            )
+                "strict": True
+            }
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(f"{self.server_url}/context/render", json=payload)
+                if resp.status_code == 200:
+                    rend = resp.json().get("rendered")
+                    # Expecting a dict { work: <ctx>, task: <resolved_task> }
+                    if isinstance(rend, dict):
+                        if "work" in rend:
+                            context = rend.get("work") or raw_context
+                        # Capture server-resolved task config when provided
+                        if "task" in rend:
+                            rendered_task = rend.get("task")
+                    elif isinstance(rend, dict):
+                        context = rend
+                else:
+                    logger.warning(f"WORKER: server render failed {resp.status_code}: {resp.text}")
+        except Exception:
+            logger.debug("WORKER: server-side render exception; using raw context", exc_info=True)
+            context = raw_context
+        execution_id = job.get("execution_id")
+        node_id = job.get("node_id") or f"job_{job.get('id')}"
 
-            if response.status_code == 200:
-                logger.debug(f"Completed job {job_id}")
-                return True
-            else:
-                logger.error(f"Failed to complete job {job_id}: {response.status_code} - {response.text}")
-                return False
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error while completing job {job_id}: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected error while completing job {job_id}: {e}")
-            return False
-
-    def _fail_job(self, job_id: str, error: str) -> bool:
-        """Mark a job as failed."""
-        try:
-            response = requests.post(
-                f"{self.server_url}/queue/{job_id}/fail",
-                json={
-                    "worker_id": self.worker_id,
-                    "error": error
-                },
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                logger.debug(f"Failed job {job_id}: {error}")
-                return True
-            else:
-                logger.error(f"Failed to mark job {job_id} as failed: {response.status_code} - {response.text}")
-                return False
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error while failing job {job_id}: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected error while failing job {job_id}: {e}")
-            return False
-
-    def _execute_job_sync(self, job_data: Dict[str, Any]) -> tuple[bool, Any]:
-        """Execute a job synchronously."""
-        job_id = job_data.get('job_id')
+        # If server returned a rendered task, use it; otherwise parse raw.
+        # Fallback: if rendered is not a dict, try parsing raw JSON.
+        action_cfg = None
+        original_task_cfg = action_cfg_raw if isinstance(action_cfg_raw, dict) else None
+        if rendered_task is not None and isinstance(rendered_task, dict):
+            action_cfg = rendered_task
+        else:
+            if isinstance(action_cfg_raw, str):
+                try:
+                    action_cfg = json.loads(action_cfg_raw)
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse action config for job {job.get('id')}: {action_cfg_raw}")
+                    return
+            elif isinstance(action_cfg_raw, dict):
+                action_cfg = action_cfg_raw
 
         try:
-            # Extract job parameters
-            playbook_content = job_data.get('playbook_content')
-            execution_id = job_data.get('execution_id')
-            params = job_data.get('params', {})
+            # Base64 decoding is now handled in individual task executors
+            # to ensure single method of code/command handling
 
-            if not playbook_content:
-                raise ValueError("No playbook content provided")
+            # Original task config merging logic (only when original_task_cfg exists)
+            if isinstance(action_cfg, dict) and original_task_cfg:
+                placeholder_codes = {"", "def main(**kwargs):\n    return {}"}
+                if original_task_cfg.get('type') and action_cfg.get('type') in (None,
+                                                                                'python') and original_task_cfg.get(
+                        'type') not in (None, 'python'):
+                    action_cfg['type'] = original_task_cfg.get('type')
+                if 'code' in original_task_cfg:
+                    rendered_code = action_cfg.get('code')
+                    if (rendered_code in placeholder_codes or
+                            'code' not in action_cfg or
+                            (isinstance(rendered_code, str) and '{{' in rendered_code and '}}' in rendered_code)):
+                        action_cfg['code'] = original_task_cfg['code']
+                for field in ('command', 'commands'):
+                    if field in original_task_cfg:
+                        rendered_value = action_cfg.get(field)
+                        if (field not in action_cfg or
+                                not rendered_value or
+                                (isinstance(rendered_value,
+                                            str) and '{{' in rendered_value and '}}' in rendered_value)):
+                            action_cfg[field] = original_task_cfg[field]
+                if isinstance(original_task_cfg.get('with'), dict):
+                    merged_with = {}
+                    merged_with.update(original_task_cfg.get('with') or {})
+                    if isinstance(action_cfg.get('with'), dict):
+                        merged_with.update(action_cfg.get('with') or {})
+                    action_cfg['with'] = merged_with
+        except Exception:
+            logger.debug("WORKER: Failed to merge original task config after server render", exc_info=True)
 
-            if not execution_id:
-                raise ValueError("No execution ID provided")
+        if isinstance(action_cfg, dict):
+            # Handle broker/maintenance jobs that are not standard task executions
+            try:
+                act_type = str(action_cfg.get('type') or '').strip().lower()
+            except Exception:
+                act_type = ''
+            if act_type == 'result_aggregation':
+                # Process loop result aggregation job via worker-side coroutine
+                try:
+                    from noetl.job.result import process_loop_aggregation_job
+                    import asyncio as _a
+                    try:
+                        _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
+                    except Exception:
+                        # Compatible run for various environments
+                        try:
+                            _a.run(process_loop_aggregation_job(job))
+                        except Exception:
+                            loop = _a.new_event_loop()
+                            try:
+                                _a.set_event_loop(loop)
+                                loop.run_until_complete(process_loop_aggregation_job(job))
+                            finally:
+                                try:
+                                    loop.close()
+                                except Exception:
+                                    pass
+                    # Do not emit separate start/complete events here; the aggregation job emits its own
+                    return
+                except Exception:
+                    logger.exception("WORKER: Failed processing result_aggregation job")
+                    raise
 
-            logger.info(f"Executing job {job_id} with execution_id {execution_id}")
+            task_name = action_cfg.get("name") or node_id
 
-            # Execute the job using the job execution framework
-            result = execute_task(
-                playbook_content=playbook_content,
-                execution_id=execution_id,
-                params=params,
-                worker_id=self.worker_id
-            )
+            logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
+            try:
+                if not isinstance(action_cfg.get('with'), dict):
+                    action_cfg['with'] = {}
+            except Exception:
+                pass
 
-            logger.info(f"Job {job_id} completed successfully")
-            return True, result
+            try:
+                logger.debug(f"WORKER: evaluated input_context (server): {json.dumps(context, default=str)[:500]}")
+            except Exception:
+                logger.debug("WORKER: evaluated input_context not JSON-serializable; using str()")
+                logger.debug(f"WORKER: evaluated input_context (str): {str(context)[:500]}")
+            loop_meta = None
+            try:
+                if isinstance(context, dict) and isinstance(context.get('_loop'), dict):
+                    lm = context.get('_loop')
+                    loop_meta = {
+                        'loop_id': lm.get('loop_id'),
+                        'loop_name': lm.get('loop_name'),
+                        'iterator': lm.get('iterator'),
+                        'current_index': lm.get('current_index'),
+                        'current_item': lm.get('current_item'),
+                        'items_count': lm.get('items_count'),
+                    }
+            except Exception:
+                loop_meta = None
 
-        except Exception as e:
-            error_msg = f"Job {job_id} failed: {str(e)}"
-            logger.error(error_msg)
-            logger.exception("Job execution error details:")
-            return False, error_msg
+            # Extract parent_event_id from context metadata when provided (e.g., loop iteration parent)
+            parent_event_id = None
+            try:
+                if isinstance(context, dict):
+                    meta = context.get('_meta') or {}
+                    if isinstance(meta, dict):
+                        peid = meta.get('parent_event_id')
+                        if peid:
+                            parent_event_id = peid
+            except Exception:
+                parent_event_id = None
 
-    async def _execute_job(self, job_data: Dict[str, Any]) -> None:
-        """Execute a job asynchronously."""
-        job_id = job_data.get('job_id')
+            start_event = {
+                "execution_id": execution_id,
+                "event_type": "action_started",
+                "status": "RUNNING",
+                "node_id": node_id,
+                "node_name": task_name,
+                "node_type": "task",
+                "context": {"work": context, "task": action_cfg},
+                "trace_component": {"worker_raw_context": raw_context},
+                "timestamp": datetime.datetime.now().isoformat(),
+            }
+            if loop_meta:
+                start_event.update(loop_meta)
+            if parent_event_id:
+                start_event["parent_event_id"] = parent_event_id
+            report_event(start_event, self.server_url)
 
+            try:
+                task_with = action_cfg.get('with', {}) if isinstance(action_cfg, dict) else {}
+                if not isinstance(task_with, dict):
+                    task_with = {}
+                try:
+                    exec_ctx = dict(context) if isinstance(context, dict) else {}
+                except Exception:
+                    exec_ctx = {}
+                try:
+                    if 'execution_id' not in exec_ctx:
+                        exec_ctx['execution_id'] = execution_id
+                except Exception:
+                    pass
+                try:
+                    if 'env' not in exec_ctx:
+                        exec_ctx['env'] = dict(os.environ)
+                except Exception:
+                    pass
+                try:
+                    if 'job' not in exec_ctx:
+                        exec_ctx['job'] = {
+                            'id': job.get('id'),
+                            'uuid': str(job.get('id')) if job.get('id') is not None else None,
+                            'execution_id': job.get('execution_id'),
+                            'node_id': node_id,
+                            'worker_id': self.worker_id,
+                        }
+                except Exception:
+                    pass
+                result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
+
+                res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
+                emitted_error = False
+                if isinstance(res_status, str) and res_status.lower() == 'error':
+                    err_msg = (result or {}).get('error') if isinstance(result, dict) else 'Unknown error'
+                    tb_text = ''
+                    if isinstance(result, dict):
+                        tb_text = result.get('traceback') or ''
+                    error_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_error",
+                        "status": "ERROR",
+                        "node_id": node_id,
+                        "node_name": task_name,
+                        "node_type": "task",
+                        "error": err_msg,
+                        "traceback": tb_text,
+                        "result": result,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    if loop_meta:
+                        error_event.update(loop_meta)
+                    if parent_event_id:
+                        error_event["parent_event_id"] = parent_event_id
+                    report_event(error_event, self.server_url)
+                    emitted_error = True
+                    raise RuntimeError(err_msg or "Task returned error status")
+                else:
+                    complete_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_completed",
+                        "status": "COMPLETED",
+                        "node_id": node_id,
+                        "node_name": task_name,
+                        "node_type": "task",
+                        "result": result,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    if loop_meta:
+                        complete_event.update(loop_meta)
+                    if parent_event_id:
+                        complete_event["parent_event_id"] = parent_event_id
+                    report_event(complete_event, self.server_url)
+
+            except Exception as e:
+                try:
+                    import traceback as _tb
+                    tb_text = _tb.format_exc()
+                except Exception:
+                    tb_text = str(e)
+                if not locals().get('emitted_error'):
+                    error_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_error",
+                        "status": "ERROR",
+                        "node_id": node_id,
+                        "node_name": task_name,
+                        "node_type": "task",
+                        "error": f"{type(e).__name__}: {str(e)}",
+                        "traceback": tb_text,
+                        "result": {"error": str(e), "traceback": tb_text},
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    }
+                    if loop_meta:
+                        error_event.update(loop_meta)
+                    if parent_event_id:
+                        error_event["parent_event_id"] = parent_event_id
+                    report_event(error_event, self.server_url)
+                raise  # Re-raise to let the worker handle job failure
+        else:
+            logger.warning("Job %s has no actionable configuration", str(job.get("id")))
+
+    async def _execute_job(self, job: Dict[str, Any]) -> None:
+        loop = asyncio.get_running_loop()
+        use_process = bool(job.get("run_mode") == "process")
+        executor = self._process_pool if use_process else self._thread_pool
         try:
-            # Run the job in a thread pool to avoid blocking
-            success, result = await asyncio.get_event_loop().run_in_executor(
-                self._thread_pool,
-                self._execute_job_sync,
-                job_data
-            )
+            await loop.run_in_executor(executor, self._execute_job_sync, job)
+            await self._complete_job(job["id"])
+        except Exception as exc:
+            logger.exception("Error executing job %s: %s", job.get("id"), exc)
+            await self._fail_job(job["id"])
 
-            # Report result back to server
-            if success:
-                self._complete_job(job_id, result)
-            else:
-                self._fail_job(job_id, str(result))
+    # ------------------------------------------------------------------
+    async def run_forever(
+            self, interval: float = 1.0, stop_event: Optional[asyncio.Event] = None
+    ) -> None:
+        """Continuously poll for jobs and execute them asynchronously.
 
-        except Exception as e:
-            error_msg = f"Async job execution failed: {str(e)}"
-            logger.error(error_msg)
-            self._fail_job(job_id, error_msg)
-
-    async def run_forever(self):
-        """Run the worker loop forever."""
-        logger.info(f"Worker {self.worker_id} starting main loop")
-
+        Parameters
+        ----------
+        interval:
+            Sleep duration between lease attempts when the queue is empty.
+        stop_event:
+            Optional :class:`asyncio.Event` that can be set by the caller to
+            request the loop to exit.  This makes the worker usable inside
+            pools where individual workers need to be stopped or replaced
+            dynamically.
+        """
         try:
             while True:
-                try:
-                    # Try to lease a job
-                    job_data = self._lease_job()
-
-                    if job_data:
-                        # Execute the job asynchronously
-                        asyncio.create_task(self._execute_job(job_data))
-                    else:
-                        # No jobs available, wait before polling again
-                        await asyncio.sleep(self.poll_interval)
-
-                except Exception as e:
-                    logger.error(f"Error in worker main loop: {e}")
-                    await asyncio.sleep(self.poll_interval)
-
-        except KeyboardInterrupt:
-            logger.info(f"Worker {self.worker_id} interrupted, shutting down...")
-        except Exception as e:
-            logger.error(f"Worker {self.worker_id} encountered fatal error: {e}")
+                if stop_event and stop_event.is_set():
+                    break
+                job = await self._lease_job()
+                if job:
+                    await self._execute_job(job)
+                else:
+                    await asyncio.sleep(interval)
         finally:
             if self._deregister_on_exit:
-                _on_worker_terminate(self.worker_id, os.environ.get("NOETL_WORKER_POOL_NAME", "default"))
-
-            # Cleanup resources
-            self._thread_pool.shutdown(wait=True)
-            self._process_pool.shutdown(wait=True)
+                try:
+                    await asyncio.to_thread(deregister_worker_pool_from_env)
+                except Exception:
+                    pass
 
 
 class ScalableQueueWorkerPool:
-    """A scalable pool of queue workers that can dynamically adjust the number of workers based on queue size."""
+    """Pool that scales worker tasks based on queue depth."""
 
     def __init__(
-        self,
-        server_url: Optional[str] = None,
-        max_workers: int = 4,
-        max_processes: int = 2,
-        check_interval: float = 10.0,
-        worker_poll_interval: float = 1.0,
-    ):
-        self.server_url = server_url or _get_server_url()
-        self.max_workers = max_workers
-        self.max_processes = max_processes
+            self,
+            server_url: Optional[str] = None,
+            max_workers: Optional[int] = None,
+            check_interval: float = 5.0,
+            worker_poll_interval: float = 1.0,
+            max_processes: Optional[int] = None,
+    ) -> None:
+        self.server_url = _normalize_server_url(
+            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
+            ensure_api=True,
+        )
+        self.max_workers = max_workers or int(os.getenv("NOETL_MAX_WORKERS", "8"))
         self.check_interval = check_interval
         self.worker_poll_interval = worker_poll_interval
-
-        # Thread and process pools for management
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=4,
-            thread_name_prefix="pool-manager"
-        )
-        self._process_pool = concurrent.futures.ProcessPoolExecutor(
-            max_workers=self.max_processes
-        )
-
-        # Worker management
-        self._tasks: List[asyncio.Task] = []
-        self._stop = False
+        self.max_processes = max_processes or self.max_workers
+        self._thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
+        self._process_pool = ProcessPoolExecutor(max_workers=self.max_processes)
+        self._tasks: List[Tuple[asyncio.Task, asyncio.Event]] = []
+        self._stop = asyncio.Event()
         self._stopped = False
 
-        logger.info(f"Initialized scalable worker pool with max {self.max_workers} workers")
-
+    # --------------------------------------------------------------
     async def _queue_size(self) -> int:
-        """Get the current queue size from the server."""
         try:
-            response = requests.get(f"{self.server_url}/queue/size", timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get('count', data.get('size', 0))
-            else:
-                logger.error(f"Failed to get queue size: {response.status_code}")
-                return 0
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error getting queue size: {e}")
-            return 0
-        except Exception as e:
-            logger.error(f"Unexpected error getting queue size: {e}")
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self.server_url}/queue/size")
+                resp.raise_for_status()
+                data = resp.json()
+                return int(data.get("queued") or data.get("count") or 0)
+        except Exception:  # pragma: no cover - network best effort
+            logger.debug("Failed fetching queue size", exc_info=True)
             return 0
 
-    async def _spawn_worker(self) -> Optional[asyncio.Task]:
-        """Spawn a new worker task."""
+    def _spawn_worker(self) -> None:
+        stop_evt = asyncio.Event()
+        worker = QueueWorker(
+            self.server_url,
+            thread_pool=self._thread_pool,
+            process_pool=self._process_pool,
+            deregister_on_exit=False,
+            register_on_init=False,
+        )
+        task = asyncio.create_task(
+            worker.run_forever(self.worker_poll_interval, stop_evt)
+        )
+        self._tasks.append((task, stop_evt))
+
+    async def _scale_workers(self) -> None:
+        desired = min(self.max_workers, max(1, await self._queue_size()))
+        current = len(self._tasks)
+        if desired > current:
+            for _ in range(desired - current):
+                self._spawn_worker()
+        elif desired < current:
+            for _ in range(current - desired):
+                task, evt = self._tasks.pop()
+                evt.set()
+                await task
+
+    # --------------------------------------------------------------
+    async def run_forever(self) -> None:
+        """Run the auto-scaling loop until ``stop`` is called."""
+        # Ensure single registration for the pool
         try:
-            worker = QueueWorker(
-                server_url=self.server_url,
-                max_workers=1,  # Each spawned worker handles one job at a time
-                max_processes=1,
-                poll_interval=self.worker_poll_interval,
-                deregister_on_exit=False  # Pool manages registration
-            )
+            register_worker_pool_from_env()
+        except Exception:
+            logger.debug("Pool initial registration failed", exc_info=True)
 
-            task = asyncio.create_task(worker.run_forever())
-            logger.debug(f"Spawned new worker: {worker.worker_id}")
-            return task
+        # Heartbeat loop task
+        heartbeat_interval = float(os.environ.get("NOETL_WORKER_HEARTBEAT_INTERVAL", "15"))
 
-        except Exception as e:
-            logger.error(f"Failed to spawn worker: {e}")
-            return None
+        async def _heartbeat_loop():
+            name = os.environ.get('NOETL_WORKER_POOL_NAME') or 'worker-cpu'
+            payload = {"name": name}
+            url = f"{self.server_url}/worker/pool/heartbeat"
+            while not self._stop.is_set():
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.post(url, json=payload)
+                        if resp.status_code != 200:
+                            logger.debug(f"Worker heartbeat non-200 {resp.status_code}: {resp.text}")
+                except Exception:
+                    logger.debug("Worker heartbeat failed", exc_info=True)
+                await asyncio.sleep(heartbeat_interval)
 
-    async def _scale_workers(self):
-        """Scale workers based on queue size."""
-        queue_size = await self._queue_size()
-        current_workers = len([t for t in self._tasks if not t.done()])
-
-        if queue_size is None:
-            logger.warning("Queue size is None, defaulting to 0")
-            queue_size = 0
-        if self.max_workers is None:
-            logger.warning("max_workers is None, defaulting to 4")
-            self.max_workers = 4
-
-        # Simple scaling logic: one worker per job, up to max_workers
-        target_workers = min(queue_size, self.max_workers)
-
-        if target_workers > current_workers:
-            # Scale up
-            workers_to_add = target_workers - current_workers
-            logger.info(f"Scaling up: adding {workers_to_add} workers (queue: {queue_size}, current: {current_workers})")
-
-            for _ in range(workers_to_add):
-                task = await self._spawn_worker()
-                if task:
-                    self._tasks.append(task)
-
-        elif target_workers < current_workers and queue_size == 0:
-            # Scale down only if queue is empty
-            workers_to_remove = current_workers - target_workers
-            logger.info(f"Scaling down: removing {workers_to_remove} workers (queue: {queue_size}, current: {current_workers})")
-
-            # Cancel excess workers
-            for _ in range(workers_to_remove):
-                for task in self._tasks:
-                    if not task.done():
-                        task.cancel()
-                        break
-
-        # Clean up completed tasks
-        self._tasks = [t for t in self._tasks if not t.done()]
-
-    async def run_forever(self):
-        """Run the scalable worker pool forever."""
-        logger.info("Starting scalable worker pool")
-
-        # Register the pool
-        register_worker_pool_from_env()
-
+        hb_task = asyncio.create_task(_heartbeat_loop())
         try:
-            while not self._stop:
+            while not self._stop.is_set():
                 await self._scale_workers()
                 await asyncio.sleep(self.check_interval)
-
-        except KeyboardInterrupt:
-            logger.info("Worker pool interrupted, shutting down...")
-        except Exception as e:
-            logger.error(f"Worker pool encountered fatal error: {e}")
         finally:
             await self.stop()
+            try:
+                hb_task.cancel()
+                with contextlib.suppress(Exception):
+                    await hb_task
+            except Exception:
+                pass
 
-    async def stop(self):
-        """Stop the worker pool and all workers."""
+    async def stop(self) -> None:
+        """Request the scaling loop and all workers to stop."""
         if self._stopped:
             return
-
-        logger.info("Stopping worker pool...")
-        self._stop = True
-
-        # Cancel all worker tasks
-        for task in self._tasks:
-            if not task.done():
-                task.cancel()
-
-        # Wait for tasks to complete
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-
-        # Cleanup resources
-        self._thread_pool.shutdown(wait=True)
-        self._process_pool.shutdown(wait=True)
-
-        # Deregister the pool
-        try:
-            deregister_worker_pool_from_env()
-        except Exception as e:
-            logger.error(f"Failed to deregister worker pool: {e}")
-
+        self._stop.set()
+        for task, evt in self._tasks:
+            evt.set()
+        await asyncio.gather(*(t for t, _ in self._tasks), return_exceptions=True)
+        self._tasks.clear()
+        self._thread_pool.shutdown(wait=False)
+        self._process_pool.shutdown(wait=False)
         self._stopped = True
-        logger.info("Worker pool stopped")
