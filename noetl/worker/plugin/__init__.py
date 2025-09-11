@@ -18,6 +18,8 @@ from .python import execute_python_task
 from .duckdb import execute_duckdb_task, get_duckdb_connection
 from .postgres import execute_postgres_task
 from .secrets import execute_secrets_task
+from .playbook import execute_playbook_task
+from .workbook import execute_workbook_task
 from .action import report_event, sql_split
 
 
@@ -61,8 +63,35 @@ def execute_task(
         # For secrets, we need to get the secret_manager from context or somewhere
         secret_manager = context.get('secret_manager')
         return execute_secrets_task(task_config, context, secret_manager, task_with or {}, log_event_callback)
+    elif task_type == 'playbook':
+        return execute_playbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+    elif task_type == 'workbook':
+        # Workbook tasks need async execution for catalog access
+        import asyncio
+        if asyncio.iscoroutinefunction(execute_workbook_task):
+            # In worker threads, there may be no running event loop; prefer asyncio.run
+            try:
+                return asyncio.run(
+                    execute_workbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+                )
+            except RuntimeError:
+                # Fallback: create and manage a new event loop explicitly
+                loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(loop)
+                    return loop.run_until_complete(
+                        execute_workbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+                    )
+                finally:
+                    try:
+                        asyncio.set_event_loop(None)
+                    except Exception:
+                        pass
+                    loop.close()
+        else:
+            return execute_workbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
     else:
-        raise ValueError(f"Unknown task type '{raw_type}'. Available types: http, python, duckdb, postgres, secrets")
+        raise ValueError(f"Unknown task type '{raw_type}'. Available types: http, python, duckdb, postgres, secrets, playbook, workbook")
 
 
 def execute_task_resolved(
@@ -88,5 +117,9 @@ __all__ = [
     'execute_duckdb_task',
     'execute_postgres_task',
     'execute_secrets_task',
+    'execute_playbook_task',
+    'execute_workbook_task',
+    'get_duckdb_connection',
     'report_event',
+    'sql_split'
 ]

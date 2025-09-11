@@ -14,6 +14,107 @@ from noetl.server.api.event.event_log import EventLog
 logger = setup_logger(__name__, include_location=True)
 
 
+async def _populate_workflow_tables(cursor, execution_id: str, playbook_path: str, playbook: Dict[str, Any]) -> None:
+    """
+    Populate workflow, transition, and workbook tables for the given execution.
+    
+    Args:
+        cursor: Database cursor
+        execution_id: Execution ID 
+        playbook_path: Path to the playbook
+        playbook: Parsed playbook content
+    """
+    try:
+        # Get workflow steps
+        workflow_steps = playbook.get('workflow', []) or playbook.get('steps', [])
+        if not workflow_steps:
+            return
+            
+        # Insert workflow steps
+        for step in workflow_steps:
+            step_name = step.get('step') or step.get('name')
+            if not step_name:
+                continue
+                
+            step_id = step.get('id') or step_name
+            description = step.get('description')
+            await cursor.execute(
+                """
+                INSERT INTO noetl.workflow (execution_id, step_id, step_name, step_type, description, raw_config)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (execution_id, step_id) DO NOTHING
+                """,
+                (
+                    execution_id,
+                    step_id,
+                    step_name,
+                    step.get('type', 'unknown'),
+                    description,
+                    json.dumps(step)
+                )
+            )
+            
+            # Insert transitions for this step
+            next_steps = step.get('next', [])
+            if isinstance(next_steps, list):
+                for next_item in next_steps:
+                    if isinstance(next_item, dict):
+                        next_step_name = next_item.get('step')
+                        condition = next_item.get('when')
+                    elif isinstance(next_item, str):
+                        next_step_name = next_item
+                        condition = None
+                    else:
+                        continue
+                        
+                    if next_step_name:
+                        with_params = None
+                        try:
+                            # Persist 'with' parameters on the transition if provided
+                            if isinstance(next_item, dict) and next_item.get('with') is not None:
+                                with_params = json.dumps(next_item.get('with'))
+                        except Exception:
+                            with_params = None
+                        # Ensure condition is non-null because it's part of the PK in schema
+                        _cond = condition if (condition is not None and condition != 'null') else ''
+                        await cursor.execute(
+                            """
+                            INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (execution_id, from_step, to_step, condition) DO NOTHING
+                            """,
+                            (execution_id, step_name, next_step_name, _cond, with_params)
+                        )
+        
+        # Insert workbook actions
+        workbook_actions = playbook.get('workbook', [])
+        for action in workbook_actions:
+            action_name = action.get('name')
+            if not action_name:
+                continue
+                
+            task_id = action.get('id') or action_name
+            await cursor.execute(
+                """
+                INSERT INTO noetl.workbook (execution_id, task_id, task_name, task_type, raw_config)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (execution_id, task_id) DO NOTHING
+                """,
+                (
+                    execution_id,
+                    task_id,
+                    action_name,
+                    action.get('type', 'unknown'),
+                    json.dumps(action)
+                )
+            )
+            
+    except Exception as e:
+        logger.error(f"Error populating workflow tables for {execution_id}: {e}")
+        # Re-raise to allow outer logic to rollback aborted transaction before continuing
+        raise
+
+
 def _evaluate_broker_for_execution(execution_id: str):
     """Placeholder stub; real implementation assigned later in the file."""
     return None
@@ -745,14 +846,19 @@ async def evaluate_broker_for_execution(
         # INITIAL DISPATCH LOGIC (minimal): enqueue first actionable step if nothing queued/completed yet
         # --------------------
         try:
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Starting initial dispatch for {execution_id}")
             import json as _json
             import yaml as _yaml
             from noetl.core.common import snowflake_id_to_int as _sf_to_int
             from noetl.server.api.broker import encode_task_for_queue as _encode_task
+            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Imports successful for {execution_id}")
 
             async with get_async_db_connection() as _conn:
+                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Database connection established for {execution_id}")
                 async with _conn.cursor() as _cur:
+                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Cursor created for {execution_id}")
                     # If there is already a queued/leased job for this execution, skip initial dispatch
+                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Checking for pending queue items for {execution_id}")
                     await _cur.execute(
                         """
                         SELECT COUNT(*) FROM noetl.queue
@@ -762,8 +868,10 @@ async def evaluate_broker_for_execution(
                     )
                     _qrow = await _cur.fetchone()
                     has_pending = bool(_qrow and int(_qrow[0]) > 0)
+                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: has_pending={has_pending} for {execution_id}")
 
                     # If any action already completed for this execution (not just execution_start), skip initial dispatch
+                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Checking for progress events for {execution_id}")
                     await _cur.execute(
                         """
                         SELECT COUNT(*) FROM noetl.event_log
@@ -773,22 +881,33 @@ async def evaluate_broker_for_execution(
                     )
                     _erow = await _cur.fetchone()
                     has_progress = bool(_erow and int(_erow[0]) > 0)
+                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: has_progress={has_progress} for {execution_id}")
+
+                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Condition check complete - proceed with dispatch: {not has_pending and not has_progress} for {execution_id}")
 
                     if not has_pending and not has_progress:
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Entering dispatch block for {execution_id}")
                         # Load workload context persisted at execution_start
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Loading workload context for {execution_id}")
                         await _cur.execute("SELECT data FROM noetl.workload WHERE execution_id = %s", (execution_id,))
                         _wrow = await _cur.fetchone()
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Workload query result: {_wrow} for {execution_id}")
                         _workload_ctx = {}
                         if _wrow and _wrow[0]:
                             try:
                                 _workload_ctx = _json.loads(_wrow[0]) if isinstance(_wrow[0], str) else (_wrow[0] or {})
                             except Exception:
                                 _workload_ctx = {}
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Parsed workload context for {execution_id}: {_workload_ctx}")
                         _pb_path = (_workload_ctx or {}).get('path') or (_workload_ctx or {}).get('resource_path')
                         _pb_ver = (_workload_ctx or {}).get('version')
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Extracted path={_pb_path}, version={_pb_ver} for {execution_id}")
                         # Fetch playbook from catalog
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Getting catalog service for {execution_id}")
                         catalog = get_catalog_service()
+                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Catalog service obtained for {execution_id}")
                         if not _pb_path:
+                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: No path found, attempting fallback for {execution_id}")
                             # Best-effort: derive from last execution_start event
                             try:
                                 await _cur.execute(
@@ -807,18 +926,42 @@ async def evaluate_broker_for_execution(
                             except Exception:
                                 pass
                         if _pb_path:
+                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Have path, proceeding with catalog fetch for {execution_id}: {_pb_path}")
                             if not _pb_ver:
                                 try:
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Getting latest version for {_pb_path}")
                                     _pb_ver = await catalog.get_latest_version(_pb_path)
-                                except Exception:
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Got latest version: {_pb_ver}")
+                                except Exception as e:
+                                    logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Failed to get latest version: {e}")
                                     _pb_ver = '0.1.0'
+                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Fetching entry from catalog: {_pb_path} v{_pb_ver}")
                             entry = await catalog.fetch_entry(_pb_path, _pb_ver)
+                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Catalog entry result: {entry is not None} for {execution_id}")
                             if entry and entry.get('content'):
+                                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Entry has content, parsing YAML for {execution_id}")
                                 try:
                                     _pb = _yaml.safe_load(entry['content']) or {}
                                 except Exception:
                                     _pb = {}
+                                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Parsed playbook for {execution_id}: {len(_pb)} keys")
                                 _steps = (_pb.get('workflow') or _pb.get('steps') or [])
+                                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Found {len(_steps)} steps for {execution_id}")
+                                
+                                # Populate workflow, transition, and workbook tables for child execution
+                                try:
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Populating workflow tables for {execution_id}")
+                                    await _populate_workflow_tables(_cur, execution_id, _pb_path, _pb)
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Workflow tables populated for {execution_id}")
+                                except Exception as e:
+                                    # If population fails, the transaction may be left in aborted state; rollback before continuing
+                                    try:
+                                        logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: Failed to populate workflow tables for {execution_id}: {e}")
+                                        await _conn.rollback()
+                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Transaction rolled back after workflow population error for {execution_id}")
+                                    except Exception:
+                                        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Rollback after workflow population error failed", exc_info=True)
+                                
                                 # Build by-name index
                                 _by_name = {}
                                 for _s in _steps:
@@ -893,15 +1036,18 @@ async def evaluate_broker_for_execution(
                                             if isinstance(_nw, dict):
                                                 _next_with = _nw
                                 if _next_step_name and _next_step_name in _by_name:
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Creating task for step '{_next_step_name}' in execution {execution_id}")
                                     _def = _by_name[_next_step_name]
                                     _task = {
                                         'name': _next_step_name,
                                         'type': _def.get('type') or 'python',
                                     }
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task base config: {_task}")
                                     # Copy key fields into task config for worker
-                                    for _fld in ('code','command','commands','sql','url','method','headers','params','data','payload','with'):
+                                    for _fld in ('code','command','commands','sql','url','method','headers','params','data','payload','with','resource_path','content','path'):
                                         if _def.get(_fld) is not None:
                                             _task[_fld] = _def.get(_fld)
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task after field copy: {_task}")
                                     # Merge 'with' from start->next transition into task config so workers receive kwargs
                                     if _next_with:
                                         try:
@@ -914,6 +1060,7 @@ async def evaluate_broker_for_execution(
                                             _task['with'] = merged_with
                                         except Exception:
                                             _task['with'] = _next_with
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task after with merge: {_task}")
                                     # Additional 'with' parameters merged into context for templating
                                     _ctx = {
                                         'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
@@ -923,29 +1070,38 @@ async def evaluate_broker_for_execution(
                                         _ctx.update(_next_with)
                                     # Encode task payload for safe transport
                                     _encoded = _encode_task(_task)
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Encoded task: {_encoded}")
                                     # Insert into queue (avoid duplicate on conflict)
                                     # Insert into queue; rely on evaluator-level guards (has_pending/has_progress) to avoid duplicates
-                                    await _cur.execute(
-                                        """
-                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                        RETURNING id
-                                        """,
-                                        (
-                                            _sf_to_int(execution_id),
-                                            f"{execution_id}:{_next_step_name}",
-                                            _json.dumps(_encoded),
-                                            _json.dumps(_ctx),
-                                            5,
-                                            3,
+                                    try:
+                                        await _cur.execute(
+                                            """
+                                            INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                                            VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                            RETURNING id
+                                            """,
+                                            (
+                                                _sf_to_int(execution_id),
+                                                f"{execution_id}:{_next_step_name}",
+                                                _json.dumps(_encoded),
+                                                _json.dumps(_ctx),
+                                                5,
+                                                3,
+                                            )
                                         )
-                                    )
+                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert successful for step '{_next_step_name}'")
+                                    except Exception as e:
+                                        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for step '{_next_step_name}': {e}")
                                     try:
                                         await _conn.commit()
-                                    except Exception:
-                                        pass
+                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Commit successful for step '{_next_step_name}'")
+                                    except Exception as e:
+                                        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Commit failed for step '{_next_step_name}': {e}")
                                     logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued first step '{_next_step_name}' for execution {execution_id}")
-        except Exception:
+                                else:
+                                    logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: Step '{_next_step_name}' not found in by_name index or step name is None")
+        except Exception as e:
+            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed with exception: {e}")
             logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed", exc_info=True)
 
         # PROACTIVE COMPLETION HANDLER: Check for completed child executions and process their results

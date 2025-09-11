@@ -51,6 +51,12 @@ class CatalogService:
 
     async def fetch_entry(self, path: str, version: str) -> Optional[Dict[str, Any]]:
         try:
+            # Handle "latest" version by getting the actual latest version
+            if version == "latest":
+                version = await self.get_latest_version(path)
+                if not version:
+                    return None
+            
             async with get_async_db_connection(self.pgdb_conn_string) as conn:
                 async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
