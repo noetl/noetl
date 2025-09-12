@@ -43,14 +43,6 @@ workflow:
       in: "{{ workload.cities }}"
       iterator: city_item
       distribution: true
-    return: |
-      {
-        "city_name": "{{ city_item.name }}",
-        "city_lat": "{{ city_item.lat }}",
-        "city_lon": "{{ city_item.lon }}",
-        "status": "{{ status }}",
-        "weather_data": {{ result | tojson }}
-      }
     next:
       - step: aggregate_results
         with:
