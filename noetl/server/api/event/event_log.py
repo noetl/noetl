@@ -196,8 +196,8 @@ class EventLog:
                     ) VALUES (
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s
+                        %s, %s, %s, %s, %s, %s::jsonb,
+                        %s, %s::jsonb
                     )
                     ON CONFLICT (execution_id, event_id) DO NOTHING
                     """,

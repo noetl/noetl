@@ -152,7 +152,7 @@ class EventService:
             parent_event_id = event_data.get("parent_id") or event_data.get("parent_event_id")
             execution_id = event_data.get("execution_id", event_id)
             node_id = event_data.get("node_id", event_id)
-            node_name = event_data.get("node_name", event_type)
+            node_name = event_data.get("node_name") or event_type
             node_type = event_data.get("node_type", "event")
             duration = event_data.get("duration", 0.0)
             metadata = event_data.get("meta", {})
@@ -168,6 +168,46 @@ class EventService:
                 result_dict = event_data.get("output_result")
             context = json.dumps(context_dict)
             result = json.dumps(result_dict)
+            
+            # Derive better node_name/node_type when missing using context
+            try:
+                # Infer node_name from context when absent or generic
+                if (not node_name) or (node_name == event_type) or (str(node_name).lower() == 'unknown'):
+                    if isinstance(context_dict, dict):
+                        work_ctx = context_dict.get('work') or context_dict.get('workload') or {}
+                        step_nm = None
+                        if isinstance(work_ctx, dict):
+                            step_nm = work_ctx.get('step_name') or work_ctx.get('step') or work_ctx.get('name')
+                        step_nm = step_nm or context_dict.get('step_name') or context_dict.get('step') or context_dict.get('name')
+                        if step_nm:
+                            node_name = str(step_nm)
+                # Infer node_type when absent/unknown/event
+                nt_lower = str(node_type or '').lower()
+                if (not node_type) or (nt_lower in ('event', 'unknown', '')):
+                    inferred_type = None
+                    if isinstance(context_dict, dict):
+                        # If a task section is present, it's a task step
+                        task_ctx = context_dict.get('task')
+                        if isinstance(task_ctx, dict):
+                            inferred_type = 'task'
+                        else:
+                            work_ctx = context_dict.get('work') or context_dict.get('workload') or {}
+                            if isinstance(work_ctx, dict) and isinstance(work_ctx.get('_loop'), dict):
+                                inferred_type = 'loop' if str(event_type or '').lower().startswith('loop') else 'task'
+                    # Fall back to event_type prefixes
+                    et = str(event_type or '').lower()
+                    if not inferred_type:
+                        if et in {'execution_start', 'execution_started', 'start', 'execution_completed', 'execution_complete'}:
+                            inferred_type = 'playbook'
+                        elif et.startswith('action_'):
+                            inferred_type = 'task'
+                        elif et.startswith('loop_'):
+                            inferred_type = 'loop'
+                        elif et == 'result':
+                            inferred_type = 'task'
+                    node_type = inferred_type or node_type or 'event'
+            except Exception:
+                pass
             
             # DEBUG: Log what we're actually storing
             logger.debug(f"EMIT_DEBUG: event_type={event_type}, context_dict={context_dict}, context_json_length={len(context)}")
@@ -218,9 +258,20 @@ class EventService:
                       if not loop_id_val:
                           # Try to extract from context (use context_dict, not context which is the JSON string)
                           if context_dict and isinstance(context_dict, dict):
+                              # Support both 'workload' (server) and 'work' (worker) context keys
                               workload = context_dict.get('workload')
+                              work = context_dict.get('work')
+                              candidate_contexts = []
                               if workload and isinstance(workload, dict):
-                                  loop_data = workload.get('_loop')
+                                  candidate_contexts.append(workload)
+                              if work and isinstance(work, dict):
+                                  candidate_contexts.append(work)
+                              loop_data = None
+                              for cctx in candidate_contexts:
+                                  if isinstance(cctx, dict) and isinstance(cctx.get('_loop'), dict):
+                                      loop_data = cctx.get('_loop')
+                                      break
+                              if loop_data and isinstance(loop_data, dict):
                                   if loop_data and isinstance(loop_data, dict):
                                       loop_id_extracted = loop_data.get('loop_id')
                                       if loop_id_extracted is not None and not isinstance(loop_id_extracted, (str, int)):
@@ -308,9 +359,9 @@ class EventService:
                                   trace_component = %s::jsonb,
                                   loop_id = %s,
                                   loop_name = %s,
-                                  iterator = %s,
+                                  iterator = %s::jsonb,
                                   current_index = %s,
-                                  current_item = %s,
+                                  current_item = %s::jsonb,
                                   timestamp = CURRENT_TIMESTAMP
                               WHERE execution_id = %s AND event_id = %s
                           """, (

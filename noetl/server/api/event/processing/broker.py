@@ -218,36 +218,45 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection):
                                     except Exception:
                                         task['with'] = next_with
                                 
-                                # Create execution context
-                                ctx = {
-                                    'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {},
-                                    'step_name': next_step_name,
-                                    'path': pb_path,
-                                    'version': pb_ver or 'latest',
-                                }
-                                if next_with:
-                                    ctx.update(next_with)
+                                # Check if this step has a loop
+                                loop_cfg = task.get('loop') or {}
+                                has_loop = bool(loop_cfg.get('in'))
                                 
-                                # Encode and enqueue task
-                                encoded = encode_task_for_queue(task)
-                                
-                                await cur.execute(
-                                    """
-                                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                    RETURNING id
-                                    """,
-                                    (
-                                        snowflake_id_to_int(execution_id),
-                                        f"{execution_id}:{next_step_name}",
-                                        json.dumps(encoded),
-                                        json.dumps(ctx),
-                                        5,
-                                        3,
+                                if has_loop:
+                                    # Loop processing: expand items and create individual tasks
+                                    await _handle_loop_step(cur, conn, execution_id, next_step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with)
+                                else:
+                                    # Non-loop step: single task
+                                    # Create execution context
+                                    ctx = {
+                                        'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {},
+                                        'step_name': next_step_name,
+                                        'path': pb_path,
+                                        'version': pb_ver or 'latest',
+                                    }
+                                    if next_with:
+                                        ctx.update(next_with)
+                                    
+                                    # Encode and enqueue task
+                                    encoded = encode_task_for_queue(task)
+                                    
+                                    await cur.execute(
+                                        """
+                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                        RETURNING id
+                                        """,
+                                        (
+                                            snowflake_id_to_int(execution_id),
+                                            f"{execution_id}:{next_step_name}",
+                                            json.dumps(encoded),
+                                            json.dumps(ctx),
+                                            5,
+                                            3,
+                                        )
                                     )
-                                )
-                                await conn.commit()
-                                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued first step '{next_step_name}' for execution {execution_id}")
+                                    await conn.commit()
+                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued single step '{next_step_name}' for execution {execution_id}")
                             else:
                                 logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No valid first step found for {execution_id}")
                         else:
@@ -258,3 +267,106 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection):
     except Exception as e:
         logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed: {e}")
         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed", exc_info=True)
+
+
+async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with):
+    """Handle loop step by expanding items and creating individual tasks."""
+    
+    try:
+        from noetl.core.dsl.render import render_template
+        from jinja2 import Environment, StrictUndefined
+        from noetl.server.api.broker import encode_task_for_queue
+        
+        jenv = Environment(undefined=StrictUndefined)
+        iterator = loop_cfg.get('iterator') or 'item'
+        items_tmpl = loop_cfg.get('in')
+        loop_mode = loop_cfg.get('mode') or 'async'
+        
+        # Build rendering context
+        items_ctx = {
+            'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {}
+        }
+        
+        # Include variables passed via 'with' from previous step
+        if next_with:
+            try:
+                rendered_next_with = render_template(jenv, next_with, items_ctx)
+                if isinstance(rendered_next_with, dict):
+                    items_ctx.update(rendered_next_with)
+                else:
+                    items_ctx.update(next_with)
+            except Exception:
+                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render next_with; using raw values", exc_info=True)
+                items_ctx.update(next_with)
+        
+        # Render loop items
+        items = []
+        try:
+            rendered_items = render_template(jenv, items_tmpl, items_ctx)
+            if isinstance(rendered_items, list):
+                items = rendered_items
+            elif rendered_items is not None:
+                items = [rendered_items]
+        except Exception:
+            logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render loop items; defaulting to empty list", exc_info=True)
+            items = []
+        
+        count = len(items)
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Processing loop '{step_name}' over {count} items (iterator={iterator}, mode={loop_mode}) for execution {execution_id}")
+        
+        # Remove loop config from task for workers
+        task_loop_free = dict(task)
+        task_loop_free.pop('loop', None)
+        encoded_task = encode_task_for_queue(task_loop_free)
+        
+        # Process each loop item
+        for idx, item in enumerate(items):
+            ctx = {
+                'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {},
+                'step_name': step_name,
+                'path': pb_path,
+                'version': pb_ver or 'latest',
+                iterator: item,  # Set the iterator variable (e.g., city_item)
+                '_loop': {
+                    'loop_id': f"{execution_id}:{step_name}",
+                    'loop_name': step_name,
+                    'iterator': iterator,
+                    'current_index': idx,
+                    'current_item': item,
+                    'items_count': count,
+                },
+            }
+            if next_with:
+                try:
+                    ctx.update(next_with)
+                except Exception:
+                    pass
+            
+            # Priority: sequential mode uses index-based priority, async mode uses same priority
+            priority = 5 - idx if loop_mode == 'sequential' else 5
+            
+            try:
+                await cur.execute(
+                    """
+                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                    RETURNING id
+                    """,
+                    (
+                        snowflake_id_to_int(execution_id),
+                        f"{execution_id}:{step_name}:{idx}",
+                        json.dumps(encoded_task),
+                        json.dumps(ctx),
+                        priority,
+                        3,
+                    )
+                )
+            except Exception as e:
+                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for loop item {idx} of step '{step_name}': {e}")
+        
+        await conn.commit()
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued {count} loop jobs for step '{step_name}' (mode: {loop_mode}) in execution {execution_id}")
+        
+    except Exception as e:
+        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Loop processing failed for step '{step_name}': {e}")
+        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Loop processing failed", exc_info=True)
