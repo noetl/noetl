@@ -217,6 +217,38 @@ class EventService:
             async with get_async_db_connection() as conn:
                 try:
                     async with conn.cursor() as cursor:
+                      # Dedupe guards for common marker events to prevent duplicate spam
+                      try:
+                          et_l = (str(event_type) if event_type is not None else '').lower()
+                          if et_l == 'step_started':
+                              await cursor.execute(
+                                  """
+                                  SELECT 1 FROM event_log
+                                  WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
+                                  LIMIT 1
+                                  """,
+                                  (execution_id, node_name)
+                              )
+                              if await cursor.fetchone():
+                                  # Skip duplicate insert and scheduling
+                                  return event_data
+                          if et_l == 'loop_iteration':
+                              # When current_index is present, dedupe by (execution_id, node_name, current_index)
+                              _idx_txt = str(current_index_val) if (locals().get('current_index_val') is not None) else None
+                              if _idx_txt is not None:
+                                  await cursor.execute(
+                                      """
+                                      SELECT 1 FROM event_log
+                                      WHERE execution_id = %s AND node_name = %s AND event_type = 'loop_iteration'
+                                        AND current_index::text = %s
+                                      LIMIT 1
+                                      """,
+                                      (execution_id, node_name, _idx_txt)
+                                  )
+                                  if await cursor.fetchone():
+                                      return event_data
+                      except Exception:
+                          logger.debug("EMIT: dedupe guard failed; proceeding with insert", exc_info=True)
                       # Default parent_event_id if missing: link to previous event in the same execution
                       if not parent_event_id:
                           try:

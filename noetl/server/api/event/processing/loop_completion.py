@@ -650,7 +650,20 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
             except Exception:
                 step_def = None
                 
-            if isinstance(step_def, dict):
+            def _is_actionable(sd: Dict) -> bool:
+                try:
+                    t = str((sd or {}).get('type') or '').lower()
+                    if not t:
+                        return False
+                    if t in {'http','python','duckdb','postgres','secrets','workbook','playbook'}:
+                        if t == 'python':
+                            return bool(sd.get('code') or sd.get('code_b64') or sd.get('code_base64'))
+                        return True
+                    return False
+                except Exception:
+                    return False
+
+            if isinstance(step_def, dict) and _is_actionable(step_def):
                 task_def = {
                     'name': next_step_name,
                     'type': step_def.get('type') or 'python',
@@ -662,7 +675,6 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 ):
                     if step_def.get(_fld) is not None:
                         task_def[_fld] = step_def.get(_fld)
-                        
                 # Merge 'with' from transition
                 if next_with:
                     try:
@@ -674,6 +686,18 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                             task_def['with'] = dict(next_with)
                     except Exception:
                         task_def['with'] = next_with
+            else:
+                # Non-actionable next step: finalize control step immediately
+                try:
+                    from .broker import _finalize_result_step  # reuse helper via relative import path
+                except Exception:
+                    _finalize_result_step = None
+                if _finalize_result_step and isinstance(step_def, dict):
+                    try:
+                        await _finalize_result_step(parent_execution_id, next_step_name, step_def, None, None)
+                    except Exception:
+                        logger.debug("LOOP_COMPLETION_CHECK: Failed to finalize non-actionable next step", exc_info=True)
+                return
                         
             # Encode and enqueue
             encoded = _encode_task(task_def)
