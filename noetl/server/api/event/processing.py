@@ -371,8 +371,27 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                             # Add loop metadata if available
                             emit_data.update(loop_metadata)
                             
-                            await event_service.emit(emit_data)
-                            logger.info(f"PROACTIVE_COMPLETION_CHECK: Emitted result for parent {parent_execution_id} step {parent_step} from child {child_exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
+                            # Idempotency guard: skip emit if a result for this child has already been recorded in parent
+                            try:
+                                await cur.execute(
+                                    """
+                                    SELECT COUNT(*) FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                      AND event_type = 'result'
+                                      AND node_name = %s
+                                      AND context::text LIKE %s
+                                    """,
+                                    (parent_execution_id, parent_step, f'%"child_execution_id": "{child_exec_id}"%')
+                                )
+                                _cnt = await cur.fetchone()
+                                already_emitted = bool(_cnt and int(_cnt[0]) > 0)
+                            except Exception:
+                                already_emitted = False
+                            if not already_emitted:
+                                await event_service.emit(emit_data)
+                                logger.info(f"PROACTIVE_COMPLETION_CHECK: Emitted result for parent {parent_execution_id} step {parent_step} from child {child_exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
+                            else:
+                                logger.debug(f"PROACTIVE_COMPLETION_CHECK: Skipping duplicate emit for child {child_exec_id} (already recorded)")
                         except Exception as e:
                             logger.error(f"PROACTIVE_COMPLETION_CHECK: Error emitting result event: {e}")
                     else:
@@ -774,6 +793,213 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             'loop_name': loop_step_name
                         })
                         logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} completed! Final aggregated results: {final_results}")
+                        # After loop completion, enqueue an aggregation job, then the next step(s)
+                        try:
+                            # Enqueue a single aggregation job if not already queued/leased/done
+                            try:
+                                agg_node_id = f"{parent_execution_id}:{loop_step_name}:aggregate"
+                                await cur.execute(
+                                    """
+                                    SELECT COUNT(*) FROM noetl.queue
+                                    WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased')
+                                    """,
+                                    (parent_execution_id, agg_node_id)
+                                )
+                                _agg_cntrow = await cur.fetchone()
+                                _agg_already = bool(_agg_cntrow and int(_agg_cntrow[0]) > 0)
+                            except Exception:
+                                _agg_already = False
+                            if not _agg_already:
+                                from noetl.server.api.broker.endpoint import encode_task_for_queue as _encode_task
+                                # Collect iteration event IDs for context
+                                iter_event_ids = []
+                                try:
+                                    await cur.execute(
+                                        """
+                                        SELECT event_id FROM noetl.event_log
+                                        WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
+                                        ORDER BY timestamp
+                                        """,
+                                        (parent_execution_id, loop_step_name)
+                                    )
+                                    _rows = await cur.fetchall()
+                                    iter_event_ids = [r[0] if isinstance(r, tuple) else r.get('event_id') for r in _rows or []]
+                                except Exception:
+                                    iter_event_ids = []
+                                agg_task = {
+                                    'name': f"{loop_step_name}_aggregate",
+                                    'type': 'result_aggregation',
+                                    'with': {
+                                        'loop_step': loop_step_name
+                                    }
+                                }
+                                agg_encoded = _encode_task(agg_task)
+                                agg_ctx = {
+                                    'workload': {},
+                                    'step_name': f"{loop_step_name}_aggregate",
+                                    'path': None,
+                                    'version': 'latest',
+                                    '_meta': {
+                                        'parent_execution_id': parent_execution_id,
+                                        'loop_step': loop_step_name,
+                                        'iteration_event_ids': iter_event_ids
+                                    }
+                                }
+                                await cur.execute(
+                                    """
+                                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                    RETURNING id
+                                    """,
+                                    (
+                                        parent_execution_id,
+                                        agg_node_id,
+                                        json.dumps(agg_encoded),
+                                        json.dumps(agg_ctx),
+                                        5,
+                                        3,
+                                    )
+                                )
+                                await conn.commit()
+                                logger.info(f"LOOP_COMPLETION_CHECK: Enqueued aggregation job for loop '{loop_step_name}' in execution {parent_execution_id}")
+                        except Exception:
+                            logger.debug("LOOP_COMPLETION_CHECK: Failed to enqueue aggregation job after loop", exc_info=True)
+                        # After loop completion, enqueue the next step(s) following this loop step if defined
+                        try:
+                            # Determine playbook path/version from earliest event
+                            playbook_path = None
+                            playbook_version = None
+                            try:
+                                await cur.execute(
+                                    """
+                                    SELECT context, metadata FROM noetl.event_log
+                                    WHERE execution_id = %s
+                                    ORDER BY timestamp ASC
+                                    LIMIT 1
+                                    """,
+                                    (parent_execution_id,)
+                                )
+                                _first = await cur.fetchone()
+                                if _first:
+                                    try:
+                                        _ctx0 = json.loads(_first[0]) if _first and _first[0] else {}
+                                    except Exception:
+                                        _ctx0 = {}
+                                    try:
+                                        _meta0 = json.loads(_first[1]) if _first and _first[1] else {}
+                                    except Exception:
+                                        _meta0 = {}
+                                    playbook_path = (_ctx0.get('path') if isinstance(_ctx0, dict) else None) or (_meta0.get('playbook_path') if isinstance(_meta0, dict) else None) or (_meta0.get('resource_path') if isinstance(_meta0, dict) else None)
+                                    playbook_version = (_ctx0.get('version') if isinstance(_ctx0, dict) else None) or (_meta0.get('resource_version') if isinstance(_meta0, dict) else None)
+                            except Exception:
+                                pass
+
+                            next_step_name = None
+                            next_with = {}
+                            if playbook_path:
+                                try:
+                                    catalog = get_catalog_service()
+                                    entry = await catalog.fetch_entry(playbook_path, playbook_version or '')
+                                    if entry and entry.get('content'):
+                                        import yaml as _yaml
+                                        pb = _yaml.safe_load(entry['content']) or {}
+                                        steps = pb.get('workflow') or pb.get('steps') or []
+                                        # Build by-name
+                                        by_name = {}
+                                        for s in steps:
+                                            try:
+                                                nm = s.get('step') or s.get('name')
+                                                if nm:
+                                                    by_name[str(nm)] = s
+                                            except Exception:
+                                                pass
+                                        cur_step = by_name.get(loop_step_name)
+                                        if isinstance(cur_step, dict):
+                                            nxt_list = cur_step.get('next') or []
+                                            if isinstance(nxt_list, list) and nxt_list:
+                                                # choose first item without evaluating conditions
+                                                choice = nxt_list[0]
+                                                if isinstance(choice, dict):
+                                                    next_step_name = choice.get('step') or choice.get('name')
+                                                    if isinstance(choice.get('with'), dict):
+                                                        next_with = choice.get('with') or {}
+                                                else:
+                                                    next_step_name = str(choice)
+                                except Exception:
+                                    logger.debug("LOOP_COMPLETION_CHECK: Failed to resolve next step after loop", exc_info=True)
+
+                            if next_step_name:
+                                try:
+                                    # Avoid duplicate enqueues: check if a job for this next step is already pending
+                                    await cur.execute(
+                                        """
+                                        SELECT COUNT(*) FROM noetl.queue
+                                        WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased')
+                                        """,
+                                        (parent_execution_id, f"{parent_execution_id}:{next_step_name}")
+                                    )
+                                    _cntrow = await cur.fetchone()
+                                    _already = bool(_cntrow and int(_cntrow[0]) > 0)
+                                    if not _already:
+                                        from noetl.server.api.broker.endpoint import encode_task_for_queue as _encode_task
+                                        # Build task definition for next step
+                                        task_def = {}
+                                        try:
+                                            step_def = by_name.get(next_step_name) if 'by_name' in locals() else None
+                                        except Exception:
+                                            step_def = None
+                                        if isinstance(step_def, dict):
+                                            task_def = {
+                                                'name': next_step_name,
+                                                'type': step_def.get('type') or 'python',
+                                            }
+                                            for _fld in (
+                                                'task','code','command','commands','sql',
+                                                'url','endpoint','method','headers','params','data','payload',
+                                                'with','resource_path','content','path','loop'
+                                            ):
+                                                if step_def.get(_fld) is not None:
+                                                    task_def[_fld] = step_def.get(_fld)
+                                            # Merge 'with' from transition
+                                            if next_with:
+                                                try:
+                                                    existing_with = task_def.get('with') or {}
+                                                    if isinstance(existing_with, dict):
+                                                        existing_with.update(next_with)
+                                                        task_def['with'] = existing_with
+                                                    else:
+                                                        task_def['with'] = dict(next_with)
+                                                except Exception:
+                                                    task_def['with'] = next_with
+                                        # Encode and enqueue
+                                        encoded = _encode_task(task_def)
+                                        job_ctx = {
+                                            'workload': _ctx0.get('workload', {}) if isinstance(_ctx0, dict) else {},
+                                            'step_name': next_step_name,
+                                            'path': playbook_path,
+                                            'version': playbook_version or 'latest',
+                                        }
+                                        await cur.execute(
+                                            """
+                                            INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                                            VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                            RETURNING id
+                                            """,
+                                            (
+                                                parent_execution_id,
+                                                f"{parent_execution_id}:{next_step_name}",
+                                                json.dumps(encoded),
+                                                json.dumps(job_ctx),
+                                                5,
+                                                3,
+                                            )
+                                        )
+                                        await conn.commit()
+                                        logger.info(f"LOOP_COMPLETION_CHECK: Enqueued next step '{next_step_name}' after loop {loop_step_name} for execution {parent_execution_id}")
+                                except Exception:
+                                    logger.debug("LOOP_COMPLETION_CHECK: Failed to enqueue next step after loop", exc_info=True)
+                        except Exception:
+                            logger.debug("LOOP_COMPLETION_CHECK: Post-loop next-step scheduling failed", exc_info=True)
                         # Emit an explicit loop_completed marker event too
                         try:
                             await event_service.emit({
@@ -1124,6 +1350,51 @@ async def evaluate_broker_for_execution(
                                                         _ctx.update(_next_with)
                                                     except Exception:
                                                         pass
+
+                                                # Emit a loop_iteration event per item and chain subsequent action events to it
+                                                try:
+                                                    # Idempotency: do not emit duplicate loop_iteration for same index
+                                                    await _cur.execute(
+                                                        """
+                                                        SELECT COUNT(*) FROM noetl.event_log
+                                                        WHERE execution_id = %s
+                                                          AND event_type = 'loop_iteration'
+                                                          AND node_name = %s
+                                                          AND context::json->>'index' = %s
+                                                        """,
+                                                        (execution_id, _next_step_name, str(_idx))
+                                                    )
+                                                    _row = await _cur.fetchone()
+                                                    _exists = bool(_row and int(_row[0]) > 0)
+                                                    if not _exists:
+                                                        from .service import get_event_service as _get_es
+                                                        _es = _get_es()
+                                                        _iter_event_id = get_snowflake_id_str()
+                                                        await _es.emit({
+                                                            'execution_id': execution_id,
+                                                            'event_type': 'loop_iteration',
+                                                            'status': 'RUNNING',
+                                                            'node_id': f"{execution_id}:{_next_step_name}:{_idx}",
+                                                            'node_name': _next_step_name,
+                                                            'node_type': 'loop',
+                                                            'event_id': _iter_event_id,
+                                                            'context': {
+                                                                'index': _idx,
+                                                                'item': _item
+                                                            },
+                                                            'loop_id': f"{execution_id}:{_next_step_name}",
+                                                            'loop_name': _next_step_name,
+                                                            'iterator': _iterator,
+                                                            'current_index': _idx,
+                                                            'current_item': _item,
+                                                        })
+                                                        # Attach parent_event_id for worker to chain events correctly
+                                                        _ctx['_meta'] = {'parent_event_id': _iter_event_id}
+                                                    else:
+                                                        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: loop_iteration already exists for {execution_id}:{_next_step_name} index {_idx}; skipping emit")
+                                                except Exception:
+                                                    logger.debug('EVALUATE_BROKER_FOR_EXECUTION: Failed to emit loop_iteration event', exc_info=True)
+
                                                 try:
                                                     await _cur.execute(
                                                         """
