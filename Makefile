@@ -357,9 +357,11 @@ noetl-execute:
 	@if [ "$${rc:-1}" -eq 0 ]; then \
 		 eid="$$(printf '%s\n' "$$out" | jq -r '.result.execution_id // .execution_id // .id // empty' 2>/dev/null)"; \
 	  if [ -n "$$eid" ] && [ "$$eid" != "null" ]; then \
-	    echo "Detected execution_id=$$eid; exporting workflow and transition tables to logs/"; \
+	    echo "Detected execution_id=$$eid; exporting logs (workflow, transition, event_log, queue) to logs/"; \
 	    $(MAKE) export-transition ID=$$eid >/dev/null 2>&1 || true; \
 	    $(MAKE) export-workflow ID=$$eid >/dev/null 2>&1 || true; \
+	    $(MAKE) export-event-log ID=$$eid >/dev/null 2>&1 || true; \
+	    $(MAKE) export-queue ID=$$eid >/dev/null 2>&1 || true; \
 		  fi; \
 	fi;
 	@exit $$rc

@@ -338,7 +338,8 @@ class QueueWorker:
     async def _fail_job(self, job_id: int) -> None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(f"{self.server_url}/queue/{job_id}/fail", json={})
+                # Do not retry failed jobs by default; mark terminal 'dead'
+                await client.post(f"{self.server_url}/queue/{job_id}/fail", json={"retry": False})
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to mark job %s failed", job_id, exc_info=True)
 

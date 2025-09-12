@@ -1044,7 +1044,11 @@ async def evaluate_broker_for_execution(
                                     }
                                     logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task base config: {_task}")
                                     # Copy key fields into task config for worker
-                                    for _fld in ('task','code','command','commands','sql','url','method','headers','params','data','payload','with','resource_path','content','path','loop'):
+                                    for _fld in (
+                                        'task','code','command','commands','sql',
+                                        'url','endpoint','method','headers','params','data','payload',
+                                        'with','resource_path','content','path','loop'
+                                    ):
                                         if _def.get(_fld) is not None:
                                             _task[_fld] = _def.get(_fld)
                                     logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task after field copy: {_task}")
@@ -1061,45 +1065,130 @@ async def evaluate_broker_for_execution(
                                         except Exception:
                                             _task['with'] = _next_with
                                     logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Task after with merge: {_task}")
-                                    # Additional 'with' parameters merged into context for templating
-                                    _ctx = {
-                                        'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
-                                        'step_name': _next_step_name,
-                                        'path': _pb_path,
-                                        'version': _pb_ver or 'latest',
-                                    }
-                                    if _next_with:
-                                        _ctx.update(_next_with)
-                                    # Encode task payload for safe transport
-                                    _encoded = _encode_task(_task)
-                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Encoded task: {_encoded}")
-                                    # Insert into queue (avoid duplicate on conflict)
-                                    # Insert into queue; rely on evaluator-level guards (has_pending/has_progress) to avoid duplicates
-                                    try:
-                                        await _cur.execute(
-                                            """
-                                            INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                                            VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                            RETURNING id
-                                            """,
-                                            (
-                                                _sf_to_int(execution_id),
-                                                f"{execution_id}:{_next_step_name}",
-                                                _json.dumps(_encoded),
-                                                _json.dumps(_ctx),
-                                                5,
-                                                3,
+
+                                    # Determine if this step should be distributed over a loop
+                                    _loop_cfg = (_def.get('loop') or {}) if isinstance(_def.get('loop'), dict) else {}
+                                    _do_distribute = bool(_loop_cfg.get('distribution'))
+
+                                    if _do_distribute:
+                                        try:
+                                            from noetl.core.dsl.render import render_template as _render
+                                            from jinja2 import Environment, StrictUndefined
+                                            _jenv = jenv if 'jenv' in locals() else Environment(undefined=StrictUndefined)
+
+                                            _iterator = _loop_cfg.get('iterator') or 'item'
+                                            _items_tmpl = _loop_cfg.get('in')
+                                            _items_ctx = {
+                                                'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {}
+                                            }
+                                            _items = []
+                                            try:
+                                                _rendered_items = _render(_jenv, _items_tmpl, _items_ctx)
+                                                if isinstance(_rendered_items, list):
+                                                    _items = _rendered_items
+                                                elif _rendered_items is not None:
+                                                    _items = [_rendered_items]
+                                            except Exception:
+                                                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render loop items; defaulting to empty list", exc_info=True)
+                                                _items = []
+
+                                            _count = len(_items)
+                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Distributing step '{_next_step_name}' over {_count} items (iterator={_iterator}) for execution {execution_id}")
+
+                                            # For distributed jobs, we remove the loop config from the task passed to workers
+                                            _task_dist = dict(_task)
+                                            try:
+                                                _task_dist.pop('loop', None)
+                                            except Exception:
+                                                pass
+                                            _encoded_task = _encode_task(_task_dist)
+
+                                            for _idx, _item in enumerate(_items):
+                                                _ctx = {
+                                                    'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
+                                                    'step_name': _next_step_name,
+                                                    'path': _pb_path,
+                                                    'version': _pb_ver or 'latest',
+                                                    _iterator: _item,
+                                                    '_loop': {
+                                                        'loop_id': f"{execution_id}:{_next_step_name}",
+                                                        'loop_name': _next_step_name,
+                                                        'iterator': _iterator,
+                                                        'current_index': _idx,
+                                                        'current_item': _item,
+                                                        'items_count': _count,
+                                                    },
+                                                }
+                                                if _next_with:
+                                                    try:
+                                                        _ctx.update(_next_with)
+                                                    except Exception:
+                                                        pass
+                                                try:
+                                                    await _cur.execute(
+                                                        """
+                                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                                                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                                        RETURNING id
+                                                        """,
+                                                        (
+                                                            _sf_to_int(execution_id),
+                                                            f"{execution_id}:{_next_step_name}:{_idx}",
+                                                            _json.dumps(_encoded_task),
+                                                            _json.dumps(_ctx),
+                                                            5,
+                                                            3,
+                                                        )
+                                                    )
+                                                except Exception as e:
+                                                    logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for distributed item {_idx} of step '{_next_step_name}': {e}")
+                                            try:
+                                                await _conn.commit()
+                                            except Exception as e:
+                                                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Commit failed for distributed step '{_next_step_name}': {e}")
+                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued {_count} distributed jobs for step '{_next_step_name}' in execution {execution_id}")
+                                        except Exception:
+                                            logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Distribution handling failed; falling back to single job", exc_info=True)
+                                            _do_distribute = False
+
+                                    if not _do_distribute:
+                                        # Non-distributed path: enqueue a single job
+                                        _ctx = {
+                                            'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
+                                            'step_name': _next_step_name,
+                                            'path': _pb_path,
+                                            'version': _pb_ver or 'latest',
+                                        }
+                                        if _next_with:
+                                            _ctx.update(_next_with)
+                                        # Encode task payload for safe transport
+                                        _encoded = _encode_task(_task)
+                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Encoded task: {_encoded}")
+                                        try:
+                                            await _cur.execute(
+                                                """
+                                                INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                                                VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                                RETURNING id
+                                                """,
+                                                (
+                                                    _sf_to_int(execution_id),
+                                                    f"{execution_id}:{_next_step_name}",
+                                                    _json.dumps(_encoded),
+                                                    _json.dumps(_ctx),
+                                                    5,
+                                                    3,
+                                                )
                                             )
-                                        )
-                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert successful for step '{_next_step_name}'")
-                                    except Exception as e:
-                                        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for step '{_next_step_name}': {e}")
-                                    try:
-                                        await _conn.commit()
-                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Commit successful for step '{_next_step_name}'")
-                                    except Exception as e:
-                                        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Commit failed for step '{_next_step_name}': {e}")
-                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued first step '{_next_step_name}' for execution {execution_id}")
+                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert successful for step '{_next_step_name}'")
+                                        except Exception as e:
+                                            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for step '{_next_step_name}': {e}")
+                                        try:
+                                            await _conn.commit()
+                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Commit successful for step '{_next_step_name}'")
+                                        except Exception as e:
+                                            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Commit failed for step '{_next_step_name}': {e}")
+                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued first step '{_next_step_name}' for execution {execution_id}")
                                 else:
                                     logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: Step '{_next_step_name}' not found in by_name index or step name is None")
         except Exception as e:

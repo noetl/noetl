@@ -26,6 +26,7 @@ PLAYBOOKS=(
   "examples/wikipedia/wikipedia_duckdb_postgres_example.yaml"
   "examples/github/github_metrics_example.yaml"
   "examples/test/simple_test.yaml"
+  "examples/test/loop_http_test.yaml"
 )
 
 for playbooks in "${PLAYBOOKS[@]}"; do
