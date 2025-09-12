@@ -486,6 +486,13 @@ class EventService:
                           pass
 
                       await conn.commit()
+                      # Control dispatcher: route event to specialized controllers (best-effort)
+                      try:
+                          from .control import route_event
+                          event_data['trigger_event_id'] = event_id
+                          await route_event(event_data)
+                      except Exception:
+                          logger.debug("EVENT_SERVICE_EMIT: route_event failed", exc_info=True)
                 except Exception as db_error:
                     logger.error(f"Database error in emit: {db_error}", exc_info=True)
                     try:
