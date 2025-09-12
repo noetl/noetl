@@ -1,10 +1,10 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-name: loop_http_test
-path: examples/test/loop_http_test
+name: loop_http_test_sequential
+path: examples/test/loop_http_test_sequential
 
 workload:
-  message: "Testing HTTP loop over cities with weather API aggregation"
+  message: "Testing HTTP loop over cities with weather API aggregation (sequential mode)"
   cities:
     - name: "London"
       lat: 51.51
@@ -19,14 +19,14 @@ workload:
 
 workflow:
   - step: start
-    desc: "Start HTTP loop test"
+    desc: "Start HTTP loop test (sequential)"
     next:
       - step: http_loop
         with:
           cities: "{{ workload.cities }}"
 
   - step: http_loop
-    desc: "Loop through cities making weather API HTTP calls"
+    desc: "Loop through cities making weather API HTTP calls (sequential mode)"
     type: http
     method: GET
     endpoint: "{{ workload.base_url }}/forecast"
@@ -41,7 +41,7 @@ workflow:
     loop:
       in: "{{ cities }}"
       iterator: city_item
-      mode: async
+      mode: sequential
     next:
       - step: aggregate_results
         with:
@@ -120,7 +120,7 @@ workflow:
       - step: end
 
   - step: end
-    desc: "End HTTP loop test"
+    desc: "End HTTP loop test (sequential)"
     result:
       loop_http_response: "{{ aggregate_results.result }}"
-      test_summary: "Completed weather HTTP loop test with {{ aggregate_results.result.total_cities }} cities"
+      test_summary: "Completed weather HTTP loop test with {{ aggregate_results.result.total_cities }} cities (sequential mode)"

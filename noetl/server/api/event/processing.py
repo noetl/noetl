@@ -793,6 +793,30 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             'loop_name': loop_step_name
                         })
                         logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} completed! Final aggregated results: {final_results}")
+                        
+                        # Emit step_completed event after loop finishes
+                        try:
+                            await event_service.emit({
+                                'execution_id': parent_execution_id,
+                                'event_type': 'step_completed',
+                                'status': 'COMPLETED',
+                                'node_id': f"{parent_execution_id}:{loop_step_name}",
+                                'node_name': loop_step_name,
+                                'node_type': 'step',
+                                'result': {
+                                    'data': final_results,
+                                    'count': len(final_results)
+                                },
+                                'context': {
+                                    'step_name': loop_step_name,
+                                    'step_type': 'loop',
+                                    'total_iterations': len(final_results)
+                                }
+                            })
+                            logger.info(f"LOOP_COMPLETION_CHECK: Emitted step_completed for {loop_step_name}")
+                        except Exception as e:
+                            logger.debug(f"LOOP_COMPLETION_CHECK: Failed to emit step_completed event: {e}", exc_info=True)
+                        
                         # After loop completion, enqueue an aggregation job, then the next step(s)
                         try:
                             # Enqueue a single aggregation job if not already queued/leased/done
@@ -1294,9 +1318,54 @@ async def evaluate_broker_for_execution(
 
                                     # Determine if this step should be distributed over a loop
                                     _loop_cfg = (_def.get('loop') or {}) if isinstance(_def.get('loop'), dict) else {}
-                                    _do_distribute = bool(_loop_cfg.get('distribution'))
+                                    _has_loop = bool(_loop_cfg.get('in'))  # Check if there's actually a loop to process
+                                    _loop_mode = _loop_cfg.get('mode', 'async')  # Default to async, support 'sequential'
 
-                                    if _do_distribute:
+                                    # Emit step_started event before executing the step (only once)
+                                    try:
+                                        # Idempotency: do not emit duplicate step_started for same step
+                                        await _cur.execute(
+                                            """
+                                            SELECT COUNT(*) FROM noetl.event_log
+                                            WHERE execution_id = %s
+                                              AND event_type = 'step_started'
+                                              AND node_name = %s
+                                            """,
+                                            (execution_id, _next_step_name)
+                                        )
+                                        _row = await _cur.fetchone()
+                                        _step_exists = bool(_row and int(_row[0]) > 0)
+                                        if not _step_exists:
+                                            from .service import get_event_service as _get_es
+                                            _es = _get_es()
+                                            _step_event_id = get_snowflake_id_str()
+                                            await _es.emit({
+                                                'execution_id': execution_id,
+                                                'event_type': 'step_started',
+                                                'status': 'RUNNING',
+                                                'node_id': f"{execution_id}:{_next_step_name}",
+                                                'node_name': _next_step_name,
+                                                'node_type': 'step',
+                                                'event_id': _step_event_id,
+                                                'context': {
+                                                    'step_name': _next_step_name,
+                                                    'step_type': _def.get('type', 'unknown'),
+                                                    'has_loop': _has_loop,
+                                                    'loop_mode': _loop_mode if _has_loop else None
+                                                },
+                                                'metadata': {
+                                                    'transition_from': 'start',
+                                                    'step_definition': _def
+                                                }
+                                            })
+                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Emitted step_started for {_next_step_name}")
+                                        else:
+                                            logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: step_started already exists for {execution_id}:{_next_step_name}; skipping emit")
+                                    except Exception as e:
+                                        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: Failed to emit step_started event: {e}", exc_info=True)
+
+                                    if _has_loop:
+                                        # Loop processing: handle both async (default) and sequential modes
                                         try:
                                             from noetl.core.dsl.render import render_template as _render
                                             from jinja2 import Environment, StrictUndefined
@@ -1319,6 +1388,7 @@ async def evaluate_broker_for_execution(
                                                 except Exception:
                                                     logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render _next_with; using raw values", exc_info=True)
                                                     _items_ctx.update(_next_with)
+                                            
                                             _items = []
                                             try:
                                                 _rendered_items = _render(_jenv, _items_tmpl, _items_ctx)
@@ -1331,16 +1401,17 @@ async def evaluate_broker_for_execution(
                                                 _items = []
 
                                             _count = len(_items)
-                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Distributing step '{_next_step_name}' over {_count} items (iterator={_iterator}) for execution {execution_id}")
+                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Processing loop '{_next_step_name}' over {_count} items (iterator={_iterator}, mode={_loop_mode}) for execution {execution_id}")
 
-                                            # For distributed jobs, we remove the loop config from the task passed to workers
-                                            _task_dist = dict(_task)
+                                            # Remove the loop config from the task passed to workers (both modes use this)
+                                            _task_loop_free = dict(_task)
                                             try:
-                                                _task_dist.pop('loop', None)
+                                                _task_loop_free.pop('loop', None)
                                             except Exception:
                                                 pass
-                                            _encoded_task = _encode_task(_task_dist)
+                                            _encoded_task = _encode_task(_task_loop_free)
 
+                                            # Process each loop item
                                             for _idx, _item in enumerate(_items):
                                                 _ctx = {
                                                     'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
@@ -1407,6 +1478,9 @@ async def evaluate_broker_for_execution(
                                                 except Exception:
                                                     logger.debug('EVALUATE_BROKER_FOR_EXECUTION: Failed to emit loop_iteration event', exc_info=True)
 
+                                                # Calculate priority: sequential mode uses index-based priority, async mode uses same priority
+                                                _priority = 5 - _idx if _loop_mode == 'sequential' else 5
+                                                
                                                 try:
                                                     await _cur.execute(
                                                         """
@@ -1419,23 +1493,24 @@ async def evaluate_broker_for_execution(
                                                             f"{execution_id}:{_next_step_name}:{_idx}",
                                                             _json.dumps(_encoded_task),
                                                             _json.dumps(_ctx),
-                                                            5,
+                                                            _priority,
                                                             3,
                                                         )
                                                     )
                                                 except Exception as e:
-                                                    logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for distributed item {_idx} of step '{_next_step_name}': {e}")
+                                                    logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for loop item {_idx} of step '{_next_step_name}': {e}")
+                                            
                                             try:
                                                 await _conn.commit()
                                             except Exception as e:
-                                                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Commit failed for distributed step '{_next_step_name}': {e}")
-                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued {_count} distributed jobs for step '{_next_step_name}' in execution {execution_id}")
-                                        except Exception:
-                                            logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Distribution handling failed; falling back to single job", exc_info=True)
-                                            _do_distribute = False
+                                                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Commit failed for loop step '{_next_step_name}': {e}")
+                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued {_count} loop jobs for step '{_next_step_name}' (mode: {_loop_mode}) in execution {execution_id}")
+                                        except Exception as e:
+                                            logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Loop processing failed for step '{_next_step_name}': {e}")
+                                            logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Loop processing failed", exc_info=True)
 
-                                    if not _do_distribute:
-                                        # Non-distributed path: enqueue a single job
+                                    else:
+                                        # Non-loop path: enqueue a single job
                                         _ctx = {
                                             'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {},
                                             'step_name': _next_step_name,
@@ -1471,7 +1546,7 @@ async def evaluate_broker_for_execution(
                                             logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Commit successful for step '{_next_step_name}'")
                                         except Exception as e:
                                             logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Commit failed for step '{_next_step_name}': {e}")
-                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued first step '{_next_step_name}' for execution {execution_id}")
+                                        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued step '{_next_step_name}' for execution {execution_id}")
                                 else:
                                     logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: Step '{_next_step_name}' not found in by_name index or step name is None")
         except Exception as e:

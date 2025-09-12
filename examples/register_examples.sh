@@ -27,6 +27,7 @@ PLAYBOOKS=(
   "examples/github/github_metrics_example.yaml"
   "examples/test/simple_test.yaml"
   "examples/test/loop_http_test.yaml"
+  "examples/test/loop_http_test_sequential.yaml"
 )
 
 for playbooks in "${PLAYBOOKS[@]}"; do
