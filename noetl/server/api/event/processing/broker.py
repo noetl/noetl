@@ -495,6 +495,9 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
     Idempotent: skips if step already has step_completed or next step already queued/started.
     """
     try:
+        # Only run when invoked with a specific trigger to avoid duplicate scheduling
+        if not trigger_event_id:
+            return
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 # Fetch recently completed non-loop steps (no loop_id)
