@@ -2,7 +2,7 @@
 # Configured for mestumre-dev-host project
 
 # Project Configuration
-project_id = "mestumre-dev-host"
+project_id = "noetl-demo-19700101"
 region     = "us-central1"
 zone       = "us-central1-a"
 
