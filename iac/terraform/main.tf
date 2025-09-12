@@ -18,7 +18,8 @@ terraform {
   }
 
   backend "gcs" {
-    bucket = "noetl-demo-19700101-terraform-state"
+    # bucket is configured via terraform init -backend-config
+    # or terraform.env environment variables
     prefix = "noetl/terraform/state"
   }
 }

@@ -219,6 +219,9 @@ cat > terraform.env << EOF
 export GOOGLE_CLOUD_PROJECT="${PROJECT_ID}"
 export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/${KEY_FILE}"
 
+# Terraform Backend Configuration
+export TF_CLI_ARGS_init="-backend-config=bucket=${BUCKET_NAME}"
+
 # Terraform Configuration
 export TF_VAR_project_id="${PROJECT_ID}"
 export TF_VAR_terraform_state_bucket="${BUCKET_NAME}"

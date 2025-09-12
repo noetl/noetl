@@ -75,25 +75,44 @@ get_project_id() {
     fi
 }
 
+validate_build_context() {
+    print_status "Validating Docker build context..."
+
+    if [ ! -d "$BUILD_CONTEXT" ]; then
+        print_error "Build context directory not found: $BUILD_CONTEXT"
+        exit 1
+    fi
+
+    if [ ! -f "${BUILD_CONTEXT}/${DOCKERFILE_PATH}" ]; then
+        print_error "Dockerfile not found: ${BUILD_CONTEXT}/${DOCKERFILE_PATH}"
+        exit 1
+    fi
+
+    print_success "Build context validation passed"
+}
+
 build_image() {
     local image_name="$1"
     local target="$2"
-    
+
     print_status "Building $image_name..."
-    
+
     # Full image name with registry
     local full_image_name="${SERVER_REPO}/${PROJECT_ID}/${image_name}:${IMAGE_TAG}"
-    
+
     # Build the image
-    docker build \
+    if docker build \
         --target "$target" \
         --tag "$full_image_name" \
         --file "${BUILD_CONTEXT}/${DOCKERFILE_PATH}" \
-        "$BUILD_CONTEXT"
-    
-    print_success "Built $full_image_name"
-    echo "$full_image_name"
+        "$BUILD_CONTEXT"; then
+        print_success "Built $full_image_name"
+    else
+        print_error "Failed to build $image_name"
+        exit 1
+    fi
 
+    echo "$full_image_name"
     push_image "$full_image_name"
 }
 
@@ -181,6 +200,7 @@ main() {
     
     check_prerequisites
     get_project_id
+    validate_build_context
     configure_docker
     build_and_push_all
     
