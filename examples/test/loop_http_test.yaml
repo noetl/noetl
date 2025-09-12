@@ -4,8 +4,7 @@ name: loop_http_test
 path: examples/test/loop_http_test
 
 workload:
-  message: "Testing HTTP loop with weather API aggregation"
-  # List of cities to process in the loop (copied from weather_loop_example.yaml)
+  message: "Testing HTTP loop over cities with weather API aggregation"
   cities:
     - name: "London"
       lat: 51.51
@@ -40,7 +39,7 @@ workflow:
       forecast_days: 1
     timeout: 10
     loop:
-      in: "{{ workload.cities }}"
+      in: "{{ cities }}"
       iterator: city_item
       distribution: true
     next:

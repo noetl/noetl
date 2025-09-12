@@ -1307,6 +1307,18 @@ async def evaluate_broker_for_execution(
                                             _items_ctx = {
                                                 'workload': (_workload_ctx.get('workload') if isinstance(_workload_ctx, dict) else None) or {}
                                             }
+                                            # Include variables passed via 'with' from previous step
+                                            if _next_with:
+                                                # Render the _next_with templates first to resolve template strings like "{{ workload.cities }}"
+                                                try:
+                                                    rendered_next_with = _render(_jenv, _next_with, _items_ctx)
+                                                    if isinstance(rendered_next_with, dict):
+                                                        _items_ctx.update(rendered_next_with)
+                                                    else:
+                                                        _items_ctx.update(_next_with)
+                                                except Exception:
+                                                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render _next_with; using raw values", exc_info=True)
+                                                    _items_ctx.update(_next_with)
                                             _items = []
                                             try:
                                                 _rendered_items = _render(_jenv, _items_tmpl, _items_ctx)
