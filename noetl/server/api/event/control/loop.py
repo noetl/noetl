@@ -20,4 +20,3 @@ async def handle_loop_event(event: Dict[str, Any], et: str) -> None:
             return
     except Exception:
         logger.debug("LOOP_CONTROL: Failed handling loop event", exc_info=True)
-

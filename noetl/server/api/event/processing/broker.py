@@ -20,6 +20,7 @@ async def evaluate_broker_for_execution(
     get_async_db_connection=get_async_db_connection,
     get_catalog_service=None,
     AsyncClientClass=None,
+    trigger_event_id: str | None = None,
 ):
     """Server-side broker evaluator.
 
@@ -45,7 +46,7 @@ async def evaluate_broker_for_execution(
                 return
 
         # INITIAL DISPATCH LOGIC: enqueue first actionable step if nothing queued/completed yet
-        await _handle_initial_dispatch(execution_id, get_async_db_connection)
+        await _handle_initial_dispatch(execution_id, get_async_db_connection, trigger_event_id)
 
         # PROACTIVE COMPLETION HANDLERS
         from .child_executions import check_and_process_completed_child_executions
@@ -58,7 +59,7 @@ async def evaluate_broker_for_execution(
         await check_and_process_completed_loops(execution_id)
 
         # NON-LOOP PROGRESSION: Advance workflow for completed non-loop steps
-        await _advance_non_loop_steps(execution_id)
+        await _advance_non_loop_steps(execution_id, trigger_event_id)
 
         logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Basic broker evaluation completed for {execution_id}")
         
@@ -75,7 +76,7 @@ def _evaluate_broker_for_execution(execution_id: str):
     return asyncio.create_task(evaluate_broker_for_execution(execution_id))
 
 
-async def _handle_initial_dispatch(execution_id: str, get_async_db_connection):
+async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, trigger_event_id: str | None = None):
     """Handle initial workflow dispatch if no progress has been made."""
     
     try:
@@ -273,7 +274,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection):
                                                 except Exception:
                                                     logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit step_started for loop step", exc_info=True)
                                             # Loop processing: expand items and create individual tasks
-                                            await _handle_loop_step(cur, conn, execution_id, next_step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with)
+                                            await _handle_loop_step(cur, conn, execution_id, next_step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with, trigger_event_id)
                                     except Exception:
                                         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Loop initialization idempotency check failed", exc_info=True)
                                 else:
@@ -287,6 +288,12 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection):
                                     }
                                     if next_with:
                                         ctx.update(next_with)
+                                    # Attach trigger metadata for worker lineage
+                                    try:
+                                        if trigger_event_id:
+                                            ctx['_meta'] = {'parent_event_id': str(trigger_event_id)}
+                                    except Exception:
+                                        pass
                                     
                                     # Emit a step_started event for this non-loop step (only once)
                                     try:
@@ -346,7 +353,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection):
         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed", exc_info=True)
 
 
-async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with):
+async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with, trigger_event_id: str | None = None):
     """Handle loop step by expanding items and creating individual tasks."""
     
     try:
@@ -418,6 +425,14 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                     ctx.update(next_with)
                 except Exception:
                     pass
+            # Attach trigger metadata
+            try:
+                if trigger_event_id:
+                    meta = ctx.get('_meta') or {}
+                    meta['parent_event_id'] = str(trigger_event_id)
+                    ctx['_meta'] = meta
+            except Exception:
+                pass
 
             # Priority: sequential mode uses index-based priority, async mode uses same priority
             priority = 5 - idx if loop_mode == 'sequential' else 5
@@ -436,6 +451,7 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                         'iterator': iterator,
                         'path': pb_path,
                         'version': pb_ver or 'latest',
+                        '_meta': {'parent_event_id': str(trigger_event_id)} if trigger_event_id else {},
                     },
                     'iterator': iterator,
                     'current_index': idx,
@@ -473,7 +489,7 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Loop processing failed", exc_info=True)
 
 
-async def _advance_non_loop_steps(execution_id: str) -> None:
+async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | None = None) -> None:
     """Advance workflow for steps that completed (non-loop) by enqueuing their next step and emitting step_completed.
 
     Idempotent: skips if step already has step_completed or next step already queued/started.
@@ -607,7 +623,7 @@ async def _advance_non_loop_steps(execution_id: str) -> None:
                                 await _finalize_result_step(execution_id, next_step_name, step_def2, pb_path, pb_ver)
                             else:
                                 from .loop_completion import _enqueue_next_step
-                                await _enqueue_next_step(conn, cur, execution_id, next_step_name, next_with, by_name)
+                                await _enqueue_next_step(conn, cur, execution_id, next_step_name, next_with, by_name, trigger_event_id)
                         except Exception:
                             logger.debug("ADVANCE_NON_LOOP: Failed to enqueue next step", exc_info=True)
     except Exception:

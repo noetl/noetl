@@ -625,7 +625,7 @@ async def _enqueue_next_workflow_steps(conn, cur, parent_execution_id: str, loop
 
 
 async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name: str, 
-                           next_with: Dict, by_name: Dict):
+                           next_with: Dict, by_name: Dict, trigger_event_id: str | None = None):
     """Enqueue a specific next step in the workflow."""
     
     try:
@@ -707,6 +707,11 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 'path': None,
                 'version': 'latest'
             }
+            try:
+                if trigger_event_id:
+                    job_ctx['_meta'] = {'parent_event_id': str(trigger_event_id)}
+            except Exception:
+                pass
             
             await cur.execute(
                 """
