@@ -1,0 +1,260 @@
+"""
+Broker execution and workflow coordination.
+Handles server-side workflow evaluation, step routing, and task enqueueing.
+"""
+
+import asyncio
+import json
+import yaml
+from noetl.core.common import get_async_db_connection, snowflake_id_to_int
+from noetl.core.logger import setup_logger
+from noetl.server.api.event.event_log import EventLog
+from .workflow import populate_workflow_tables
+
+logger = setup_logger(__name__, include_location=True)
+
+
+async def evaluate_broker_for_execution(
+    execution_id: str,
+    get_async_db_connection=get_async_db_connection,
+    get_catalog_service=None,
+    AsyncClientClass=None,
+):
+    """Server-side broker evaluator.
+
+    - Builds execution context (workload + results) from event_log
+    - Parses playbook and advances to the next actionable step
+    - Evaluates step-level pass/when using server-side rendering (minimal for now)
+    - Enqueues the first actionable step to the queue for workers
+    """
+    print(f"!!! BROKER EVALUATION CALLED FOR {execution_id} !!!")
+    logger.info(f"=== EVALUATE_BROKER_FOR_EXECUTION: Starting for execution_id={execution_id} ===")
+    try:
+        print(f"!!! STEP 1: Inside try block for {execution_id} !!!")
+        
+        # Guard to prevent re-enqueuing post-loop steps per-item immediately
+        await asyncio.sleep(0.2)
+        
+        # Return early if execution has failed
+        dao = EventLog()
+        rows = await dao.get_statuses(execution_id)
+        for s in [str(x or '').lower() for x in rows]:
+            if ('failed' in s) or ('error' in s):
+                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Found error status '{s}' for {execution_id}; stop scheduling")
+                return
+
+        # INITIAL DISPATCH LOGIC: enqueue first actionable step if nothing queued/completed yet
+        await _handle_initial_dispatch(execution_id, get_async_db_connection)
+
+        # PROACTIVE COMPLETION HANDLERS
+        from .child_executions import check_and_process_completed_child_executions
+        from .loop_completion import check_and_process_completed_loops
+        
+        # PROACTIVE COMPLETION HANDLER: Check for completed child executions and process their results
+        await check_and_process_completed_child_executions(execution_id)
+        
+        # LOOP COMPLETION HANDLER: Check for completed loops and emit end_loop events
+        await check_and_process_completed_loops(execution_id)
+
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Basic broker evaluation completed for {execution_id}")
+        
+    except Exception as e:
+        print(f"!!! BROKER EVALUATION EXCEPTION: {e} !!!")
+        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Exception in broker evaluation: {e}")
+        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Unhandled exception", exc_info=True)
+        return
+
+
+def _evaluate_broker_for_execution(execution_id: str):
+    """Legacy sync wrapper for evaluate_broker_for_execution - use async version instead."""
+    import asyncio
+    return asyncio.create_task(evaluate_broker_for_execution(execution_id))
+
+
+async def _handle_initial_dispatch(execution_id: str, get_async_db_connection):
+    """Handle initial workflow dispatch if no progress has been made."""
+    
+    try:
+        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Starting initial dispatch for {execution_id}")
+        
+        from noetl.server.api.broker import encode_task_for_queue
+        
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                # Check if there is already a queued/leased job for this execution
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) FROM noetl.queue
+                    WHERE execution_id = %s AND status IN ('queued','leased')
+                    """,
+                    (execution_id,)
+                )
+                qrow = await cur.fetchone()
+                has_pending = bool(qrow and int(qrow[0]) > 0)
+                
+                # Check if any action already completed for this execution
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) FROM noetl.event_log
+                    WHERE execution_id = %s AND event_type IN ('action_completed','execution_completed')
+                    """,
+                    (execution_id,)
+                )
+                erow = await cur.fetchone()
+                has_progress = bool(erow and int(erow[0]) > 0)
+                
+                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: has_pending={has_pending}, has_progress={has_progress} for {execution_id}")
+                
+                if not has_pending and not has_progress:
+                    # Load workload context
+                    await cur.execute("SELECT data FROM noetl.workload WHERE execution_id = %s", (execution_id,))
+                    wrow = await cur.fetchone()
+                    workload_ctx = {}
+                    if wrow and wrow[0]:
+                        try:
+                            workload_ctx = json.loads(wrow[0]) if isinstance(wrow[0], str) else (wrow[0] or {})
+                        except Exception:
+                            workload_ctx = {}
+                    
+                    pb_path = (workload_ctx or {}).get('path') or (workload_ctx or {}).get('resource_path')
+                    pb_ver = (workload_ctx or {}).get('version')
+                    
+                    if not pb_path:
+                        # Try to get path from execution_start event
+                        await cur.execute(
+                            """
+                            SELECT context FROM noetl.event_log
+                            WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
+                            ORDER BY timestamp DESC LIMIT 1
+                            """,
+                            (execution_id,)
+                        )
+                        er = await cur.fetchone()
+                        if er and er[0]:
+                            try:
+                                c = json.loads(er[0]) if isinstance(er[0], str) else (er[0] or {})
+                                pb_path = c.get('path')
+                                pb_ver = pb_ver or c.get('version')
+                            except Exception:
+                                pass
+                    
+                    if pb_path:
+                        # Get catalog service and fetch playbook
+                        from noetl.server.api.catalog import get_catalog_service
+                        catalog = get_catalog_service()
+                        
+                        if not pb_ver:
+                            try:
+                                pb_ver = await catalog.get_latest_version(pb_path)
+                            except Exception:
+                                pb_ver = '0.1.0'
+                        
+                        entry = await catalog.fetch_entry(pb_path, pb_ver)
+                        if entry and entry.get('content'):
+                            try:
+                                pb = yaml.safe_load(entry['content']) or {}
+                            except Exception:
+                                pb = {}
+                            
+                            steps = pb.get('workflow') or pb.get('steps') or []
+                            
+                            # Populate workflow tables
+                            try:
+                                await populate_workflow_tables(cur, execution_id, pb_path, pb)
+                            except Exception as e:
+                                try:
+                                    await conn.rollback()
+                                except Exception:
+                                    pass
+                                logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: Failed to populate workflow tables: {e}")
+                            
+                            # Build by-name index and find first step
+                            by_name = {}
+                            for s in steps:
+                                try:
+                                    nm = s.get('step') or s.get('name')
+                                    if nm:
+                                        by_name[str(nm)] = s
+                                except Exception:
+                                    continue
+                            
+                            # Find 'start' step and determine first actionable step
+                            start_step = by_name.get('start') or next((s for s in steps if (s.get('step') == 'start')), None)
+                            next_step_name = None
+                            next_with = {}
+                            
+                            if start_step:
+                                nxt_list = start_step.get('next') or []
+                                if isinstance(nxt_list, list) and nxt_list:
+                                    # Simple logic: take first item for now
+                                    first = nxt_list[0] or {}
+                                    if isinstance(first, str):
+                                        next_step_name = first
+                                    elif isinstance(first, dict):
+                                        next_step_name = first.get('step') or first.get('name')
+                                        if isinstance(first.get('with'), dict):
+                                            next_with = first.get('with') or {}
+                            
+                            if next_step_name and next_step_name in by_name:
+                                step_def = by_name[next_step_name]
+                                task = {
+                                    'name': next_step_name,
+                                    'type': step_def.get('type') or 'python',
+                                }
+                                
+                                # Copy key fields
+                                for fld in ('task','code','command','commands','sql','url','endpoint','method','headers','params','data','payload','with','resource_path','content','path','loop'):
+                                    if step_def.get(fld) is not None:
+                                        task[fld] = step_def.get(fld)
+                                
+                                # Merge 'with' from transition
+                                if next_with:
+                                    try:
+                                        existing_with = task.get('with') or {}
+                                        if isinstance(existing_with, dict):
+                                            task['with'] = {**existing_with, **next_with}
+                                        else:
+                                            task['with'] = dict(next_with)
+                                    except Exception:
+                                        task['with'] = next_with
+                                
+                                # Create execution context
+                                ctx = {
+                                    'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {},
+                                    'step_name': next_step_name,
+                                    'path': pb_path,
+                                    'version': pb_ver or 'latest',
+                                }
+                                if next_with:
+                                    ctx.update(next_with)
+                                
+                                # Encode and enqueue task
+                                encoded = encode_task_for_queue(task)
+                                
+                                await cur.execute(
+                                    """
+                                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
+                                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                    RETURNING id
+                                    """,
+                                    (
+                                        snowflake_id_to_int(execution_id),
+                                        f"{execution_id}:{next_step_name}",
+                                        json.dumps(encoded),
+                                        json.dumps(ctx),
+                                        5,
+                                        3,
+                                    )
+                                )
+                                await conn.commit()
+                                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued first step '{next_step_name}' for execution {execution_id}")
+                            else:
+                                logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No valid first step found for {execution_id}")
+                        else:
+                            logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No playbook content found for {pb_path}")
+                    else:
+                        logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No playbook path found for {execution_id}")
+                        
+    except Exception as e:
+        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed: {e}")
+        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed", exc_info=True)
