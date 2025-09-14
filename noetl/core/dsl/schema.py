@@ -250,6 +250,13 @@ class DatabaseSchema:
                     )
                 """)
                 try:
+                    cursor.execute(
+                        f"ALTER TABLE {self.noetl_schema}.event_log ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP"
+                    )
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                try:
                     cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB")
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):

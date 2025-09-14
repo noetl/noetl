@@ -601,34 +601,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                     except Exception:
                         logger.debug("ADVANCE_NON_LOOP: Failed to emit step_completed", exc_info=True)
 
-                    # Resolve next step (choose first transition) and enqueue if actionable; otherwise finalize
-                    next_step_name = None
-                    next_with = {}
-                    try:
-                        step_def = by_name.get(step_name) if by_name else None
-                        if isinstance(step_def, dict):
-                            nxt = step_def.get('next') or []
-                            if isinstance(nxt, list) and nxt:
-                                choice = nxt[0]
-                                if isinstance(choice, dict):
-                                    next_step_name = choice.get('step') or choice.get('name')
-                                    if isinstance(choice.get('with'), dict):
-                                        next_with = choice.get('with') or {}
-                                else:
-                                    next_step_name = str(choice)
-                    except Exception:
-                        logger.debug("ADVANCE_NON_LOOP: Failed to resolve next step", exc_info=True)
-
-                    if next_step_name:
-                        try:
-                            step_def2 = by_name.get(next_step_name) if by_name else None
-                            if isinstance(step_def2, dict) and not _is_actionable_step(step_def2):
-                                await _finalize_result_step(execution_id, next_step_name, step_def2, pb_path, pb_ver)
-                            else:
-                                from .loop_completion import _enqueue_next_step
-                                await _enqueue_next_step(conn, cur, execution_id, next_step_name, next_with, by_name, trigger_event_id)
-                        except Exception:
-                            logger.debug("ADVANCE_NON_LOOP: Failed to enqueue next step", exc_info=True)
+                    # Let the step controller handle choosing and enqueuing the next transition
     except Exception:
         logger.debug("ADVANCE_NON_LOOP: Unhandled exception", exc_info=True)
 
