@@ -16,14 +16,9 @@ workflow:
     desc: "Ensure target table exists"
     type: postgres
     with:
-      db_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-      db_port: "{{ env.POSTGRES_PORT | default('5432') }}"
-      db_user: "{{ env.POSTGRES_USER | default('demo') }}"
-      db_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
-      db_name: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+      credential: pg_local
     command: |
-      CREATE SCHEMA IF NOT EXISTS noetl;
-      CREATE TABLE IF NOT EXISTS noetl.postgres_save_demo (
+      CREATE TABLE IF NOT EXISTS public.postgres_save_demo (
         id TEXT PRIMARY KEY,
         message TEXT,
         created_at TIMESTAMPTZ DEFAULT now()
@@ -38,7 +33,7 @@ workflow:
       storage:
         kind: postgres
         credential: pg_local
-      table: noetl.postgres_save_demo
+      table: public.postgres_save_demo
       mode: upsert
       key: id
       data:
