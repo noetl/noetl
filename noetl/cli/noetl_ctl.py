@@ -26,6 +26,10 @@ worker_app = typer.Typer()
 cli_appprefix = "worker"
 cli_app.add_typer(worker_app, name=cli_appprefix)
 
+# Database management
+db_app = typer.Typer()
+cli_app.add_typer(db_app, name="db")
+
 
 @worker_app.command("start")
 def start_worker_service(
@@ -166,7 +170,9 @@ def stop_worker_service(
         raise typer.Exit(code=1)
 
 @server_app.command("start")
-def start_server():
+def start_server(
+    init_db: bool = typer.Option(False, "--init-db/--no-init-db", help="Initialize database schema on startup (optional)")
+):
     """
     Start the NoETL server using settings loaded from environment.
     All runtime settings (host, port, enable_ui, debug, server runtime, workers, reload) are read from config.
@@ -194,24 +200,25 @@ def start_server():
     logger.info(f"Starting NoETL API server at http://{settings.host}:{settings.port} (UI {ui_status}, Debug {debug_status})")
 
 
-    logger.info("Initializing NoETL system metadata (schema validate=%s)." % settings.schema_validate)
-    try:
-        db_schema = DatabaseSchema(auto_setup=True)
+    if init_db:
+        logger.info("Initializing NoETL system metadata by request (--init-db).")
+        try:
+            db_schema = DatabaseSchema(auto_setup=True)
 
-        async def _init_db():
-            await db_schema.initialize_connection()
-            await db_schema.init_database()
+            async def _init_db():
+                await db_schema.initialize_connection()
+                await db_schema.init_database()
 
-        asyncio.run(_init_db())
-        logger.info("NoETL database schema initialized.")
-    except Exception as e:
-        logger.error(f"FATAL: Error initializing NoETL system metadata: {e}", exc_info=True)
-        if os.path.exists(settings.pid_file_path):
-            os.remove(settings.pid_file_path)
-        legacy_makefile_pid_file = "logs/server.pid"
-        if os.path.exists(legacy_makefile_pid_file):
-            os.remove(legacy_makefile_pid_file)
-        raise typer.Exit(code=1)
+            asyncio.run(_init_db())
+            logger.info("NoETL database schema initialized.")
+        except Exception as e:
+            logger.error(f"FATAL: Error initializing NoETL system metadata: {e}", exc_info=True)
+            if os.path.exists(settings.pid_file_path):
+                os.remove(settings.pid_file_path)
+            legacy_makefile_pid_file = "logs/server.pid"
+            if os.path.exists(legacy_makefile_pid_file):
+                os.remove(legacy_makefile_pid_file)
+            raise typer.Exit(code=1)
 
     server_runtime = settings.server_runtime
     if server_runtime == "auto":
@@ -432,6 +439,75 @@ def run_server():
     Backward-compatible entry; starts server using runtime settings from config.
     """
     start_server()
+
+
+@db_app.command("apply-schema")
+def db_apply_schema(
+    schema_file: str = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="Path to schema_ddl.sql (defaults to packaged noetl/database/ddl/postgres/schema_ddl.sql)",
+    ),
+    ensure_role: bool = typer.Option(
+        True,
+        "--ensure-role/--no-ensure-role",
+        help="Ensure the noetl database role and schema exist before applying DDL"
+    ),
+):
+    """Apply the canonical schema DDL to the configured Postgres database.
+
+    Uses the admin connection string from environment (POSTGRES_* / settings).
+    """
+    try:
+        settings = get_settings(reload=True)
+        admin_conn = settings.admin_conn_string
+        import psycopg
+
+        # Load DDL from provided path, else from packaged resource
+        if schema_file:
+            if not os.path.exists(schema_file):
+                typer.echo(f"Schema file not found: {schema_file}")
+                raise typer.Exit(code=2)
+            with open(schema_file, "r", encoding="utf-8") as f:
+                ddl_sql = f.read()
+            ddl_origin = schema_file
+        else:
+            try:
+                from importlib import resources as pkg_resources
+                ddl_sql = pkg_resources.files("noetl").joinpath("database/ddl/postgres/schema_ddl.sql").read_text(encoding="utf-8")
+                ddl_origin = "package://noetl/database/ddl/postgres/schema_ddl.sql"
+            except Exception as e:
+                typer.echo(f"Failed to read packaged schema DDL: {e}")
+                raise typer.Exit(code=2)
+
+        with psycopg.connect(admin_conn) as conn:
+            conn.execute("SET client_min_messages TO WARNING")
+            with conn.cursor() as cur:
+                if ensure_role:
+                    # Best-effort: ensure role and schema exist
+                    try:
+                        cur.execute(
+                            """
+                            DO $$
+                            BEGIN
+                              IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %s) THEN
+                                EXECUTE format('CREATE USER %I LOGIN', %s);
+                              END IF;
+                            END
+                            $$;
+                            """,
+                            (settings.noetl_user, settings.noetl_user),
+                        )
+                    except Exception:
+                        pass
+                # Apply DDL as a single batch
+                cur.execute(ddl_sql)
+                conn.commit()
+        typer.echo(f"Applied schema from {ddl_origin}")
+    except Exception as e:
+        typer.echo(f"Error applying schema: {e}")
+        raise typer.Exit(code=1)
 
 
 @cli_app.command("catalog")

@@ -45,12 +45,6 @@ spec:
             - name: postgres-config-volume
               mountPath: /etc/postgresql/conf.d/postgresql.conf
               subPath: postgresql.conf
-            - name: postgres-init-volume
-              mountPath: /docker-entrypoint-initdb.d/init_database.sh
-              subPath: init_database.sh
-            - name: postgres-schema-volume
-              mountPath: /docker-entrypoint-initdb.d/schema_ddl.sql
-              subPath: schema_ddl.sql
           resources:
             limits:
               cpu: "1"
@@ -96,15 +90,3 @@ spec:
             items:
               - key: postgresql.conf
                 path: postgresql.conf
-        - name: postgres-init-volume
-          configMap:
-            name: postgres-config-files
-            items:
-              - key: init_database.sh
-                path: init_database.sh
-        - name: postgres-schema-volume
-          configMap:
-            name: postgres-config-files
-            items:
-              - key: schema_ddl.sql
-                path: schema_ddl.sql

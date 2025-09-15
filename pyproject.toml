@@ -86,4 +86,4 @@ where = ["."]
 include = ["noetl*"]
 
 [tool.setuptools.package-data]
-"noetl" = ["ui/**/*"]
+"noetl" = ["ui/**/*", "database/ddl/**/*"]

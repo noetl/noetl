@@ -215,21 +215,20 @@ start-server:
 	if [ -f .env ]; then . .env; fi; \
 	if [ -f .env.server ]; then . .env.server; fi; \
 	set +a; \
-	if [ -z "$${NOETL_SCHEMA_VALIDATE:-}" ]; then \
-	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be set (true/false) in your .env[.server]"; \
-	  exit 1; \
-	fi; \
-	if [ "$${NOETL_SCHEMA_VALIDATE}" != "true" ] && [ "$${NOETL_SCHEMA_VALIDATE}" != "false" ]; then \
-	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be 'true' or 'false'"; \
-	  exit 1; \
+	# Optional schema init: prefer NOETL_INIT_DB=true; fallback to NOETL_SCHEMA_VALIDATE=true for backward compat
+	INIT_DB_FLAG=""; \
+	if [ "$${NOETL_INIT_DB:-}" = "true" ]; then \
+	  INIT_DB_FLAG="--init-db"; \
+	elif [ "$${NOETL_SCHEMA_VALIDATE:-}" = "true" ]; then \
+	  INIT_DB_FLAG="--init-db"; \
 	fi; \
 	mkdir -p ~/.noetl; \
 	cli="$(VENV)/bin/noetl"; \
 	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
 	if command -v setsid >/dev/null 2>&1; then \
-	  setsid nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & \
+	  setsid nohup "$$cli" server start $$INIT_DB_FLAG </dev/null >> logs/server.log 2>&1 & \
 	else \
-	  nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & \
+	  nohup "$$cli" server start $$INIT_DB_FLAG </dev/null >> logs/server.log 2>&1 & \
 	fi; \
 	sleep 3; \
 	if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \
@@ -708,13 +707,18 @@ postgres-reset-schema:
 	export PGHOST=$$POSTGRES_HOST PGPORT=$$POSTGRES_PORT PGUSER=$$POSTGRES_USER PGPASSWORD=$$POSTGRES_PASSWORD PGDATABASE=$$POSTGRES_DB; \
 	echo "Dropping schema $${NOETL_SCHEMA:-noetl}..."; \
 	psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS $${NOETL_SCHEMA:-noetl} CASCADE;"; \
-	echo "Applying schema DDL..."; \
-	if [ -f scripts/database/postgres/schema_ddl.sql ]; then \
-		psql -v ON_ERROR_STOP=1 -f scripts/database/postgres/schema_ddl.sql ; \
-	elif $(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files >/dev/null 2>&1 ; then \
-		$(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files -o jsonpath='{.data.schema_ddl\.sql}' | psql -v ON_ERROR_STOP=1 -f - ; \
+	echo "Applying schema DDL via noetl CLI..."; \
+	cli="$(VENV)/bin/noetl"; \
+	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	if $$cli db apply-schema --ensure-role; then \
+	  echo "Schema applied using packaged DDL."; \
 	else \
-		echo "Could not find schema_ddl.sql locally or in cluster configmap; aborting."; exit 1; \
+	  echo "noetl CLI apply-schema failed; trying local DDL fallback..."; \
+	  if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then \
+	    psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql ; \
+	  else \
+	    echo "Could not apply schema (no CLI and no local DDL)."; exit 1; \
+	  fi; \
 	fi
 
 
