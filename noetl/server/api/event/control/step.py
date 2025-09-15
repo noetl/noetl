@@ -151,9 +151,18 @@ async def _build_base_ctx(execution_id: str) -> Dict[str, Any]:
         if isinstance(node_results, dict):
             for k, v in node_results.items():
                 try:
-                    results[str(k)] = json.loads(v) if isinstance(v, str) else v
+                    val = json.loads(v) if isinstance(v, str) else v
                 except Exception:
-                    results[str(k)] = v
+                    val = v
+                # Flatten common action envelope one level so Jinja references like `step.data.*` work
+                try:
+                    if isinstance(val, dict) and isinstance(val.get('data'), (dict, list)) and (
+                        ('status' in val) or ('id' in val)
+                    ):
+                        val = val.get('data')
+                except Exception:
+                    pass
+                results[str(k)] = val
     except Exception:
         pass
     base_ctx = {'workload': workload, 'work': workload, 'context': workload}

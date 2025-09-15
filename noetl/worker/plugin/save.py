@@ -122,9 +122,10 @@ def execute_save_task(
                     raise ValueError("postgres save requires 'table' and mapping 'data' when no 'statement' provided")
                 cols = list(rendered_data.keys())
                 # Use Jinja to render values from save_data mapping we pass via with
+                # Wrap values in single quotes and escape to ensure valid SQL for text values
                 vals = []
                 for c in cols:
-                    vals.append(f"{{{{ save_data.{c} }}}}")
+                    vals.append("{{\"'\" ~ (save_data.%s|string)|replace(\"'\", \"''\") ~ \"'\"}}" % c)
                 insert_sql = f"INSERT INTO {table} (" + ", ".join(cols) + ") VALUES (" + ", ".join(vals) + ")"
                 if (mode or '').lower() == 'upsert' and key_cols:
                     key_list = key_cols if isinstance(key_cols, (list, tuple)) else [key_cols]

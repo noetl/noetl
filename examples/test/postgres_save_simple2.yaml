@@ -1,0 +1,62 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: postgres_save_simple2
+path: examples/test/postgres_save_simple2
+
+workload:
+  message: "Hello Save"
+
+workflow:
+  - step: start
+    desc: "Start Postgres Save Demo"
+    next:
+      - step: create_table
+
+  - step: create_table
+    desc: "Ensure target table exists"
+    type: postgres
+    with:
+      db_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+      db_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+      db_user: "{{ env.POSTGRES_USER | default('demo') }}"
+      db_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+      db_name: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+    command: |
+      CREATE SCHEMA IF NOT EXISTS noetl;
+      CREATE TABLE IF NOT EXISTS noetl.postgres_save_demo (
+        id TEXT PRIMARY KEY,
+        message TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    next:
+      - step: save_row
+
+  - step: save_row
+    desc: "Save one row via save(plugin=postgres)"
+    type: save
+    save:
+      storage:
+        kind: postgres
+        spec:
+          dsn: "host={{ env.POSTGRES_HOST | default('localhost') }} port={{ env.POSTGRES_PORT | default('5432') }} user={{ env.POSTGRES_USER | default('demo') }} password={{ env.POSTGRES_PASSWORD | default('demo') }} dbname={{ env.POSTGRES_DB | default('demo_noetl') }}"
+          db_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
+          db_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+          db_user: "{{ env.POSTGRES_USER | default('demo') }}"
+          db_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+          db_name: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+      table: noetl.postgres_save_demo
+      mode: upsert
+      key: id
+      data:
+        id: "{{ execution_id }}"
+        message: "{{ workload.message }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "Finalize"
+    result:
+      status: "ok"
+      saved: "{{ save_row.saved }}"
+      table: "{{ save_row.table }}"
+      message: "{{ workload.message }}"

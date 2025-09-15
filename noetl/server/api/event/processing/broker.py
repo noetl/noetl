@@ -214,7 +214,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     'name': next_step_name,
                                     'type': step_def.get('type') or 'python',
                                 }
-                                for fld in ('task','code','command','commands','sql','url','endpoint','method','headers','params','data','payload','with','resource_path','content','path','loop'):
+                                for fld in ('task','code','command','commands','sql','url','endpoint','method','headers','params','data','payload','with','resource_path','content','path','loop','save'):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)
                                 # Merge 'with' from transition
@@ -648,9 +648,18 @@ async def _finalize_result_step(execution_id: str, step_name: str, step_def: dic
             import json as _json
             for k, v in node_results_map.items():
                 try:
-                    results[str(k)] = _json.loads(v) if isinstance(v, str) else v
+                    val = _json.loads(v) if isinstance(v, str) else v
                 except Exception:
-                    results[str(k)] = v
+                    val = v
+                # Flatten common action envelope one level so `step.data.*` resolves naturally
+                try:
+                    if isinstance(val, dict) and isinstance(val.get('data'), (dict, list)) and (
+                        ('status' in val) or ('id' in val)
+                    ):
+                        val = val.get('data')
+                except Exception:
+                    pass
+                results[str(k)] = val
         # Render result mapping if present
         result_mapping = step_def.get('result')
         rendered_result = None

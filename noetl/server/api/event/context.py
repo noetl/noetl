@@ -226,9 +226,9 @@ async def render_context(request: Request):
             if 'task' in template:
                 task_tpl = template.get('task')
                 try:
-                    # Render task non-strict to avoid error logs for not-yet-defined values
-                    # The worker has fallbacks for unresolved 'with' params (alerts/items/city)
-                    task_rendered = render_template(env, task_tpl, base_ctx, rules=None, strict_keys=False)
+                    # Render task in strict mode so unresolved variables remain unchanged
+                    # Worker-side rendering will resolve remaining placeholders later.
+                    task_rendered = render_template(env, task_tpl, base_ctx, rules=None, strict_keys=True)
                 except Exception:
                     task_rendered = task_tpl
                 # If task is a JSON string, try parsing to dict for convenience

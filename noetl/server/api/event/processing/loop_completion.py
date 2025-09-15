@@ -655,7 +655,8 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     t = str((sd or {}).get('type') or '').lower()
                     if not t:
                         return False
-                    if t in {'http','python','duckdb','postgres','secrets','workbook','playbook'}:
+                    # Include 'save' so save steps run on workers
+                    if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save'}:
                         if t == 'python':
                             return bool(sd.get('code') or sd.get('code_b64') or sd.get('code_base64'))
                         return True
@@ -671,7 +672,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 for _fld in (
                     'task','code','command','commands','sql',
                     'url','endpoint','method','headers','params','data','payload',
-                    'with','resource_path','content','path','loop'
+                    'with','resource_path','content','path','loop','save'
                 ):
                     if step_def.get(_fld) is not None:
                         task_def[_fld] = step_def.get(_fld)
@@ -701,8 +702,30 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                         
             # Encode and enqueue
             encoded = _encode_task(task_def)
+            # Load earliest workload context for this execution to provide rendering variables
+            base_workload = {}
+            try:
+                await cur.execute(
+                    """
+                    SELECT context FROM noetl.event_log
+                    WHERE execution_id = %s::bigint AND event_type IN ('execution_start','execution_started')
+                    ORDER BY timestamp ASC LIMIT 1
+                    """,
+                    (parent_execution_id,)
+                )
+                _row = await cur.fetchone()
+                if _row and _row[0]:
+                    import json as _json
+                    try:
+                        _ctx0 = _json.loads(_row[0]) if isinstance(_row[0], str) else _row[0]
+                        if isinstance(_ctx0, dict) and isinstance(_ctx0.get('workload'), dict):
+                            base_workload = _ctx0.get('workload') or {}
+                    except Exception:
+                        base_workload = {}
+            except Exception:
+                base_workload = {}
             job_ctx = {
-                'workload': {},
+                'workload': base_workload,
                 'step_name': next_step_name,
                 'path': None,
                 'version': 'latest'
