@@ -671,20 +671,31 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 }
                 for _fld in (
                     'task','code','command','commands','sql',
-                    'url','endpoint','method','headers','params','data','payload',
-                    'with','resource_path','content','path','loop','save','credential'
+                    'url','endpoint','method','headers','params',
+                    'input','payload','with','data',
+                    'resource_path','content','path','loop','save','credential'
                 ):
                     if step_def.get(_fld) is not None:
                         task_def[_fld] = step_def.get(_fld)
-                # Merge 'with' from transition
+                # Merge transition payload into unified input (and keep 'with' for back-compat)
                 if next_with:
                     try:
-                        existing_with = task_def.get('with') or {}
-                        if isinstance(existing_with, dict):
-                            existing_with.update(next_with)
-                            task_def['with'] = existing_with
-                        else:
-                            task_def['with'] = dict(next_with)
+                        existing_with = task_def.get('with') if isinstance(task_def.get('with'), dict) else {}
+                        merged_with = {**existing_with, **next_with}
+                        task_def['with'] = merged_with
+
+                        # Rebuild unified input (with precedence: input > payload > with)
+                        base = {}
+                        w = task_def.get('with') if isinstance(task_def.get('with'), dict) else None
+                        if w:
+                            base.update(w)
+                        p = task_def.get('payload') if isinstance(task_def.get('payload'), dict) else None
+                        if p:
+                            base.update(p)
+                        i = task_def.get('input') if isinstance(task_def.get('input'), dict) else None
+                        if i:
+                            base.update(i)
+                        task_def['input'] = base
                     except Exception:
                         task_def['with'] = next_with
             else:

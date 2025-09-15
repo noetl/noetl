@@ -197,8 +197,27 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         next_step_name = first
                                     elif isinstance(first, dict):
                                         next_step_name = first.get('step') or first.get('name')
-                                        if isinstance(first.get('with'), dict):
-                                            next_with = first.get('with') or {}
+                                        # Build transition payload with precedence: input > payload > with
+                                        merged = {}
+                                        try:
+                                            w = first.get('with') if isinstance(first.get('with'), dict) else None
+                                            if w:
+                                                merged.update(w)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            p = first.get('payload') if isinstance(first.get('payload'), dict) else None
+                                            if p:
+                                                merged.update(p)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            i = first.get('input') if isinstance(first.get('input'), dict) else None
+                                            if i:
+                                                merged.update(i)
+                                        except Exception:
+                                            pass
+                                        next_with = merged
                             
                             if next_step_name and next_step_name in by_name:
                                 step_def = by_name[next_step_name]
@@ -216,19 +235,43 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                 }
                                 for fld in (
                                     'task','code','command','commands','sql',
-                                    'url','endpoint','method','headers','params','data','payload',
-                                    'with','resource_path','content','path','loop','save','credential'
+                                    'url','endpoint','method','headers','params',
+                                    # unified payload fields (prefer input/payload over legacy with later)
+                                    'input','payload','with',
+                                    'data',  # some steps embed data payloads directly
+                                    'resource_path','content','path','loop','save','credential'
                                 ):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)
-                                # Merge 'with' from transition
+                                # Merge transition payload into unified input (and keep 'with' for back-compat)
                                 if next_with:
                                     try:
-                                        existing_with = task.get('with') or {}
-                                        if isinstance(existing_with, dict):
-                                            task['with'] = {**existing_with, **next_with}
-                                        else:
-                                            task['with'] = dict(next_with)
+                                        # Merge legacy with first
+                                        existing_with = task.get('with') if isinstance(task.get('with'), dict) else {}
+                                        merged_with = {**existing_with, **next_with}
+                                        task['with'] = merged_with
+
+                                        # Now build unified input with precedence input > payload > with
+                                        base = {}
+                                        try:
+                                            w = task.get('with') if isinstance(task.get('with'), dict) else None
+                                            if w:
+                                                base.update(w)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            p = task.get('payload') if isinstance(task.get('payload'), dict) else None
+                                            if p:
+                                                base.update(p)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            i = task.get('input') if isinstance(task.get('input'), dict) else None
+                                            if i:
+                                                base.update(i)
+                                        except Exception:
+                                            pass
+                                        task['input'] = base
                                     except Exception:
                                         task['with'] = next_with
                                 # Check if this step has a loop

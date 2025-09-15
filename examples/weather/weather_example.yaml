@@ -28,7 +28,7 @@ workflow:
     desc: "Fetch weather data for the city"
     type: workbook
     task: fetch_weather
-    with:
+    input:
       city: "{{ workload.cities[0] }}"
       threshold: "{{ workload.temperature_threshold }}"
       base_url: "{{ workload.base_url }}"
@@ -36,19 +36,19 @@ workflow:
       - when: "{{ fetch_weather.alert }}"
         then:
           - step: report_warm
-            with:
+            input:
               city: "{{ workload.cities[0] }}"
               temperature: "{{ fetch_weather.max_temp }}"
       - else:
           - step: report_cold
-            with:
+            input:
               city: "{{ workload.cities[0] }}"
               temperature: "{{ fetch_weather.max_temp }}"
 
   - step: report_warm
     desc: "Report warm weather"
     type: python
-    with:
+    input:
       city: "{{ city }}"
       temperature: "{{ temperature }}"
     code: |
@@ -63,7 +63,7 @@ workflow:
     desc: "Report cold weather"
     type: python
     name: report_cold
-    with:
+    input:
       city: "{{ city }}"
       temperature: "{{ temperature }}"
     code: |

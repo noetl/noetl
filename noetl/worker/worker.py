@@ -533,13 +533,43 @@ class QueueWorker:
             report_event(start_event, self.server_url)
 
             try:
-                task_with = action_cfg.get('with', {}) if isinstance(action_cfg, dict) else {}
+                # Unify step payloads: prefer 'input', then 'payload', then legacy 'with'
+                if isinstance(action_cfg, dict):
+                    # Merge with priority input > payload > with
+                    merged = {}
+                    try:
+                        w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
+                        if w:
+                            merged.update(w)
+                    except Exception:
+                        pass
+                    try:
+                        p = action_cfg.get('payload') if isinstance(action_cfg.get('payload'), dict) else None
+                        if p:
+                            merged.update(p)
+                    except Exception:
+                        pass
+                    try:
+                        i = action_cfg.get('input') if isinstance(action_cfg.get('input'), dict) else None
+                        if i:
+                            merged.update(i)
+                    except Exception:
+                        pass
+                    task_with = merged
+                else:
+                    task_with = {}
                 if not isinstance(task_with, dict):
                     task_with = {}
                 try:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
                 except Exception:
                     exec_ctx = {}
+                # Expose unified payload under exec_ctx['input'] for template convenience
+                try:
+                    if isinstance(exec_ctx, dict):
+                        exec_ctx['input'] = task_with
+                except Exception:
+                    pass
                 try:
                     if 'execution_id' not in exec_ctx:
                         exec_ctx['execution_id'] = execution_id

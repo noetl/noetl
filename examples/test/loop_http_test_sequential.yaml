@@ -22,7 +22,7 @@ workflow:
     desc: "Start HTTP loop test (sequential)"
     next:
       - step: http_loop
-        with:
+        input:
           cities: "{{ workload.cities }}"
 
   - step: http_loop
@@ -44,7 +44,7 @@ workflow:
       mode: sequential
     next:
       - step: aggregate_results
-        with:
+        input:
           http_results: "{{ http_loop.result }}"
           original_message: "{{ workload.message }}"
 
@@ -113,7 +113,7 @@ workflow:
           
           print(f"AGGREGATE_RESULTS: Final weather aggregated result: {aggregated_result}")
           return aggregated_result
-    with:
+    input:
       http_results: "{{ http_loop.result }}"
       original_message: "{{ workload.message }}"
     next:

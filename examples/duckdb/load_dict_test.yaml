@@ -102,7 +102,7 @@ workbook:
 
       -- Clean up
       DROP TABLE IF EXISTS test_table;
-    with:
+    input:
       table: test_table
       file: "{{ workload.data_dir }}/test.csv"
       header: false

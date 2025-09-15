@@ -84,7 +84,7 @@ workflow:
     desc: "Create Duckdb secret for GCS authentication"
     type: workbook
     task: create_gcs_secret_task
-    with:
+    input:
       key_id: "{{ get_gcs_key_id.secret_value }}"
       secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
@@ -94,7 +94,7 @@ workflow:
     desc: "Create Duckdb secret for Postgres authentication"
     type: workbook
     task: create_pg_secret_task
-    with:
+    input:
       pg_user: "{{ workload.pg_user }}"
       pg_password: "{{ get_pg_password.secret_value }}"
       execution_id: "{{ workload.execution_id }}"
@@ -106,7 +106,7 @@ workflow:
     desc: "Test GCS credentials by attempting to list bucket or create a test file"
     type: workbook
     task: test_gcs_credentials
-    with:
+    input:
       key_id: "{{ get_gcs_key_id.secret_value }}"
       secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
@@ -116,7 +116,7 @@ workflow:
     desc: "Read data from Postgres test_data_table and store on local filesystem"
     type: workbook
     task: read_from_postgres_task
-    with:
+    input:
       pg_user: "{{ get_pg_user.secret_value }}"
       pg_password: "{{ get_pg_password.secret_value }}"
       execution_id: "{{ workload.execution_id }}"
@@ -127,7 +127,7 @@ workflow:
     desc: "Upload CSV file to Google Storage bucket"
     type: workbook
     task: upload_csv_task
-    with:
+    input:
       key_id: "{{ get_gcs_key_id.secret_value }}"
       secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
@@ -137,7 +137,7 @@ workflow:
     desc: "Download CSV from GS and convert to Parquet"
     type: workbook
     task: download_convert_task
-    with:
+    input:
       key_id: "{{ get_gcs_key_id.secret_value }}"
       secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
@@ -147,7 +147,7 @@ workflow:
     desc: "Create table in Postgres"
     type: workbook
     task: create_table_task
-    with:
+    input:
       key_id: "{{ get_gcs_key_id.secret_value }}"
       secret_key: "{{ get_gcs_secret_key.secret_value }}"
     next:
@@ -187,7 +187,7 @@ workflow:
     desc: "Delete all secrets created during workflow"
     type: workbook
     task: delete_secrets_task
-    with:
+    input:
       execution_id: "{{ workload.execution_id }}"
     next:
       - step: end
@@ -242,7 +242,7 @@ workbook:
 
   - name: read_from_postgres_task
     type: duckdb
-    with:
+    input:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
       pg_user: "demo"
@@ -307,7 +307,7 @@ workbook:
 
   - name: create_gcs_secret_task
     type: duckdb
-    with:
+    input:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
     command: |
@@ -352,7 +352,7 @@ workbook:
   - name: test_gcs_credentials
     desc: "Test GCS credentials using the created secret"
     type: duckdb
-    with:
+    input:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
     command: |
@@ -475,7 +475,7 @@ workbook:
 
   - name: create_table_task
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -547,7 +547,7 @@ workbook:
 
   - name: upload_parquet_task
     type: duckdb
-    with:
+    input:
       key_id: "{{ key_id }}"
       secret_key: "{{ secret_key }}"
       pg_user: "demo"

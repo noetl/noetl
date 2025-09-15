@@ -263,7 +263,15 @@ def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Optional
                 val = render_template(jenv, cond, base_ctx, rules=None, strict_keys=False) if isinstance(cond, (str, dict, list)) else cond
                 if _truthy(val):
                     step_nm = item.get('step') or item.get('name')
-                    return (step_nm, item.get('with') or {}) if step_nm else None
+                    # Support input/payload/with as transition payloads (input wins, then payload, then with)
+                    payload = None
+                    if isinstance(item.get('input'), dict):
+                        payload = item.get('input')
+                    elif isinstance(item.get('payload'), dict):
+                        payload = item.get('payload')
+                    elif isinstance(item.get('with'), dict):
+                        payload = item.get('with')
+                    return (step_nm, payload or {}) if step_nm else None
             except Exception:
                 continue
 
@@ -273,7 +281,14 @@ def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Optional
             if 'when' not in item:
                 nm = item.get('step') or item.get('name')
                 if nm:
-                    return nm, item.get('with') or {}
+                    payload = None
+                    if isinstance(item.get('input'), dict):
+                        payload = item.get('input')
+                    elif isinstance(item.get('payload'), dict):
+                        payload = item.get('payload')
+                    elif isinstance(item.get('with'), dict):
+                        payload = item.get('with')
+                    return nm, (payload or {})
         else:
             # string step reference
             return str(item), {}
