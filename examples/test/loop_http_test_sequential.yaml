@@ -1,0 +1,160 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: loop_http_test_sequential
+path: examples/test/loop_http_test_sequential
+
+workload:
+  message: "Testing HTTP loop over cities with weather API aggregation (sequential mode)"
+  cities:
+    - name: "London"
+      lat: 51.51
+      lon: -0.13
+    - name: "Paris"
+      lat: 48.85
+      lon: 2.35
+    - name: "Berlin"
+      lat: 52.52
+      lon: 13.41
+  base_url: "https://api.open-meteo.com/v1"
+
+workflow:
+  - step: start
+    desc: "Start HTTP loop test (sequential)"
+    next:
+      - step: http_loop
+        input:
+          cities: "{{ workload.cities }}"
+
+  - step: http_loop
+    desc: "Loop through cities making weather API HTTP calls (sequential mode)"
+    type: http
+    method: GET
+    endpoint: "{{ workload.base_url }}/forecast"
+    headers:
+      User-Agent: "NoETL HTTP Loop Test/1.0"
+    params:
+      latitude: "{{ city_item.lat }}"
+      longitude: "{{ city_item.lon }}"
+      hourly: "temperature_2m"
+      forecast_days: 1
+    timeout: 10
+    loop:
+      in: "{{ cities }}"
+      iterator: city_item
+      mode: sequential
+    next:
+      - step: aggregate_results
+        input:
+          http_results: "{{ http_loop.result.results }}"
+          original_message: "{{ workload.message }}"
+
+  - step: aggregate_results
+    desc: "Aggregate weather HTTP results and count items"
+    type: python
+    code: |
+      def main(http_results, original_message):
+          import json, ast
+
+          def _coerce(v):
+              if isinstance(v, (dict, list)):
+                  return v
+              if isinstance(v, str):
+                  s = v.strip()
+                  try:
+                      if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
+                          try:
+                              return json.loads(s)
+                          except Exception:
+                              return ast.literal_eval(s)
+                  except Exception:
+                      return v
+              return v
+
+          http_results = _coerce(http_results)
+          if not isinstance(http_results, list):
+              http_results = [http_results]
+          http_results = [_coerce(x) for x in http_results]
+
+          print(f"AGGREGATE_RESULTS: Processing weather data from {len(http_results)} cities")
+
+          successful_count = 0
+          failed_count = 0
+          weather_summaries = []
+          total_temperature_count = 0
+
+          for item in http_results:
+              result = item if isinstance(item, dict) else {}
+              if isinstance(result, dict) and 'status_code' in result:
+                  status = 'success' if 200 <= int(result.get('status_code', 0)) < 400 else 'error'
+                  norm = {
+                      'status': status,
+                      'city_name': result.get('city_name') or result.get('city') or 'Unknown',
+                      'weather_data': result.get('data') or {},
+                      'city_lat': result.get('city_lat'),
+                      'city_lon': result.get('city_lon'),
+                  }
+                  result = norm
+
+              city_for_log = (result.get('city_name') if isinstance(result, dict) else None) or 'Unknown'
+              print(f"AGGREGATE_RESULTS: Processing result for city: {city_for_log}")
+
+              if isinstance(result, dict) and result.get('status') == 'success':
+                  successful_count += 1
+                  weather_data = result.get('weather_data', {})
+                  city_name = result.get('city_name', 'Unknown')
+
+                  hourly_temps = []
+                  if isinstance(weather_data, dict) and 'hourly' in weather_data:
+                      hourly_data = weather_data['hourly']
+                      if 'temperature_2m' in hourly_data:
+                          hourly_temps = hourly_data['temperature_2m']
+                          total_temperature_count += len(hourly_temps)
+
+                  avg_temp = 0
+                  if hourly_temps:
+                      avg_temp = sum(hourly_temps) / len(hourly_temps)
+
+                  weather_summaries.append({
+                      'city_name': city_name,
+                      'city_lat': result.get('city_lat'),
+                      'city_lon': result.get('city_lon'),
+                      'temperature_readings': len(hourly_temps),
+                      'average_temperature': round(avg_temp, 2) if hourly_temps else None,
+                      'min_temperature': min(hourly_temps) if hourly_temps else None,
+                      'max_temperature': max(hourly_temps) if hourly_temps else None
+                  })
+              else:
+                  failed_count += 1
+                  if isinstance(result, dict):
+                      print(f"AGGREGATE_RESULTS: Failed request for city: {result.get('city_name', 'Unknown')}")
+
+          overall_avg_temp = 0
+          valid_cities = [city for city in weather_summaries if city['average_temperature'] is not None]
+          if valid_cities:
+              overall_avg_temp = sum(city['average_temperature'] for city in valid_cities) / len(valid_cities)
+
+          aggregated_result = {
+              "message": original_message,
+              "total_cities": len(http_results),
+              "successful_requests": successful_count,
+              "failed_requests": failed_count,
+              "total_temperature_readings": total_temperature_count,
+              "overall_average_temperature": round(overall_avg_temp, 2) if valid_cities else None,
+              "weather_summaries": weather_summaries,
+              "processing_complete": True
+          }
+
+          print(f"AGGREGATE_RESULTS: Final weather aggregated result: {aggregated_result}")
+          return aggregated_result
+    input:
+      http_results: "{{ http_loop.results }}"
+      original_message: "{{ workload.message }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End HTTP loop test (sequential)"
+    save:
+      data:
+        loop_http_response: "{{ aggregate_results }}"
+        test_summary: "Completed weather HTTP loop test with {{ aggregate_results.total_cities }} cities (sequential mode)"

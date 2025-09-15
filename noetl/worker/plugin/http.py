@@ -52,7 +52,9 @@ def execute_http_task(
         method = task_config.get('method', 'GET').upper()
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: HTTP method={method}")
 
-        endpoint = render_template(jinja_env, task_config.get('endpoint', ''), context)
+        # Support both 'endpoint' (preferred) and legacy 'url' key for backward compatibility
+        raw_endpoint_template = task_config.get('endpoint') or task_config.get('url', '')
+        endpoint = render_template(jinja_env, raw_endpoint_template, context)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
 
         params = render_template(jinja_env, task_config.get('params', {}), context)

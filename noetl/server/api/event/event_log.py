@@ -189,15 +189,15 @@ class EventLog:
                 await cur.execute(
                     """
                     INSERT INTO noetl.event_log (
-                        execution_id, event_id, parent_event_id, parent_execution_id, event_type,
+                        execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type,
                         node_id, node_name, node_type, status, duration, context, result,
                         metadata, error, trace_component, loop_id, loop_name, iterator,
                         current_index, current_item
                     ) VALUES (
-                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, CURRENT_TIMESTAMP, %s,
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s
+                        %s, %s, %s, %s, %s, %s::jsonb,
+                        %s, %s::jsonb
                     )
                     ON CONFLICT (execution_id, event_id) DO NOTHING
                     """,

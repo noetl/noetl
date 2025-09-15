@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS noetl.event_log (
     event_id BIGINT,
     parent_event_id BIGINT,
     parent_execution_id BIGINT,
-    timestamp TIMESTAMP,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     event_type VARCHAR,
     node_id VARCHAR,
     node_name VARCHAR,
@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS noetl.event_log (
 ALTER TABLE noetl.event_log OWNER TO noetl;
 ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB;
 ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
+-- Ensure timestamp column has a default
+DO $$ BEGIN
+    ALTER TABLE noetl.event_log ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP;
+EXCEPTION WHEN others THEN NULL; END $$;
 
 -- Workflow/workbook/transition
 CREATE TABLE IF NOT EXISTS noetl.workflow (

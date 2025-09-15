@@ -247,10 +247,25 @@ def execute_playbook_via_broker(
                                     logger.debug("EXECUTE: Error processing step transitions (direct)", exc_info=True)
 
                             # Workflow rows
+                            # Warn on multiple 'start'/'end' steps for debugging correctness
+                            try:
+                                _starts = sum(1 for s in _steps if str((s.get('step') or s.get('name') or '')).strip().lower() == 'start')
+                                _ends = sum(1 for s in _steps if str((s.get('step') or s.get('name') or '')).strip().lower() == 'end')
+                                if _starts > 1:
+                                    logger.warning(f"EXECUTE: Multiple 'start' steps detected for execution {_exec_id}; expected exactly one")
+                                if _ends > 1:
+                                    logger.warning(f"EXECUTE: Multiple 'end' steps detected for execution {_exec_id}; expected exactly one")
+                            except Exception:
+                                pass
+                            
                             for st in _steps or []:
                                 try:
                                     step_name = st.get("step") or st.get("name") or ""
-                                    step_type = st.get("type") or st.get("kind") or st.get("task_type") or ""
+                                    # Derive special types for control steps 'start' and 'end'
+                                    if str(step_name).strip().lower() in {"start","end"}:
+                                        step_type = str(step_name).strip().lower()
+                                    else:
+                                        step_type = st.get("type") or st.get("kind") or st.get("task_type") or ""
                                     desc = st.get("desc") or st.get("description") or ""
                                     raw = _json.dumps(st)
                                     # Use step_name as step_id since it should be unique within the workflow

@@ -338,7 +338,8 @@ class QueueWorker:
     async def _fail_job(self, job_id: int) -> None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(f"{self.server_url}/queue/{job_id}/fail", json={})
+                # Do not retry failed jobs by default; mark terminal 'dead'
+                await client.post(f"{self.server_url}/queue/{job_id}/fail", json={"retry": False})
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to mark job %s failed", job_id, exc_info=True)
 
@@ -448,30 +449,26 @@ class QueueWorker:
                 act_type = ''
             if act_type == 'result_aggregation':
                 # Process loop result aggregation job via worker-side coroutine
+                from noetl.worker.plugin.result import process_loop_aggregation_job
+                import asyncio as _a
                 try:
-                    from noetl.job.result import process_loop_aggregation_job
-                    import asyncio as _a
-                    try:
-                        _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
-                    except Exception:
-                        # Compatible run for various environments
-                        try:
-                            _a.run(process_loop_aggregation_job(job))
-                        except Exception:
-                            loop = _a.new_event_loop()
-                            try:
-                                _a.set_event_loop(loop)
-                                loop.run_until_complete(process_loop_aggregation_job(job))
-                            finally:
-                                try:
-                                    loop.close()
-                                except Exception:
-                                    pass
-                    # Do not emit separate start/complete events here; the aggregation job emits its own
-                    return
+                    _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
                 except Exception:
-                    logger.exception("WORKER: Failed processing result_aggregation job")
-                    raise
+                    # Compatible run for various environments
+                    try:
+                        _a.run(process_loop_aggregation_job(job))
+                    except Exception:
+                        loop = _a.new_event_loop()
+                        try:
+                            _a.set_event_loop(loop)
+                            loop.run_until_complete(process_loop_aggregation_job(job))
+                        finally:
+                            try:
+                                loop.close()
+                            except Exception:
+                                pass
+                # Do not emit separate start/complete events here; the aggregation job emits its own
+                return
 
             task_name = action_cfg.get("name") or node_id
 
@@ -532,13 +529,43 @@ class QueueWorker:
             report_event(start_event, self.server_url)
 
             try:
-                task_with = action_cfg.get('with', {}) if isinstance(action_cfg, dict) else {}
+                # Unify step payloads: prefer 'input', then 'payload', then legacy 'with'
+                if isinstance(action_cfg, dict):
+                    # Merge with priority input > payload > with
+                    merged = {}
+                    try:
+                        w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
+                        if w:
+                            merged.update(w)
+                    except Exception:
+                        pass
+                    try:
+                        p = action_cfg.get('payload') if isinstance(action_cfg.get('payload'), dict) else None
+                        if p:
+                            merged.update(p)
+                    except Exception:
+                        pass
+                    try:
+                        i = action_cfg.get('input') if isinstance(action_cfg.get('input'), dict) else None
+                        if i:
+                            merged.update(i)
+                    except Exception:
+                        pass
+                    task_with = merged
+                else:
+                    task_with = {}
                 if not isinstance(task_with, dict):
                     task_with = {}
                 try:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
                 except Exception:
                     exec_ctx = {}
+                # Expose unified payload under exec_ctx['input'] for template convenience
+                try:
+                    if isinstance(exec_ctx, dict):
+                        exec_ctx['input'] = task_with
+                except Exception:
+                    pass
                 try:
                     if 'execution_id' not in exec_ctx:
                         exec_ctx['execution_id'] = execution_id
@@ -561,6 +588,38 @@ class QueueWorker:
                 except Exception:
                     pass
                 result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
+
+                # Inline save: if the action config declares a `save` block, perform the save on worker
+                inline_save = None
+                try:
+                    inline_save = action_cfg.get('save') if isinstance(action_cfg, dict) else None
+                except Exception:
+                    inline_save = None
+                if inline_save:
+                    try:
+                        # Provide current result to rendering context as `this` for convenience
+                        try:
+                            exec_ctx_with_result = dict(exec_ctx)
+                            exec_ctx_with_result['this'] = result
+                        except Exception:
+                            exec_ctx_with_result = exec_ctx
+                        from .plugin.save import execute_save_task as _do_save
+                        save_payload = {'save': inline_save}
+                        save_out = _do_save(save_payload, exec_ctx_with_result, self._jinja, task_with)
+                        # Attach save outcome to result envelope under meta.save or data.save
+                        if isinstance(result, dict):
+                            if 'meta' in result and isinstance(result['meta'], dict):
+                                result['meta']['save'] = save_out
+                            else:
+                                # Keep envelope valid; prefer adding under meta
+                                result['meta'] = {'save': save_out}
+                    except Exception as _e:
+                        # Attach error under meta.save_error but do not fail the action
+                        if isinstance(result, dict):
+                            if 'meta' in result and isinstance(result['meta'], dict):
+                                result['meta']['save_error'] = str(_e)
+                            else:
+                                result['meta'] = {'save_error': str(_e)}
 
                 res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
                 emitted_error = False

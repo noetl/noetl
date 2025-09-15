@@ -40,7 +40,7 @@ workflow:
     desc: "Create test tables in Postgres"
     pass: "{{ workload.steps.setup_tables }}"
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -104,7 +104,7 @@ workbook:
 
   - name: setup_tables_task
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -131,7 +131,7 @@ workbook:
 
   - name: insert_data_task
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -156,7 +156,7 @@ workbook:
 
   - name: query_data_task
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -191,7 +191,7 @@ workbook:
 
   - name: update_data_task
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"

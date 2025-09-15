@@ -82,6 +82,8 @@ help:
 	@echo "  make noetl-execute-watch ID=222437726840946688 HOST=localhost PORT=8082			Watch status with live updates"
 	@echo "  make noetl-execute-status ID=222437726840946688 > logs/status.json					Get status for specific ID"
 	@echo "  make noetl-validate-status FILE=logs/status.json							Validate and clean up a status.json file"
+	@echo "  make register-credential FILE=examples/test/credentials/pg_local.json HOST=localhost PORT=8082	Register one credential payload"
+	@echo "  make register-test-credentials HOST=localhost PORT=8082			Upload all example test credentials"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -215,21 +217,20 @@ start-server:
 	if [ -f .env ]; then . .env; fi; \
 	if [ -f .env.server ]; then . .env.server; fi; \
 	set +a; \
-	if [ -z "$${NOETL_SCHEMA_VALIDATE:-}" ]; then \
-	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be set (true/false) in your .env[.server]"; \
-	  exit 1; \
-	fi; \
-	if [ "$${NOETL_SCHEMA_VALIDATE}" != "true" ] && [ "$${NOETL_SCHEMA_VALIDATE}" != "false" ]; then \
-	  echo "ERROR: NOETL_SCHEMA_VALIDATE must be 'true' or 'false'"; \
-	  exit 1; \
+	# Optional schema init: prefer NOETL_INIT_DB=true; fallback to NOETL_SCHEMA_VALIDATE=true for backward compat
+	INIT_DB_FLAG=""; \
+	if [ "$${NOETL_INIT_DB:-}" = "true" ]; then \
+	  INIT_DB_FLAG="--init-db"; \
+	elif [ "$${NOETL_SCHEMA_VALIDATE:-}" = "true" ]; then \
+	  INIT_DB_FLAG="--init-db"; \
 	fi; \
 	mkdir -p ~/.noetl; \
 	cli="$(VENV)/bin/noetl"; \
 	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
 	if command -v setsid >/dev/null 2>&1; then \
-	  setsid nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & \
+	  setsid nohup "$$cli" server start $$INIT_DB_FLAG </dev/null >> logs/server.log 2>&1 & \
 	else \
-	  nohup "$$cli" server start </dev/null >> logs/server.log 2>&1 & \
+	  nohup "$$cli" server start $$INIT_DB_FLAG </dev/null >> logs/server.log 2>&1 & \
 	fi; \
 	sleep 3; \
 	if [ -f ~/.noetl/noetl_server.pid ] && ps -p $$(cat ~/.noetl/noetl_server.pid) >/dev/null 2>&1; then \
@@ -357,9 +358,11 @@ noetl-execute:
 	@if [ "$${rc:-1}" -eq 0 ]; then \
 		 eid="$$(printf '%s\n' "$$out" | jq -r '.result.execution_id // .execution_id // .id // empty' 2>/dev/null)"; \
 	  if [ -n "$$eid" ] && [ "$$eid" != "null" ]; then \
-	    echo "Detected execution_id=$$eid; exporting workflow and transition tables to logs/"; \
+	    echo "Detected execution_id=$$eid; exporting logs (workflow, transition, event_log, queue) to logs/"; \
 	    $(MAKE) export-transition ID=$$eid >/dev/null 2>&1 || true; \
 	    $(MAKE) export-workflow ID=$$eid >/dev/null 2>&1 || true; \
+	    $(MAKE) export-event-log ID=$$eid >/dev/null 2>&1 || true; \
+	    $(MAKE) export-queue ID=$$eid >/dev/null 2>&1 || true; \
 		  fi; \
 	fi;
 	@exit $$rc
@@ -497,6 +500,32 @@ export-workbook:
 	psql -v ON_ERROR_STOP=1 -Atc "SELECT coalesce(json_agg(row_to_json(wb)),'[]'::json) FROM noetl.workbook wb WHERE execution_id = $(ID)" > logs/workbook.json; \
 	[ -s logs/workbook.json ] && (jq . logs/workbook.json >/dev/null 2>&1 && jq . logs/workbook.json > logs/workbook.json.tmp && mv logs/workbook.json.tmp logs/workbook.json || true) || true; \
 	echo "Wrote logs/workbook.json"
+
+# === Credential helpers ===
+.PHONY: register-credential register-test-credentials
+
+register-credential:
+	@if [ -z "$(FILE)" ]; then \
+	  echo "Usage: make register-credential FILE=examples/test/credentials/pg_local.json [HOST=localhost] [PORT=8082]"; \
+	  exit 1; \
+	fi; \
+	url="http://$(HOST):$(PORT)/api/credentials"; \
+	echo "POST $$url < $(FILE)"; \
+	if command -v jq >/dev/null 2>&1; then \
+	  curl -sS -X POST "$$url" -H 'Content-Type: application/json' --data-binary @"$(FILE)" | jq -C .; \
+	else \
+	  curl -sS -X POST "$$url" -H 'Content-Type: application/json' --data-binary @"$(FILE)"; \
+	fi
+
+register-test-credentials:
+	@set -e; \
+	shopt -s nullglob; \
+	for f in examples/test/credentials/*.json; do \
+	  echo "Registering credential payload: $$f"; \
+	  $(MAKE) -s register-credential FILE="$$f" HOST=$(HOST) PORT=$(PORT); \
+	done; \
+	shopt -u nullglob; \
+	echo "Credential payloads registered."
 
 export-all-event-log:
 	@mkdir -p logs
@@ -706,13 +735,18 @@ postgres-reset-schema:
 	export PGHOST=$$POSTGRES_HOST PGPORT=$$POSTGRES_PORT PGUSER=$$POSTGRES_USER PGPASSWORD=$$POSTGRES_PASSWORD PGDATABASE=$$POSTGRES_DB; \
 	echo "Dropping schema $${NOETL_SCHEMA:-noetl}..."; \
 	psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS $${NOETL_SCHEMA:-noetl} CASCADE;"; \
-	echo "Applying schema DDL..."; \
-	if [ -f scripts/database/postgres/schema_ddl.sql ]; then \
-		psql -v ON_ERROR_STOP=1 -f scripts/database/postgres/schema_ddl.sql ; \
-	elif $(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files >/dev/null 2>&1 ; then \
-		$(KUBECTL) -n $(NAMESPACE) get configmap postgres-config-files -o jsonpath='{.data.schema_ddl\.sql}' | psql -v ON_ERROR_STOP=1 -f - ; \
+	echo "Applying schema DDL via noetl CLI..."; \
+	cli="$(VENV)/bin/noetl"; \
+	if [ ! -x "$$cli" ]; then cli="noetl"; fi; \
+	if $$cli db apply-schema --ensure-role; then \
+	  echo "Schema applied using packaged DDL."; \
 	else \
-		echo "Could not find schema_ddl.sql locally or in cluster configmap; aborting."; exit 1; \
+	  echo "noetl CLI apply-schema failed; trying local DDL fallback..."; \
+	  if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then \
+	    psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql ; \
+	  else \
+	    echo "Could not apply schema (no CLI and no local DDL)."; exit 1; \
+	  fi; \
 	fi
 
 

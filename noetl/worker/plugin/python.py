@@ -129,13 +129,30 @@ def execute_python_task(
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
 
         if 'main' in exec_locals and callable(exec_locals['main']):
-            # Normalize parameters from 'with' — server may render objects as strings
-            normalized_with = {}
+            # Render and normalize parameters from 'with' using server-evaluated context
+            # 1) Render Jinja templates against provided context
+            rendered_with = {}
             try:
                 for k, v in (task_with or {}).items():
+                    if isinstance(v, str):
+                        try:
+                            tmpl = jinja_env.from_string(v)
+                            rendered_with[k] = tmpl.render(context or {})
+                        except Exception:
+                            rendered_with[k] = v
+                    else:
+                        rendered_with[k] = v
+            except Exception:
+                rendered_with = task_with or {}
+
+            # 2) Coerce common literal/JSON strings to Python objects
+            normalized_with = {}
+            try:
+                for k, v in rendered_with.items():
                     normalized_with[k] = _coerce_param(v)
             except Exception:
-                normalized_with = task_with or {}
+                normalized_with = rendered_with
+
             result_data = exec_locals['main'](**normalized_with)
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

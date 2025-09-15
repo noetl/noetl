@@ -32,6 +32,40 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     task_name = task_config.get('task', 'postgres_task')
     start_time = datetime.datetime.now()
 
+    # Resolve credential alias if provided and merge into task_with best-effort
+    try:
+        cred_ref = task_with.get('credential') or task_config.get('credential')
+        if cred_ref:
+            import httpx as _httpx
+            server_url = (context.get('env', {}) or {}).get('NOETL_SERVER_URL') or os.getenv('NOETL_SERVER_URL', 'http://localhost:8082')
+            server_url = server_url.rstrip('/')
+            if not server_url.endswith('/api'):
+                server_url = server_url + '/api'
+            url = f"{server_url}/credentials/{cred_ref}?include_data=true"
+            try:
+                with _httpx.Client(timeout=5.0) as _c:
+                    _r = _c.get(url)
+                    if _r.status_code == 200:
+                        body = _r.json() or {}
+                        data = body.get('data') or {}
+                        if isinstance(data, dict):
+                            # Merge only missing keys in task_with
+                            for src, dst in (
+                                ('dsn','db_conn_string'),
+                                ('db_conn_string','db_conn_string'),
+                                ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
+                                ('db_port','db_port'), ('port','db_port'),
+                                ('db_user','db_user'), ('user','db_user'),
+                                ('db_password','db_password'), ('password','db_password'),
+                                ('db_name','db_name'), ('dbname','db_name'),
+                            ):
+                                if dst not in task_with and data.get(src) is not None:
+                                    task_with[dst] = data.get(src)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # Validate configuration first - these errors should not be caught
     # Get database connection parameters - must be provided in task 'with' parameters only
     pg_host_raw = task_with.get('db_host')

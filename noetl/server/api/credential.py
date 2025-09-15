@@ -77,6 +77,12 @@ async def create_or_update_credential(request: Request):
                     await conn.commit()
                 except Exception:
                     pass
+        # Ensure datetime fields are JSON serializable (ISO8601 strings)
+        def _iso(v):
+            try:
+                return v.isoformat() if hasattr(v, 'isoformat') else v
+            except Exception:
+                return str(v)
         result = {
             "id": row[0],
             "name": row[1],
@@ -84,8 +90,8 @@ async def create_or_update_credential(request: Request):
             "meta": row[3],
             "tags": row[4],
             "description": row[5],
-            "created_at": row[6],
-            "updated_at": row[7],
+            "created_at": _iso(row[6]),
+            "updated_at": _iso(row[7]),
         }
         return JSONResponse(content=result)
     except HTTPException:
@@ -120,6 +126,11 @@ async def list_credentials(ctype: Optional[str] = None, q: Optional[str] = None)
                 await cursor.execute(sql, params)
                 rows = await cursor.fetchall() or []
                 for r in rows:
+                    def _iso(v):
+                        try:
+                            return v.isoformat() if hasattr(v, 'isoformat') else v
+                        except Exception:
+                            return str(v)
                     items.append({
                         "id": r[0],
                         "name": r[1],
@@ -127,8 +138,8 @@ async def list_credentials(ctype: Optional[str] = None, q: Optional[str] = None)
                         "meta": r[3],
                         "tags": r[4],
                         "description": r[5],
-                        "created_at": r[6],
-                        "updated_at": r[7],
+                        "created_at": _iso(r[6]),
+                        "updated_at": _iso(r[7]),
                     })
         return JSONResponse(content={"items": items, "filter": {"type": ctype, "q": q}})
     except Exception as e:
@@ -156,6 +167,11 @@ async def get_credential(identifier: str, include_data: bool = False):
                 row = await cursor.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="Credential not found")
+                def _iso(v):
+                    try:
+                        return v.isoformat() if hasattr(v, 'isoformat') else v
+                    except Exception:
+                        return str(v)
                 result = {
                     "id": row[0],
                     "name": row[1],
@@ -163,8 +179,8 @@ async def get_credential(identifier: str, include_data: bool = False):
                     "meta": row[4],
                     "tags": row[5],
                     "description": row[6],
-                    "created_at": row[7],
-                    "updated_at": row[8]
+                    "created_at": _iso(row[7]),
+                    "updated_at": _iso(row[8])
                 }
                 if include_data:
                     try:

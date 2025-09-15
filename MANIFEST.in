@@ -2,6 +2,7 @@ include README.md
 include LICENSE
 include pyproject.toml
 recursive-include noetl *.py
+recursive-include noetl/database/ddl *
 recursive-include noetl/ui *
 recursive-include noetl/ui/static *
 recursive-include noetl/ui/templates *

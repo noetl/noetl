@@ -1,70 +1,56 @@
-# Example Terraform variables file for NoETL deployment
-# Copy this file to terraform.tfvars and modify the values as needed
+# Terraform variables file for NoETL deployment
+# Configured for mestumre-dev-host project
 
 # Project Configuration
-project_id = "mestumre-dev-host"
+project_id = "noetl-demo-19700101"
 region     = "us-central1"
 zone       = "us-central1-a"
 
 # Environment Configuration  
-environment = "dev"  # Options: dev, staging, prod
+environment = "development"  # Options: development, staging, production
 
 # Database Configuration
 db_name     = "noetl"
-db_user     = "noetl_user"
-db_tier     = "db-f1-micro"  # Options: db-f1-micro, db-g1-small, db-n1-standard-1, etc.
-enable_ha   = false  # Set to true for production environments
+db_user     = "noetl"
+db_tier     = ""  # Will use environment default (db-f1-micro for development)
+db_disk_size = 20
+enable_db_ha = false  # Set to true for production environments
 
 # Container Images
-server_image_tag = "latest"
-worker_image_tag = "latest"
-# server_image_repository = "gcr.io/your-project/noetl-server"  # Uncomment to override
-# worker_image_repository = "gcr.io/your-project/noetl-worker"  # Uncomment to override
+noetl_image_tag = "latest"
+container_registry = ""  # Will use default GCR
 
 # Worker Configuration
 cpu_worker_count   = 2
 enable_gpu_workers = false
-gpu_worker_count   = 1
+gpu_worker_count   = 0
 
-# Resource Limits (leave empty to use environment defaults)
+# Resource Limits (empty strings will use environment defaults)
 server_cpu_limit    = ""  # e.g., "1000m"
 server_memory_limit = ""  # e.g., "2Gi"
 worker_cpu_limit    = ""  # e.g., "2000m"
 worker_memory_limit = ""  # e.g., "4Gi"
 
-# Auto-scaling Configuration
-server_min_instances = null  # null uses environment default
-server_max_instances = null  # null uses environment default
-worker_min_instances = null  # null uses environment default
-worker_max_instances = null  # null uses environment default
-
-# Networking Configuration
-vpc_cidr           = "10.0.0.0/16"
-subnet_cidr        = "10.0.1.0/24"
-enable_private_ip  = true
-authorized_networks = [
-  {
-    name  = "office-network"
-    value = "203.0.113.0/24"  # Replace with your office IP range
-  }
-]
+# Auto-scaling Configuration (null uses environment defaults)
+server_min_instances = null
+server_max_instances = null
+worker_min_instances = null
+worker_max_instances = null
 
 # Security Configuration
-enable_deletion_protection = false  # Set to true for production
-enable_backup             = true
-backup_retention_days     = 7
+allowed_ingress_cidrs = ["0.0.0.0/0"]  # Restrict this for production
+
+# Monitoring and Logging
+enable_cloud_trace = true
+log_level = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Backup Configuration
+backup_retention_days = 7
+
+# Development Configuration
+enable_debug_mode = true
+deploy_timestamp = ""
 
 # Feature Flags
-enable_monitoring   = true
-enable_debug_mode   = false
-enable_api_auth     = true
-
-# Logging Configuration
-log_level = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
-
-# Labels (optional)
-# labels = {
-#   cost_center = "engineering"
-#   team        = "data-platform"
-#   project     = "noetl"
-# }
+enable_experimental_features = false
+enable_metrics_dashboard = true

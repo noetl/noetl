@@ -575,11 +575,13 @@ async def complete_job(job_id: int):
 @router.post("/queue/{job_id}/fail", response_class=JSONResponse)
 async def fail_job(job_id: int, request: Request):
     """Mark job failed; optionally reschedule if attempts < max_attempts.
-    Body: { retry_delay_seconds? }
+    Body: { retry_delay_seconds?, retry? }
+    If retry is explicitly false, mark the job as terminal 'dead' immediately.
     """
     try:
         body = await request.json()
         retry_delay = int(body.get("retry_delay_seconds", 60))
+        retry = body.get("retry", True)
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute("SELECT attempts, max_attempts FROM noetl.queue WHERE id = %s", (job_id,))
@@ -589,7 +591,10 @@ async def fail_job(job_id: int, request: Request):
                 attempts = row.get("attempts", 0)
                 max_attempts = row.get("max_attempts", 5)
 
-                if attempts >= max_attempts:
+                if retry is False:
+                    # Caller indicates this failure should not be retried
+                    await cur.execute("UPDATE noetl.queue SET status='dead' WHERE id = %s RETURNING id", (job_id,))
+                elif attempts >= max_attempts:
                     await cur.execute("UPDATE noetl.queue SET status='dead' WHERE id = %s RETURNING id", (job_id,))
                 else:
                     await cur.execute("UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval WHERE id = %s RETURNING id", (str(retry_delay), job_id))
