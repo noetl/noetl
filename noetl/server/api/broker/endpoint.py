@@ -155,10 +155,24 @@ async def persist_workflow_config(request: Request):
                         logger.debug("WORKFLOW_CONFIG: Error processing step transitions", exc_info=True)
 
                 # Insert workflow step metadata (best-effort; schema is 6 columns in templates)
+                # Warn on multiple 'start'/'end' steps
+                try:
+                    _starts = sum(1 for s in steps if str((s.get('step') or s.get('name') or '')).strip().lower() == 'start')
+                    _ends = sum(1 for s in steps if str((s.get('step') or s.get('name') or '')).strip().lower() == 'end')
+                    if _starts > 1:
+                        logger.warning(f"WORKFLOW_CONFIG: Multiple 'start' steps detected for execution {execution_id}; expected exactly one")
+                    if _ends > 1:
+                        logger.warning(f"WORKFLOW_CONFIG: Multiple 'end' steps detected for execution {execution_id}; expected exactly one")
+                except Exception:
+                    pass
                 for st in steps:
                     try:
                         step_name = st.get("step") or st.get("name") or ""
-                        step_type = st.get("type") or st.get("kind") or st.get("task_type") or ""
+                        # Derive special types for control steps 'start' and 'end'
+                        if str(step_name).strip().lower() in {"start","end"}:
+                            step_type = str(step_name).strip().lower()
+                        else:
+                            step_type = st.get("type") or st.get("kind") or st.get("task_type") or ""
                         desc = st.get("desc") or st.get("description") or ""
                         raw = _json.dumps(st)
                         # Use step_name as step_id since it should be unique within the workflow

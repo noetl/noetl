@@ -99,98 +99,110 @@ def execute_save_task(
                 'meta': meta_payload,
             }
 
-        # Demonstration wiring: postgres save
+        # Chain to the Postgres worker plugin rather than re-implementing
         if kind == 'postgres':
+            import base64
+            from noetl.worker.plugin.postgres import execute_postgres_task as _pg_exec
+
+            # Prepare the SQL to pass to the postgres plugin
+            sql_text = None
+            if isinstance(statement, str) and statement.strip():
+                # If the statement isn't templated, allow :param style by mapping to Jinja params
+                sql_text = statement
+                if ('{{' not in sql_text) and isinstance(rendered_params, dict) and rendered_params:
+                    try:
+                        for _k in rendered_params.keys():
+                            # Replace only plain tokens :key (very simple heuristic)
+                            sql_text = sql_text.replace(f":{_k}", f"{{{{ params.{_k} }}}}")
+                    except Exception:
+                        pass
+            else:
+                # Build a basic INSERT (or UPSERT) template from declarative mapping
+                if not table or not isinstance(rendered_data, dict):
+                    raise ValueError("postgres save requires 'table' and mapping 'data' when no 'statement' provided")
+                cols = list(rendered_data.keys())
+                # Use Jinja to render values from save_data mapping we pass via with
+                vals = []
+                for c in cols:
+                    vals.append(f"{{{{ save_data.{c} }}}}")
+                insert_sql = f"INSERT INTO {table} (" + ", ".join(cols) + ") VALUES (" + ", ".join(vals) + ")"
+                if (mode or '').lower() == 'upsert' and key_cols:
+                    key_list = key_cols if isinstance(key_cols, (list, tuple)) else [key_cols]
+                    set_parts = []
+                    for c in cols:
+                        if c not in key_list:
+                            set_parts.append(f"{c} = EXCLUDED.{c}")
+                    if set_parts:
+                        insert_sql += f" ON CONFLICT (" + ", ".join(key_list) + ") DO UPDATE SET " + ", ".join(set_parts)
+                    else:
+                        insert_sql += f" ON CONFLICT (" + ", ".join(key_list) + ") DO NOTHING"
+                sql_text = insert_sql
+
+            # Build task config and with-params for postgres plugin
+            pg_task = {
+                'type': 'postgres',
+                'task': 'save_postgres',
+                'command_b64': base64.b64encode(sql_text.encode('utf-8')).decode('ascii'),
+            }
+
+            # Start with provided 'with' for DB creds passthrough, then overlay storage.spec
+            pg_with: Dict[str, Any] = {}
             try:
-                import psycopg
-                from psycopg import sql as _sql
-            except Exception as e:
+                if isinstance(task_with, dict):
+                    pg_with.update(task_with)
+            except Exception:
+                pass
+            # Map storage spec to expected postgres plugin keys
+            try:
+                if isinstance(spec, dict):
+                    # Allow direct connection string when provided
+                    if spec.get('dsn'):
+                        pg_with['db_conn_string'] = spec.get('dsn')
+                    for src, dst in (
+                        ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
+                        ('db_port','db_port'), ('port','db_port'),
+                        ('db_user','db_user'), ('user','db_user'),
+                        ('db_password','db_password'), ('password','db_password'),
+                        ('db_name','db_name'), ('dbname','db_name'),
+                    ):
+                        if spec.get(src) is not None and not pg_with.get(dst):
+                            pg_with[dst] = spec.get(src)
+            except Exception:
+                pass
+            # Provide params/save_data to rendering context for the postgres plugin renderer
+            if isinstance(rendered_params, dict) and rendered_params:
+                pg_with['params'] = rendered_params
+            if isinstance(rendered_data, dict) and rendered_data:
+                pg_with['save_data'] = rendered_data
+
+            pg_result = _pg_exec(pg_task, context, jinja_env, pg_with, log_event_callback)
+            # Normalize into save envelope
+            if isinstance(pg_result, dict) and pg_result.get('status') == 'success':
+                return {
+                    'status': 'success',
+                    'data': {
+                        'saved': 'postgres',
+                        'table': table,
+                        'task_result': pg_result.get('data')
+                    },
+                    'meta': {
+                        'storage_kind': kind,
+                        'credential_ref': credential_ref,
+                        'save_spec': {
+                            'mode': mode,
+                            'key': key_cols,
+                            'statement_present': bool(statement),
+                            'param_keys': list(rendered_params.keys()) if isinstance(rendered_params, dict) else None,
+                        }
+                    }
+                }
+            else:
                 return {
                     'status': 'error',
                     'data': None,
                     'meta': {'storage_kind': kind},
-                    'error': f'psycopg not available: {e}'
+                    'error': (pg_result or {}).get('error') if isinstance(pg_result, dict) else 'postgres save failed'
                 }
-
-            # Build connection string from spec or env
-            dsn = spec.get('dsn')
-            if not dsn:
-                host = spec.get('db_host') or spec.get('host') or spec.get('pg_host') or os.environ.get('POSTGRES_HOST')
-                port = spec.get('db_port') or spec.get('port') or os.environ.get('POSTGRES_PORT', '5432')
-                user = spec.get('db_user') or spec.get('user') or os.environ.get('POSTGRES_USER')
-                password = spec.get('db_password') or spec.get('password') or os.environ.get('POSTGRES_PASSWORD')
-                dbname = spec.get('db_name') or spec.get('dbname') or os.environ.get('POSTGRES_DB')
-                parts = []
-                if host: parts.append(f"host={host}")
-                if port: parts.append(f"port={port}")
-                if user: parts.append(f"user={user}")
-                if password: parts.append(f"password={password}")
-                if dbname: parts.append(f"dbname={dbname}")
-                dsn = ' '.join(parts)
-
-            rows_affected = None
-            with psycopg.connect(dsn) as conn:
-                with conn.cursor() as cur:
-                    if statement:
-                        # Convert :name params to %(name)s for psycopg
-                        stmt = str(statement)
-                        rp = rendered_params if isinstance(rendered_params, dict) else {}
-                        for k in rp.keys():
-                            stmt = stmt.replace(f":{k}", f"%({k})s")
-                        cur.execute(stmt, rp)
-                        rows_affected = cur.rowcount
-                    else:
-                        # Declarative insert/upsert
-                        if not table or not isinstance(rendered_data, dict):
-                            raise ValueError("postgres declarative save requires 'table' and mapping 'data'")
-                        cols = list(rendered_data.keys())
-                        placeholders = [ _sql.Placeholder(c) for c in cols ]
-                        insert_sql = _sql.SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals})").format(
-                            tbl=_sql.Identifier(str(table)),
-                            cols=_sql.SQL(', ').join(map(_sql.Identifier, cols)),
-                            vals=_sql.SQL(', ').join(placeholders)
-                        )
-                        if (mode or '').lower() == 'upsert' and key_cols:
-                            key_list = key_cols if isinstance(key_cols, (list, tuple)) else [key_cols]
-                            # non-key columns updated from EXCLUDED
-                            upd_cols = [c for c in cols if c not in key_list]
-                            if upd_cols:
-                                on_conflict = _sql.SQL(" ON CONFLICT ({keys}) DO UPDATE SET {updates}").format(
-                                    keys=_sql.SQL(', ').join(map(_sql.Identifier, key_list)),
-                                    updates=_sql.SQL(', ').join(
-                                        _sql.Composed([
-                                            _sql.Identifier(c), _sql.SQL(" = EXCLUDED."), _sql.Identifier(c)
-                                        ]) for c in upd_cols
-                                    )
-                                )
-                            else:
-                                on_conflict = _sql.SQL(" ON CONFLICT ({keys}) DO NOTHING").format(
-                                    keys=_sql.SQL(', ').join(map(_sql.Identifier, key_list))
-                                )
-                            query = _sql.Composed([insert_sql, on_conflict])
-                        else:
-                            query = insert_sql
-                        cur.execute(query, rendered_data)
-                        rows_affected = cur.rowcount
-
-            return {
-                'status': 'success',
-                'data': {
-                    'saved': 'postgres',
-                    'table': table,
-                    'rows_affected': rows_affected,
-                },
-                'meta': {
-                    'storage_kind': kind,
-                    'credential_ref': credential_ref,
-                    'save_spec': {
-                        'mode': mode,
-                        'key': key_cols,
-                        'statement_present': bool(statement),
-                        'param_keys': list(rendered_params.keys()) if isinstance(rendered_params, dict) else None,
-                    }
-                }
-            }
 
         # Placeholder behavior for unsupported kinds: report not-implemented
         return {

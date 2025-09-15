@@ -52,6 +52,71 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
         next_choice = _choose_next(cur_step, base_ctx)
         if not next_choice:
             logger.info(f"STEP_CONTROL: No next transition chosen for step {step_name}")
+            # If this is the terminal 'end' step, emit execution_complete using declared result/save mapping
+            try:
+                if str(step_name).strip().lower() == 'end':
+                    from noetl.server.api.event import get_event_service
+                    es = get_event_service()
+                    # Compute final result from 'result' mapping or fallback to save.data
+                    final_result = None
+                    try:
+                        # 1) Prefer explicit 'result' mapping
+                        res_map = cur_step.get('result') if isinstance(cur_step, dict) else None
+                        if isinstance(res_map, (dict, list, str)):
+                            from noetl.core.dsl.render import render_template
+                            jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+                            final_result = render_template(jenv, res_map, base_ctx, rules=None, strict_keys=False)
+                    except Exception:
+                        final_result = None
+                    # 2) Fallback: if save.data exists (common pattern), render it and use as final result
+                    if final_result is None:
+                        try:
+                            save_block = cur_step.get('save') if isinstance(cur_step, dict) else None
+                            if isinstance(save_block, dict):
+                                data_map = save_block.get('data')
+                                if data_map is not None:
+                                    from noetl.core.dsl.render import render_template
+                                    jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+                                    final_result = render_template(jenv, data_map, base_ctx, rules=None, strict_keys=False)
+                        except Exception:
+                            final_result = None
+                    # 3) Last resort: pull the latest action_completed result for this step from event_log
+                    if final_result is None:
+                        try:
+                            from noetl.core.common import get_async_db_connection
+                            async with get_async_db_connection() as conn:
+                                async with conn.cursor() as cur:
+                                    await cur.execute(
+                                        """
+                                        SELECT result FROM noetl.event_log
+                                        WHERE execution_id = %s
+                                          AND node_name = %s
+                                          AND event_type = 'action_completed'
+                                        ORDER BY timestamp DESC
+                                        LIMIT 1
+                                        """,
+                                        (execution_id, step_name)
+                                    )
+                                    row = await cur.fetchone()
+                                    if row and row[0]:
+                                        try:
+                                            final_result = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                                        except Exception:
+                                            final_result = row[0]
+                        except Exception:
+                            final_result = None
+
+                    await es.emit({
+                        'execution_id': execution_id,
+                        'event_type': 'execution_complete',
+                        'status': 'COMPLETED',
+                        'node_name': step_name,
+                        'node_type': 'playbook',
+                        'result': final_result if final_result is not None else {},
+                        'context': {'reason': 'end_step'}
+                    })
+            except Exception:
+                logger.debug("STEP_CONTROL: Failed to emit execution_complete for end step", exc_info=True)
             return
         next_step_name, next_with = next_choice
 
