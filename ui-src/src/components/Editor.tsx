@@ -377,6 +377,7 @@ tasks:
           playbookId={playbookId || playbook?.id || "new"}
           playbookName={playbook?.name || "New Playbook"}
           content={content}
+          onUpdateContent={(newYaml) => setContent(newYaml)}
         />
 
         {/* Code Editor */}

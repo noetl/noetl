@@ -43,6 +43,7 @@ interface FlowVisualizationProps {
   content?: string; // Optional content to use instead of fetching from API
   readOnly?: boolean; // NEW: render in read-only (view) mode
   hideTitle?: boolean; // NEW: suppress internal title (avoid duplicates)
+  onUpdateContent?: (newContent: string) => void; // NEW: callback to push updated YAML back to editor
 }
 
 
@@ -55,6 +56,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   content,
   readOnly,
   hideTitle,
+  onUpdateContent,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -112,7 +114,17 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const handleEditTask = useCallback(
     (updatedTask: EditableTaskNode) => {
       if (readOnly) return; // prevent edits in read-only
-      setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
+      setTasks((prev) => prev.map((t) => {
+        if (t.id === updatedTask.id) {
+          // If the name changed, also adjust id (once) to keep single node
+          if (updatedTask.name && updatedTask.name !== t.name) {
+            const newId = updatedTask.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+            return { ...updatedTask, id: newId };
+          }
+          return updatedTask;
+        }
+        return t;
+      }));
       setNodes((currentNodes) => currentNodes.map((node) => node.id === updatedTask.id ? { ...node, data: { ...node.data, task: updatedTask } } : node));
       setHasChanges(true);
       setActiveTask(updatedTask); // keep modal in sync while open
@@ -231,19 +243,137 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     }
   }, [tasks.length, recreateFlow]); // Only recreate when task count changes
 
-  // Save entire workflow
+  // Helper: escape double quotes in strings
+  const esc = (s: string) => (s || "").replace(/"/g, '\\"');
+
+  // Helper: build task/workflow YAML blocks
+  const buildWorkflowYaml = (taskList: EditableTaskNode[], rootKey: 'workflow' | 'tasks'): string => {
+    const lines: string[] = [`${rootKey}:`];
+    taskList.forEach((t) => {
+      const displayName = t.name || t.id || 'step';
+      const sanitizedStep = displayName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (rootKey === 'workflow') {
+        lines.push(`  - step: ${sanitizedStep}`);
+        if (t.description) {
+          lines.push(`    desc: \"${esc(t.description)}\"`);
+        } else if (displayName !== sanitizedStep) {
+          lines.push(`    desc: \"${esc(displayName)}\"`);
+        }
+        if (t.type && !['workbook'].includes(t.type)) {
+          lines.push(`    type: ${t.type}`);
+        }
+        if (t.config && (t.config.code || t.config.sql)) {
+          if (t.config.code) {
+            lines.push(`    code: |`);
+            t.config.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
+          }
+          if (t.config.sql) {
+            lines.push(`    sql: |`);
+            t.config.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
+          }
+        }
+      } else { // tasks style
+        lines.push(`  - name: \"${esc(displayName)}\"`);
+        if (t.type && !['workbook'].includes(t.type)) {
+          lines.push(`    type: ${t.type}`);
+        }
+        if (t.description) {
+          lines.push(`    desc: \"${esc(t.description)}\"`);
+        }
+        if (t.config && (t.config.code || t.config.sql)) {
+          if (t.config.code) {
+            lines.push(`    code: |`);
+            t.config.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
+          }
+          if (t.config.sql) {
+            lines.push(`    sql: |`);
+            t.config.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
+          }
+        }
+      }
+    });
+    return lines.join('\n');
+  };
+
+  // Helper: find top-level block range (start, end) for a given key
+  const findBlockRange = (lines: string[], key: string): [number, number] | null => {
+    const start = lines.findIndex(l => l.trim() === `${key}:`);
+    if (start === -1) return null;
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) {
+      const raw = lines[i];
+      if (!raw.trim()) continue;
+      if (/^[A-Za-z0-9_-]+:\s*$/.test(raw) && !/^\s/.test(raw)) { // new top-level key line
+        end = i;
+        break;
+      }
+    }
+    return [start, end];
+  };
+
+  // Replace existing tasks/workflow section (prefer tasks if present) and remove duplicates
+  const updateWorkflowInYaml = (original: string, taskList: EditableTaskNode[]): string => {
+    if (!original || !original.trim()) {
+      return buildWorkflowYaml(taskList, 'workflow');
+    }
+    const lines = original.split(/\r?\n/);
+    const tasksRange = findBlockRange(lines, 'tasks');
+    const workflowRange = findBlockRange(lines, 'workflow');
+
+    // Decide which root key to use
+    const useKey: 'tasks' | 'workflow' = tasksRange ? 'tasks' : 'workflow';
+
+    // Collect ranges to remove (all existing tasks/workflow blocks)
+    const ranges: Array<[number, number]> = [];
+    if (tasksRange) ranges.push(tasksRange);
+    if (workflowRange) ranges.push(workflowRange);
+
+    // Sort ranges by start
+    ranges.sort((a, b) => a[0] - b[0]);
+
+    // Build new block
+    const newBlock = buildWorkflowYaml(taskList, useKey);
+
+    // If no existing block, append
+    if (ranges.length === 0) {
+      const needsBlank = lines.length > 0 && lines[lines.length - 1].trim() !== '';
+      return [...lines, needsBlank ? '' : '', newBlock].join('\n');
+    }
+
+    // Remove from end to start to avoid index shifts
+    let mutable = [...lines];
+    for (let i = ranges.length - 1; i >= 0; i--) {
+      const [s, e] = ranges[i];
+      mutable.splice(s, e - s);
+    }
+
+    // Insert new block at position of first removed range start
+    const insertAt = ranges[0][0];
+    const before = mutable.slice(0, insertAt);
+    const after = mutable.slice(insertAt);
+
+    // Ensure blank line separation
+    if (before.length && before[before.length - 1].trim() !== '') before.push('');
+    if (after.length && after[0].trim() !== '') after.unshift('');
+
+    return [...before, newBlock, ...after].join('\n');
+  };
+
+  // Save entire workflow (now also updates YAML content)
   const handleSaveWorkflow = useCallback(async () => {
     try {
       setLoading(true);
-      // await apiService.savePlaybookWorkflow(playbookId, tasks);
+      const updatedYaml = updateWorkflowInYaml(content || '', tasks);
+      if (onUpdateContent) onUpdateContent(updatedYaml);
       setHasChanges(false);
-      messageApi.success("Workflow saved successfully!");
+      messageApi.success('Workflow saved & YAML updated');
     } catch (error) {
-      messageApi.error("Failed to save workflow");
+      console.error(error);
+      messageApi.error('Failed to save workflow');
     } finally {
       setLoading(false);
     }
-  }, [tasks, playbookId, messageApi]);
+  }, [tasks, content, onUpdateContent, messageApi]);
 
   const parsePlaybookContent = (content: string): TaskNode[] => {
     try {
