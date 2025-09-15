@@ -34,6 +34,8 @@ import { nodeTypeMap, orderedNodeTypes } from './nodeTypes';
 import { EditableTaskNode, TaskNode } from "./types";
 import { EditableNode } from "./EditableNode";
 import MonacoEditor from '@monaco-editor/react';
+// @ts-ignore - types may not be present
+import yaml from 'js-yaml'; // NEW: robust YAML parsing
 
 interface FlowVisualizationProps {
   visible: boolean;
@@ -92,8 +94,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         return 'duckdb';
       case 'export':
         return 'workbook';
-      case 'log':
-        return 'start';
+      // keep 'log' as-is now (no remap to start)
       case 'http':
       case 'python':
       case 'workbook':
@@ -104,9 +105,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       case 'loop':
       case 'start':
       case 'end':
+      case 'log':
         return t as any;
       default:
-        return 'workbook';
+        return (t as any) || 'workbook';
     }
   };
 
@@ -116,18 +118,21 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       if (readOnly) return; // prevent edits in read-only
       setTasks((prev) => prev.map((t) => {
         if (t.id === updatedTask.id) {
-          // If the name changed, also adjust id (once) to keep single node
-          if (updatedTask.name && updatedTask.name !== t.name) {
-            const newId = updatedTask.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
-            return { ...updatedTask, id: newId };
-          }
-          return updatedTask;
+          // Preserve original id; only update name/config/etc.
+          return { ...t, ...updatedTask, id: t.id };
         }
         return t;
       }));
-      setNodes((currentNodes) => currentNodes.map((node) => node.id === updatedTask.id ? { ...node, data: { ...node.data, task: updatedTask } } : node));
+      setNodes((currentNodes) => currentNodes.map((node) => {
+        if (node.id === updatedTask.id) {
+          const existingTask: EditableTaskNode = (node.data as any)?.task || { id: updatedTask.id, name: '', type: 'workbook' };
+          const merged: EditableTaskNode = { ...existingTask, ...updatedTask, id: existingTask.id };
+          return { ...node, data: { ...node.data, task: merged } } as any;
+        }
+        return node;
+      }));
       setHasChanges(true);
-      setActiveTask(updatedTask); // keep modal in sync while open
+      setActiveTask((prev) => prev && prev.id === updatedTask.id ? { ...prev, ...updatedTask, id: prev.id } : prev); // keep modal in sync
     },
     [setNodes, readOnly]
   );
@@ -249,46 +254,90 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   // Helper: build task/workflow YAML blocks
   const buildWorkflowYaml = (taskList: EditableTaskNode[], rootKey: 'workflow' | 'tasks'): string => {
     const lines: string[] = [`${rootKey}:`];
+
+    const isPlainObject = (v: any) => Object.prototype.toString.call(v) === '[object Object]';
+    const serializeConfig = (cfg: any, indent: string) => {
+      Object.entries(cfg).forEach(([k, v]) => {
+        if (v === undefined || v === null) return;
+        if (k === 'code' || k === 'sql') return; // handled separately
+        if (isPlainObject(v)) {
+          lines.push(`${indent}${k}:`);
+          serializeConfig(v, indent + '  ');
+        } else if (Array.isArray(v)) {
+          lines.push(`${indent}${k}:`);
+          v.forEach(item => {
+            if (isPlainObject(item)) {
+              lines.push(`${indent}  -`);
+              Object.entries(item).forEach(([ik, iv]) => {
+                lines.push(`${indent}    ${ik}: ${JSON.stringify(iv)}`);
+              });
+            } else {
+              lines.push(`${indent}  - ${JSON.stringify(item)}`);
+            }
+          });
+        } else if (typeof v === 'string') {
+          // quote if contains special chars
+          if (/[#:>-]|^\s|\s$|"/.test(v)) {
+            lines.push(`${indent}${k}: ${JSON.stringify(v)}`);
+          } else {
+            lines.push(`${indent}${k}: "${v}"`);
+          }
+        } else {
+          lines.push(`${indent}${k}: ${JSON.stringify(v)}`);
+        }
+      });
+    };
+
     taskList.forEach((t) => {
-      const displayName = t.name || t.id || 'step';
+      const displayNameRaw = t.name ?? '';
+      const displayName = displayNameRaw.trim();
+      if (!displayName) {
+        return; // skip incomplete edits
+      }
       const sanitizedStep = displayName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cfg = (t as any).config || {};
+      const hasOtherConfigKeys = cfg && Object.keys(cfg).some(k => !['code', 'sql'].includes(k));
       if (rootKey === 'workflow') {
         lines.push(`  - step: ${sanitizedStep}`);
         if (t.description) {
-          lines.push(`    desc: \"${esc(t.description)}\"`);
+          lines.push(`    desc: "${esc(t.description)}"`);
         } else if (displayName !== sanitizedStep) {
-          lines.push(`    desc: \"${esc(displayName)}\"`);
+          lines.push(`    desc: "${esc(displayName)}"`);
         }
         if (t.type && !['workbook'].includes(t.type)) {
           lines.push(`    type: ${t.type}`);
         }
-        if (t.config && (t.config.code || t.config.sql)) {
-          if (t.config.code) {
-            lines.push(`    code: |`);
-            t.config.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-          }
-          if (t.config.sql) {
-            lines.push(`    sql: |`);
-            t.config.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-          }
+        if (hasOtherConfigKeys) {
+          lines.push(`    config:`);
+          serializeConfig(cfg, '      ');
+        }
+        if (cfg.code) {
+          lines.push(`    code: |`);
+          cfg.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
+        }
+        if (cfg.sql) {
+          lines.push(`    sql: |`);
+          cfg.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
         }
       } else { // tasks style
-        lines.push(`  - name: \"${esc(displayName)}\"`);
+        lines.push(`  - name: "${esc(displayName)}"`);
         if (t.type && !['workbook'].includes(t.type)) {
           lines.push(`    type: ${t.type}`);
         }
         if (t.description) {
-          lines.push(`    desc: \"${esc(t.description)}\"`);
+          lines.push(`    desc: "${esc(t.description)}"`);
         }
-        if (t.config && (t.config.code || t.config.sql)) {
-          if (t.config.code) {
-            lines.push(`    code: |`);
-            t.config.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-          }
-          if (t.config.sql) {
-            lines.push(`    sql: |`);
-            t.config.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-          }
+        if (hasOtherConfigKeys) {
+          lines.push(`    config:`);
+          serializeConfig(cfg, '      ');
+        }
+        if (cfg.code) {
+          lines.push(`    code: |`);
+          cfg.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
+        }
+        if (cfg.sql) {
+          lines.push(`    sql: |`);
+          cfg.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
         }
       }
     });
@@ -375,7 +424,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     }
   }, [tasks, content, onUpdateContent, messageApi]);
 
-  const parsePlaybookContent = (content: string): TaskNode[] => {
+  // Legacy line-based parser kept as fallback
+  const legacyParsePlaybookContent = (content: string): TaskNode[] => {
     try {
       const lines = content.split("\n");
       const tasks: TaskNode[] = [];
@@ -385,12 +435,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       let workflowIndent = 0;
       let inNestedLogic = false;
       let nestedLevel = 0;
-
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
         const indent = line.length - line.trimStart().length;
-
         if (
           trimmed === "workflow:" ||
           trimmed.startsWith("workflow:") ||
@@ -403,7 +451,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           workflowIndent = indent;
           continue;
         }
-
         if (inWorkflowSection) {
           if (
             trimmed &&
@@ -414,7 +461,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           ) {
             break;
           }
-
           if (trimmed.match(/^(next|then|else|when):/)) {
             if (!inNestedLogic) {
               inNestedLogic = true;
@@ -422,7 +468,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             }
             continue;
           }
-
           if (
             inNestedLogic &&
             indent === workflowIndent + 2 &&
@@ -430,7 +475,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           ) {
             inNestedLogic = false;
           }
-
           if (
             trimmed.startsWith("- step:") &&
             !inNestedLogic &&
@@ -440,12 +484,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               tasks.push(currentTask as TaskNode);
               taskIndex++;
             }
-
-            const stepMatch = trimmed.match(/step:\s*([^'"]+)/);
+            const stepMatch = trimmed.match(/step:\s*([^'"#]+)/);
             const taskName = stepMatch
               ? stepMatch[1].trim()
               : `Step ${taskIndex + 1}`;
-
             currentTask = {
               id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
               name: taskName,
@@ -460,14 +502,12 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               tasks.push(currentTask as TaskNode);
               taskIndex++;
             }
-
             const nameMatch = trimmed.match(
               /name:\s*['"](.*?)['"]|name:\s*(.+)/
             );
             const taskName = nameMatch
               ? (nameMatch[1] || nameMatch[2] || "").trim()
               : `Task ${taskIndex + 1}`;
-
             currentTask = {
               id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
               name: taskName,
@@ -484,7 +524,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             if (descMatch) {
               const description = (descMatch[1] || descMatch[2] || "")
                 .trim()
-                .replace(/^["']|["']$/g, "");
+                .replace(/^['"]|['"]$/g, "");
               const originalName = currentTask.name;
               currentTask.name = description;
               if (
@@ -503,26 +543,66 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             !inNestedLogic
           ) {
             const typeMatch = trimmed.match(
-              /type:\s*['"](.*?)['"]|type:\s*([^'"]+)/
+              /type:\s*['"](.*?)['"]|type:\s*([^'"#]+)/
             );
             if (typeMatch) {
               currentTask.type = mapType((typeMatch[1] || typeMatch[2] || '').trim());
             }
           }
-
           if (inNestedLogic && indent <= nestedLevel) {
             inNestedLogic = false;
           }
         }
       }
-
       if (currentTask.name) {
         tasks.push(currentTask as TaskNode);
       }
-
       return tasks;
-    } catch (error) {
+    } catch {
       return [];
+    }
+  };
+
+  // New js-yaml based parser
+  const parsePlaybookContent = (content: string): TaskNode[] => {
+    try {
+      const doc: any = yaml.load(content);
+      if (!doc || typeof doc !== 'object') return [];
+      const sequence = Array.isArray(doc.tasks)
+        ? doc.tasks
+        : Array.isArray(doc.workflow)
+          ? doc.workflow
+          : [];
+      if (!Array.isArray(sequence)) return [];
+      const parsed: TaskNode[] = [];
+      sequence.forEach((entry: any, idx: number) => {
+        if (!entry || typeof entry !== 'object') return;
+        let rawName: string = entry.name || entry.step || entry.desc || `Task ${idx + 1}`;
+        if (typeof rawName !== 'string') rawName = `Task ${idx + 1}`;
+        const idBase = rawName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() || `task_${idx + 1}`;
+        let id = idBase;
+        let dupe = 1;
+        while (parsed.some(t => t.id === id)) id = `${idBase}_${dupe++}`;
+        const t: any = {
+          id,
+          name: rawName,
+          type: mapType(entry.type || 'workbook'),
+        };
+        if (entry.config && typeof entry.config === 'object') {
+          t.config = { ...entry.config };
+        }
+        if (entry.code && typeof entry.code === 'string') {
+          t.config = t.config || {}; t.config.code = entry.code;
+        }
+        if (entry.sql && typeof entry.sql === 'string') {
+          t.config = t.config || {}; t.config.sql = entry.sql;
+        }
+        parsed.push(t as TaskNode);
+      });
+      return parsed.length ? parsed : [];
+    } catch (e) {
+      console.warn('YAML parse failed, falling back to legacy parser', e);
+      return legacyParsePlaybookContent(content);
     }
   };
 
@@ -778,9 +858,9 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             />
           </div>
           {editorTab === 'config' && (() => {
-            const nodeDef = nodeTypeMap[activeTask.type];
-            const EditorComp = nodeDef.editor;
-            if (!EditorComp) return <div>No editor for this type.</div>;
+            const nodeDef = nodeTypeMap[activeTask.type] || nodeTypeMap['workbook'] || { editor: null, label: activeTask.type } as any;
+            const EditorComp = (nodeDef as any)?.editor;
+            if (!EditorComp) return <div style={{ padding: 8 }}>No editor UI for type: <code>{activeTask.type}</code></div>;
             const updateField = (field: keyof EditableTaskNode, value: any) => handleEditTask({ ...activeTask, [field]: value });
             return <EditorComp task={activeTask} readOnly={readOnly} updateField={updateField} />;
           })()}
