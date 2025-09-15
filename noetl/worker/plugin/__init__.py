@@ -20,6 +20,7 @@ from .postgres import execute_postgres_task
 from .secrets import execute_secrets_task
 from .playbook import execute_playbook_task
 from .workbook import execute_workbook_task
+from .save import execute_save_task
 from .action import report_event, sql_split
 
 
@@ -90,6 +91,8 @@ def execute_task(
                     loop.close()
         else:
             return execute_workbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+    elif task_type == 'save':
+        return execute_save_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
     else:
         raise ValueError(f"Unknown task type '{raw_type}'. Available types: http, python, duckdb, postgres, secrets, playbook, workbook")
 
@@ -119,6 +122,7 @@ __all__ = [
     'execute_secrets_task',
     'execute_playbook_task',
     'execute_workbook_task',
+    'execute_save_task',
     'get_duckdb_connection',
     'report_event',
     'sql_split'

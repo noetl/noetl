@@ -11,7 +11,7 @@ workflow:
     desc: "Start simple test"
     next:
       - step: test_step
-        data:
+        with:
           message: "{{ workload.message }}"
 
   - step: test_step
@@ -20,12 +20,18 @@ workflow:
     code: |
       def main(message):
           print(f"TEST_STEP: {message}")
-          return {"result": "success", "message": message}
+          # Required envelope: {status, data, meta?}
+          return {"status": "success", "data": {"message": message}}
     next:
       - step: end
 
   - step: end
     desc: "End simple test"
+    type: save
     save:
-      storage: {kind: postgres,  spec: {db_host: "localhost", db_port: "5432", db_user: "demo", db_password: "", db_name: "demo_noetl"}}
-      data: {hello_world_step: "{{ test_step.data }}"}
+      storage:
+        kind: event_log
+      data:
+        status: "success"
+        data:
+          message: "{{ test_step.data.message }}"

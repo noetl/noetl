@@ -563,6 +563,38 @@ class QueueWorker:
                     pass
                 result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
 
+                # Inline save: if the action config declares a `save` block, perform the save on worker
+                inline_save = None
+                try:
+                    inline_save = action_cfg.get('save') if isinstance(action_cfg, dict) else None
+                except Exception:
+                    inline_save = None
+                if inline_save:
+                    try:
+                        # Provide current result to rendering context as `this` for convenience
+                        try:
+                            exec_ctx_with_result = dict(exec_ctx)
+                            exec_ctx_with_result['this'] = result
+                        except Exception:
+                            exec_ctx_with_result = exec_ctx
+                        from .plugin.save import execute_save_task as _do_save
+                        save_payload = {'save': inline_save}
+                        save_out = _do_save(save_payload, exec_ctx_with_result, self._jinja, task_with)
+                        # Attach save outcome to result envelope under meta.save or data.save
+                        if isinstance(result, dict):
+                            if 'meta' in result and isinstance(result['meta'], dict):
+                                result['meta']['save'] = save_out
+                            else:
+                                # Keep envelope valid; prefer adding under meta
+                                result['meta'] = {'save': save_out}
+                    except Exception as _e:
+                        # Attach error under meta.save_error but do not fail the action
+                        if isinstance(result, dict):
+                            if 'meta' in result and isinstance(result['meta'], dict):
+                                result['meta']['save_error'] = str(_e)
+                            else:
+                                result['meta'] = {'save_error': str(_e)}
+
                 res_status = (result or {}).get('status', '') if isinstance(result, dict) else ''
                 emitted_error = False
                 if isinstance(res_status, str) and res_status.lower() == 'error':
