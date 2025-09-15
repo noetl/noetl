@@ -20,8 +20,7 @@ workflow:
   - step: create_table
     desc: "Ensure target table exists"
     type: postgres
-    with:
-      credential: pg_local
+    credential: pg_local
     command: |
       CREATE TABLE IF NOT EXISTS public.postgres_save_demo (
         id TEXT PRIMARY KEY,

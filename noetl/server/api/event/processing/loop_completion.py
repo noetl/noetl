@@ -672,7 +672,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 for _fld in (
                     'task','code','command','commands','sql',
                     'url','endpoint','method','headers','params','data','payload',
-                    'with','resource_path','content','path','loop','save'
+                    'with','resource_path','content','path','loop','save','credential'
                 ):
                     if step_def.get(_fld) is not None:
                         task_def[_fld] = step_def.get(_fld)

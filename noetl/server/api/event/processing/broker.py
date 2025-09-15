@@ -214,7 +214,11 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     'name': next_step_name,
                                     'type': step_def.get('type') or 'python',
                                 }
-                                for fld in ('task','code','command','commands','sql','url','endpoint','method','headers','params','data','payload','with','resource_path','content','path','loop','save'):
+                                for fld in (
+                                    'task','code','command','commands','sql',
+                                    'url','endpoint','method','headers','params','data','payload',
+                                    'with','resource_path','content','path','loop','save','credential'
+                                ):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)
                                 # Merge 'with' from transition
