@@ -53,34 +53,70 @@ workflow:
     type: python
     code: |
       def main(http_results, original_message):
+          import json, ast
+
+          # Coerce input into a list of dicts
+          def _coerce(v):
+              if isinstance(v, (dict, list)):
+                  return v
+              if isinstance(v, str):
+                  s = v.strip()
+                  try:
+                      if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
+                          try:
+                              return json.loads(s)
+                          except Exception:
+                              return ast.literal_eval(s)
+                  except Exception:
+                      return v
+              return v
+
+          http_results = _coerce(http_results)
+          if not isinstance(http_results, list):
+              http_results = [http_results]
+          http_results = [_coerce(x) for x in http_results]
+
           print(f"AGGREGATE_RESULTS: Processing weather data from {len(http_results)} cities")
-          
-          # Count successful and failed requests
+
           successful_count = 0
           failed_count = 0
           weather_summaries = []
           total_temperature_count = 0
-          
-          for result in http_results:
-              print(f"AGGREGATE_RESULTS: Processing result for city: {result.get('city_name', 'Unknown')}")
-              if result.get('status') == 'success':
+
+          for item in http_results:
+              # Normalize item shape to { status, city_name, weather_data }
+              result = item if isinstance(item, dict) else {}
+              # If this looks like an HTTP response (status_code + data), adapt
+              if isinstance(result, dict) and 'status_code' in result:
+                  status = 'success' if 200 <= int(result.get('status_code', 0)) < 400 else 'error'
+                  norm = {
+                      'status': status,
+                      'city_name': result.get('city_name') or result.get('city') or 'Unknown',
+                      'weather_data': result.get('data') or {},
+                      'city_lat': result.get('city_lat'),
+                      'city_lon': result.get('city_lon'),
+                  }
+                  result = norm
+
+              city_for_log = (result.get('city_name') if isinstance(result, dict) else None) or 'Unknown'
+              print(f"AGGREGATE_RESULTS: Processing result for city: {city_for_log}")
+
+              if isinstance(result, dict) and result.get('status') == 'success':
                   successful_count += 1
                   weather_data = result.get('weather_data', {})
                   city_name = result.get('city_name', 'Unknown')
-                  
-                  # Extract temperature data if available
+
                   hourly_temps = []
                   if isinstance(weather_data, dict) and 'hourly' in weather_data:
                       hourly_data = weather_data['hourly']
                       if 'temperature_2m' in hourly_data:
                           hourly_temps = hourly_data['temperature_2m']
                           total_temperature_count += len(hourly_temps)
-                  
-                  # Calculate average temperature for the city
+
                   avg_temp = 0
                   if hourly_temps:
                       avg_temp = sum(hourly_temps) / len(hourly_temps)
-                  
+
                   weather_summaries.append({
                       'city_name': city_name,
                       'city_lat': result.get('city_lat'),
@@ -92,14 +128,14 @@ workflow:
                   })
               else:
                   failed_count += 1
-                  print(f"AGGREGATE_RESULTS: Failed request for city: {result.get('city_name', 'Unknown')}")
-          
-          # Calculate overall statistics
+                  if isinstance(result, dict):
+                      print(f"AGGREGATE_RESULTS: Failed request for city: {result.get('city_name', 'Unknown')}")
+
           overall_avg_temp = 0
           valid_cities = [city for city in weather_summaries if city['average_temperature'] is not None]
           if valid_cities:
               overall_avg_temp = sum(city['average_temperature'] for city in valid_cities) / len(valid_cities)
-          
+
           aggregated_result = {
               "message": original_message,
               "total_cities": len(http_results),
@@ -110,11 +146,11 @@ workflow:
               "weather_summaries": weather_summaries,
               "processing_complete": True
           }
-          
+
           print(f"AGGREGATE_RESULTS: Final weather aggregated result: {aggregated_result}")
           return aggregated_result
     input:
-      http_results: "{{ http_loop.result.results }}"
+      http_results: "{{ http_loop.results }}"
       original_message: "{{ workload.message }}"
     next:
       - step: end

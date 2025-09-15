@@ -539,14 +539,12 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
 
 
 async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | None = None) -> None:
-    """Advance workflow for steps that completed (non-loop) by enqueuing their next step and emitting step_completed.
+    """Advance workflow for completed non-loop steps by emitting step_completed and allowing controllers to enqueue next.
 
-    Idempotent: skips if step already has step_completed or next step already queued/started.
+    Idempotent by design: dedup guards skip if step_completed already exists.
+    Runs even without a trigger id so action_completed alone can progress the workflow.
     """
     try:
-        # Only run when invoked with a specific trigger to avoid duplicate scheduling
-        if not trigger_event_id:
-            return
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 # Fetch recently completed non-loop steps (no loop_id)

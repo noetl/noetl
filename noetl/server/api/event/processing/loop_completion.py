@@ -508,11 +508,10 @@ async def _finalize_loop_completion(conn, cur, event_service, parent_execution_i
     
     logger.info(f"LOOP_COMPLETION_CHECK: All children completed for {loop_step_name}: {len(child_executions_data)}/{len(child_executions_data)} total children")
     
-    # All children completed -> emit a loop_completed marker and schedule aggregation job
+    # All children completed -> emit loop results and advance workflow
     await _emit_loop_completion_events(event_service, parent_execution_id, loop_step_name, final_results)
-    
-    # After loop completion, enqueue aggregation and next steps
-    await _schedule_post_loop_tasks(conn, cur, parent_execution_id, loop_step_name, final_results)
+    # Enqueue only the next workflow steps (no internal aggregation job)
+    await _enqueue_next_workflow_steps(conn, cur, parent_execution_id, loop_step_name)
 
 
 async def _emit_loop_completion_events(event_service, parent_execution_id: str, 
@@ -574,45 +573,16 @@ async def _emit_loop_completion_events(event_service, parent_execution_id: str,
         'loop_name': loop_step_name
     })
     
-    # Emit step_completed event after loop finishes
-    try:
-        await event_service.emit({
-            'execution_id': parent_execution_id,
-            'event_type': 'step_completed',
-            'status': 'COMPLETED',
-            'node_id': f"{parent_execution_id}:{loop_step_name}",
-            'node_name': loop_step_name,
-            'node_type': 'step',
-            'result': {
-                'data': final_results,
-                'count': len(final_results)
-            },
-            'context': {
-                'step_name': loop_step_name,
-                'step_type': 'loop',
-                'total_iterations': len(final_results)
-            }
-        })
-        logger.info(f"LOOP_COMPLETION_CHECK: Emitted step_completed for {loop_step_name}")
-    except Exception as e:
-        logger.debug(f"LOOP_COMPLETION_CHECK: Failed to emit step_completed event: {e}", exc_info=True)
-    
+    # Do not emit step_completed here; let broker progression handle it idempotently
     logger.info(f"LOOP_COMPLETION_CHECK: Loop {loop_step_name} completed! Final aggregated results: {final_results}")
 
 
 async def _schedule_post_loop_tasks(conn, cur, parent_execution_id: str, loop_step_name: str, final_results: List):
-    """Schedule aggregation job and next workflow steps after loop completion."""
-    
-    # After loop completion, enqueue an aggregation job, then the next step(s)
+    """Deprecated: only enqueue next steps; do not schedule internal aggregation job."""
     try:
-        # Enqueue a single aggregation job if not already queued/leased/done
-        await _enqueue_aggregation_job(conn, cur, parent_execution_id, loop_step_name)
-        
-        # After loop completion, enqueue the next step(s) following this loop step if defined
         await _enqueue_next_workflow_steps(conn, cur, parent_execution_id, loop_step_name)
-        
     except Exception:
-        logger.debug("LOOP_COMPLETION_CHECK: Failed to schedule post-loop tasks", exc_info=True)
+        logger.debug("LOOP_COMPLETION_CHECK: Failed to enqueue next steps", exc_info=True)
 
 
 async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_step_name: str):
@@ -876,12 +846,35 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                         base_workload = {}
             except Exception:
                 base_workload = {}
+            # Build job context with workload and expose prior step results by name for Jinja rendering
             job_ctx = {
                 'workload': base_workload,
                 'step_name': next_step_name,
                 'path': None,
                 'version': 'latest'
             }
+            try:
+                from noetl.server.api.event.event_log import EventLog
+                dao = EventLog()
+                node_results_map = await dao.get_all_node_results(parent_execution_id)
+                if isinstance(node_results_map, dict):
+                    import json as _json
+                    for k, v in node_results_map.items():
+                        try:
+                            val = _json.loads(v) if isinstance(v, str) else v
+                        except Exception:
+                            val = v
+                        # Flatten common action envelope: expose .data at the step key
+                        try:
+                            if isinstance(val, dict) and isinstance(val.get('data'), (dict, list)) and (('status' in val) or ('id' in val)):
+                                val = val.get('data')
+                        except Exception:
+                            pass
+                        # Make result accessible via step name in context
+                        job_ctx[str(k)] = val
+            except Exception:
+                # Non-fatal; context will still include workload
+                pass
             try:
                 if trigger_event_id:
                     job_ctx['_meta'] = {'parent_event_id': str(trigger_event_id)}
