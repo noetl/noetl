@@ -50,13 +50,15 @@ async def evaluate_broker_for_execution(
 
         # PROACTIVE COMPLETION HANDLERS
         from .child_executions import check_and_process_completed_child_executions
-        from .loop_completion import check_and_process_completed_loops
+        from .loop_completion import check_and_process_completed_loops, ensure_direct_loops_finalized
         
         # PROACTIVE COMPLETION HANDLER: Check for completed child executions and process their results
         await check_and_process_completed_child_executions(execution_id)
         
         # LOOP COMPLETION HANDLER: Check for completed loops and emit end_loop events
         await check_and_process_completed_loops(execution_id)
+        # Also proactively finalize direct (non-child) loops using per-iteration results
+        await ensure_direct_loops_finalized(execution_id)
 
         # NON-LOOP PROGRESSION: Advance workflow for completed non-loop steps
         await _advance_non_loop_steps(execution_id, trigger_event_id)

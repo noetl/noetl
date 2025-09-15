@@ -99,6 +99,13 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                     
                     if not child_executions:
                         logger.debug(f"LOOP_COMPLETION_CHECK: No child executions found for loop {loop_step_name}")
+                        # Fallback path: handle direct per-iteration results (no child executions)
+                        try:
+                            await _process_direct_loop_completion(
+                                conn, cur, event_service, parent_execution_id, loop_step_name
+                            )
+                        except Exception:
+                            logger.debug("LOOP_COMPLETION_CHECK: Direct loop completion path failed", exc_info=True)
                         continue
                     
                     # Step 2: Check if we need to create an end_loop tracking event
@@ -153,6 +160,37 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                         
     except Exception as e:
         logger.error(f"LOOP_COMPLETION_CHECK: Error processing completed loops: {e}")
+
+
+async def ensure_direct_loops_finalized(parent_execution_id: str) -> None:
+    """Proactively attempt to finalize any direct (non-child) loops for an execution.
+
+    This is idempotent and safe to call repeatedly. It will iterate all loop steps
+    that have emitted loop_iteration events and attempt to finalize them using
+    per-iteration results when all iterations are complete.
+    """
+    try:
+        from ..service import get_event_service
+        es = get_event_service()
+        async with get_async_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT DISTINCT node_name
+                    FROM noetl.event_log
+                    WHERE execution_id = %s AND event_type = 'loop_iteration'
+                    """,
+                    (parent_execution_id,)
+                )
+                rows = await cur.fetchall()
+                loop_steps = [r[0] if not isinstance(r, dict) else r.get('node_name') for r in rows or []]
+                for step_name in loop_steps:
+                    try:
+                        await _process_direct_loop_completion(conn, cur, es, parent_execution_id, step_name)
+                    except Exception:
+                        logger.debug("LOOP_COMPLETION_CHECK: ensure_direct_loops_finalized failed for %s", step_name, exc_info=True)
+    except Exception:
+        logger.debug("LOOP_COMPLETION_CHECK: ensure_direct_loops_finalized encountered an error", exc_info=True)
 
 
 async def _process_loop_completion_status(conn, cur, event_service, parent_execution_id: str, loop_step_name: str):
@@ -242,6 +280,109 @@ async def _process_loop_completion_status(conn, cur, event_service, parent_execu
             conn, cur, event_service, parent_execution_id, loop_step_name, 
             new_aggregated_results, child_executions_data
         )
+
+
+async def _process_direct_loop_completion(conn, cur, event_service, parent_execution_id: str, loop_step_name: str) -> None:
+    """Fallback: finalize loops whose iterations ran within the same execution (no child executions).
+
+    Uses loop metadata (loop_id, loop_name, current_index) to determine completion and aggregate results.
+    Idempotent: skips if a final loop completion event already exists.
+    """
+    # Idempotency: skip if final completion already present for this loop
+    try:
+        await cur.execute(
+            """
+            SELECT COUNT(*) FROM noetl.event_log
+            WHERE execution_id = %s
+              AND event_type = 'action_completed'
+              AND node_name = %s
+              AND context::text LIKE '%%loop_completed%%'
+              AND context::text LIKE '%%true%%'
+            """,
+            (parent_execution_id, loop_step_name)
+        )
+        _row = await cur.fetchone()
+        if _row and int(_row[0]) > 0:
+            logger.info(f"LOOP_COMPLETION_CHECK: Direct loop {loop_step_name} already finalized; skipping")
+            return
+    except Exception:
+        logger.debug("LOOP_COMPLETION_CHECK: Idempotency check failed for direct loop completion", exc_info=True)
+
+    # Determine total iterations from loop_iteration events (distinct indices to avoid duplicates)
+    try:
+        await cur.execute(
+            """
+            SELECT COUNT(DISTINCT COALESCE(current_index::text, (context::json)->>'index'))
+            FROM noetl.event_log
+            WHERE execution_id = %s
+              AND event_type = 'loop_iteration'
+              AND node_name = %s
+            """,
+            (parent_execution_id, loop_step_name)
+        )
+        _cntrow = await cur.fetchone()
+        total_iterations = int(_cntrow[0]) if _cntrow else 0
+    except Exception:
+        logger.debug("LOOP_COMPLETION_CHECK: Failed to count loop iterations for direct loop", exc_info=True)
+        total_iterations = 0
+
+    if total_iterations <= 0:
+        return
+
+    # Fetch per-iteration results using loop metadata fields
+    try:
+        await cur.execute(
+            """
+            SELECT result, current_index, timestamp
+            FROM noetl.event_log
+            WHERE execution_id = %s
+              AND loop_name = %s
+              AND event_type IN ('result','action_completed')
+              AND lower(status) IN ('completed','success')
+              AND result IS NOT NULL 
+              AND result != '{}'
+              AND loop_id IS NOT NULL
+              AND current_index IS NOT NULL
+              AND NOT (result::text LIKE '%%"skipped": true%%')
+              AND NOT (result::text LIKE '%%"reason": "control_step"%%')
+            ORDER BY current_index, timestamp
+            """,
+            (parent_execution_id, loop_step_name)
+        )
+        rows = await cur.fetchall()
+    except Exception:
+        logger.debug("LOOP_COMPLETION_CHECK: Failed to fetch per-iteration results for direct loop", exc_info=True)
+        rows = []
+
+    # Parse results and ensure we have a result for each iteration index
+    aggregated_pairs = []  # list of (idx, result)
+    for r in rows or []:
+        try:
+            res_raw = r[0] if isinstance(r, tuple) else r.get('result')
+            idx = r[1] if isinstance(r, tuple) else r.get('current_index')
+            import json as _json
+            parsed = _json.loads(res_raw) if isinstance(res_raw, str) else res_raw
+            if isinstance(parsed, dict) and 'data' in parsed:
+                parsed = parsed['data']
+            aggregated_pairs.append((int(idx) if idx is not None else 0, parsed))
+        except Exception:
+            continue
+
+    if len(aggregated_pairs) < total_iterations:
+        # Not all iterations finished yet
+        logger.info(
+            f"LOOP_COMPLETION_CHECK: Direct loop {loop_step_name} not complete yet: "
+            f"{len(aggregated_pairs)}/{total_iterations}"
+        )
+        return
+
+    # Build final ordered list of results
+    aggregated_pairs.sort(key=lambda x: x[0])
+    final_results = [p[1] for p in aggregated_pairs]
+
+    # Emit final completion and schedule next tasks
+    await _emit_loop_completion_events(event_service, parent_execution_id, loop_step_name, final_results)
+    await _schedule_post_loop_tasks(conn, cur, parent_execution_id, loop_step_name, final_results)
 
 
 async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
