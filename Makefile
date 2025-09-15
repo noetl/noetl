@@ -82,6 +82,8 @@ help:
 	@echo "  make noetl-execute-watch ID=222437726840946688 HOST=localhost PORT=8082			Watch status with live updates"
 	@echo "  make noetl-execute-status ID=222437726840946688 > logs/status.json					Get status for specific ID"
 	@echo "  make noetl-validate-status FILE=logs/status.json							Validate and clean up a status.json file"
+	@echo "  make register-credential FILE=examples/test/credentials/pg_local.json HOST=localhost PORT=8082	Register one credential payload"
+	@echo "  make register-test-credentials HOST=localhost PORT=8082			Upload all example test credentials"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -498,6 +500,32 @@ export-workbook:
 	psql -v ON_ERROR_STOP=1 -Atc "SELECT coalesce(json_agg(row_to_json(wb)),'[]'::json) FROM noetl.workbook wb WHERE execution_id = $(ID)" > logs/workbook.json; \
 	[ -s logs/workbook.json ] && (jq . logs/workbook.json >/dev/null 2>&1 && jq . logs/workbook.json > logs/workbook.json.tmp && mv logs/workbook.json.tmp logs/workbook.json || true) || true; \
 	echo "Wrote logs/workbook.json"
+
+# === Credential helpers ===
+.PHONY: register-credential register-test-credentials
+
+register-credential:
+	@if [ -z "$(FILE)" ]; then \
+	  echo "Usage: make register-credential FILE=examples/test/credentials/pg_local.json [HOST=localhost] [PORT=8082]"; \
+	  exit 1; \
+	fi; \
+	url="http://$(HOST):$(PORT)/api/credentials"; \
+	echo "POST $$url < $(FILE)"; \
+	if command -v jq >/dev/null 2>&1; then \
+	  curl -sS -X POST "$$url" -H 'Content-Type: application/json' --data-binary @"$(FILE)" | jq -C .; \
+	else \
+	  curl -sS -X POST "$$url" -H 'Content-Type: application/json' --data-binary @"$(FILE)"; \
+	fi
+
+register-test-credentials:
+	@set -e; \
+	shopt -s nullglob; \
+	for f in examples/test/credentials/*.json; do \
+	  echo "Registering credential payload: $$f"; \
+	  $(MAKE) -s register-credential FILE="$$f" HOST=$(HOST) PORT=$(PORT); \
+	done; \
+	shopt -u nullglob; \
+	echo "Credential payloads registered."
 
 export-all-event-log:
 	@mkdir -p logs

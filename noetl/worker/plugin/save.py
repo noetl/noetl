@@ -7,6 +7,7 @@ other storage kinds can be extended incrementally (postgres/duckdb/etc.).
 """
 
 from typing import Dict, Any, Optional, Callable
+import os
 from jinja2 import Environment
 
 from noetl.core.logger import setup_logger
@@ -101,6 +102,29 @@ def execute_save_task(
 
         # Chain to the Postgres worker plugin rather than re-implementing
         if kind == 'postgres':
+            # Resolve credential alias if provided (best-effort)
+            try:
+                if credential_ref:
+                    server_url = os.getenv('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+                    if not server_url.endswith('/api'):
+                        server_url = server_url + '/api'
+                    cred_key = str(credential_ref)
+                    import httpx
+                    url = f"{server_url}/credentials/{cred_key}?include_data=true"
+                    with httpx.Client(timeout=5.0) as _c:
+                        _r = _c.get(url)
+                        if _r.status_code == 200:
+                            body = _r.json() or {}
+                            cdata = body.get('data') or {}
+                            if isinstance(cdata, dict):
+                                merged = dict(cdata)
+                                if isinstance(spec, dict):
+                                    for k, v in spec.items():
+                                        if v is not None:
+                                            merged[k] = v
+                                spec = merged
+            except Exception:
+                pass
             import base64
             from noetl.worker.plugin.postgres import execute_postgres_task as _pg_exec
 
