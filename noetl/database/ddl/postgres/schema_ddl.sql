@@ -236,7 +236,7 @@ CREATE TABLE IF NOT EXISTS noetl.dentry (
     id BIGINT PRIMARY KEY,
     parent_id BIGINT REFERENCES noetl.dentry(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('folder','chat')),
+    type TEXT NOT NULL CHECK (type IN ('folder')),
     resource_type TEXT,
     resource_id BIGINT,
     is_positive BOOLEAN DEFAULT TRUE,
@@ -246,41 +246,12 @@ CREATE TABLE IF NOT EXISTS noetl.dentry (
 );
 ALTER TABLE noetl.dentry OWNER TO noetl;
 
--- Chats now represented as resources and linked via dentry when type='chat'
-CREATE TABLE IF NOT EXISTS noetl.chat (
-    id BIGINT PRIMARY KEY,
-    name TEXT NOT NULL,
-    owner_id BIGINT REFERENCES noetl.profile(id),
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE noetl.chat OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.member (
-    id BIGINT PRIMARY KEY,
-    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
-    profile_id BIGINT REFERENCES noetl.profile(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-    joined_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(chat_id, profile_id)
-);
-ALTER TABLE noetl.member OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.message (
-    id BIGINT PRIMARY KEY,
-    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
-    sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
-    sender_id BIGINT,
-    role TEXT,
-    content TEXT NOT NULL,
-    metadata JSONB,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE noetl.message OWNER TO noetl;
 
 -- Indexes for dentry and messages
 CREATE INDEX IF NOT EXISTS idx_dentry_parent ON noetl.dentry(parent_id);
 CREATE INDEX IF NOT EXISTS idx_dentry_type ON noetl.dentry(type);
-CREATE INDEX IF NOT EXISTS idx_message_chat_created ON noetl.message(chat_id, created_at);
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
@@ -304,9 +275,6 @@ ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.chat ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.member ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.message ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 
 -- Seed sample roles (ids via function)
 INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'admin', 'Administrator') ON CONFLICT (name) DO NOTHING;

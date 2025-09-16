@@ -603,7 +603,7 @@ class DatabaseSchema:
                         id BIGINT PRIMARY KEY,
                         parent_id BIGINT REFERENCES {self.noetl_schema}.dentry(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
-                        type TEXT NOT NULL CHECK (type IN ('folder','chat')),
+                        type TEXT NOT NULL CHECK (type IN ('folder')),
                         resource_type TEXT,
                         resource_id BIGINT,
                         is_positive BOOLEAN DEFAULT TRUE,
@@ -612,41 +612,10 @@ class DatabaseSchema:
                         UNIQUE(parent_id, name)
                     )
                 """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
-                        id BIGINT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.member (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id) ON DELETE CASCADE,
-                        role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-                        joined_at TIMESTAMPTZ DEFAULT now(),
-                        UNIQUE(chat_id, profile_id)
-                    )
-                """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.message (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
-                        sender_id BIGINT,
-                        role TEXT,
-                        content TEXT NOT NULL,
-                        metadata JSONB,
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
                 try:
                     cursor.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
                         CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
-                        CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
                     """)
                 except Exception as e:
                     logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (sync): {e}. Retrying as admin.")
@@ -658,12 +627,17 @@ class DatabaseSchema:
                                 ac.execute(f"""
                                     CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
                                     CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
-                                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
                                 """)
                         finally:
                             admin.close()
                     except Exception as e2:
                         logger.error(f"Admin fallback also failed creating identity/collab indexes (sync): {e2}")
+                # Best-effort removal of legacy chat table (and its FKs) if present
+                try:
+                    cursor.execute(f"DROP TABLE IF EXISTS {self.noetl_schema}.chat CASCADE")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
                 if not getattr(self.conn, "autocommit", False):
                     self.conn.commit()
                 logger.info("Postgres database tables initialized in noetl schema (sync).")
@@ -1248,7 +1222,7 @@ class DatabaseSchema:
                         id BIGINT PRIMARY KEY,
                         parent_id BIGINT REFERENCES {self.noetl_schema}.dentry(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
-                        type TEXT NOT NULL CHECK (type IN ('folder','chat')),
+                        type TEXT NOT NULL CHECK (type IN ('folder')),
                         resource_type TEXT,
                         resource_id BIGINT,
                         is_positive BOOLEAN DEFAULT TRUE,
@@ -1257,41 +1231,10 @@ class DatabaseSchema:
                         UNIQUE(parent_id, name)
                     )
                 """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
-                        id BIGINT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.member (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id) ON DELETE CASCADE,
-                        role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-                        joined_at TIMESTAMPTZ DEFAULT now(),
-                        UNIQUE(chat_id, profile_id)
-                    )
-                """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.message (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
-                        sender_id BIGINT,
-                        role TEXT,
-                        content TEXT NOT NULL,
-                        metadata JSONB,
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
                 try:
                     await cursor.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
                         CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
-                        CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
                     """)
                 except Exception as e:
                     logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (async): {e}. Retrying as admin.")
@@ -1303,12 +1246,16 @@ class DatabaseSchema:
                                 await ac.execute(f"""
                                     CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
                                     CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
-                                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
                                 """)
                         finally:
                             await admin_conn.close()
                     except Exception as e2:
                         logger.error(f"Admin fallback also failed creating identity/collab indexes (async): {e2}")
+                # Best-effort removal of legacy chat table (and its FKs) if present
+                try:
+                    await cursor.execute(f"DROP TABLE IF EXISTS {self.noetl_schema}.chat CASCADE")
+                except Exception:
+                    pass
 
                 # Snowflake-like ID function (best-effort) and defaults
                 try:
@@ -1371,7 +1318,7 @@ class DatabaseSchema:
                         await admin_conn.close()
                     except Exception:
                         pass
-                for tbl in ['role','profile','session','dentry','chat','member','message']:
+                for tbl in ['role','profile','session','dentry']:
                     try:
                         await cursor.execute(f"ALTER TABLE {self.noetl_schema}." + tbl + " ALTER COLUMN id SET DEFAULT {self.noetl_schema}.snowflake_id();")
                     except Exception:
