@@ -453,6 +453,29 @@ def execute_duckdb_task(
                         logger.warning(f"Error in DETACH command: {detach_error}.")
                         results[f"command_{i}"] = {"status": "warning", "message": f"DETACH operation failed: {str(detach_error)}"}
                 else:
+                    # Normalize COPY paths: ensure file/URI is quoted to avoid parser issues on ':' (e.g., gs://)
+                    try:
+                        import re as _re
+                        _cmd_upper = cmd.strip().upper()
+                        if _cmd_upper.startswith("COPY "):
+                            # Handle COPY <table> TO <path> ( ... ) and COPY <table> FROM <path> ...
+                            def _quote_copy_path(_cmd: str, _kw: str) -> str:
+                                # Match 'COPY <obj> <KW> <path> (' capturing <path> as non-space/non-parenthesis
+                                # Keep minimalistic to avoid heavy parsing
+                                pattern = _re.compile(rf"^(COPY\s+[^\s]+\s+{_kw}\s+)([^\s\(]+)(\s*\()", _re.IGNORECASE)
+                                m = pattern.search(_cmd)
+                                if m:
+                                    path = m.group(2)
+                                    if not (path.startswith("'") or path.startswith('"')):
+                                        quoted = f"'{path}'"
+                                        _cmd = _cmd[:m.start(2)] + quoted + _cmd[m.end(2):]
+                                return _cmd
+                            if " TO " in _cmd_upper:
+                                cmd = _quote_copy_path(cmd, "TO")
+                            if " FROM " in _cmd_upper:
+                                cmd = _quote_copy_path(cmd, "FROM")
+                    except Exception:
+                        pass
                     cursor = duckdb_con.execute(cmd)
                     result = cursor.fetchall()
 
