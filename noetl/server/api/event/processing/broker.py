@@ -24,7 +24,7 @@ async def evaluate_broker_for_execution(
 ):
     """Server-side broker evaluator.
 
-    - Builds execution context (workload + results) from event_log
+    - Builds execution context (workload + results) from event
     - Parses playbook and advances to the next actionable step
     - Evaluates step-level pass/when using server-side rendering (minimal for now)
     - Enqueues the first actionable step to the queue for workers
@@ -102,7 +102,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                 # Check if any action already completed for this execution
                 await cur.execute(
                     """
-                    SELECT COUNT(*) FROM noetl.event_log
+                    SELECT COUNT(*) FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('action_completed','execution_completed')
                     """,
                     (execution_id,)
@@ -130,7 +130,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                         # Try to get path from execution_start event
                         await cur.execute(
                             """
-                            SELECT context FROM noetl.event_log
+                            SELECT context FROM noetl.event
                             WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                             ORDER BY timestamp DESC LIMIT 1
                             """,
@@ -284,7 +284,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     try:
                                         await cur.execute(
                                             """
-                                            SELECT 1 FROM noetl.event_log
+                                            SELECT 1 FROM noetl.event
                                             WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
                                             LIMIT 1
                                             """,
@@ -297,7 +297,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                             try:
                                                 await cur.execute(
                                                     """
-                                                    SELECT 1 FROM noetl.event_log
+                                                    SELECT 1 FROM noetl.event
                                                     WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
                                                     LIMIT 1
                                                     """,
@@ -348,7 +348,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     try:
                                         await cur.execute(
                                             """
-                                            SELECT 1 FROM noetl.event_log
+                                            SELECT 1 FROM noetl.event
                                             WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
                                             LIMIT 1
                                             """,
@@ -560,7 +560,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                 await cur.execute(
                     """
                     SELECT DISTINCT node_name
-                    FROM noetl.event_log
+                    FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'action_completed'
                       AND (loop_id IS NULL OR loop_id = '')
@@ -578,7 +578,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                 pb_ver = None
                 await cur.execute(
                     """
-                    SELECT metadata, context FROM noetl.event_log
+                    SELECT metadata, context FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     ORDER BY timestamp ASC
                     LIMIT 1
@@ -635,7 +635,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                     # Skip if step_completed already recorded
                     await cur.execute(
                         """
-                        SELECT 1 FROM noetl.event_log
+                        SELECT 1 FROM noetl.event
                         WHERE execution_id = %s AND node_name = %s AND event_type = 'step_completed'
                         LIMIT 1
                         """,

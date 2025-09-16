@@ -58,42 +58,62 @@ workflow:
       parent_execution_id: "{{ execution_id }}"
       index: "{{ _loop.current_index }}"
     next:
+      - step: get_pg_credential
+
+  - step: get_pg_credential
+    desc: "Fetch Postgres credential from NoETL server"
+    type: http
+    method: GET
+    endpoint: "{{ env.NOETL_SERVER_URL | default('http://localhost:8082') }}/api/credentials/pg_local?include_data=true"
+    next:
+      - step: get_gcs_credential
+
+  - step: get_gcs_credential
+    desc: "Fetch GCS HMAC credential from NoETL server"
+    type: http
+    method: GET
+    endpoint: "{{ env.NOETL_SERVER_URL | default('http://localhost:8082') }}/api/credentials/gcs_hmac_local?include_data=true"
+    next:
       - step: aggregate_with_duckdb
 
   - step: aggregate_with_duckdb
-    desc: "Read raw rows from Postgres in DuckDB, aggregate, and write to GCS"
+    desc: "Read Postgres rows in DuckDB, aggregate, write to GCS with explicit DuckDB secrets"
     type: duckdb
-    # Step-level credentials mapping by alias (refer by name in credential table)
-    credentials:
-      postgres_db:
-        kind: postgres
-        credential: pg_local
-        spec:
-          dbname: demo_noetl
-      gcs_hmac:
-        kind: gcs_hmac
-        credential: gcs_hmac_local
+    with:
+      # Flatten server HTTP responses to the decrypted credential payloads
+      # HTTP action result schema: result.data => { status_code, headers, url, elapsed, data: <payload> }
+      # We want the inner decrypted payload object under .data
+      pg: "{{ get_pg_credential.data.data }}"
+      gcs: "{{ get_gcs_credential.data.data }}"
     commands: |
-      -- Flattened view from Postgres-attached table without JSON parsing
+      -- Load required extensions
+      INSTALL httpfs;  LOAD httpfs;
+      INSTALL postgres; LOAD postgres;
+
+      -- Explicit Postgres attach using credential fields
+      ATTACH 'dbname={{ pg.db_name }} user={{ pg.db_user }} password={{ pg.db_password }} host={{ pg.db_host }} port={{ pg.db_port }}' AS postgres_db (TYPE postgres);
+
+      -- Explicit DuckDB secret for GCS with scoped access to the bucket
+      CREATE OR REPLACE SECRET noetl_gcs_secret (
+        TYPE gcs,
+        KEY_ID '{{ gcs.key_id }}',
+        SECRET '{{ gcs.secret_key }}',
+        SCOPE 'gs://{{ workload.gcs_bucket }}'
+      );
+
+      -- Flattened view from Postgres-attached table
       CREATE OR REPLACE TABLE weather_flat AS
-      SELECT
-        id,
-        city,
-        url as source_url,
-        elapsed as elapsed_sec,
-        payload
+      SELECT id, city, url AS source_url, elapsed AS elapsed_sec, payload
       FROM postgres_db.public.weather_http_raw
       WHERE execution_id = '{{ execution_id }}';
 
       -- Aggregate by city (simple count)
       CREATE OR REPLACE TABLE weather_agg AS
-      SELECT
-        city,
-        COUNT(*) AS rows_per_city
+      SELECT city, COUNT(*) AS rows_per_city
       FROM weather_flat
       GROUP BY city;
 
-      -- Write to GCS as Parquet (requires gcs_hmac credentials configured)
+      -- Write to GCS as Parquet via DuckDB secrets
       COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
       COPY weather_agg  TO 'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
     next:

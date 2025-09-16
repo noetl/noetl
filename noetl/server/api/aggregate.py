@@ -13,7 +13,7 @@ router = APIRouter()
 async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[str, Any]:
     """
     Return the list of per-iteration results for a given execution and loop step.
-    This endpoint sources data from event_log only (event-sourced server side),
+    This endpoint sources data from event only (event-sourced server side),
     avoiding any worker-side DB access.
     
     Uses generic loop metadata fields for robust filtering instead of content-specific logic.
@@ -33,7 +33,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                         loop_id,
                         node_id,
                         timestamp
-                    FROM noetl.event_log
+                    FROM noetl.event
                     WHERE execution_id = %s
                       AND loop_name = %s
                       AND event_type IN ('result','action_completed')
@@ -72,7 +72,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                 logger.warning(f"AGGREGATE: No results found using loop metadata, falling back to legacy filtering for {execution_id}:{step_name}")
                 await cur.execute(
                     """
-                    SELECT result FROM noetl.event_log
+                    SELECT result FROM noetl.event
                     WHERE execution_id = %s
                       AND node_name = %s
                       AND event_type IN ('result','action_completed')

@@ -2,7 +2,7 @@
 Save action executor for NoETL jobs.
 
 Executes a declarative or statement-based save operation on the worker side.
-Initial implementation supports event_log "save" by returning the envelope;
+Initial implementation supports event (formerly event_log) "save" by returning the envelope;
 other storage kinds can be extended incrementally (postgres/duckdb/etc.).
 """
 
@@ -51,7 +51,7 @@ def execute_save_task(
         # Support nested save: { save: { storage, data, statement, params, ... } }
         payload = task_config.get('save') or task_config
         storage = payload.get('storage') or {}
-        kind = str((storage or {}).get('kind') or 'event_log').strip().lower()
+        kind = str((storage or {}).get('kind') or 'event').strip().lower()
         # Spec-defined attributes (parsed now; handling may be added later)
         data_spec = payload.get('data')
         statement = payload.get('statement')
@@ -87,10 +87,10 @@ def execute_save_task(
         except Exception:
             pass
 
-        # Handle storage kinds - initial support for event_log only
-        if kind in ('event_log', ''):
+        # Handle storage kinds - initial support for event/event_log
+        if kind in ('event', 'event_log', ''):
             result_payload = {
-                'saved': 'event_log',
+                'saved': 'event',
                 'data': rendered_data,
             }
             meta_payload = {

@@ -29,7 +29,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                         (context::json)->>'child_execution_id' as child_exec_id,
                         node_name as parent_step,
                         node_id as iter_node_id
-                    FROM noetl.event_log 
+                    FROM noetl.event 
                     WHERE execution_id = %s 
                       AND event_type = 'loop_iteration'
                       AND context::text LIKE '%%child_execution_id%%'
@@ -53,7 +53,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                     # Check if this child execution has completed
                     await cur.execute(
                         """
-                        SELECT 1 FROM noetl.event_log 
+                        SELECT 1 FROM noetl.event 
                         WHERE execution_id = %s 
                           AND event_type = 'execution_start'
                         """,
@@ -68,7 +68,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                     # Check if we've already processed this child completion
                     await cur.execute(
                         """
-                        SELECT 1 FROM noetl.event_log 
+                        SELECT 1 FROM noetl.event 
                         WHERE execution_id = %s 
                           AND event_type = 'action_completed'
                           AND node_name = %s
@@ -87,7 +87,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                     for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
                         await cur.execute(
                             """
-                            SELECT result FROM noetl.event_log
+                            SELECT result FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = %s
                               AND event_type = 'action_completed'
@@ -119,7 +119,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                     if child_result is None:
                         await cur.execute(
                             """
-                            SELECT result FROM noetl.event_log
+                            SELECT result FROM noetl.event
                             WHERE execution_id = %s
                               AND event_type = 'action_completed'
                               AND lower(status) IN ('completed','success')
@@ -164,7 +164,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                                 await cur.execute(
                                     """
                                     SELECT loop_id, loop_name, iterator, current_index, current_item 
-                                    FROM noetl.event_log
+                                    FROM noetl.event
                                     WHERE execution_id = %s
                                       AND event_type = 'loop_iteration'
                                       AND node_name = %s
@@ -217,7 +217,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                             try:
                                 await cur.execute(
                                     """
-                                    SELECT COUNT(*) FROM noetl.event_log
+                                    SELECT COUNT(*) FROM noetl.event
                                     WHERE execution_id = %s
                                       AND event_type = 'result'
                                       AND node_name = %s
@@ -259,8 +259,8 @@ async def check_distributed_loop_completion(execution_id: str, step_name: str) -
                     SELECT 
                         COUNT(*) as total_iterations,
                         COUNT(CASE WHEN el2.execution_id IS NOT NULL THEN 1 END) as completed_iterations
-                    FROM noetl.event_log el1
-                    LEFT JOIN noetl.event_log el2 ON 
+                    FROM noetl.event el1
+                    LEFT JOIN noetl.event el2 ON 
                         el2.execution_id = (el1.context::json)->>'child_execution_id'
                         AND el2.event_type = 'execution_complete'
                         AND el2.status = 'COMPLETED'

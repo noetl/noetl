@@ -57,7 +57,7 @@ class BrokerService:
                                 # Also ensure no final aggregated action_completed exists already
                                 _cur.execute(
                                     """
-                                    SELECT COUNT(*) FROM noetl.event_log
+                                    SELECT COUNT(*) FROM noetl.event
                                     WHERE execution_id = %s
                                       AND event_type = 'action_completed'
                                       AND node_name = %s
@@ -90,7 +90,7 @@ class BrokerService:
                     with __conn.cursor() as __cur:
                         __cur.execute(
                             """
-                            SELECT 1 FROM noetl.event_log
+                            SELECT 1 FROM noetl.event
                             WHERE execution_id = %s AND event_type = 'execution_completed'
                             LIMIT 1
                             """,

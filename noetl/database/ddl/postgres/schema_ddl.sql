@@ -41,8 +41,8 @@ CREATE TABLE IF NOT EXISTS noetl.workload (
 );
 ALTER TABLE noetl.workload OWNER TO noetl;
 
--- Event log
-CREATE TABLE IF NOT EXISTS noetl.event_log (
+-- Event
+CREATE TABLE IF NOT EXISTS noetl.event (
     execution_id BIGINT,
     event_id BIGINT,
     parent_event_id BIGINT,
@@ -69,13 +69,15 @@ CREATE TABLE IF NOT EXISTS noetl.event_log (
     context_key VARCHAR,
     context_value TEXT,
     trace_component JSONB,
+    stack_trace TEXT,
     PRIMARY KEY (execution_id, event_id)
 );
-ALTER TABLE noetl.event_log OWNER TO noetl;
-ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB;
-ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
+ALTER TABLE noetl.event OWNER TO noetl;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS trace_component JSONB;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS stack_trace TEXT;
 DO $$ BEGIN
-    ALTER TABLE noetl.event_log ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE noetl.event ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP;
 EXCEPTION WHEN others THEN NULL; END $$;
 
 -- Workflow/workbook/transition
@@ -110,30 +112,8 @@ CREATE TABLE IF NOT EXISTS noetl.transition (
 );
 ALTER TABLE noetl.transition OWNER TO noetl;
 
--- Error log
-CREATE TABLE IF NOT EXISTS noetl.error_log (
-    error_id BIGINT PRIMARY KEY,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    error_type VARCHAR(50),
-    error_message TEXT,
-    execution_id BIGINT,
-    step_id VARCHAR,
-    step_name VARCHAR,
-    template_string TEXT,
-    context_data JSONB,
-    stack_trace TEXT,
-    input_data JSONB,
-    output_data JSONB,
-    severity VARCHAR(20) DEFAULT 'error',
-    resolved BOOLEAN DEFAULT FALSE,
-    resolution_notes TEXT,
-    resolution_timestamp TIMESTAMP
-);
-ALTER TABLE noetl.error_log OWNER TO noetl;
-CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON noetl.error_log (timestamp);
-CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON noetl.error_log (error_type);
-CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON noetl.error_log (execution_id);
-CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON noetl.error_log (resolved);
+-- Legacy compatibility view for event_log
+CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
 
 -- Credential
 CREATE TABLE IF NOT EXISTS noetl.credential (

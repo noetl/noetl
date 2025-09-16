@@ -121,8 +121,13 @@ def execute_http_task(
                 request_args = {
                     'url': endpoint,
                     'headers': headers,
-                    'params': params
                 }
+                # Only include params when provided to avoid overwriting query string in endpoint
+                try:
+                    if isinstance(params, dict) and params:
+                        request_args['params'] = params
+                except Exception:
+                    pass
                 logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Initial request_args={request_args}")
 
                 if method in ['POST', 'PUT', 'PATCH'] and payload:

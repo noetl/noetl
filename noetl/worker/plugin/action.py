@@ -64,11 +64,15 @@ def sql_split(sql_text: str) -> list[str]:
 
     for char in sql_text:
         if not in_string and char in ('"', "'"):
+            # Enter string literal and keep the quote
             in_string = True
             string_char = char
+            current_statement.append(char)
         elif in_string and char == string_char:
+            # Exit string literal and keep the quote
             in_string = False
             string_char = None
+            current_statement.append(char)
         elif not in_string and char == ';':
             statement = ''.join(current_statement).strip()
             if statement:

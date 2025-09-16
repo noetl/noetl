@@ -405,8 +405,12 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
                 {'error': error_msg, 'with_params': task_with}, None
             )
 
+        # Best-effort traceback for worker to propagate
+        import traceback as _tb
+        tb_text = _tb.format_exc()
         return {
             'id': task_id,
             'status': 'error',
-            'error': error_msg
+            'error': error_msg,
+            'traceback': tb_text
         }

@@ -27,19 +27,19 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                     SELECT DISTINCT 
                         node_name as loop_step_name,
                         COUNT(*) as total_iterations
-                    FROM noetl.event_log 
+                    FROM noetl.event 
                     WHERE execution_id = %s 
                       AND event_type = 'loop_iteration'
                       AND (
                           node_name NOT IN (
                               SELECT DISTINCT node_name 
-                              FROM noetl.event_log 
+                              FROM noetl.event 
                               WHERE execution_id = %s 
                                 AND event_type = 'end_loop'
                           )
                           OR node_name IN (
                               SELECT DISTINCT node_name 
-                              FROM noetl.event_log 
+                              FROM noetl.event 
                               WHERE execution_id = %s 
                                 AND event_type = 'end_loop' 
                                 AND status = 'TRACKING'
@@ -70,7 +70,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                 event_id as iter_event_id,
                                 COALESCE((context::json)->>'index', '0') as iteration_index,
                                 'loop_iteration' as source_event
-                            FROM noetl.event_log 
+                            FROM noetl.event 
                             WHERE execution_id = %s 
                               AND event_type = 'loop_iteration'
                               AND node_name = %s
@@ -85,7 +85,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                 event_id as iter_event_id,
                                 '0' as iteration_index,
                                 'action_completed' as source_event
-                            FROM noetl.event_log 
+                            FROM noetl.event 
                             WHERE execution_id = %s 
                               AND event_type = 'action_completed'
                               AND node_name = %s
@@ -111,7 +111,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                     # Step 2: Check if we need to create an end_loop tracking event
                     await cur.execute(
                         """
-                        SELECT 1 FROM noetl.event_log 
+                        SELECT 1 FROM noetl.event 
                         WHERE execution_id = %s 
                           AND event_type = 'end_loop'
                           AND node_name = %s
@@ -177,7 +177,7 @@ async def ensure_direct_loops_finalized(parent_execution_id: str) -> None:
                 await cur.execute(
                     """
                     SELECT DISTINCT node_name
-                    FROM noetl.event_log
+                    FROM noetl.event
                     WHERE execution_id = %s AND event_type = 'loop_iteration'
                     """,
                     (parent_execution_id,)
@@ -199,7 +199,7 @@ async def _process_loop_completion_status(conn, cur, event_service, parent_execu
     # Step 3: Check completion status and aggregate results
     await cur.execute(
         """
-        SELECT context FROM noetl.event_log 
+        SELECT context FROM noetl.event 
         WHERE execution_id = %s 
           AND event_type = 'end_loop'
           AND node_name = %s
@@ -292,7 +292,7 @@ async def _process_direct_loop_completion(conn, cur, event_service, parent_execu
     try:
         await cur.execute(
             """
-            SELECT COUNT(*) FROM noetl.event_log
+            SELECT COUNT(*) FROM noetl.event
             WHERE execution_id = %s
               AND event_type = 'action_completed'
               AND node_name = %s
@@ -313,7 +313,7 @@ async def _process_direct_loop_completion(conn, cur, event_service, parent_execu
         await cur.execute(
             """
             SELECT COUNT(DISTINCT COALESCE(current_index::text, (context::json)->>'index'))
-            FROM noetl.event_log
+            FROM noetl.event
             WHERE execution_id = %s
               AND event_type = 'loop_iteration'
               AND node_name = %s
@@ -334,7 +334,7 @@ async def _process_direct_loop_completion(conn, cur, event_service, parent_execu
         await cur.execute(
             """
             SELECT result, current_index, timestamp
-            FROM noetl.event_log
+            FROM noetl.event
             WHERE execution_id = %s
               AND loop_name = %s
               AND event_type IN ('result','action_completed')
@@ -393,7 +393,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
     # First check for execution_complete event which should have the final return value
     await cur.execute(
         """
-        SELECT result FROM noetl.event_log
+        SELECT result FROM noetl.event
         WHERE execution_id = %s
           AND event_type = 'execution_complete'
           AND lower(status) IN ('completed','success')
@@ -418,7 +418,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
     # Fallback: Look for any meaningful step result from any completed action
     await cur.execute(
         """
-        SELECT node_name, result FROM noetl.event_log
+        SELECT node_name, result FROM noetl.event
         WHERE execution_id = %s
           AND event_type = 'action_completed'
           AND lower(status) IN ('completed','success')
@@ -448,7 +448,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
     # Final fallback: accept any non-empty action_completed result from the child
     await cur.execute(
         """
-        SELECT result FROM noetl.event_log
+        SELECT result FROM noetl.event
         WHERE execution_id = %s
           AND event_type = 'action_completed'
           AND lower(status) IN ('completed','success')
@@ -485,7 +485,7 @@ async def _finalize_loop_completion(conn, cur, event_service, parent_execution_i
     # to prevent infinite recursion, but allow legitimate workflow transition events
     await cur.execute(
         """
-        SELECT COUNT(*) as final_completion_count FROM noetl.event_log
+        SELECT COUNT(*) as final_completion_count FROM noetl.event
         WHERE execution_id = %s
           AND event_type = 'action_completed'
           AND node_name = %s
@@ -610,7 +610,7 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
         try:
             await cur.execute(
                 """
-                SELECT event_id FROM noetl.event_log
+                SELECT event_id FROM noetl.event
                 WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
                 ORDER BY timestamp
                 """,
@@ -670,7 +670,7 @@ async def _enqueue_next_workflow_steps(conn, cur, parent_execution_id: str, loop
         try:
             await cur.execute(
                 """
-                SELECT context, metadata FROM noetl.event_log
+                SELECT context, metadata FROM noetl.event
                 WHERE execution_id = %s
                 ORDER BY timestamp ASC
                 LIMIT 1
@@ -848,7 +848,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
             try:
                 await cur.execute(
                     """
-                    SELECT context FROM noetl.event_log
+                    SELECT context FROM noetl.event
                     WHERE execution_id = %s::bigint AND event_type IN ('execution_start','execution_started')
                     ORDER BY timestamp ASC LIMIT 1
                     """,
