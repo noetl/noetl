@@ -14,6 +14,17 @@ from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
+def _pg_exec(pg_task, context, jinja_env, pg_with, log_event_callback):
+    """Helper to invoke the Postgres plugin from the save action.
+    Keeps the dependency local to avoid import cycles at module import time.
+    """
+    try:
+        from .postgres import execute_postgres_task
+        return execute_postgres_task(pg_task, context, jinja_env, pg_with, log_event_callback)
+    except Exception as e:
+        logger.error(f"SAVE: Failed delegating to postgres plugin: {e}")
+        return {"status": "error", "error": str(e)}
+
 
 def _render_data_mapping(jinja_env: Environment, mapping: Any, context: Dict[str, Any]) -> Any:
     try:

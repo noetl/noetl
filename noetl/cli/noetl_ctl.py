@@ -271,6 +271,10 @@ def start_server(
             _run_with_gunicorn(settings.host, settings.port, workers, reload, log_level)
         else:
             import subprocess, sys
+            # Determine access log behavior (default: off to reduce noise for frequent endpoints like /queue/lease)
+            access_log_env = os.environ.get("NOETL_ACCESS_LOG", "false").strip().lower()
+            access_log = access_log_env in ("1","true","yes","y","on")
+
             cmd = [
                 sys.executable, "-m", "uvicorn",
                 "noetl.server:create_app",
@@ -279,6 +283,8 @@ def start_server(
                 "--port", str(settings.port),
                 "--log-level", log_level
             ]
+            if not access_log:
+                cmd.append("--no-access-log")
             if reload:
                 cmd.append("--reload")
             if workers and int(workers) > 1:
@@ -306,10 +312,29 @@ def start_server(
         raise
 
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
+    access_log_env = os.environ.get("NOETL_ACCESS_LOG", "false").strip().lower()
+    access_log = access_log_env in ("1","true","yes","y","on")
     if workers and workers > 1:
-        uvicorn.run("noetl.server:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+        uvicorn.run(
+            "noetl.server:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            workers=workers,
+            reload=reload,
+            log_level=log_level,
+            access_log=access_log,
+        )
     else:
-        uvicorn.run("noetl.server:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
+        uvicorn.run(
+            "noetl.server:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=reload,
+            log_level=log_level,
+            access_log=access_log,
+        )
 
 
 def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
