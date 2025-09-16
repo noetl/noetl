@@ -108,7 +108,7 @@ class EventLog:
                     """
                     SELECT DISTINCT execution_id
                     FROM noetl.event
-                    WHERE metadata LIKE %s
+                    WHERE meta LIKE %s
                     """,
                     (f'%"parent_execution_id": "{parent_execution_id}"%',),
                 )
@@ -192,7 +192,7 @@ class EventLog:
                     INSERT INTO noetl.event (
                         execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type,
                         node_id, node_name, node_type, status, duration, context, result,
-                        metadata, error, trace_component, loop_id, loop_name, iterator,
+                        meta, error, trace_component, loop_id, loop_name, iterator,
                         current_index, current_item, stack_trace
                     ) VALUES (
                         %s, %s, %s, %s, CURRENT_TIMESTAMP, %s,

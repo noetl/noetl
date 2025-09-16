@@ -12,7 +12,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;
 
 -- Resource
 CREATE TABLE IF NOT EXISTS noetl.resource (
-    name TEXT PRIMARY KEY
+    name TEXT PRIMARY KEY,
+    type TEXT,
+    meta JSONB
 );
 ALTER TABLE noetl.resource OWNER TO noetl;
 
@@ -56,7 +58,7 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     duration DOUBLE PRECISION,
     context TEXT,
     result TEXT,
-    metadata TEXT,
+    meta TEXT,
     error TEXT,
     loop_id VARCHAR,
     loop_name VARCHAR,
@@ -225,22 +227,28 @@ CREATE TABLE IF NOT EXISTS noetl.session (
     session_type TEXT NOT NULL CHECK (session_type IN ('user','bot','ai')),
     connected_at TIMESTAMPTZ DEFAULT now(),
     disconnected_at TIMESTAMPTZ,
-    metadata JSONB
+    meta JSONB
 );
 ALTER TABLE noetl.session OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.label (
+-- Dentry-based hierarchy replacing label/attachment
+CREATE TABLE IF NOT EXISTS noetl.dentry (
     id BIGINT PRIMARY KEY,
-    parent_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+    parent_id BIGINT REFERENCES noetl.dentry(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    owner_id BIGINT REFERENCES noetl.profile(id),
-    created_at TIMESTAMPTZ DEFAULT now()
+    type TEXT NOT NULL CHECK (type IN ('folder','chat')),
+    resource_type TEXT,
+    resource_id BIGINT,
+    is_positive BOOLEAN DEFAULT TRUE,
+    meta JSONB,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(parent_id, name)
 );
-ALTER TABLE noetl.label OWNER TO noetl;
+ALTER TABLE noetl.dentry OWNER TO noetl;
 
+-- Chats now represented as resources and linked via dentry when type='chat'
 CREATE TABLE IF NOT EXISTS noetl.chat (
     id BIGINT PRIMARY KEY,
-    label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     owner_id BIGINT REFERENCES noetl.profile(id),
     created_at TIMESTAMPTZ DEFAULT now()
@@ -269,21 +277,10 @@ CREATE TABLE IF NOT EXISTS noetl.message (
 );
 ALTER TABLE noetl.message OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.attachment (
-    id BIGINT PRIMARY KEY,
-    label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
-    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
-    filename TEXT NOT NULL,
-    filepath TEXT NOT NULL,
-    uploaded_by BIGINT REFERENCES noetl.profile(id),
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE noetl.attachment OWNER TO noetl;
-CREATE INDEX IF NOT EXISTS idx_label_parent ON noetl.label(parent_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON noetl.label(parent_id, name);
-CREATE INDEX IF NOT EXISTS idx_chat_label ON noetl.chat(label_id);
+-- Indexes for dentry and messages
+CREATE INDEX IF NOT EXISTS idx_dentry_parent ON noetl.dentry(parent_id);
+CREATE INDEX IF NOT EXISTS idx_dentry_type ON noetl.dentry(type);
 CREATE INDEX IF NOT EXISTS idx_message_chat_created ON noetl.message(chat_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON noetl.attachment(chat_id, created_at);
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
@@ -306,11 +303,10 @@ ALTER FUNCTION noetl.snowflake_id() OWNER TO noetl;
 ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.label ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.chat ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.member ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.message ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.attachment ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 
 -- Seed sample roles (ids via function)
 INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'admin', 'Administrator') ON CONFLICT (name) DO NOTHING;

@@ -578,7 +578,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                 pb_ver = None
                 await cur.execute(
                     """
-                    SELECT metadata, context FROM noetl.event
+                    SELECT meta, context FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     ORDER BY timestamp ASC
                     LIMIT 1

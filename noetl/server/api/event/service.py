@@ -55,7 +55,7 @@ class EventService:
                             e.event_type,
                             e.status,
                             e.timestamp,
-                            e.metadata,
+                            e.meta,
                             e.context,
                             e.result,
                             e.error,
@@ -394,7 +394,7 @@ class EventService:
                                   duration = %s,
                                   context = %s,
                                   result = %s,
-                                  metadata = %s,
+                                  meta = %s,
                                   error = %s,
                                   trace_component = %s::jsonb,
                                   loop_id = %s,
@@ -716,7 +716,7 @@ class EventService:
                             timestamp, 
                             context, 
                             result, 
-                            metadata, 
+                            meta, 
                             error
                         FROM event 
                         WHERE execution_id = %s
@@ -796,7 +796,7 @@ class EventService:
                             timestamp, 
                             context, 
                             result, 
-                            metadata, 
+                            meta, 
                             error,
                             stack_trace,
                             execution_id

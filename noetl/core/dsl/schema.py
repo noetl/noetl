@@ -189,6 +189,22 @@ class DatabaseSchema:
 
     def create_postgres_tables_sync(self):
         try:
+            # Execute canonical SQL DDL from file and return
+            ddl_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "database", "ddl", "postgres", "schema_ddl.sql"))
+            if not os.path.isfile(ddl_path):
+                raise FileNotFoundError(f"Canonical DDL file not found at {ddl_path}")
+            with self.conn.cursor() as cursor:
+                with open(ddl_path, "r", encoding="utf-8") as f:
+                    ddl_sql = f.read()
+                cursor.execute(ddl_sql)
+                if not getattr(self.conn, "autocommit", False):
+                    self.conn.commit()
+                logger.info("Executed canonical Postgres DDL from schema_ddl.sql (sync).")
+            return
+        except Exception as e:
+            logger.error(f"FATAL: Error creating postgres tables from canonical DDL (sync): {e}", exc_info=True)
+            raise
+        try:
             with self.conn.cursor() as cursor:
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.resource (
@@ -234,7 +250,7 @@ class DatabaseSchema:
                         duration DOUBLE PRECISION,
                         context TEXT,
                         result TEXT,
-                        metadata TEXT,
+                        meta TEXT,
                         error TEXT,
                         loop_id VARCHAR,
                         loop_name VARCHAR,
@@ -251,6 +267,15 @@ class DatabaseSchema:
                         PRIMARY KEY (execution_id, event_id)
                     )
                 """)
+                # Migration: rename legacy column 'metadata' -> 'meta' if needed
+                try:
+                    cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_schema=%s AND table_name='event'", (self.noetl_schema,))
+                    cols = {r[0] for r in (cursor.fetchall() or [])}
+                    if 'metadata' in cols and 'meta' not in cols:
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.event RENAME COLUMN metadata TO meta")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
                 # Back-compat: if event_log table exists but event does not, try to rename event_log -> event
                 try:
                     cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.event') IS NOT NULL")
@@ -572,19 +597,24 @@ class DatabaseSchema:
                         metadata JSONB
                     )
                 """)
+                # Dentry-based hierarchy replacing label/attachment
                 cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.label (
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.dentry (
                         id BIGINT PRIMARY KEY,
-                        parent_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        parent_id BIGINT REFERENCES {self.noetl_schema}.dentry(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
+                        type TEXT NOT NULL CHECK (type IN ('folder','chat')),
+                        resource_type TEXT,
+                        resource_id BIGINT,
+                        is_positive BOOLEAN DEFAULT TRUE,
+                        metadata JSONB,
+                        created_at TIMESTAMPTZ DEFAULT now(),
+                        UNIQUE(parent_id, name)
                     )
                 """)
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
                         id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
                         owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
                         created_at TIMESTAMPTZ DEFAULT now()
@@ -612,24 +642,11 @@ class DatabaseSchema:
                         created_at TIMESTAMPTZ DEFAULT now()
                     )
                 """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.attachment (
-                        id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        filename TEXT NOT NULL,
-                        filepath TEXT NOT NULL,
-                        uploaded_by BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
                 try:
                     cursor.execute(f"""
-                        CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                        CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                         CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                        CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
                     """)
                 except Exception as e:
                     logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (sync): {e}. Retrying as admin.")
@@ -639,11 +656,9 @@ class DatabaseSchema:
                             admin.autocommit = True
                             with admin.cursor() as ac:
                                 ac.execute(f"""
-                                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                                     CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
                                 """)
                         finally:
                             admin.close()
@@ -801,6 +816,20 @@ class DatabaseSchema:
 
     async def create_postgres_tables(self):
         try:
+            ddl_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "database", "ddl", "postgres", "schema_ddl.sql"))
+            if not os.path.isfile(ddl_path):
+                raise FileNotFoundError(f"Canonical DDL file not found at {ddl_path}")
+            async with self.conn.cursor() as cursor:
+                with open(ddl_path, "r", encoding="utf-8") as f:
+                    ddl_sql = f.read()
+                await cursor.execute(ddl_sql)
+                await self.conn.commit()
+                logger.info("Executed canonical Postgres DDL from schema_ddl.sql (async).")
+            return
+        except Exception as e:
+            logger.error(f"FATAL: Error creating postgres tables from canonical DDL (async): {e}", exc_info=True)
+            raise
+        try:
             async with self.conn.cursor() as cursor:
                 logger.info("Creating resource table (async).")
                 await cursor.execute(f"""
@@ -853,7 +882,7 @@ class DatabaseSchema:
                         duration DOUBLE PRECISION,
                         context TEXT,
                         result TEXT,
-                        metadata TEXT,
+                        meta TEXT,
                         error TEXT,
                         loop_id VARCHAR,
                         loop_name VARCHAR,
@@ -870,6 +899,21 @@ class DatabaseSchema:
                         PRIMARY KEY (execution_id, event_id)
                     )
                 """)
+                # Migration: rename legacy column 'metadata' -> 'meta' if needed (async)
+                try:
+                    await cursor.execute(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = 'event'
+                        """,
+                        (self.noetl_schema,)
+                    )
+                    rows = await cursor.fetchall() or []
+                    cols = {r[0] if isinstance(r, (list,tuple)) else r.get('column_name') for r in rows}
+                    if 'metadata' in cols and 'meta' not in cols:
+                        await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event RENAME COLUMN metadata TO meta")
+                except Exception:
+                    pass
                 # Back-compat: rename event_log -> event if event not present
                 try:
                     await cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.event') IS NOT NULL")
@@ -1198,19 +1242,24 @@ class DatabaseSchema:
                         metadata JSONB
                     )
                 """)
+                # Dentry-based hierarchy replacing label/attachment (async)
                 await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.label (
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.dentry (
                         id BIGINT PRIMARY KEY,
-                        parent_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        parent_id BIGINT REFERENCES {self.noetl_schema}.dentry(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
+                        type TEXT NOT NULL CHECK (type IN ('folder','chat')),
+                        resource_type TEXT,
+                        resource_id BIGINT,
+                        is_positive BOOLEAN DEFAULT TRUE,
+                        metadata JSONB,
+                        created_at TIMESTAMPTZ DEFAULT now(),
+                        UNIQUE(parent_id, name)
                     )
                 """)
                 await cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
                         id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
                         owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
                         created_at TIMESTAMPTZ DEFAULT now()
@@ -1238,24 +1287,11 @@ class DatabaseSchema:
                         created_at TIMESTAMPTZ DEFAULT now()
                     )
                 """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.attachment (
-                        id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        filename TEXT NOT NULL,
-                        filepath TEXT NOT NULL,
-                        uploaded_by BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
                 try:
                     await cursor.execute(f"""
-                        CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                        CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                         CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                        CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
                     """)
                 except Exception as e:
                     logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (async): {e}. Retrying as admin.")
@@ -1265,11 +1301,9 @@ class DatabaseSchema:
                             await admin_conn.set_autocommit(True)
                             async with admin_conn.cursor() as ac:
                                 await ac.execute(f"""
-                                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                                     CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
                                 """)
                         finally:
                             await admin_conn.close()
@@ -1337,7 +1371,7 @@ class DatabaseSchema:
                         await admin_conn.close()
                     except Exception:
                         pass
-                for tbl in ['role','profile','session','label','chat','member','message','attachment']:
+                for tbl in ['role','profile','session','dentry','chat','member','message']:
                     try:
                         await cursor.execute(f"ALTER TABLE {self.noetl_schema}." + tbl + " ALTER COLUMN id SET DEFAULT {self.noetl_schema}.snowflake_id();")
                     except Exception:
@@ -1583,7 +1617,7 @@ class DatabaseSchema:
                 cursor.execute(f"""
                     INSERT INTO {self.noetl_schema}.event (
                         execution_id, event_id, timestamp, event_type, node_id, node_name, status,
-                        context, result, metadata, error, stack_trace
+                        context, result, meta, error, stack_trace
                     ) VALUES (
                         %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s
@@ -1613,7 +1647,7 @@ class DatabaseSchema:
                 self.initialize_connection_sync()
             with self.conn.cursor() as cursor:
                 cursor.execute(f"""
-                    INSERT INTO {self.noetl_schema}.event (execution_id, event_id, timestamp, event_type, status, metadata)
+                    INSERT INTO {self.noetl_schema}.event (execution_id, event_id, timestamp, event_type, status, meta)
                     VALUES (%s, %s, CURRENT_TIMESTAMP, 'error_resolved', 'COMPLETED', %s)
                 """, (
                     0, error_event_id, json.dumps({'resolution_notes': resolution_notes}) if resolution_notes else None
@@ -1650,10 +1684,10 @@ class DatabaseSchema:
             if not self.conn or self.conn.closed:
                 self.initialize_connection_sync()
                 
-            query = f"SELECT execution_id, event_id, timestamp, node_id, node_name, error, metadata, stack_trace FROM {self.noetl_schema}.event WHERE event_type = 'error'"
+            query = f"SELECT execution_id, event_id, timestamp, node_id, node_name, error, meta, stack_trace FROM {self.noetl_schema}.event WHERE event_type = 'error'"
             params = []
             if error_type:
-                query += " AND metadata LIKE %s"
+                query += " AND meta LIKE %s"
                 params.append(f'%"error_type": "{error_type}"%')
             if execution_id:
                 query += " AND execution_id = %s"
@@ -1726,7 +1760,7 @@ class DatabaseSchema:
                 await cursor.execute(f"""
                     INSERT INTO {self.noetl_schema}.event (
                         execution_id, event_id, timestamp, event_type, node_id, node_name, status,
-                        context, result, metadata, error, stack_trace
+                        context, result, meta, error, stack_trace
                     ) VALUES (
                         %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s
@@ -1755,7 +1789,7 @@ class DatabaseSchema:
                 await self.initialize_connection()
             async with self.conn.cursor() as cursor:
                 await cursor.execute(f"""
-                    INSERT INTO {self.noetl_schema}.event (execution_id, event_id, timestamp, event_type, status, metadata)
+                    INSERT INTO {self.noetl_schema}.event (execution_id, event_id, timestamp, event_type, status, meta)
                     VALUES (%s, %s, CURRENT_TIMESTAMP, 'error_resolved', 'COMPLETED', %s)
                 """, (
                     0, error_event_id, json.dumps({'resolution_notes': resolution_notes}) if resolution_notes else None
@@ -1783,7 +1817,7 @@ class DatabaseSchema:
             query = f"SELECT * FROM {self.noetl_schema}.event WHERE event_type = 'error'"
             params: list[Any] = []
             if error_type:
-                query += " AND metadata LIKE %s"
+                query += " AND meta LIKE %s"
                 params.append(f'%"error_type": "{error_type}"%')
             if execution_id:
                 query += " AND execution_id = %s"
@@ -1799,6 +1833,12 @@ class DatabaseSchema:
                 errors: List[Dict[str, Any]] = []
                 for row in rows:
                     error_dict = dict(zip(columns, row))
+                    # Back-compat: expose 'metadata' key sourced from 'meta' column if present
+                    try:
+                        if 'metadata' not in error_dict and 'meta' in error_dict:
+                            error_dict['metadata'] = error_dict.get('meta')
+                    except Exception:
+                        pass
                     for field in ['context_data', 'input_data', 'output_data']:
                         if error_dict.get(field) and isinstance(error_dict[field], str):
                             try:

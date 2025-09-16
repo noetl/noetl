@@ -9,7 +9,7 @@ EVENT_LOG_INSERT_POSTGRES = """
 INSERT INTO event
 (execution_id, event_id, parent_event_id, timestamp, event_type,
  node_id, node_name, node_type, status, duration,
- context, result, metadata, error,
+ context, result, meta, error,
  loop_id, loop_name, iterator, items, current_index, current_item,
  worker_id, distributed_state, context_key, context_value)
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -19,7 +19,7 @@ EVENT_LOG_INSERT_DUCKDB = """
 INSERT INTO event
 (execution_id, event_id, parent_event_id, timestamp, event_type,
  node_id, node_name, node_type, status, duration,
- context, result, metadata, error,
+ context, result, meta, error,
  loop_id, loop_name, iterator, items, current_index, current_item,
  worker_id, distributed_state, context_key, context_value)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -268,7 +268,7 @@ LIMIT 1
 EXPORT_EXECUTION_DATA_POSTGRES = """
 SELECT execution_id, event_id, parent_event_id, timestamp, event_type,
        node_id, node_name, node_type, status, duration,
-       context, result, metadata, error,
+       context, result, meta, error,
        loop_id, loop_name, iterator, items, current_index, current_item,
        worker_id, distributed_state, context_key, context_value
 FROM event_log
@@ -279,7 +279,7 @@ ORDER BY timestamp
 EXPORT_EXECUTION_DATA_DUCKDB = """
 SELECT execution_id, event_id, parent_event_id, timestamp, event_type,
        node_id, node_name, node_type, status, duration,
-       context, result, metadata, error,
+       context, result, meta, error,
        loop_id, loop_name, iterator, items, current_index, current_item,
        worker_id, distributed_state, context_key, context_value
 FROM event_log

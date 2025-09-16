@@ -670,7 +670,7 @@ async def _enqueue_next_workflow_steps(conn, cur, parent_execution_id: str, loop
         try:
             await cur.execute(
                 """
-                SELECT context, metadata FROM noetl.event
+                SELECT context, meta FROM noetl.event
                 WHERE execution_id = %s
                 ORDER BY timestamp ASC
                 LIMIT 1

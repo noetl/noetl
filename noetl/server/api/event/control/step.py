@@ -183,7 +183,7 @@ async def _load_playbook_and_index(execution_id: str) -> Tuple[Dict[str, Dict[st
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT context, metadata FROM noetl.event
+                    SELECT context, meta FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     ORDER BY timestamp ASC LIMIT 1
                     """,
