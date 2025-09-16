@@ -30,6 +30,7 @@ PLAYBOOKS=(
   "examples/test/loop_http_test_sequential.yaml"
   "examples/test/postgres_save_simple.yaml"
   "examples/test/postgres_save_simple2.yaml"
+  "examples/test/http_duckdb_postgres.yaml"
 )
 
 for playbooks in "${PLAYBOOKS[@]}"; do
