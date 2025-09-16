@@ -30,6 +30,7 @@ from noetl.core.common import DateTimeEncoder
 from noetl.core.logger import setup_logger
 
 import duckdb
+import httpx
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -157,6 +158,137 @@ def execute_duckdb_task(
         logger.info(f"Connecting to DuckDB at {duckdb_file} for execution {execution_id}")
         duckdb_con = duckdb.connect(duckdb_file)
 
+        # Optional: attach multiple external databases from credentials mapping/list
+        # Step-level preferred: task_config['credentials'] as a mapping of alias -> { kind, credential, spec, dsn }
+        # Back-compat: with.credentials can be a list or mapping too
+        # Supported kinds: postgres|mysql|sqlite (attach) and gcs_hmac (configure GCS access)
+        try:
+            creds_cfg = task_config.get('credentials') or task_with.get('credentials')
+            if isinstance(creds_cfg, dict):
+                # Convert mapping { alias: { ... } } to list with alias injected
+                _tmp = []
+                for _alias, _spec in creds_cfg.items():
+                    if isinstance(_spec, dict):
+                        _ent = dict(_spec)
+                        _ent.setdefault('alias', _alias)
+                        _tmp.append(_ent)
+                creds_cfg = _tmp
+            if isinstance(creds_cfg, list):
+                for ent in creds_cfg:
+                    try:
+                        if not isinstance(ent, dict):
+                            continue
+                        alias = ent.get('alias') or ent.get('db_alias') or 'ext_db'
+                        kind = (ent.get('kind') or ent.get('db_type') or 'postgres').lower()
+                        dsn = ent.get('dsn') or ent.get('db_conn_string')
+                        spec = ent.get('spec') if isinstance(ent.get('spec'), dict) else {}
+                        cred_ref = ent.get('credential') or ent.get('credentialRef')
+
+                        # Resolve credential by name/id from server when provided
+                        cred_data = None
+                        if cred_ref and not dsn:
+                            try:
+                                base = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+                                if not base.endswith('/api'):
+                                    base = base + '/api'
+                                url = f"{base}/credentials/{cred_ref}?include_data=true"
+                                with httpx.Client(timeout=5.0) as _c:
+                                    _r = _c.get(url)
+                                    if _r.status_code == 200:
+                                        body = _r.json() or {}
+                                        cred_data = (body.get('data') or {}) if isinstance(body, dict) else None
+                            except Exception:
+                                cred_data = None
+
+                        # Special case: configure GCS HMAC without attach
+                        if kind in ('gcs','gcs_hmac'):
+                            _kid = ent.get('key_id') or (cred_data.get('key_id') if isinstance(cred_data, dict) else None)
+                            _sec = ent.get('secret_key') or ent.get('secret') or (cred_data.get('secret_key') if isinstance(cred_data, dict) else None)
+                            if _kid and _sec:
+                                try:
+                                    duckdb_con.execute(f"""
+                                        CREATE OR REPLACE SECRET gcs_secret (
+                                            TYPE S3,
+                                            PROVIDER GCS,
+                                            KEY_ID '{_kid}',
+                                            SECRET '{_sec}',
+                                            REGION 'auto',
+                                            ENDPOINT 'storage.googleapis.com',
+                                            URL_STYLE 'path',
+                                            USE_SSL true
+                                        );
+                                    """)
+                                except Exception:
+                                    # Fallback to session parameters if secret failed
+                                    duckdb_con.execute("set s3_endpoint='storage.googleapis.com';")
+                                    duckdb_con.execute("set s3_region='auto';")
+                                    duckdb_con.execute("set s3_url_style='path';")
+                                    duckdb_con.execute("set s3_use_ssl=true;")
+                                    duckdb_con.execute(f"set s3_access_key_id='{_kid}';")
+                                    duckdb_con.execute(f"set s3_secret_access_key='{_sec}';")
+                            continue
+
+                        conn_string = dsn or ''
+                        if not conn_string:
+                            # Build from spec/cred_data
+                            src = {}
+                            try:
+                                if isinstance(cred_data, dict):
+                                    src.update(cred_data)
+                                if isinstance(spec, dict):
+                                    src.update(spec)
+                            except Exception:
+                                pass
+                            if kind == 'postgres':
+                                host = src.get('host') or src.get('db_host') or os.environ.get('POSTGRES_HOST', 'localhost')
+                                port = src.get('port') or src.get('db_port') or os.environ.get('POSTGRES_PORT', '5434')
+                                user = src.get('user') or src.get('db_user') or os.environ.get('POSTGRES_USER', 'noetl')
+                                pwd = src.get('password') or src.get('db_password') or os.environ.get('POSTGRES_PASSWORD', 'noetl')
+                                dbn = src.get('dbname') or src.get('database') or src.get('db_name') or os.environ.get('POSTGRES_DB', 'noetl')
+                                conn_string = f"dbname={dbn} user={user} password={pwd} host={host} port={port}"
+                            elif kind == 'sqlite':
+                                path = src.get('path') or src.get('db_path') or os.path.join(duckdb_data_dir, 'sqlite', 'noetl.db')
+                                conn_string = path
+                            elif kind == 'mysql':
+                                host = src.get('host') or src.get('db_host') or os.environ.get('MYSQL_HOST', 'localhost')
+                                port = src.get('port') or src.get('db_port') or os.environ.get('MYSQL_PORT', '3306')
+                                user = src.get('user') or src.get('db_user') or os.environ.get('MYSQL_USER', 'noetl')
+                                pwd = src.get('password') or src.get('db_password') or os.environ.get('MYSQL_PASSWORD', 'noetl')
+                                dbn = src.get('dbname') or src.get('database') or src.get('db_name') or os.environ.get('MYSQL_DB', 'noetl')
+                                conn_string = f"host={host} port={port} user={user} password={pwd} dbname={dbn}"
+                            else:
+                                conn_string = src.get('dsn') or ''
+
+                        if not conn_string:
+                            continue
+
+                        # Install required extension and ATTACH
+                        if kind == 'postgres':
+                            duckdb_con.execute("INSTALL postgres;")
+                            duckdb_con.execute("LOAD postgres;")
+                            attach_opts = " (TYPE postgres)"
+                        elif kind == 'mysql':
+                            duckdb_con.execute("INSTALL mysql;")
+                            duckdb_con.execute("LOAD mysql;")
+                            attach_opts = " (TYPE mysql)"
+                        elif kind == 'sqlite':
+                            attach_opts = ""
+                        else:
+                            attach_opts = ""
+                        try:
+                            test_query = (
+                                f"SELECT 1 FROM {alias}.information_schema.tables LIMIT 1" if kind in ['postgres','mysql']
+                                else f"SELECT 1 FROM {alias}.sqlite_master LIMIT 1"
+                            )
+                            duckdb_con.execute(test_query)
+                        except Exception:
+                            duckdb_con.execute(f"ATTACH '{conn_string}' AS {alias}{attach_opts};")
+                            logger.info(f"Attached {kind} database as '{alias}'")
+                    except Exception as _ent_err:
+                        logger.warning(f"DUCKDB: Failed to attach credential entry {ent}: {_ent_err}")
+        except Exception:
+            logger.debug("DUCKDB: credentials attachment phase skipped or failed", exc_info=True)
+
         db_type = task_with.get('db_type', 'postgres')
         db_alias = task_with.get('db_alias', 'postgres_db')
 
@@ -176,6 +308,7 @@ def execute_duckdb_task(
         duckdb_con.execute("INSTALL httpfs;")
         duckdb_con.execute("LOAD httpfs;")
 
+        # Back-compat single HMAC keys still supported
         key_id = task_with.get('key_id')
         secret_key = task_with.get('secret_key')
         if key_id and secret_key:

@@ -450,6 +450,15 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
         # Remove loop config from task for workers
         task_loop_free = dict(task)
         task_loop_free.pop('loop', None)
+
+        # If loop defines an item-level save, propagate it into the per-iteration task
+        # so the worker performs an inline save after executing the action.
+        try:
+            loop_save = loop_cfg.get('save') if isinstance(loop_cfg, dict) else None
+            if isinstance(loop_save, dict) and not task_loop_free.get('save'):
+                task_loop_free['save'] = loop_save
+        except Exception:
+            pass
         encoded_task = encode_task_for_queue(task_loop_free)
         
         # Process each loop item

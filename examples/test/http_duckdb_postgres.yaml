@@ -1,0 +1,161 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: http_duckdb_postgres
+path: examples/test/http_duckdb_postgres
+
+workload:
+  message: "HTTP -> DuckDB -> Postgres pipeline"
+  cities:
+    - name: "London"
+      lat: 51.51
+      lon: -0.13
+    - name: "Paris"
+      lat: 48.85
+      lon: 2.35
+    - name: "Berlin"
+      lat: 52.52
+      lon: 13.41
+  base_url: "https://api.open-meteo.com/v1"
+  gcs_bucket: "noetl-demo-19700101-noetl-development-data"   # set this to an actual bucket; requires HMAC key_id/secret_key
+
+workflow:
+  - step: start
+    desc: "Start pipeline"
+    next:
+      - step: ensure_pg_table
+
+  - step: ensure_pg_table
+    desc: "Ensure raw HTTP results table exists in Postgres"
+    type: postgres
+    credential: pg_local
+    command: |
+      CREATE TABLE IF NOT EXISTS public.weather_http_raw (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT,
+        iter_index INTEGER,
+        city TEXT,
+        url TEXT,
+        elapsed DOUBLE PRECISION,
+        payload TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    next:
+      - step: http_loop
+        input:
+          cities: "{{ workload.cities }}"
+
+  - step: http_loop
+    desc: "Fetch hourly temperatures for each city"
+    type: http
+    method: GET
+    endpoint: "{{ workload.base_url }}/forecast"
+    headers:
+      User-Agent: "NoETL HTTP DuckDB Postgres Demo/1.0"
+    params:
+      latitude: "{{ city_item.lat }}"
+      longitude: "{{ city_item.lon }}"
+      hourly: "temperature_2m"
+      forecast_days: 1
+    timeout: 20
+    loop:
+      in: "{{ cities }}"
+      iterator: city_item
+      mode: async
+    # Persist each iteration's HTTP response directly into Postgres via loop-level save
+    # Demonstrates statement + params with Jinja + per-iteration context
+      save:
+        storage:
+          kind: postgres
+          credential: pg_local
+        statement: |
+          INSERT INTO public.weather_http_raw (
+            id, execution_id, iter_index, city, url, elapsed, payload
+          ) VALUES (
+            :id, :execution_id, :iter_index, :city, :url, :elapsed, :payload
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            city = EXCLUDED.city,
+            url = EXCLUDED.url,
+            elapsed = EXCLUDED.elapsed,
+            payload = EXCLUDED.payload;
+        params:
+          id: "{{ execution_id }}:{{ _loop.current_index }}"
+          execution_id: "{{ execution_id }}"
+          iter_index: "{{ _loop.current_index }}"
+          city: "{{ city_item.name }}"
+          url: "{{ this.data.url }}"
+          elapsed: "{{ this.data.elapsed }}"
+          payload: "{{ tojson(this.data) }}"
+    next:
+      - step: aggregate_with_duckdb
+
+  - step: aggregate_with_duckdb
+    desc: "Read raw rows from Postgres in DuckDB, aggregate, and write to GCS"
+    type: duckdb
+    # Step-level credentials mapping by alias (refer by name in credential table)
+    credentials:
+      postgres_db:
+        kind: postgres
+        credential: pg_local
+        spec:
+          dbname: demo_noetl
+      gcs_hmac:
+        kind: gcs_hmac
+        credential: gcs_hmac_local
+    commands: |
+      -- Build a flattened view directly from Postgres-attached table
+      CREATE OR REPLACE TABLE weather_flat AS
+      SELECT
+        row_number() over() as id,
+        city,
+        (from_json(payload)->>'url')::VARCHAR as source_url,
+        (from_json(payload)->>'elapsed')::DOUBLE as elapsed_sec,
+        (from_json(payload)->'data'->>'latitude')::DOUBLE as lat,
+        (from_json(payload)->'data'->>'longitude')::DOUBLE as lon,
+        (from_json(payload)->'data'->'hourly'->'temperature_2m') as hourly_temps
+      FROM postgres_db.public.weather_http_raw
+      WHERE execution_id = '{{ execution_id }}';
+
+      -- Aggregate by city (example)
+      CREATE OR REPLACE TABLE weather_agg AS
+      SELECT
+        city,
+        COUNT(*) AS rows_per_city
+      FROM weather_flat
+      GROUP BY city;
+
+      -- Write aggregated and flat results to GCS as Parquet
+      COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
+      COPY weather_agg  TO 'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
+    next:
+      - step: ensure_metrics_table
+
+  - step: ensure_metrics_table
+    desc: "Ensure metrics table exists in Postgres"
+    type: postgres
+    credential: pg_local
+    command: |
+      CREATE TABLE IF NOT EXISTS public.weather_pipeline_metrics (
+        execution_id TEXT PRIMARY KEY,
+        pg_rows_saved INTEGER,
+        gcs_flat_uri TEXT,
+        gcs_agg_uri  TEXT,
+        created_at   TIMESTAMPTZ DEFAULT now()
+      );
+    next:
+      - step: end
+
+  - step: end
+    desc: "Finish"
+    save:
+      storage:
+        kind: postgres
+        credential: pg_local
+      table: public.weather_pipeline_metrics
+      mode: upsert
+      key: execution_id
+      data:
+        execution_id: "{{ execution_id }}"
+        pg_rows_saved: "{{ http_loop.count }}"
+        gcs_flat_uri: "gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet"
+        gcs_agg_uri:  "gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet"
