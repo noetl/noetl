@@ -58,44 +58,55 @@ async def populate_workflow_tables(cursor, execution_id: str, playbook_path: str
             for next_def in next_steps:
                 if isinstance(next_def, dict):
                     next_step_name = next_def.get('step') or next_def.get('name')
-                    condition = next_def.get('when') or next_def.get('pass')
-                    with_data = next_def.get('with')
+                    condition = next_def.get('when') or next_def.get('condition') or next_def.get('pass')
+                    with_params = next_def.get('with')
                 elif isinstance(next_def, str):
                     next_step_name = next_def
                     condition = None
-                    with_data = None
+                    with_params = None
                 else:
                     continue
-                    
+                
                 if next_step_name:
+                    # Ensure condition is a non-null string because it's part of the transition PK
+                    condition_value = condition or ""
                     await cursor.execute(
                         """
-                        INSERT INTO noetl.transition (execution_id, from_step, to_step, condition_expr, with_data)
+                        INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
                         VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (execution_id, from_step, to_step) DO NOTHING
+                        ON CONFLICT (execution_id, from_step, to_step, condition) DO NOTHING
                         """,
                         (
                             execution_id,
                             step_name,
                             next_step_name,
-                            json.dumps(condition) if condition else None,
-                            json.dumps(with_data) if with_data else None
+                            condition_value,
+                            json.dumps(with_params) if with_params is not None else None
                         )
                     )
         
-        # Insert workbook entry
-        await cursor.execute(
-            """
-            INSERT INTO noetl.workbook (execution_id, playbook_path, content)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (execution_id) DO NOTHING
-            """,
-            (
-                execution_id,
-                playbook_path,
-                json.dumps(playbook)
+        # Insert workbook rows for workbook-type steps (align with schema 5 columns)
+        for step in workflow_steps:
+            st_type = str(step.get('type') or '').lower()
+            if st_type != 'workbook':
+                continue
+            step_name = step.get('step') or step.get('name') or ''
+            task_name = step.get('task') or step.get('name') or ''
+            raw = json.dumps(step)
+            await cursor.execute(
+                """
+                INSERT INTO noetl.workbook
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (execution_id, task_id) DO NOTHING
+                """,
+                (
+                    execution_id,
+                    playbook_path or '',
+                    step_name,
+                    task_name,
+                    raw,
+                )
             )
-        )
         
     except Exception as e:
         logger.error(f"Error populating workflow tables for {execution_id}: {e}")

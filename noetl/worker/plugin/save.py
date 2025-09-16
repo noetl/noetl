@@ -72,6 +72,20 @@ def execute_save_task(
         if data_spec is not None:
             rendered_data = _render_data_mapping(jinja_env, data_spec, context)
         rendered_params = _render_data_mapping(jinja_env, params, context) if params else {}
+        # Normalize complex param values (dict/list) to JSON strings to ensure
+        # safe embedding into SQL statements when using {{ params.* }} in strings.
+        try:
+            if isinstance(rendered_params, dict):
+                import json as _json
+                from noetl.core.common import DateTimeEncoder as _Enc
+                for _k, _v in list(rendered_params.items()):
+                    if isinstance(_v, (dict, list)):
+                        try:
+                            rendered_params[_k] = _json.dumps(_v, cls=_Enc)
+                        except Exception:
+                            rendered_params[_k] = str(_v)
+        except Exception:
+            pass
 
         # Handle storage kinds - initial support for event_log only
         if kind in ('event_log', ''):

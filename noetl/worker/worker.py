@@ -601,6 +601,13 @@ class QueueWorker:
                         try:
                             exec_ctx_with_result = dict(exec_ctx)
                             exec_ctx_with_result['this'] = result
+                            # Convenience alias: expose current action's payload as `data`
+                            # so templates can use {{ data.* }} in inline save blocks.
+                            if isinstance(result, dict):
+                                _payload = result.get('data')
+                                # Do not overwrite an existing 'data' key in context
+                                if 'data' not in exec_ctx_with_result:
+                                    exec_ctx_with_result['data'] = _payload
                         except Exception:
                             exec_ctx_with_result = exec_ctx
                         from .plugin.save import execute_save_task as _do_save

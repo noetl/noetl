@@ -776,6 +776,25 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     return False
 
             if isinstance(step_def, dict) and _is_actionable(step_def):
+                # If the next step is a loop, expand items and enqueue per-iteration tasks (not a single job)
+                try:
+                    loop_cfg = step_def.get('loop') if isinstance(step_def.get('loop'), dict) else None
+                except Exception:
+                    loop_cfg = None
+                if loop_cfg:
+                    try:
+                        from .broker import _handle_loop_step as _expand_loop
+                    except Exception:
+                        _expand_loop = None
+                    if _expand_loop:
+                        try:
+                            workload_ctx = {'workload': base_workload}
+                            await _expand_loop(cur, conn, parent_execution_id, next_step_name, step_def, loop_cfg, playbook_path, playbook_version, workload_ctx, next_with, trigger_event_id)
+                            await conn.commit()
+                            logger.info(f"LOOP_COMPLETION_CHECK: Expanded next loop step '{next_step_name}' for execution {parent_execution_id}")
+                            return
+                        except Exception:
+                            logger.debug("LOOP_COMPLETION_CHECK: Failed expanding loop step; falling back to single enqueue", exc_info=True)
                 task_def = {
                     'name': next_step_name,
                     'type': step_def.get('type') or 'python',

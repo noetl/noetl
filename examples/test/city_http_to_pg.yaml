@@ -1,0 +1,61 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+name: city_http_to_pg
+path: examples/test/city_http_to_pg
+
+workload:
+  city: {}
+  base_url: "https://api.open-meteo.com/v1"
+  parent_execution_id: ""
+  index: null
+
+workflow:
+  - step: start
+    desc: "Start city processing"
+    next:
+      - step: fetch_weather
+
+  - step: fetch_weather
+    desc: "Fetch weather for a single city and save to Postgres"
+    type: http
+    method: GET
+    endpoint: "{{ workload.base_url }}/forecast"
+    headers:
+      User-Agent: "NoETL City HTTP -> PG Demo/1.0"
+    params:
+      latitude: "{{ workload.city.lat }}"
+      longitude: "{{ workload.city.lon }}"
+      hourly: "temperature_2m"
+      forecast_days: 1
+    timeout: 20
+    save:
+      storage:
+        kind: postgres
+        credential: pg_local
+      statement: |
+        INSERT INTO public.weather_http_raw (
+          id, execution_id, iter_index, city, url, elapsed, payload
+        ) VALUES (
+          '{{ params.id }}', '{{ params.execution_id }}', {{ params.iter_index }}, '{{ params.city }}', '{{ params.url }}', {{ params.elapsed }}, $json${{ params.payload }}$json$
+        )
+        ON CONFLICT(id) DO UPDATE SET
+          city = EXCLUDED.city,
+          url = EXCLUDED.url,
+          elapsed = EXCLUDED.elapsed,
+          payload = EXCLUDED.payload;
+      params:
+        id: "{{ workload.parent_execution_id }}:{{ workload.city.name }}{{ (':' ~ workload.index) if workload.index is not none else '' }}"
+        execution_id: "{{ workload.parent_execution_id }}"
+        iter_index: "{{ workload.index if workload.index is not none else null }}"
+        city: "{{ workload.city.name }}"
+        url: "{{ data.url }}"
+        elapsed: "{{ data.elapsed | default(0) }}"
+        payload: "{{ data | tojson }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End"
+    result:
+      city: "{{ workload.city.name }}"
+      status: "saved"

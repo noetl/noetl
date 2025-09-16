@@ -216,6 +216,7 @@ workflow:
 
                 results = []
                 child_ids = []
+                total = len(items or [])
                 for idx, item in enumerate(items or []):
                     # Per-iteration render context
                     iter_ctx = dict(context)
@@ -225,6 +226,13 @@ workflow:
                             iter_ctx['work'] = dict(context['work'])
                             iter_ctx['work'][iterator_name] = item
                         iter_ctx[iterator_name] = item
+                        # Provide _loop metadata similar to server rendering
+                        iter_ctx['_loop'] = {
+                            'current_index': idx,
+                            'index': idx,
+                            'item': item,
+                            'count': total,
+                        }
                     except Exception:
                         iter_ctx[iterator_name] = item
 

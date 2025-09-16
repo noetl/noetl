@@ -172,47 +172,64 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
 
         if isinstance(commands, str):
             commands_rendered = render_template(jinja_env, commands, {**context, **processed_task_with})
-            commands = []
-            current_command = []
-            dollar_quote = False
-            dollar_quote_tag = ""
-
+            # Remove comment-only lines and squash whitespace for robust splitting
             cmd_lines = []
             for line in commands_rendered.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('--'):
-                    cmd_lines.append(line)
-
+                s = line.strip()
+                if s and not s.startswith('--'):
+                    cmd_lines.append(s)
             commands_text = ' '.join(cmd_lines)
-            i = 0
-            while i < len(commands_text):
-                char = commands_text[i]
-                if char == '$' and (i + 1 < len(commands_text)) and (commands_text[i+1].isalnum() or commands_text[i+1] == '$'):
-                    j = i + 1
-                    while j < len(commands_text) and (commands_text[j].isalnum() or commands_text[j] == '_' or commands_text[j] == '$'):
-                        j += 1
-                    optional_tag = commands_text[i:j]
-                    if dollar_quote and optional_tag == dollar_quote_tag:
-                        dollar_quote = False
-                        dollar_quote_tag = ""
-                    elif not dollar_quote:
-                        dollar_quote = True
-                        dollar_quote_tag = optional_tag
 
-                    current_command.append(commands_text[i:j])
+            # Split on semicolons, respecting single/double quotes and dollar-quoted strings
+            commands = []
+            current = []
+            in_single = False
+            in_double = False
+            dollar_quote = False
+            dollar_tag = ""
+            i = 0
+            n = len(commands_text)
+            while i < n:
+                ch = commands_text[i]
+                # Handle dollar-quoted strings when not inside standard quotes
+                if not in_single and not in_double and ch == '$':
+                    j = i + 1
+                    while j < n and (commands_text[j].isalnum() or commands_text[j] in ['_', '$']):
+                        j += 1
+                    tag = commands_text[i:j]
+                    if dollar_quote and tag == dollar_tag:
+                        dollar_quote = False
+                        dollar_tag = ""
+                    elif not dollar_quote and tag.startswith('$') and tag.endswith('$'):
+                        dollar_quote = True
+                        dollar_tag = tag
+                    current.append(commands_text[i:j])
                     i = j
                     continue
-                if char == ';' and not dollar_quote:
-                    current_cmd = ''.join(current_command).strip()
-                    if current_cmd:
-                        commands.append(current_cmd)
-                    current_command = []
-                else:
-                    current_command.append(char)
+                # Toggle single/double quotes (ignore when in dollar-quote)
+                if not dollar_quote and ch == "'" and not in_double:
+                    in_single = not in_single
+                    current.append(ch)
+                    i += 1
+                    continue
+                if not dollar_quote and ch == '"' and not in_single:
+                    in_double = not in_double
+                    current.append(ch)
+                    i += 1
+                    continue
+                # Statement split
+                if ch == ';' and not in_single and not in_double and not dollar_quote:
+                    stmt = ''.join(current).strip()
+                    if stmt:
+                        commands.append(stmt)
+                    current = []
+                    i += 1
+                    continue
+                current.append(ch)
                 i += 1
-            current_cmd = ''.join(current_command).strip()
-            if current_cmd:
-                commands.append(current_cmd)
+            stmt = ''.join(current).strip()
+            if stmt:
+                commands.append(stmt)
 
         event_id = None
         if log_event_callback:

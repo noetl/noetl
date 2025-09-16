@@ -45,47 +45,18 @@ workflow:
           cities: "{{ workload.cities }}"
 
   - step: http_loop
-    desc: "Fetch hourly temperatures for each city"
-    type: http
-    method: GET
-    endpoint: "{{ workload.base_url }}/forecast"
-    headers:
-      User-Agent: "NoETL HTTP DuckDB Postgres Demo/1.0"
-    params:
-      latitude: "{{ city_item.lat }}"
-      longitude: "{{ city_item.lon }}"
-      hourly: "temperature_2m"
-      forecast_days: 1
-    timeout: 20
+    desc: "Fetch hourly temperatures for each city via child playbook"
+    type: playbook
+    path: examples/test/city_http_to_pg
     loop:
       in: "{{ cities }}"
       iterator: city_item
       mode: async
-    # Persist each iteration's HTTP response directly into Postgres via loop-level save
-    # Demonstrates statement + params with Jinja + per-iteration context
-      save:
-        storage:
-          kind: postgres
-          credential: pg_local
-        statement: |
-          INSERT INTO public.weather_http_raw (
-            id, execution_id, iter_index, city, url, elapsed, payload
-          ) VALUES (
-            :id, :execution_id, :iter_index, :city, :url, :elapsed, :payload
-          )
-          ON CONFLICT(id) DO UPDATE SET
-            city = EXCLUDED.city,
-            url = EXCLUDED.url,
-            elapsed = EXCLUDED.elapsed,
-            payload = EXCLUDED.payload;
-        params:
-          id: "{{ execution_id }}:{{ _loop.current_index }}"
-          execution_id: "{{ execution_id }}"
-          iter_index: "{{ _loop.current_index }}"
-          city: "{{ city_item.name }}"
-          url: "{{ this.data.url }}"
-          elapsed: "{{ this.data.elapsed }}"
-          payload: "{{ tojson(this.data) }}"
+    with:
+      city: "{{ city_item }}"
+      base_url: "{{ workload.base_url }}"
+      parent_execution_id: "{{ execution_id }}"
+      index: "{{ _loop.current_index }}"
     next:
       - step: aggregate_with_duckdb
 
@@ -108,11 +79,11 @@ workflow:
       SELECT
         row_number() over() as id,
         city,
-        (from_json(payload)->>'url')::VARCHAR as source_url,
-        (from_json(payload)->>'elapsed')::DOUBLE as elapsed_sec,
-        (from_json(payload)->'data'->>'latitude')::DOUBLE as lat,
-        (from_json(payload)->'data'->>'longitude')::DOUBLE as lon,
-        (from_json(payload)->'data'->'hourly'->'temperature_2m') as hourly_temps
+        json_extract_string(json_parse(payload), '$.url') as source_url,
+        CAST(json_extract_string(json_parse(payload), '$.elapsed') AS DOUBLE) as elapsed_sec,
+        CAST(json_extract_string(json_parse(payload), '$.data.latitude') AS DOUBLE) as lat,
+        CAST(json_extract_string(json_parse(payload), '$.data.longitude') AS DOUBLE) as lon,
+        json_extract(json_parse(payload), '$.data.hourly.temperature_2m') as hourly_temps
       FROM postgres_db.public.weather_http_raw
       WHERE execution_id = '{{ execution_id }}';
 
