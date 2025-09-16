@@ -74,11 +74,28 @@ workflow:
         kind: gcs_hmac
         credential: gcs_hmac_local
     commands: |
-      -- Simplified: copy rows as-is from the attached Postgres table
-      CREATE OR REPLACE TABLE weather_raw AS
-      SELECT *
+      -- Flattened view from Postgres-attached table without JSON parsing
+      CREATE OR REPLACE TABLE weather_flat AS
+      SELECT
+        id,
+        city,
+        url as source_url,
+        elapsed as elapsed_sec,
+        payload
       FROM postgres_db.public.weather_http_raw
       WHERE execution_id = '{{ execution_id }}';
+
+      -- Aggregate by city (simple count)
+      CREATE OR REPLACE TABLE weather_agg AS
+      SELECT
+        city,
+        COUNT(*) AS rows_per_city
+      FROM weather_flat
+      GROUP BY city;
+
+      -- Write to GCS as Parquet (requires gcs_hmac credentials configured)
+      COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
+      COPY weather_agg  TO 'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
     next:
       - step: ensure_metrics_table
 
