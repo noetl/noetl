@@ -16,7 +16,7 @@ workload:
       lat: 52.52
       lon: 13.41
   base_url: "https://api.open-meteo.com/v1"
-  gcs_bucket: "noetl-demo-19700101-noetl-development-data"   # set this to an actual bucket; requires HMAC key_id/secret_key
+  gcs_bucket: "noetl-demo-19700101"   # set this to an actual bucket; requires HMAC key_id/secret_key
 
 workflow:
   - step: start
@@ -74,30 +74,11 @@ workflow:
         kind: gcs_hmac
         credential: gcs_hmac_local
     commands: |
-      -- Build a flattened view directly from Postgres-attached table
-      CREATE OR REPLACE TABLE weather_flat AS
-      SELECT
-        row_number() over() as id,
-        city,
-        json_extract_string(json_parse(payload), '$.url') as source_url,
-        CAST(json_extract_string(json_parse(payload), '$.elapsed') AS DOUBLE) as elapsed_sec,
-        CAST(json_extract_string(json_parse(payload), '$.data.latitude') AS DOUBLE) as lat,
-        CAST(json_extract_string(json_parse(payload), '$.data.longitude') AS DOUBLE) as lon,
-        json_extract(json_parse(payload), '$.data.hourly.temperature_2m') as hourly_temps
+      -- Simplified: copy rows as-is from the attached Postgres table
+      CREATE OR REPLACE TABLE weather_raw AS
+      SELECT *
       FROM postgres_db.public.weather_http_raw
       WHERE execution_id = '{{ execution_id }}';
-
-      -- Aggregate by city (example)
-      CREATE OR REPLACE TABLE weather_agg AS
-      SELECT
-        city,
-        COUNT(*) AS rows_per_city
-      FROM weather_flat
-      GROUP BY city;
-
-      -- Write aggregated and flat results to GCS as Parquet
-      COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
-      COPY weather_agg  TO 'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
     next:
       - step: ensure_metrics_table
 

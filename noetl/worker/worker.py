@@ -567,7 +567,8 @@ class QueueWorker:
                 except Exception:
                     pass
                 try:
-                    if 'execution_id' not in exec_ctx:
+                    # Ensure execution_id is present and non-empty in context
+                    if not exec_ctx.get('execution_id'):
                         exec_ctx['execution_id'] = execution_id
                 except Exception:
                     pass
