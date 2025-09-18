@@ -12,7 +12,8 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Located in tools/pypi, repository root is parent of tools
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 cd "$PROJECT_ROOT"
 
@@ -39,7 +40,7 @@ try:
         print(match.group(1) if match else 'unknown')
 except FileNotFoundError:
     print('unknown')
-")
+:")
 
     echo -e "${BLUE}Current version:${NC} $current_version"
 
@@ -123,21 +124,21 @@ with open('pyproject.toml', 'r') as f:
             ;;
         1)
             echo -e "${BLUE}Incrementing patch version...${NC}"
-            "$SCRIPT_DIR/update_version.py" patch
+            "$PROJECT_ROOT/tools/update_version.py" patch
             ;;
         2)
             echo -e "${BLUE}Incrementing minor version...${NC}"
-            "$SCRIPT_DIR/update_version.py" minor
+            "$PROJECT_ROOT/tools/update_version.py" minor
             ;;
         3)
             echo -e "${BLUE}Incrementing major version...${NC}"
-            "$SCRIPT_DIR/update_version.py" major
+            "$PROJECT_ROOT/tools/update_version.py" major
             ;;
         4)
             read -p "Enter new version (e.g., 1.2.3): " new_version
             if [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
                 echo -e "${BLUE}Setting version to $new_version...${NC}"
-                "$SCRIPT_DIR/update_version.py" "$new_version"
+                "$PROJECT_ROOT/tools/update_version.py" "$new_version"
             else
                 echo -e "${RED}Invalid version format${NC}"
                 return 1
@@ -257,13 +258,13 @@ handle_build() {
     case $choice in
         0)
             echo -e "${BLUE} Building UI...${NC}"
-            "$SCRIPT_DIR/build_ui.sh"
+            "$PROJECT_ROOT/tools/build_ui.sh"
             echo -e "${BLUE} Building package...${NC}"
-            "$SCRIPT_DIR/build_package.sh"
+            "$PROJECT_ROOT/tools/build_package.sh"
             ;;
         1)
             echo -e "${BLUE} Building package only...${NC}"
-            "$SCRIPT_DIR/build_package.sh"
+            "$PROJECT_ROOT/tools/build_package.sh"
             ;;
         2)
             echo -e "${YELLOW}️  Using existing build${NC}"

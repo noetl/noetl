@@ -767,7 +767,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     if not t:
                         return False
                     # Include 'save' so save steps run on workers
-                    if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save'}:
+                    if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','loop'}:
                         if t == 'python':
                             return bool(sd.get('code') or sd.get('code_b64') or sd.get('code_base64'))
                         return True

@@ -45,18 +45,36 @@ workflow:
           cities: "{{ workload.cities }}"
 
   - step: http_loop
-    desc: "Fetch hourly temperatures for each city via child playbook"
-    type: playbook
-    path: examples/test/city_http_to_pg
-    loop:
-      in: "{{ cities }}"
-      iterator: city_item
-      mode: async
-    with:
-      city: "{{ city_item }}"
-      base_url: "{{ workload.base_url }}"
-      parent_execution_id: "{{ execution_id }}"
-      index: "{{ _loop.current_index }}"
+    desc: "Fetch hourly temperatures for each city and save raw rows"
+    type: loop
+    iterator: city
+    in: "{{ workload.cities }}"
+    task:
+      name: fetch_weather
+      type: http
+      endpoint: "{{ workload.base_url }}/forecast"
+      headers:
+        User-Agent: "NoETL City HTTP -> PG Demo/1.0"
+      params:
+        latitude: "{{ city.lat }}"
+        longitude: "{{ city.lon }}"
+        hourly: "temperature_2m"
+        forecast_days: 1
+      save:
+        storage:
+          kind: postgres
+          credential: pg_local
+        table: public.weather_http_raw
+        mode: upsert
+        key: id
+        data:
+          id: "{{ execution_id }}:{{ city.name }}:{{ _loop.current_index }}"
+          execution_id: "{{ execution_id }}"
+          iter_index: "{{ _loop.current_index }}"
+          city: "{{ city.name }}"
+          url: "{{ data.url }}"
+          elapsed: "{{ data.elapsed | default(0) }}"
+          payload: "{{ data | tojson }}"
     next:
       - step: get_pg_credential
 
@@ -141,11 +159,15 @@ workflow:
       storage:
         kind: postgres
         credential: pg_local
-      table: public.weather_pipeline_metrics
-      mode: upsert
-      key: execution_id
-      data:
-        execution_id: "{{ execution_id }}"
-        pg_rows_saved: "{{ http_loop.count }}"
-        gcs_flat_uri: "gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet"
-        gcs_agg_uri:  "gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet"
+      statement: |
+        INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved, gcs_flat_uri, gcs_agg_uri)
+        VALUES (
+          '{{ execution_id }}',
+          (SELECT COUNT(*) FROM public.weather_http_raw WHERE execution_id = '{{ execution_id }}'),
+          'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet',
+          'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'
+        )
+        ON CONFLICT (execution_id) DO UPDATE SET
+          pg_rows_saved = EXCLUDED.pg_rows_saved,
+          gcs_flat_uri = EXCLUDED.gcs_flat_uri,
+          gcs_agg_uri = EXCLUDED.gcs_agg_uri

@@ -95,14 +95,14 @@ docker-login:
 .PHONY: build
 build:
 	@echo "Building UI assets"
-	set -a; [ -f .env.docker ] && . .env.docker; set +a; bash scripts/build_ui.sh
+	set -a; [ -f .env.docker ] && . .env.docker; set +a; bash tools/build_ui.sh
 	@echo "Building Docker images"
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build
 
 .PHONY: rebuild
 rebuild:
 	@echo "Building UI assets first with no cache"
-	@bash scripts/build_ui.sh
+	@bash tools/build_ui.sh
 	@echo "Rebuilding Docker images with no cache"
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build --no-cache
 

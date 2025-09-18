@@ -668,7 +668,7 @@ def _is_actionable_step(step_def: dict) -> bool:
         if not t:
             return False
         # Include 'save' so save steps run on workers
-        if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save'}:
+        if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','loop'}:
             # For python, require code in step_def
             if t == 'python':
                 c = step_def.get('code') or step_def.get('code_b64') or step_def.get('code_base64')
