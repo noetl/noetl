@@ -87,8 +87,8 @@ class CatalogService:
 
     async def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         try:
-            resource_data = yaml.safe_load(content)
-            resource_path = resource_data.get("path", resource_data.get("name", "unknown"))
+            resource_data = yaml.safe_load(content) or {}
+            resource_path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
             # Determine latest version synchronously from DB
             latest = None
             try:

@@ -3,6 +3,10 @@ kind: Playbook
 name: city_http_to_pg
 path: examples/test/city_http_to_pg
 
+metadata:
+  name: city_http_to_pg
+  path: examples/test/city_http_to_pg
+
 workload:
   city: {}
   base_url: "https://api.open-meteo.com/v1"

@@ -76,6 +76,7 @@ help:
 	@echo "  make noetl-start										Start NoETL runtime"
 	@echo "  make noetl-stop										Stop NoETL runtime"
 	@echo "  make noetl-restart										Restart NoETL runtime"
+	@echo "  make validate-playbooks\t\t\t\tValidate playbooks for iterator+metadata schema"
 	@echo "  make noetl-run PLAYBOOK=examples/weather/weather_loop_example HOST=localhost PORT=8082	Execute specific playbook"
 	@echo "  make noetl-execute PLAYBOOK=examples/weather/weather_loop_example				Execute specific playbook"
 	@echo "  make export-execution-logs ID=222437726840946688 HOST=localhost PORT=8082			Dump execution to logs for specific ID"

@@ -4,6 +4,10 @@ name: test_postgres_storage
 version: "0.1.0"
 path: examples/test/test_postgres_storage
 
+metadata:
+  name: test_postgres_storage
+  path: examples/test/test_postgres_storage
+
 workload:
   pg_host: "localhost"
   pg_port: "30543"

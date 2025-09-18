@@ -1,7 +1,13 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-name: http_duckdb_postgres
-path: examples/test/http_duckdb_postgres
+# Iterator note: this playbook uses the new iterator task structure
+#   - type: iterator
+#   - collection: "{{ <expr> }}"
+#   - element: <name>
+
+metadata:
+  name: http_duckdb_postgres
+  path: examples/test/http_duckdb_postgres
 
 workload:
   message: "HTTP -> DuckDB -> Postgres pipeline"
@@ -46,11 +52,11 @@ workflow:
 
   - step: http_loop
     desc: "Fetch hourly temperatures for each city and save raw rows"
-    type: loop
-    iterator: city
-    in: "{{ workload.cities }}"
+    type: iterator
+    collection: "{{ cities }}"
+    element: city
+    mode: async
     task:
-      name: fetch_weather
       type: http
       endpoint: "{{ workload.base_url }}/forecast"
       headers:

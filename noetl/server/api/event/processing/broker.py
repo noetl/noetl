@@ -236,8 +236,10 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     'type': step_def.get('type') or 'python',
                                 }
                                 for fld in (
-                                    'task','code','command','commands','sql',
+                                    'task','run','code','command','commands','sql',
                                     'url','endpoint','method','headers','params',
+                                    # iterator fields
+                                    'collection','element','mode','concurrency','enumerate','where','limit','chunk','order_by',
                                     # unified payload fields (prefer input/payload over legacy with later)
                                     'input','payload','with',
                                     'data',  # some steps embed data payloads directly
@@ -280,7 +282,8 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                 loop_cfg = task.get('loop') or {}
                                 has_loop = bool(loop_cfg.get('in'))
                                 if has_loop:
-                                    # Idempotency: if loop already initialized (loop_iteration exists), skip re-enqueue & re-emit
+                                    # Legacy loop support removed — require iterator step usage.
+                                    logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Step '{next_step_name}' uses legacy 'loop' config; wrap the nested action in a 'type: iterator' step with 'collection' and 'element'")
                                     try:
                                         await cur.execute(
                                             """
@@ -668,7 +671,7 @@ def _is_actionable_step(step_def: dict) -> bool:
         if not t:
             return False
         # Include 'save' so save steps run on workers
-        if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','loop'}:
+        if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','iterator'}:
             # For python, require code in step_def
             if t == 'python':
                 c = step_def.get('code') or step_def.get('code_b64') or step_def.get('code_base64')

@@ -42,29 +42,35 @@ Step ::= Map {
 }
 ```
 
-#### 1.3.1. LoopBlock (Step-Level Loop)
+#### 1.3.1. Iterator Task (Step-Level Iteration)
 ```yaml
-LoopBlock ::= Map {
-  "in": JinjaExpression<String>,
-  "iterator": Identifier,
-  "join": Identifier
+IteratorTask ::= Map {
+  "type": "iterator",
+  "collection": JinjaExpression<String|Array>,
+  "element": Identifier,
+  "task": TaskDefinition,
+  "save"?: SaveBlock
 }
 ```
-- `"loop"` is only allowed at the __step__ level.
-- Executes a subgraph of step transitions per element in a list.
-- The current element is accessible via the `"iterator"` name.  
-- `"join"` is __required__ and specifies the aggregation step to transition to after all iterations.
-- Use `"join: end"` to indicate terminal non-aggregating loops.
-- Example of a loop block:
+- Iteration is modeled as a dedicated step with `type: iterator`.
+- The current element is exposed under the provided `element` name and is also available in the nested task context.
+- `collection` must resolve to an array (or a scalar that will be treated as a single-item list).
+- The nested `task` executes once per element; its own `save` can persist per-item results; the step-level `save` can persist aggregated results.
+- Example of an iterator step:
 ```yaml
-loop:
-  in: "{{ workload.cities }}"
-  iterator: city
-  join: aggregate_alerts
+- step: city_loop
+  type: iterator
+  collection: "{{ workload.cities }}"
+  element: city
+  task:
+    type: http
+    endpoint: "{{ workload.base_url }}/forecast"
+    params:
+      latitude:  "{{ city.lat }}"
+      longitude: "{{ city.lon }}"
+  next:
+    - step: aggregate_alerts
 ```
-Each iteration receives:
-- city injected into `with`
-- Additional `with` context merged from the step definition
 
 #### 1.3.2. Join Logic (Aggregation after Loop) 
 ```yaml
@@ -171,7 +177,7 @@ Tasks are defined at the top level and callable only by `call` in a step.
 <task_definition> ::=
   {
     task: <task_name>,
-    type: "http" | "python" | "loop" | "task",
+    type: "http" | "python" | "task",
     desc?: <string>,
     with?: { <key>: <quoted_template> },
     when?: <quoted_template>,
@@ -180,7 +186,7 @@ Tasks are defined at the top level and callable only by `call` in a step.
   }
 ```
 - A `"task"` with both `"type"` and `"run"` will:
-  - Be executed according to its `"type"` if supported (e.g., `"http"`, `"python"`, `"loop"`).
+  - Be executed according to its `"type"` if supported (e.g., `"http"`, `"python"`).
   - Otherwise, if `"type": "task"`, it is treated as a composite task and will evaluate each nested task in `"run"` in order.
 - `"task"`: A composite task that runs a list of nested tasks.
 ```yaml

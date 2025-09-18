@@ -18,8 +18,7 @@ Step:
 2.2. If type: workbook and step has attribute name: task_name then noetl will lookup the action type by name in the workbook section and schedule it for execution.  
 2.3  If type: python ot http or duckdb or postgres or secret - noetl will schedule the step action type with it's attributes to execute on workers' pool.  
 
-3. Step may has a loop attribute. In that case it will execute action type that it has for each item of the loop definition and keep aggregated result as a reference for the next steps.  
+3. Iteration is modeled with an iterator step (`type: iterator`). It executes a nested task once per element of `collection` (exposed as `element`) and can keep aggregated results for subsequent steps.  
 
 4. Step may have a "next" attribute. In next attribute it may have a "when" then condition that will route transtion to the next steps.   
-
 

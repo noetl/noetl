@@ -3,6 +3,10 @@ kind: Playbook
 name: postgres_save_simple
 path: examples/test/postgres_save_simple
 
+metadata:
+  name: postgres_save_simple
+  path: examples/test/postgres_save_simple
+
 workload:
   pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
   pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"

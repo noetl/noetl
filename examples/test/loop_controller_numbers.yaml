@@ -3,6 +3,10 @@ kind: Playbook
 name: loop_controller_numbers
 path: examples/test/loop_controller_numbers
 
+metadata:
+  name: loop_controller_numbers
+  path: examples/test/loop_controller_numbers
+
 workload:
   numbers: [1, 2, 3, 4]
 
@@ -43,9 +47,9 @@ workflow:
 
   - step: loop_numbers
     desc: "Loop controller: Python per number, save each row"
-    type: loop
-    iterator: n
-    in: "{{ workload.numbers }}"
+    type: iterator
+    collection: "{{ workload.numbers }}"
+    element: n
     task:
       name: square
       type: python

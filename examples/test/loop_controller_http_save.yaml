@@ -3,6 +3,10 @@ kind: Playbook
 name: loop_controller_http_save
 path: examples/test/loop_controller_http_save
 
+metadata:
+  name: loop_controller_http_save
+  path: examples/test/loop_controller_http_save
+
 workload:
   message: "Loop controller HTTP -> Postgres test"
   cities:
@@ -54,9 +58,9 @@ workflow:
 
   - step: loop_http
     desc: "Loop controller: HTTP per city, save each row"
-    type: loop
-    iterator: city
-    in: "{{ workload.cities }}"
+    type: iterator
+    collection: "{{ workload.cities }}"
+    element: city
     task:
       name: fetch_weather
       type: http

@@ -9,6 +9,10 @@ kind: Playbook
 name: weather_example
 path: examples/weather/weather_loop_example  # Unique path identifier for this playbooks
 
+metadata:
+  name: weather_example
+  path: examples/weather/weather_loop_example
+
 workload:  # Input parameters section accessible throughout the workflow
   jobId: "{{ job.uuid }}"
   state: ready
@@ -42,16 +46,16 @@ workflow:  # Workflow steps and transitions
           - step: end  # If not ready, end the workflow
 
   - step: city_loop
-    type: playbook
-    path: examples/weather/city_process
-    loop:
-      in: "{{ workload.cities }}"
-      iterator: city_item
-      distribution: true
-    with:
-      city: "{{ city_item }}"
-      base_url: "{{ workload.base_url }}"
-      temperature_threshold: "{{ workload.temperature_threshold }}"
+    type: iterator
+    collection: "{{ workload.cities }}"
+    element: city_item
+    task:
+      type: playbook
+      path: examples/weather/city_process
+      with:
+        city: "{{ city_item }}"
+        base_url: "{{ workload.base_url }}"
+        temperature_threshold: "{{ workload.temperature_threshold }}"
     next:
       - step: debug_results
 
@@ -68,18 +72,18 @@ workflow:  # Workflow steps and transitions
                   print(f"DEBUG_RESULTS: item[{i}] = {item} (type: {type(item)})")
           return {"debug_complete": True, "results": results}
     with:
-      results: "{{ city_loop.result }}"
+      results: "{{ city_loop.results }}"
     next:
       - step: aggregate_alerts
         with:
-          alerts: "{{ city_loop.result }}"
+          alerts: "{{ city_loop.results }}"
 
   - step: aggregate_alerts
     desc: "Aggregate results after all city loops complete"
     type: workbook
     name: aggregate_alerts_task
     with:
-      alerts: "{{ city_loop.result }}"
+      alerts: "{{ city_loop.results }}"
     next:
       - step: log_aggregate_result
         with:

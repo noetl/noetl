@@ -3,6 +3,10 @@ kind: Playbook
 name: postgres_save_simple2
 path: examples/test/postgres_save_simple2
 
+metadata:
+  name: postgres_save_simple2
+  path: examples/test/postgres_save_simple2
+
 workload:
   message: "Hello Save"
 
