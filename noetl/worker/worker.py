@@ -672,6 +672,29 @@ class QueueWorker:
                         complete_event["parent_event_id"] = parent_event_id
                     report_event(complete_event, self.server_url)
 
+                    # Emit a companion step_result event for easier querying of results per step
+                    try:
+                        norm_result = result
+                        if isinstance(result, dict) and 'data' in result and result['data'] is not None:
+                            norm_result = result['data']
+                        step_result_event = {
+                            "execution_id": execution_id,
+                            "event_type": "step_result",
+                            "status": "COMPLETED",
+                            "node_id": node_id,
+                            "node_name": task_name,
+                            "node_type": "task",
+                            "result": norm_result,
+                            "timestamp": datetime.datetime.now().isoformat(),
+                        }
+                        if loop_meta:
+                            step_result_event.update(loop_meta)
+                        if parent_event_id:
+                            step_result_event["parent_event_id"] = parent_event_id
+                        report_event(step_result_event, self.server_url)
+                    except Exception:
+                        logger.debug("WORKER: Failed to emit step_result companion event", exc_info=True)
+
             except Exception as e:
                 try:
                     import traceback as _tb
