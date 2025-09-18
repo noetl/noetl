@@ -14,7 +14,7 @@ const getApiBaseUrl = () => {
     if ((window as any).__API_BASE_URL__) {
       return (window as any).__API_BASE_URL__;
     }
-    return "http://localhost:8081/api";
+    return "http://localhost:8082/api";
   }
   return "/api";
 };
