@@ -190,7 +190,28 @@ workflow:
                 # Evaluate items expression
                 items_expr = loop_cfg.get('in')
                 try:
-                    rendered_items = render_template(jinja_env, items_expr, context) if isinstance(items_expr, str) else items_expr
+                    # Build a richer context for resolving loop items: merge context + work + workload + input + with
+                    loop_ctx = dict(context) if isinstance(context, dict) else {}
+                    try:
+                        if isinstance(context, dict):
+                            if isinstance(context.get('work'), dict):
+                                for k, v in context['work'].items():
+                                    loop_ctx.setdefault(k, v)
+                            if isinstance(context.get('workload'), dict):
+                                for k, v in context['workload'].items():
+                                    loop_ctx.setdefault(k, v)
+                            if isinstance(context.get('input'), dict):
+                                for k, v in context['input'].items():
+                                    loop_ctx.setdefault(k, v)
+                    except Exception:
+                        pass
+                    try:
+                        if isinstance(task_with, dict):
+                            for k, v in task_with.items():
+                                loop_ctx.setdefault(k, v)
+                    except Exception:
+                        pass
+                    rendered_items = render_template(jinja_env, items_expr, loop_ctx) if isinstance(items_expr, str) else items_expr
                 except Exception:
                     rendered_items = items_expr
                 # Coerce rendered_items to Python list when possible
