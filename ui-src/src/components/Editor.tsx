@@ -300,15 +300,6 @@ tasks:
             <Space>
               <Button
                 type="default"
-                icon={isFullscreen ? <CompressOutlined /> : <ExpandOutlined />}
-                onClick={toggleFullscreen}
-                title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-              >
-                {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-              </Button>
-              <Divider type="vertical" />
-              <Button
-                type="default"
                 icon={<CheckCircleOutlined />}
                 loading={validating}
                 onClick={handleValidate}

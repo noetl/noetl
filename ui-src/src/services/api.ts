@@ -183,6 +183,13 @@ class APIService {
 
   async getPlaybookContent(id: string): Promise<string> {
     try {
+      // Try path style endpoint first
+      try {
+        const respPath = await apiClient.get(`/catalog/playbooks/${id}/content`);
+        if (respPath?.data?.content) return respPath.data.content;
+      } catch (e) {
+        // swallow and fallback
+      }
       const response = await apiClient.get(
         `/catalog/playbooks/content?playbook_id=${id}`,
       );

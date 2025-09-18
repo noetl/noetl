@@ -414,15 +414,28 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       setLoading(true);
       const updatedYaml = updateWorkflowInYaml(content || '', tasks);
       if (onUpdateContent) onUpdateContent(updatedYaml);
+
+      // Attempt backend persistence directly (so user doesn't need to click main Save)
+      if (playbookId && playbookId !== 'new') {
+        try {
+          await apiService.savePlaybookContent(playbookId, updatedYaml);
+          messageApi.success('Workflow saved to backend');
+        } catch (persistErr) {
+          console.error('Backend persistence failed:', persistErr);
+          messageApi.warning('YAML updated locally, backend save failed');
+        }
+      } else {
+        messageApi.info('YAML updated. Create & save playbook from main editor to persist');
+      }
+
       setHasChanges(false);
-      messageApi.success('Workflow saved & YAML updated');
     } catch (error) {
       console.error(error);
       messageApi.error('Failed to save workflow');
     } finally {
       setLoading(false);
     }
-  }, [tasks, content, onUpdateContent, messageApi]);
+  }, [tasks, content, onUpdateContent, messageApi, playbookId]);
 
   // Legacy line-based parser kept as fallback
   const legacyParsePlaybookContent = (content: string): TaskNode[] => {
@@ -714,6 +727,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
   const flowInner = (
     <div className="FlowVisualization flow-layout-root">
+      {contextHolder}
       {/* Content container now full-width; dock moved inside canvas wrapper */}
       <div className="flow-content-container">
         {loading ? (
@@ -872,7 +886,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 value={(activeTask.config?.code) || activeTask.config?.sql || ''}
                 onChange={(val) => {
                   if (readOnly) return;
-                  const cfg = { ...(activeTask.config || {}) };
+                  const cfg = { ...(activeTask.config || {}) } as any;
                   if (activeTask.type === 'python') cfg.code = val || '';
                   if (activeTask.type === 'duckdb' || activeTask.type === 'postgres') cfg.sql = val || '';
                   handleEditTask({ ...activeTask, config: cfg });
@@ -893,7 +907,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                   try {
                     const parsed = JSON.parse(val || '{}');
                     handleEditTask({ ...activeTask, config: parsed });
-                  } catch { /* ignore parse errors live */ }
+                  } catch { }
                 }}
                 theme="vs-dark"
                 options={{ minimap: { enabled: false }, fontSize: 13 }}
@@ -910,7 +924,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                   if (readOnly) return;
                   try {
                     const parsed = JSON.parse(val || '{}');
-                    handleEditTask(parsed as any);
+                    handleEditTask({ ...(parsed as any), id: activeTask.id });
                   } catch { }
                 }}
                 theme="vs-dark"
