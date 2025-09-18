@@ -1,7 +1,5 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-name: postgres_save_simple
-path: examples/test/postgres_save_simple
 
 metadata:
   name: postgres_save_simple

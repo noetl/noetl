@@ -14,6 +14,20 @@ The following diagram illustrates the main components and intent of the NoETL sy
 
 ## Quick Start
 
+### CP-SAT Scheduler (experimental)
+
+NoETL now includes an experimental OR-Tools CP-SAT planner to schedule playbooks with iterator expansion and resource capacities.
+
+Install dependency:
+
+pip install ortools
+
+Plan a playbook (no execution, just schedule JSON):
+
+noetl plan examples/test/http_duckdb_postgres.yaml --resources http_pool=4,pg_pool=5,duckdb_host=1 --max-solve-seconds 5 --json
+
+The output includes per-step start/end times and respects capacities (e.g., http_pool concurrency, exclusive duckdb_host).
+
 ### Installation
 
 - Install NoETL from PyPI:

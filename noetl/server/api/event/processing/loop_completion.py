@@ -802,6 +802,9 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 for _fld in (
                     'task','code','command','commands','sql',
                     'url','endpoint','method','headers','params',
+                    # iterator-specific fields must be preserved
+                    'collection','element','mode','concurrency','enumerate','where','limit','chunk','order_by',
+                    # unified payload fields
                     'input','payload','with','data',
                     'resource_path','content','path','loop','save','credential'
                 ):

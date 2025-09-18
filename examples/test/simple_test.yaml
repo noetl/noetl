@@ -1,7 +1,5 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-name: simple_test
-path: examples/test/simple_test
 
 metadata:
   name: simple_test

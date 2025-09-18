@@ -373,6 +373,13 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         except Exception:
                                             logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit step_started for non-loop step", exc_info=True)
 
+                                    # Debug visibility: log keys for iterator tasks
+                                    try:
+                                        if (task.get('type') or '').lower() == 'iterator':
+                                            logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: iterator step '{next_step_name}' task keys={list(task.keys())} collection={task.get('collection')} element={task.get('element')}")
+                                    except Exception:
+                                        pass
+
                                     # Encode and enqueue task
                                     encoded = encode_task_for_queue(task)
                                     

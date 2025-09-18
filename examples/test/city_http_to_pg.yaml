@@ -1,7 +1,5 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-name: city_http_to_pg
-path: examples/test/city_http_to_pg
 
 metadata:
   name: city_http_to_pg

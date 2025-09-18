@@ -9,6 +9,7 @@ metadata:
   name: http_duckdb_postgres
   path: examples/test/http_duckdb_postgres
 
+
 workload:
   message: "HTTP -> DuckDB -> Postgres pipeline"
   cities:

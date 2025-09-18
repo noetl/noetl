@@ -1,7 +1,5 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-name: loop_controller_numbers
-path: examples/test/loop_controller_numbers
 
 metadata:
   name: loop_controller_numbers

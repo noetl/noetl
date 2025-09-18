@@ -1,7 +1,5 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-name: loop_http_test
-path: examples/test/loop_http_test
 
 metadata:
   name: loop_http_test

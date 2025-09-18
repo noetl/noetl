@@ -193,12 +193,13 @@ def execute_loop_task(
         if limit_n is not None and limit_n >= 0:
             indexed_items = indexed_items[:limit_n]
 
-        # Chunking
+        # Chunking: default is per-item iterations (no chunking)
         batches: List[List[Tuple[int, Any]]]
         if chunk_n and chunk_n > 0:
             batches = [indexed_items[i:i+chunk_n] for i in range(0, len(indexed_items), chunk_n)]
         else:
-            batches = [indexed_items]
+            # One logical iteration per item
+            batches = [[pair] for pair in indexed_items]
 
         results: List[Dict[str, Any]] = []
         errors: List[Dict[str, Any]] = []
@@ -228,12 +229,14 @@ def execute_loop_task(
                 pass
 
             # Single item vs batch
-            if len(iter_payload) == 1:
-                orig_idx, item = iter_payload[0]
-                item_for_task = item
+            items_in_payload = [it for _, it in iter_payload]
+            orig_idx = iter_payload[0][0]
+            if chunk_n and chunk_n > 0:
+                # When chunking, always provide batch list (even if length 1)
+                item_for_task = list(items_in_payload)
             else:
-                orig_idx = iter_payload[0][0]
-                item_for_task = [it for _, it in iter_payload]
+                # No chunking: per-item execution
+                item_for_task = items_in_payload[0]
 
             try:
                 if isinstance(iter_ctx.get('work'), dict):
@@ -247,8 +250,9 @@ def execute_loop_task(
                 }
                 if enumerate_flag:
                     iter_ctx['index'] = iter_index
-                if len(iter_payload) > 1:
-                    iter_ctx['batch'] = item_for_task
+                # Provide batch binding when chunking is enabled
+                if chunk_n and chunk_n > 0:
+                    iter_ctx['batch'] = list(items_in_payload)
             except Exception:
                 iter_ctx[iterator_name] = item_for_task
 
@@ -262,6 +266,19 @@ def execute_loop_task(
                         nested_with[k] = v
             except Exception:
                 nested_with = {}
+
+            # For Python nested tasks, ensure the element and optional batch are passed as kwargs
+            try:
+                nested_type = str(nested_task.get('type') or '').strip().lower()
+            except Exception:
+                nested_type = ''
+            if nested_type == 'python':
+                # For Python tasks pass conventional kwargs only
+                # Back-compat: expose element as 'value' for simple functions
+                if 'value' not in nested_with:
+                    nested_with['value'] = item_for_task
+                if 'batch' in iter_ctx and 'batch' not in nested_with:
+                    nested_with['batch'] = iter_ctx.get('batch')
 
             # Execute nested task
             try:
