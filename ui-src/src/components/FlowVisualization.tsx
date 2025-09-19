@@ -293,174 +293,82 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     }
   }, [tasks.length, recreateFlow]); // Only recreate when task count changes
 
-  // Helper: escape double quotes in strings
-  const esc = (s: string) => (s || "").replace(/"/g, '\\"');
+  const sanitizeId = (s: string) => (s || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .toLowerCase() || `task_${Date.now()}`;
 
-  // Helper: build task/workflow YAML blocks
-  const buildWorkflowYaml = (taskList: EditableTaskNode[], rootKey: 'workflow' | 'tasks'): string => {
-    const lines: string[] = [`${rootKey}:`];
-
-    const isPlainObject = (v: any) => Object.prototype.toString.call(v) === '[object Object]';
-    const serializeConfig = (cfg: any, indent: string) => {
-      Object.entries(cfg).forEach(([k, v]) => {
-        if (v === undefined || v === null) return;
-        if (k === 'code' || k === 'sql') return; // handled separately
-        if (isPlainObject(v)) {
-          lines.push(`${indent}${k}:`);
-          serializeConfig(v, indent + '  ');
-        } else if (Array.isArray(v)) {
-          lines.push(`${indent}${k}:`);
-          v.forEach(item => {
-            if (isPlainObject(item)) {
-              lines.push(`${indent}  -`);
-              Object.entries(item).forEach(([ik, iv]) => {
-                lines.push(`${indent}    ${ik}: ${JSON.stringify(iv)}`);
-              });
-            } else {
-              lines.push(`${indent}  - ${JSON.stringify(item)}`);
-            }
-          });
-        } else if (typeof v === 'string') {
-          // quote if contains special chars
-          if (/[#:>-]|^\s|\s$|"/.test(v)) {
-            lines.push(`${indent}${k}: ${JSON.stringify(v)}`);
-          } else {
-            lines.push(`${indent}${k}: "${v}"`);
-          }
-        } else {
-          lines.push(`${indent}${k}: ${JSON.stringify(v)}`);
-        }
+  const parsePlaybookContent = (raw: string): TaskNode[] => {
+    if (!raw || !raw.trim()) return [];
+    try {
+      const doc: any = yaml.load(raw) || {};
+      const list = Array.isArray(doc?.workflow) ? doc.workflow
+        : Array.isArray(doc?.tasks) ? doc.tasks
+          : [];
+      if (!Array.isArray(list)) return [];
+      const parsed: TaskNode[] = [];
+      list.forEach((entry: any, idx: number) => {
+        if (!entry || typeof entry !== 'object') return;
+        const rawName: string = entry.desc || entry.name || entry.step || `Task ${idx + 1}`;
+        const baseId = sanitizeId(entry.step || entry.name || rawName || `task_${idx + 1}`);
+        let uniqueId = baseId;
+        let c = 1;
+        while (parsed.some(t => t.id === uniqueId)) uniqueId = `${baseId}_${c++}`;
+        const t: TaskNode = {
+          id: uniqueId,
+          name: rawName,
+          type: mapType(entry.type || 'workbook'),
+          config: undefined,
+        } as any;
+        const cfg: any = {};
+        if (entry.config && typeof entry.config === 'object') Object.assign(cfg, entry.config);
+        if (typeof entry.code === 'string') cfg.code = entry.code;
+        if (typeof entry.sql === 'string') cfg.sql = entry.sql;
+        if (Object.keys(cfg).length) (t as any).config = cfg;
+        parsed.push(t);
       });
-    };
-
-    taskList.forEach((t) => {
-      const displayNameRaw = t.name ?? '';
-      const displayName = displayNameRaw.trim();
-      if (!displayName) {
-        return; // skip incomplete edits
-      }
-      const sanitizedStep = displayName.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const cfg = (t as any).config || {};
-      const hasOtherConfigKeys = cfg && Object.keys(cfg).some(k => !['code', 'sql'].includes(k));
-      if (rootKey === 'workflow') {
-        lines.push(`  - step: ${sanitizedStep}`);
-        if (t.description) {
-          lines.push(`    desc: "${esc(t.description)}"`);
-        } else if (displayName !== sanitizedStep) {
-          lines.push(`    desc: "${esc(displayName)}"`);
-        }
-        if (t.type && !['workbook'].includes(t.type)) {
-          lines.push(`    type: ${t.type}`);
-        }
-        if (hasOtherConfigKeys) {
-          lines.push(`    config:`);
-          serializeConfig(cfg, '      ');
-        }
-        if (cfg.code) {
-          lines.push(`    code: |`);
-          cfg.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-        }
-        if (cfg.sql) {
-          lines.push(`    sql: |`);
-          cfg.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-        }
-      } else { // tasks style
-        lines.push(`  - name: "${esc(displayName)}"`);
-        if (t.type && !['workbook'].includes(t.type)) {
-          lines.push(`    type: ${t.type}`);
-        }
-        if (t.description) {
-          lines.push(`    desc: "${esc(t.description)}"`);
-        }
-        if (hasOtherConfigKeys) {
-          lines.push(`    config:`);
-          serializeConfig(cfg, '      ');
-        }
-        if (cfg.code) {
-          lines.push(`    code: |`);
-          cfg.code.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-        }
-        if (cfg.sql) {
-          lines.push(`    sql: |`);
-          cfg.sql.split(/\r?\n/).forEach((l: string) => lines.push(`      ${l}`));
-        }
-      }
-    });
-    return lines.join('\n');
-  };
-
-  // Helper: find top-level block range (start, end) for a given key
-  const findBlockRange = (lines: string[], key: string): [number, number] | null => {
-    const start = lines.findIndex(l => l.trim() === `${key}:`);
-    if (start === -1) return null;
-    let end = lines.length;
-    for (let i = start + 1; i < lines.length; i++) {
-      const raw = lines[i];
-      if (!raw.trim()) continue;
-      if (/^[A-Za-z0-9_-]+:\s*$/.test(raw) && !/^\s/.test(raw)) { // new top-level key line
-        end = i;
-        break;
-      }
+      return parsed;
+    } catch (e) {
+      console.warn('YAML parse failed:', e);
+      return [];
     }
-    return [start, end];
   };
 
-  // Replace existing tasks/workflow section (prefer tasks if present) and remove duplicates
   const updateWorkflowInYaml = (original: string, taskList: EditableTaskNode[]): string => {
-    if (!original || !original.trim()) {
-      return buildWorkflowYaml(taskList, 'workflow');
+    let doc: any = {};
+    try { if (original && original.trim()) doc = yaml.load(original) || {}; } catch { doc = {}; }
+    if (!doc || typeof doc !== 'object') doc = {};
+    delete doc.tasks;
+    delete doc.workflow;
+
+    doc.workflow = taskList.filter(t => (t.name || '').trim()).map(t => {
+      const cfg = t.config || {};
+      const { code, sql, ...rest } = cfg;
+      const stepKey = sanitizeId(t.name || t.id);
+      const out: any = { step: stepKey };
+      if (t.name && t.name.trim() && t.name.trim() !== stepKey) out.desc = t.name.trim();
+      if (t.type && t.type !== 'workbook') out.type = t.type;
+      if (Object.keys(rest).length) out.config = rest;
+      if (code) out.code = code;
+      if (sql) out.sql = sql;
+      return out;
+    });
+
+    try {
+      return yaml.dump(doc, { noRefs: true, lineWidth: 120 });
+    } catch (e) {
+      console.error('Failed to dump YAML:', e);
+      return original;
     }
-    const lines = original.split(/\r?\n/);
-    const tasksRange = findBlockRange(lines, 'tasks');
-    const workflowRange = findBlockRange(lines, 'workflow');
-
-    // Decide which root key to use
-    const useKey: 'tasks' | 'workflow' = tasksRange ? 'tasks' : 'workflow';
-
-    // Collect ranges to remove (all existing tasks/workflow blocks)
-    const ranges: Array<[number, number]> = [];
-    if (tasksRange) ranges.push(tasksRange);
-    if (workflowRange) ranges.push(workflowRange);
-
-    // Sort ranges by start
-    ranges.sort((a, b) => a[0] - b[0]);
-
-    // Build new block
-    const newBlock = buildWorkflowYaml(taskList, useKey);
-
-    // If no existing block, append
-    if (ranges.length === 0) {
-      const needsBlank = lines.length > 0 && lines[lines.length - 1].trim() !== '';
-      return [...lines, needsBlank ? '' : '', newBlock].join('\n');
-    }
-
-    // Remove from end to start to avoid index shifts
-    let mutable = [...lines];
-    for (let i = ranges.length - 1; i >= 0; i--) {
-      const [s, e] = ranges[i];
-      mutable.splice(s, e - s);
-    }
-
-    // Insert new block at position of first removed range start
-    const insertAt = ranges[0][0];
-    const before = mutable.slice(0, insertAt);
-    const after = mutable.slice(insertAt);
-
-    // Ensure blank line separation
-    if (before.length && before[before.length - 1].trim() !== '') before.push('');
-    if (after.length && after[0].trim() !== '') after.unshift('');
-
-    return [...before, newBlock, ...after].join('\n');
   };
 
-  // Save entire workflow (now also updates YAML content)
   const handleSaveWorkflow = useCallback(async () => {
     try {
       setLoading(true);
       const updatedYaml = updateWorkflowInYaml(content || '', tasks);
       if (onUpdateContent) onUpdateContent(updatedYaml);
 
-      // Attempt backend persistence directly (so user doesn't need to click main Save)
       if (playbookId && playbookId !== 'new') {
         try {
           await apiService.savePlaybookContent(playbookId, updatedYaml);
@@ -481,188 +389,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       setLoading(false);
     }
   }, [tasks, content, onUpdateContent, messageApi, playbookId]);
-
-  // Legacy line-based parser kept as fallback
-  const legacyParsePlaybookContent = (content: string): TaskNode[] => {
-    try {
-      const lines = content.split("\n");
-      const tasks: TaskNode[] = [];
-      let currentTask: Partial<TaskNode> = {};
-      let inWorkflowSection = false;
-      let taskIndex = 0;
-      let workflowIndent = 0;
-      let inNestedLogic = false;
-      let nestedLevel = 0;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmed = line.trim();
-        const indent = line.length - line.trimStart().length;
-        if (
-          trimmed === "workflow:" ||
-          trimmed.startsWith("workflow:") ||
-          trimmed === "tasks:" ||
-          trimmed.startsWith("tasks:") ||
-          trimmed === "steps:" ||
-          trimmed.startsWith("steps:")
-        ) {
-          inWorkflowSection = true;
-          workflowIndent = indent;
-          continue;
-        }
-        if (inWorkflowSection) {
-          if (
-            trimmed &&
-            indent <= workflowIndent &&
-            !trimmed.startsWith("-") &&
-            trimmed.includes(":") &&
-            !trimmed.startsWith("#")
-          ) {
-            break;
-          }
-          if (trimmed.match(/^(next|then|else|when):/)) {
-            if (!inNestedLogic) {
-              inNestedLogic = true;
-              nestedLevel = indent;
-            }
-            continue;
-          }
-          if (
-            inNestedLogic &&
-            indent === workflowIndent + 2 &&
-            trimmed.startsWith("- step:")
-          ) {
-            inNestedLogic = false;
-          }
-          if (
-            trimmed.startsWith("- step:") &&
-            !inNestedLogic &&
-            indent === workflowIndent + 2
-          ) {
-            if (currentTask.name) {
-              tasks.push(currentTask as TaskNode);
-              taskIndex++;
-            }
-            const stepMatch = trimmed.match(/step:\s*([^'"#]+)/);
-            const taskName = stepMatch
-              ? stepMatch[1].trim()
-              : `Step ${taskIndex + 1}`;
-            currentTask = {
-              id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
-              name: taskName,
-              type: 'workbook',
-            };
-          } else if (
-            (trimmed.startsWith("- name:") ||
-              (trimmed.startsWith("-") && trimmed.includes("name:"))) &&
-            !inNestedLogic
-          ) {
-            if (currentTask.name) {
-              tasks.push(currentTask as TaskNode);
-              taskIndex++;
-            }
-            const nameMatch = trimmed.match(
-              /name:\s*['"](.*?)['"]|name:\s*(.+)/
-            );
-            const taskName = nameMatch
-              ? (nameMatch[1] || nameMatch[2] || "").trim()
-              : `Task ${taskIndex + 1}`;
-            currentTask = {
-              id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
-              name: taskName,
-              type: 'workbook',
-            };
-          } else if (
-            trimmed.startsWith("desc:") &&
-            currentTask.name &&
-            !inNestedLogic
-          ) {
-            const descMatch = trimmed.match(
-              /desc:\s*['"](.*?)['"]|desc:\s*(.+)/
-            );
-            if (descMatch) {
-              const description = (descMatch[1] || descMatch[2] || "")
-                .trim()
-                .replace(/^['"]|['"]$/g, "");
-              const originalName = currentTask.name;
-              currentTask.name = description;
-              if (
-                !currentTask.id ||
-                currentTask.id ===
-                originalName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase()
-              ) {
-                currentTask.id = originalName
-                  .replace(/[^a-zA-Z0-9]/g, "_")
-                  .toLowerCase();
-              }
-            }
-          } else if (
-            trimmed.startsWith("type:") &&
-            currentTask.name &&
-            !inNestedLogic
-          ) {
-            const typeMatch = trimmed.match(
-              /type:\s*['"](.*?)['"]|type:\s*([^'"#]+)/
-            );
-            if (typeMatch) {
-              currentTask.type = mapType((typeMatch[1] || typeMatch[2] || '').trim());
-            }
-          }
-          if (inNestedLogic && indent <= nestedLevel) {
-            inNestedLogic = false;
-          }
-        }
-      }
-      if (currentTask.name) {
-        tasks.push(currentTask as TaskNode);
-      }
-      return tasks;
-    } catch {
-      return [];
-    }
-  };
-
-  // New js-yaml based parser
-  const parsePlaybookContent = (content: string): TaskNode[] => {
-    try {
-      const doc: any = yaml.load(content);
-      if (!doc || typeof doc !== 'object') return [];
-      const sequence = Array.isArray(doc.tasks)
-        ? doc.tasks
-        : Array.isArray(doc.workflow)
-          ? doc.workflow
-          : [];
-      if (!Array.isArray(sequence)) return [];
-      const parsed: TaskNode[] = [];
-      sequence.forEach((entry: any, idx: number) => {
-        if (!entry || typeof entry !== 'object') return;
-        let rawName: string = entry.name || entry.step || entry.desc || `Task ${idx + 1}`;
-        if (typeof rawName !== 'string') rawName = `Task ${idx + 1}`;
-        const idBase = rawName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() || `task_${idx + 1}`;
-        let id = idBase;
-        let dupe = 1;
-        while (parsed.some(t => t.id === id)) id = `${idBase}_${dupe++}`;
-        const t: any = {
-          id,
-          name: rawName,
-          type: mapType(entry.type || 'workbook'),
-        };
-        if (entry.config && typeof entry.config === 'object') {
-          t.config = { ...entry.config };
-        }
-        if (entry.code && typeof entry.code === 'string') {
-          t.config = t.config || {}; t.config.code = entry.code;
-        }
-        if (entry.sql && typeof entry.sql === 'string') {
-          t.config = t.config || {}; t.config.sql = entry.sql;
-        }
-        parsed.push(t as TaskNode);
-      });
-      return parsed.length ? parsed : [];
-    } catch (e) {
-      console.warn('YAML parse failed, falling back to legacy parser', e);
-      return legacyParsePlaybookContent(content);
-    }
-  };
 
   const loadPlaybookFlow = async () => {
     setLoading(true);
