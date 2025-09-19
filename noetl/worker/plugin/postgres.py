@@ -10,6 +10,7 @@ from jinja2 import Environment
 from noetl.core.common import DateTimeEncoder, make_serializable
 from noetl.core.logger import setup_logger, log_error
 from noetl.core.dsl.render import render_template
+from noetl.worker.secrets import fetch_credential_by_key
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -32,61 +33,54 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     task_name = task_config.get('task', 'postgres_task')
     start_time = datetime.datetime.now()
 
-    # Resolve credential alias if provided and merge into task_with best-effort
+    # Resolve auth/credential alias if provided and merge into task_with best-effort
     try:
-        cred_ref = task_with.get('credential') or task_config.get('credential')
+        cred_ref = (
+            task_with.get('auth') or task_config.get('auth') or
+            task_with.get('credential') or task_config.get('credential')
+        )
         if cred_ref:
-            import httpx as _httpx
-            server_url = (context.get('env', {}) or {}).get('NOETL_SERVER_URL') or os.getenv('NOETL_SERVER_URL', 'http://localhost:8082')
-            server_url = server_url.rstrip('/')
-            if not server_url.endswith('/api'):
-                server_url = server_url + '/api'
-            url = f"{server_url}/credentials/{cred_ref}?include_data=true"
             try:
-                with _httpx.Client(timeout=5.0) as _c:
-                    _r = _c.get(url)
-                    if _r.status_code == 200:
-                        body = _r.json() or {}
-                        data = body.get('data') or {}
-                        if isinstance(data, dict):
-                            # Merge only missing keys in task_with
-                            for src, dst in (
-                                ('dsn','db_conn_string'),
-                                ('db_conn_string','db_conn_string'),
-                                ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
-                                ('db_port','db_port'), ('port','db_port'),
-                                ('db_user','db_user'), ('user','db_user'),
-                                ('db_password','db_password'), ('password','db_password'),
-                                ('db_name','db_name'), ('dbname','db_name'),
-                            ):
-                                if dst not in task_with and data.get(src) is not None:
-                                    task_with[dst] = data.get(src)
+                data = fetch_credential_by_key(str(cred_ref))
             except Exception:
-                pass
+                data = {}
+            if isinstance(data, dict):
+                # Merge only missing keys in task_with
+                for src, dst in (
+                    ('dsn','db_conn_string'),
+                    ('db_conn_string','db_conn_string'),
+                    ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
+                    ('db_port','db_port'), ('port','db_port'),
+                    ('db_user','db_user'), ('user','db_user'),
+                    ('db_password','db_password'), ('password','db_password'),
+                    ('db_name','db_name'), ('dbname','db_name'),
+                ):
+                    if dst not in task_with and data.get(src) is not None:
+                        task_with[dst] = data.get(src)
+            # Deprecation warning for old key
+            if task_config.get('credential') or task_with.get('credential'):
+                logger.warning("POSTGRES: 'credential' is deprecated; use 'auth' instead")
     except Exception:
-        pass
+        logger.debug("POSTGRES: failed to resolve auth credential", exc_info=True)
 
     # Validate configuration first - these errors should not be caught
     # Get database connection parameters - must be provided in task 'with' parameters only
     pg_host_raw = task_with.get('db_host')
-    if not pg_host_raw:
-        raise ValueError("Database host not provided. Set 'db_host' in task 'with' parameters.")
-    
     pg_port_raw = task_with.get('db_port')
-    if not pg_port_raw:
-        raise ValueError("Database port not provided. Set 'db_port' in task 'with' parameters.")
-    
     pg_user_raw = task_with.get('db_user')
-    if not pg_user_raw:
-        raise ValueError("Database user not provided. Set 'db_user' in task 'with' parameters.")
-    
     pg_password_raw = task_with.get('db_password')
-    if not pg_password_raw:
-        raise ValueError("Database password not provided. Set 'db_password' in task 'with' parameters.")
-    
     pg_db_raw = task_with.get('db_name')
-    if not pg_db_raw:
-        raise ValueError("Database name not provided. Set 'db_name' in task 'with' parameters.")
+    _missing = []
+    if not pg_host_raw: _missing.append('db_host')
+    if not pg_port_raw: _missing.append('db_port')
+    if not pg_user_raw: _missing.append('db_user')
+    if not pg_password_raw: _missing.append('db_password')
+    if not pg_db_raw: _missing.append('db_name')
+    if _missing:
+        raise ValueError(
+            "Postgres connection is not configured. Missing: " + ", ".join(_missing) +
+            ". Use `auth: <credential_key>` on the step (preferred) or provide explicit db_* fields in `with:`."
+        )
 
     # Build a rendering context that includes a 'workload' alias for compatibility
     render_ctx = dict(context) if isinstance(context, dict) else {}

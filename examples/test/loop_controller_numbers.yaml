@@ -16,7 +16,7 @@ workflow:
   - step: ensure_table
     desc: "Ensure results table exists"
     type: postgres
-    credential: pg_local
+    auth: pg_local
     command: |
       CREATE TABLE IF NOT EXISTS public.loop_numbers (
         id TEXT PRIMARY KEY,
@@ -32,7 +32,7 @@ workflow:
   - step: ensure_table_agg
     desc: "Ensure aggregated results table exists"
     type: postgres
-    credential: pg_local
+    auth: pg_local
     command: |
       CREATE TABLE IF NOT EXISTS public.loop_numbers_agg (
         execution_id TEXT PRIMARY KEY,
@@ -59,7 +59,7 @@ workflow:
       save:
         storage:
           kind: postgres
-          credential: pg_local
+          auth: pg_local
         table: public.loop_numbers
         mode: upsert
         key: id
@@ -73,7 +73,7 @@ workflow:
     save:
       storage:
         kind: postgres
-        credential: pg_local
+        auth: pg_local
       table: public.loop_numbers_agg
       mode: upsert
       key: execution_id

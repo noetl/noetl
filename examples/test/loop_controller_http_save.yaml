@@ -25,7 +25,7 @@ workflow:
   - step: ensure_pg_table
     desc: "Ensure raw HTTP results table exists"
     type: postgres
-    credential: pg_local
+    auth: pg_local
     command: |
       CREATE TABLE IF NOT EXISTS public.weather_http_raw (
         id TEXT PRIMARY KEY,
@@ -43,7 +43,7 @@ workflow:
   - step: ensure_agg_table
     desc: "Ensure aggregated HTTP results table exists"
     type: postgres
-    credential: pg_local
+    auth: pg_local
     command: |
       CREATE TABLE IF NOT EXISTS public.weather_http_agg (
         execution_id TEXT PRIMARY KEY,
@@ -73,7 +73,7 @@ workflow:
       save:
         storage:
           kind: postgres
-          credential: pg_local
+          auth: pg_local
         table: public.weather_http_raw
         mode: upsert
         key: id
@@ -89,7 +89,7 @@ workflow:
     save:
       storage:
         kind: postgres
-        credential: pg_local
+        auth: pg_local
       table: public.weather_http_agg
       mode: upsert
       key: execution_id
@@ -105,7 +105,7 @@ workflow:
     save:
       storage:
         kind: postgres
-        credential: pg_local
+        auth: pg_local
       table: public.weather_pipeline_metrics
       mode: upsert
       key: execution_id

@@ -241,7 +241,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     # iterator fields
                                     'collection','element','mode','concurrency','enumerate','where','limit','chunk','order_by',
                                     # unified payload fields (prefer input/payload over legacy with later)
-                                    'input','payload','with',
+                                    'input','payload','with','auth',
                                     'data',  # some steps embed data payloads directly
                                     'resource_path','content','path','loop','save','credential'
                                 ):

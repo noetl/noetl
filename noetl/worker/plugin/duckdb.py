@@ -152,17 +152,74 @@ def execute_duckdb_task(
         except Exception:
             pass
 
+        # Resolve credentials mapping early so users can refer to {{ credentials.<alias>.* }} in SQL
+        # without relying on auto-attach/auto-secret logic.
+        resolved_creds_for_tpl: Dict[str, Any] = {}
+        try:
+            creds_cfg0 = task_config.get('credentials')
+            # Normalize mapping -> list with alias injected (non-destructive)
+            norm_list = []
+            if isinstance(creds_cfg0, dict):
+                for _alias, _spec in creds_cfg0.items():
+                    if isinstance(_spec, dict):
+                        ent = dict(_spec)
+                        ent.setdefault('alias', _alias)
+                        norm_list.append(ent)
+            elif isinstance(creds_cfg0, list):
+                norm_list = [e for e in creds_cfg0 if isinstance(e, dict)]
+            # Fetch each referenced credential and expose a template-friendly view
+            if norm_list:
+                base_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+                if not base_url.endswith('/api'):
+                    base_url = base_url + '/api'
+                with httpx.Client(timeout=5.0) as _c:
+                    for ent in norm_list:
+                        alias = ent.get('alias') or 'cred'
+                        ref = ent.get('key') or ent.get('credential') or ent.get('credentialRef')
+                        if not isinstance(ref, str) or not ref:
+                            continue
+                        try:
+                            r = _c.get(f"{base_url}/credentials/{ref}?include_data=true")
+                            if r.status_code == 200:
+                                body = r.json() or {}
+                                ctype = (body.get('type') or body.get('credential_type') or '').lower()
+                                raw = body.get('data') or {}
+                                payload = raw.get('data') if isinstance(raw, dict) and isinstance(raw.get('data'), dict) else raw
+                                view = dict(payload) if isinstance(payload, dict) else {}
+                                # Provide a libpq connection string for Postgres
+                                if ctype.startswith('postgres'):
+                                    host = view.get('db_host') or view.get('host')
+                                    port = view.get('db_port') or view.get('port')
+                                    user = view.get('db_user') or view.get('user')
+                                    pwd = view.get('db_password') or view.get('password')
+                                    dbn = view.get('db_name') or view.get('dbname') or view.get('database')
+                                    if host and port and user and pwd and dbn:
+                                        view['connstr'] = f"dbname={dbn} user={user} password={pwd} host={host} port={port}"
+                                resolved_creds_for_tpl[alias] = view
+                        except Exception:
+                            continue
+        except Exception:
+            resolved_creds_for_tpl = {}
+
         if isinstance(commands, str):
-            commands_rendered = render_template(jinja_env, commands, {**context, **(processed_task_with or {})})
+            tpl_ctx = {**context, **(processed_task_with or {})}
+            # Expose resolved credentials under 'credentials' for native DuckDB ATTACH/CREATE SECRET usage
+            if 'credentials' not in tpl_ctx:
+                tpl_ctx['credentials'] = resolved_creds_for_tpl
+            commands_rendered = render_template(jinja_env, commands, tpl_ctx)
             try:
                 logger.info(f"DUCKDB.EXECUTE_DUCKDB_TASK: commands_rendered (first 400 chars)={commands_rendered[:400]}")
             except Exception:
                 pass
             cmd_lines = []
             for line in commands_rendered.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('--'):
-                    cmd_lines.append(line)
+                s = line.strip()
+                # Skip common SQL comment line prefixes (DuckDB supports -- and /* ... */)
+                if not s:
+                    continue
+                if s.startswith('--') or s.startswith('#'):
+                    continue
+                cmd_lines.append(s)
             commands_text = ' '.join(cmd_lines)
             from . import sql_split
             commands = sql_split(commands_text)
@@ -220,8 +277,9 @@ def execute_duckdb_task(
             logger.warning(f"DUCKDB: failed to install/load httpfs: {_httpfs_e}")
 
         # Optional: attach multiple external databases from credentials mapping/list
-        # Step-level preferred: task_config['credentials'] as a mapping of alias -> { kind, credential, spec, dsn }
-        # Back-compat: with.credentials can be a list or mapping too
+        # New preferred: task_config['credentials'] as a mapping of alias -> { key: <credential_name> }
+        #                'kind' becomes optional and may be derived from the credential record type.
+        # Back-compat: with.credentials can be a list or mapping too (old shape with inline payloads is rejected)
         # Supported kinds: postgres|mysql|sqlite (attach) and gcs_hmac/s3_hmac (configure cloud access via DuckDB Secrets)
         try:
             creds_cfg = task_config.get('credentials') or (processed_task_with or {}).get('credentials')
@@ -240,14 +298,20 @@ def execute_duckdb_task(
                         if not isinstance(ent, dict):
                             continue
                         alias = ent.get('alias') or ent.get('db_alias') or 'ext_db'
-                        kind = (ent.get('kind') or ent.get('db_type') or 'postgres').lower()
+                        kind = (ent.get('kind') or ent.get('db_type') or '').lower()
                         dsn = ent.get('dsn') or ent.get('db_conn_string')
                         spec = ent.get('spec') if isinstance(ent.get('spec'), dict) else {}
-                        cred_ref = ent.get('credential') or ent.get('credentialRef')
+                        cred_ref = ent.get('key') or ent.get('credential') or ent.get('credentialRef')
+
+                        # Reject inline secret payloads in credentials entries (use key: alias instead)
+                        forbidden_inline_keys = {'key_id','secret','secret_key','access_key_id','secret_access_key','db_user','db_password','db_host','db_name','dbname'}
+                        if any(k in ent for k in forbidden_inline_keys):
+                            raise ValueError("duckdb.credentials: inline secret fields are not allowed; use entries like { alias: { key: <credential_name> } }")
 
                         # Resolve credential by name/id from server when provided
                         cred_data = None
-                        if cred_ref and not dsn:
+                        cred_type = None
+                        if cred_ref:
                             try:
                                 base = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
                                 if not base.endswith('/api'):
@@ -257,12 +321,16 @@ def execute_duckdb_task(
                                     _r = _c.get(url)
                                     if _r.status_code == 200:
                                         body = _r.json() or {}
-                                        cred_data = (body.get('data') or {}) if isinstance(body, dict) else None
+                                        raw = body.get('data') or {}
+                                        payload = raw.get('data') if isinstance(raw, dict) and isinstance(raw.get('data'), dict) else raw
+                                        cred_data = payload if isinstance(payload, dict) else None
+                                        cred_type = (body.get('type') or body.get('credential_type') or '').lower()
                             except Exception:
                                 cred_data = None
 
                         # Explicitly configure DuckDB Secrets for cloud access
-                        if kind in ('gcs', 'gcs_hmac', 's3', 's3_hmac'):
+                        use_kind = kind or cred_type or ''
+                        if use_kind in ('gcs', 'gcs_hmac', 's3', 's3_hmac'):
                             # Prefer explicit values from entry/spec/cred store
                             src = {}
                             if isinstance(cred_data, dict):
@@ -276,7 +344,7 @@ def execute_duckdb_task(
                             url_style = ent.get('url_style') or src.get('url_style') or 'path'
                             use_ssl = ent.get('use_ssl') if ent.get('use_ssl') is not None else (src.get('use_ssl') if src.get('use_ssl') is not None else True)
                             # Determine provider/scheme and candidate scopes from parsed commands
-                            provider = 'GCS' if kind in ('gcs','gcs_hmac') else None
+                            provider = 'GCS' if use_kind in ('gcs','gcs_hmac') else None
                             schemes = ['gs'] if provider == 'GCS' else ['s3']
                             scopes = []
                             for sch in schemes:
@@ -296,55 +364,29 @@ def execute_duckdb_task(
                                 duckdb_con.execute("LOAD httpfs;")
                             except Exception:
                                 pass
-                            created_any = False
-                            if scopes:
-                                for sc in scopes:
-                                    secret_name = f"{secret_base}"
-                                    # When multiple scopes, differentiate names to avoid collisions
-                                    if len(scopes) > 1:
-                                        scope_tag = re.sub(r"[^a-zA-Z0-9_]+", "_", sc)
-                                        secret_name = f"{secret_base}_{scope_tag}"
-                                    parts = [
-                                        "TYPE S3",
-                                    ]
-                                    if provider:
-                                        parts.append(f"PROVIDER {provider}")
-                                    parts.append(f"KEY_ID '{key_id}'")
-                                    parts.append(f"SECRET '{secret}'")
-                                    if endpoint or provider == 'GCS':
-                                        parts.append(f"ENDPOINT '{endpoint or 'storage.googleapis.com'}'")
-                                    if region:
-                                        parts.append(f"REGION '{region}'")
-                                    if url_style:
-                                        parts.append(f"URL_STYLE '{url_style}'")
-                                    parts.append(f"USE_SSL {'true' if use_ssl else 'false'}")
-                                    parts.append(f"SCOPE '{sc}'")
-                                    ddl = f"CREATE OR REPLACE SECRET {secret_name} (\n        {', '.join(parts)}\n    );"
-                                    logger.info(f"DUCKDB: creating scoped secret {secret_name} for {sc}")
-                                    duckdb_con.execute(ddl)
-                                    created_any = True
-                            else:
-                                # Create an unscoped secret; callers must still reference exact URI in commands
-                                parts = [
-                                    "TYPE S3",
-                                ]
-                                if provider:
-                                    parts.append(f"PROVIDER {provider}")
-                                parts.append(f"KEY_ID '{key_id}'")
-                                parts.append(f"SECRET '{secret}'")
-                                if endpoint or provider == 'GCS':
-                                    parts.append(f"ENDPOINT '{endpoint or 'storage.googleapis.com'}'")
-                                if region:
-                                    parts.append(f"REGION '{region}'")
-                                if url_style:
-                                    parts.append(f"URL_STYLE '{url_style}'")
-                                parts.append(f"USE_SSL {'true' if use_ssl else 'false'}")
-                                ddl = f"CREATE OR REPLACE SECRET {secret_base} (\n        {', '.join(parts)}\n    );"
-                                logger.info(f"DUCKDB: creating unscoped secret {secret_base}")
-                                duckdb_con.execute(ddl)
-                                created_any = True
-                            if created_any:
-                                logger.info(f"DUCKDB: cloud credentials configured via DuckDB Secret(s) for alias '{alias}'")
+                            # Create a single secret named exactly as the credentials alias
+                            parts = [
+                                "TYPE S3",
+                            ]
+                            if provider:
+                                parts.append(f"PROVIDER {provider}")
+                            parts.append(f"KEY_ID '{key_id}'")
+                            parts.append(f"SECRET '{secret}'")
+                            if endpoint or provider == 'GCS':
+                                parts.append(f"ENDPOINT '{endpoint or 'storage.googleapis.com'}'")
+                            if region:
+                                parts.append(f"REGION '{region}'")
+                            if url_style:
+                                parts.append(f"URL_STYLE '{url_style}'")
+                            parts.append(f"USE_SSL {'true' if use_ssl else 'false'}")
+                            # Prefer explicit entry scope; otherwise use the first detected scope in SQL; otherwise unscoped
+                            chosen_scope = ent_scope or (scopes[0] if scopes else None)
+                            if chosen_scope:
+                                parts.append(f"SCOPE '{chosen_scope}'")
+                            secret_name = safe_alias
+                            ddl = f"CREATE OR REPLACE SECRET {secret_name} (\n        {', '.join(parts)}\n    );"
+                            logger.info(f"DUCKDB: configured secret '{secret_name}' for provider {provider or 'S3'}")
+                            duckdb_con.execute(ddl)
                             continue
 
                         conn_string = dsn or ''
@@ -358,17 +400,17 @@ def execute_duckdb_task(
                                     src.update(spec)
                             except Exception:
                                 pass
-                            if kind == 'postgres':
+                            if (use_kind or kind or '').startswith('postgres'):
                                 host = src.get('host') or src.get('db_host') or os.environ.get('POSTGRES_HOST', 'localhost')
                                 port = src.get('port') or src.get('db_port') or os.environ.get('POSTGRES_PORT', '5434')
                                 user = src.get('user') or src.get('db_user') or os.environ.get('POSTGRES_USER', 'noetl')
                                 pwd = src.get('password') or src.get('db_password') or os.environ.get('POSTGRES_PASSWORD', 'noetl')
                                 dbn = src.get('dbname') or src.get('database') or src.get('db_name') or os.environ.get('POSTGRES_DB', 'noetl')
                                 conn_string = f"dbname={dbn} user={user} password={pwd} host={host} port={port}"
-                            elif kind == 'sqlite':
+                            elif (use_kind or kind or '') == 'sqlite':
                                 path = src.get('path') or src.get('db_path') or os.path.join(duckdb_data_dir, 'sqlite', 'noetl.db')
                                 conn_string = path
-                            elif kind == 'mysql':
+                            elif (use_kind or kind or '') == 'mysql':
                                 host = src.get('host') or src.get('db_host') or os.environ.get('MYSQL_HOST', 'localhost')
                                 port = src.get('port') or src.get('db_port') or os.environ.get('MYSQL_PORT', '3306')
                                 user = src.get('user') or src.get('db_user') or os.environ.get('MYSQL_USER', 'noetl')
@@ -382,15 +424,15 @@ def execute_duckdb_task(
                             continue
 
                         # Install required extension and ATTACH
-                        if kind == 'postgres':
+                        if (use_kind or kind or '').startswith('postgres'):
                             duckdb_con.execute("INSTALL postgres;")
                             duckdb_con.execute("LOAD postgres;")
                             attach_opts = " (TYPE postgres)"
-                        elif kind == 'mysql':
+                        elif (use_kind or kind or '') == 'mysql':
                             duckdb_con.execute("INSTALL mysql;")
                             duckdb_con.execute("LOAD mysql;")
                             attach_opts = " (TYPE mysql)"
-                        elif kind == 'sqlite':
+                        elif (use_kind or kind or '') == 'sqlite':
                             attach_opts = ""
                         else:
                             attach_opts = ""
@@ -602,19 +644,46 @@ def execute_duckdb_task(
         elif db_type.lower() in ['postgres', 'mysql']:
             attach_options += f" (TYPE {db_type.lower()})"
 
+        # Determine which alias names are referenced in commands and ensure those are attached too.
+        # This keeps backward compatibility when playbooks use 'pg_db' while default alias is 'postgres_db'.
+        referenced_aliases = set()
         try:
-            test_query = f"SELECT 1 FROM {db_alias}.sqlite_master LIMIT 1" if db_type.lower() == 'sqlite' else f"SELECT 1 FROM {db_alias}.information_schema.tables LIMIT 1"
-            duckdb_con.execute(test_query)
-            logger.info(f"Database '{db_alias}' is already attached.")
-        except Exception as e:
+            if isinstance(commands, list):
+                for _c in commands:
+                    if not isinstance(_c, str):
+                        continue
+                    if 'pg_db.' in _c:
+                        referenced_aliases.add('pg_db')
+                    if 'postgres_db.' in _c:
+                        referenced_aliases.add('postgres_db')
+        except Exception:
+            pass
+
+        # Always include configured alias; for postgres also include any referenced alias tokens
+        aliases_to_attach = [db_alias]
+        if db_type.lower() == 'postgres':
+            for ra in sorted(referenced_aliases):
+                if ra not in aliases_to_attach:
+                    aliases_to_attach.append(ra)
+
+        # Attach each required alias idempotently
+        for _alias in aliases_to_attach:
             try:
-                logger.info(f"Attaching {db_type} database as '{db_alias}'.")
-                attach_sql = f"ATTACH '{conn_string}' AS {db_alias}{attach_options};"
-                logger.debug(f"ATTACH SQL: {attach_sql}")
-                duckdb_con.execute(attach_sql)
-            except Exception as attach_error:
-                logger.error(f"Error attaching database: {attach_error}.")
-                raise
+                test_query = (
+                    f"SELECT 1 FROM {_alias}.sqlite_master LIMIT 1" if db_type.lower() == 'sqlite'
+                    else f"SELECT 1 FROM {_alias}.information_schema.tables LIMIT 1"
+                )
+                duckdb_con.execute(test_query)
+                logger.info(f"Database '{_alias}' is already attached.")
+            except Exception:
+                try:
+                    logger.info(f"Attaching {db_type} database as '{_alias}'.")
+                    attach_sql = f"ATTACH '{conn_string}' AS {_alias}{attach_options};"
+                    logger.debug(f"ATTACH SQL: {attach_sql}")
+                    duckdb_con.execute(attach_sql)
+                except Exception as attach_error:
+                    logger.error(f"Error attaching database alias '{_alias}': {attach_error}.")
+                    raise
 
         results = {}
         if commands:
@@ -666,15 +735,16 @@ def execute_duckdb_task(
                         logger.warning(f"Error in DETACH command: {detach_error}.")
                         results[f"command_{i}"] = {"status": "warning", "message": f"DETACH operation failed: {str(detach_error)}"}
                 else:
-                    # Normalize COPY paths: ensure file/URI is quoted to avoid parser issues on ':' (e.g., gs://)
+                    # Normalize COPY paths
+                    # 1) Ensure file/URI is quoted to avoid parser issues on ':' (e.g., gs://)
+                    # 2) If the path is an absolute local path (starts with '/'), rewrite to NOETL_DATA_DIR
                     try:
                         import re as _re
+                        import os as _os
                         _cmd_upper = cmd.strip().upper()
                         if _cmd_upper.startswith("COPY "):
-                            # Handle COPY <table> TO <path> ( ... ) and COPY <table> FROM <path> ...
+                            # Quote unquoted path
                             def _quote_copy_path(_cmd: str, _kw: str) -> str:
-                                # Match 'COPY <obj> <KW> <path> (' capturing <path> as non-space/non-parenthesis
-                                # Keep minimalistic to avoid heavy parsing
                                 pattern = _re.compile(rf"^(COPY\s+[^\s]+\s+{_kw}\s+)([^\s\(]+)(\s*\()", _re.IGNORECASE)
                                 m = pattern.search(_cmd)
                                 if m:
@@ -687,6 +757,41 @@ def execute_duckdb_task(
                                 cmd = _quote_copy_path(cmd, "TO")
                             if " FROM " in _cmd_upper:
                                 cmd = _quote_copy_path(cmd, "FROM")
+
+                            # Rewrite absolute local paths to live under NOETL_DATA_DIR
+                            def _normalize_copy_local_path(_cmd: str) -> str:
+                                # Match COPY <obj> (TO|FROM) <path> (
+                                pat = _re.compile(r'^(COPY\s+[^\s]+\s+)(TO|FROM)\s+(\'([^\']*)\'|"([^"]*)"|([^\s\(]+))(\s*\()', _re.IGNORECASE)
+                                m = pat.search(_cmd)
+                                if not m:
+                                    return _cmd
+                                kw = (m.group(2) or '').upper()
+                                raw = m.group(3)
+                                path = m.group(4) or m.group(5) or m.group(6) or ''
+                                # Leave URIs or file: scheme unchanged
+                                if '://' in path or path.startswith('file:'):
+                                    return _cmd
+                                # Only rewrite absolute paths
+                                if path.startswith('/'):
+                                    base = duckdb_data_dir
+                                    norm = _os.path.join(base, path.lstrip('/'))
+                                    # Ensure parent dir exists for writes
+                                    if kw == 'TO':
+                                        try:
+                                            _os.makedirs(_os.path.dirname(norm), exist_ok=True)
+                                        except Exception:
+                                            pass
+                                    # Replace while preserving quotes
+                                    if raw.startswith("'") and raw.endswith("'"):
+                                        repl = f"'{norm}'"
+                                    elif raw.startswith('"') and raw.endswith('"'):
+                                        repl = f'"{norm}"'
+                                    else:
+                                        repl = f"'{norm}'"
+                                    _cmd = _cmd[:m.start(3)] + repl + _cmd[m.end(3):]
+                                return _cmd
+
+                            cmd = _normalize_copy_local_path(cmd)
                     except Exception:
                         pass
                     cursor = duckdb_con.execute(cmd)

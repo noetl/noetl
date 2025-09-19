@@ -22,7 +22,7 @@ workflow:
   - step: create_table
     desc: "Ensure target table exists"
     type: postgres
-    credential: pg_local
+    auth: pg_local
     command: |
       CREATE TABLE IF NOT EXISTS public.postgres_save_demo (
         id TEXT PRIMARY KEY,
@@ -38,7 +38,7 @@ workflow:
     save:
       storage:
         kind: postgres
-        credential: pg_local
+        auth: pg_local
       table: public.postgres_save_demo
       mode: upsert
       key: id

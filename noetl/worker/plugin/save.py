@@ -75,7 +75,9 @@ def execute_save_task(
         chunk_size = payload.get('chunk_size') or payload.get('chunksize')
         concurrency = payload.get('concurrency')
         # storage-level attributes (do not echo secrets)
-        credential_ref = storage.get('credential') or storage.get('credentialRef')
+        credential_ref = storage.get('auth') or storage.get('credential') or storage.get('credentialRef')
+        if storage.get('credential'):
+            logger.warning("SAVE: storage.credential is deprecated; use storage.auth instead")
         spec = storage.get('spec') or {}
 
         # Render data/params against the execution context
@@ -224,6 +226,10 @@ def execute_save_task(
                 pg_with['params'] = rendered_params
             if isinstance(rendered_data, dict) and rendered_data:
                 pg_with['save_data'] = rendered_data
+
+            # Pass through auth alias so postgres plugin can resolve if needed
+            if credential_ref and 'auth' not in pg_with:
+                pg_with['auth'] = credential_ref
 
             pg_result = _pg_exec(pg_task, context, jinja_env, pg_with, log_event_callback)
             # Normalize into save envelope
