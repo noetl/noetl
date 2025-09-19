@@ -1,1 +1,1 @@
-export { pythonNode } from './index.tsx';
+export { pythonNode } from './python';

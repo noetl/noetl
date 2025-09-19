@@ -1,1 +1,1 @@
-export { startNode } from './index.tsx';
+export { startNode } from './start';

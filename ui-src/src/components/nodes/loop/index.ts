@@ -1,1 +1,1 @@
-export { loopNode } from './index.tsx';
+export { loopNode } from './loop';

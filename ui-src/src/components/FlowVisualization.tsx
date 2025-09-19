@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, memo } from "react";
+import React, { useCallback, useState, useEffect, memo, useMemo } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -29,13 +29,11 @@ import {
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
-// Import modular node type definitions
 import { nodeTypeMap, orderedNodeTypes } from './nodeTypes';
 import { EditableTaskNode, TaskNode } from "./types";
-import { EditableNode } from "./EditableNode";
 import MonacoEditor from '@monaco-editor/react';
-// @ts-ignore - types may not be present
-import yaml from 'js-yaml'; // NEW: robust YAML parsing
+// @ts-ignore
+import yaml from 'js-yaml';
 
 interface FlowVisualizationProps {
   visible: boolean;
@@ -48,7 +46,56 @@ interface FlowVisualizationProps {
   onUpdateContent?: (newContent: string) => void; // NEW: callback to push updated YAML back to editor
 }
 
+// New base node component (style driven by nodeTypeMap + task.type)
+const TaskNodeBase: React.FC<NodeProps> = memo(({ data, id, selected }) => {
+  const { task, readOnly } = data as { task: EditableTaskNode; readOnly?: boolean };
+  const def = nodeTypeMap[task.type] || { icon: '❓', color: '#666', label: task.type } as any;
+  return (
+    <div
+      className={`TaskNode TaskNode--${task.type} ${selected ? 'is-selected' : ''}`}
+      style={{
+        border: `1px solid ${def.color || '#666'}`,
+        background: '#fff',
+        color: def.color || '#222',
+        borderRadius: 12,
+        padding: '6px 10px 8px',
+        minWidth: 150,
+        boxShadow: selected ? `0 0 0 2px ${(def.color || '#666')}33` : '0 1px 3px rgba(0,0,0,0.18)',
+        fontSize: 12,
+        fontWeight: 500,
+        cursor: readOnly ? 'default' : 'pointer',
+        transition: 'box-shadow 120ms, transform 120ms',
+        backgroundImage: 'linear-gradient(145deg, #ffffff, #f7f9fb)',
+      }}
+      data-node-id={id}
+    >
+      <Handle type="target" position={Position.Left} className="flow-node-handle flow-node-handle-target" />
+      <Handle type="source" position={Position.Right} className="flow-node-handle flow-node-handle-source" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.2 }}>
+        <span style={{ fontSize: 16 }} aria-hidden>{def.icon}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.name || task.id}</div>
+          <div style={{ fontSize: 10, opacity: 0.75, textTransform: 'uppercase', letterSpacing: 0.5 }}>{task.type}</div>
+        </div>
+      </div>
+      {!!task.config && Object.keys(task.config).length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 10, maxHeight: 52, overflow: 'hidden', lineHeight: 1.25 }}>
+          {Object.entries(task.config).slice(0, 3).map(([k, v]) => (
+            <div key={k}><strong>{k}</strong>: {typeof v === 'string' ? (v.length > 26 ? v.slice(0, 24) + '…' : v) : typeof v}</div>
+          ))}
+          {Object.keys(task.config).length > 3 && <div>…</div>}
+        </div>
+      )}
+    </div>
+  );
+});
 
+// Build nodeTypes map: one entry per task type referencing same base component
+const buildNodeTypes = (): NodeTypes => {
+  const map: NodeTypes = {};
+  orderedNodeTypes.forEach(t => { map[t] = TaskNodeBase; });
+  return map;
+};
 
 const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   visible,
@@ -75,10 +122,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Define custom node types for ReactFlow
-  const customNodeTypes: NodeTypes = {
-    editableNode: EditableNode,
-  };
+  // Define custom node types (per task type now)
+  const customNodeTypes = useMemo<NodeTypes>(() => buildNodeTypes(), []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -137,6 +182,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     [setNodes, readOnly]
   );
 
+  // Handle task deletion (moved above createFlowFromTasks to satisfy hooks deps)
+  const handleDeleteTask = useCallback((taskId: string) => {
+    if (readOnly) return;
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    setHasChanges(true);
+    messageApi.success("Component deleted");
+  }, [messageApi, readOnly]);
+
   // Layout constants for auto positioning (breathe like the examples)
   const GRID_COLUMNS = 3;
   const H_SPACING = 420; // was 380
@@ -161,7 +214,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
         flowNodes.push({
           id: task.id,
-          type: "editableNode",
+          type: task.type, // per-type component
           position: { x, y },
           data: {
             task,
@@ -206,7 +259,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
       return { nodes: flowNodes, edges: flowEdges };
     },
-    [handleEditTask]
+    [handleEditTask, handleDeleteTask, readOnly]
   );
 
   // Recreate flow when tasks change
@@ -215,14 +268,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     setNodes(flowNodes);
     setEdges(flowEdges);
   }, [tasks, createFlowFromTasks, setNodes, setEdges]);
-
-  // Handle task deletion
-  const handleDeleteTask = useCallback((taskId: string) => {
-    if (readOnly) return;
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
-    setHasChanges(true);
-    messageApi.success("Component deleted");
-  }, [messageApi, readOnly]);
 
   // Handle adding new task
   const handleAddTask = useCallback(() => {
@@ -780,18 +825,12 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             </div>
             <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '500px' }}>
               <ReactFlow
-                nodes={nodes.map(n => ({
-                  ...n,
-                  data: { ...n.data, readOnly },
-                }))}
+                nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                onNodeClick={(e, node) => {
-                  const task = (node.data as any)?.task;
-                  if (task) setActiveTask(task);
-                }}
+                onNodeClick={(e, node) => { const task = (node.data as any)?.task; if (task) setActiveTask(task); }}
                 nodeTypes={customNodeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
                 connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}

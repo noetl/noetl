@@ -1,1 +1,1 @@
-export { workbookNode } from './index.tsx';
+export { workbookNode } from './workbook';

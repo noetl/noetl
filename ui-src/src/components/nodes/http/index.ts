@@ -1,1 +1,1 @@
-export { httpNode } from './index.tsx';
+export { httpNode } from './http';

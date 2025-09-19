@@ -1,1 +1,1 @@
-export { duckdbNode } from './index.tsx';
+export { duckdbNode } from './duckdb';

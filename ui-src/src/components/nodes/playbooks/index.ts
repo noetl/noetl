@@ -1,1 +1,1 @@
-export { playbooksNode } from './index.tsx';
+export { playbooksNode } from './playbooks';

@@ -1,2 +1,0 @@
-Each node type has its own folder with an index.tsx exporting a NodeTypeDef named '<type>Node'.
-Allowed nodes: start, end, workbook, python, http, duckdb, postgres, secrets, playbooks, loop.

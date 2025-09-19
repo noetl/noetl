@@ -1,1 +1,1 @@
-export { postgresNode } from './index.tsx';
+export { postgresNode } from './postgres';
