@@ -442,7 +442,7 @@ export-event-log:
 	@set -a; [ -f .env ] && . .env; set +a; \
 	if [ -z "$(ID)" ]; then echo "Usage: make export-event-log ID=<execution_id>"; exit 1; fi; \
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
-	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, metadata, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, stack_trace FROM noetl.event WHERE execution_id = $(ID) ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
+	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, meta, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, trace_component, stack_trace FROM noetl.event WHERE execution_id = $(ID) ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
 	ln -sf event.json logs/event_log.json; \
 	[ -s logs/event.json ] && (jq . logs/event.json >/dev/null 2>&1 && jq . logs/event.json > logs/event.json.tmp && mv logs/event.json.tmp logs/event.json || true) || true; \
 	echo "Wrote logs/event.json (symlinked to event_log.json)"

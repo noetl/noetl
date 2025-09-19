@@ -511,13 +511,16 @@ class QueueWorker:
             except Exception:
                 parent_event_id = None
 
+            # Determine node_type for events (iterator vs task)
+            node_type_val = "iterator" if act_type == "iterator" else "task"
+
             start_event = {
                 "execution_id": execution_id,
                 "event_type": "action_started",
                 "status": "RUNNING",
                 "node_id": node_id,
                 "node_name": task_name,
-                "node_type": "task",
+                "node_type": node_type_val,
                 "context": {"work": context, "task": action_cfg},
                 "trace_component": {"worker_raw_context": raw_context},
                 "timestamp": datetime.datetime.now().isoformat(),
@@ -642,7 +645,7 @@ class QueueWorker:
                         "status": "ERROR",
                         "node_id": node_id,
                         "node_name": task_name,
-                        "node_type": "task",
+                        "node_type": node_type_val,
                         "error": err_msg,
                         "traceback": tb_text,
                         "result": result,
@@ -662,7 +665,7 @@ class QueueWorker:
                         "status": "COMPLETED",
                         "node_id": node_id,
                         "node_name": task_name,
-                        "node_type": "task",
+                        "node_type": node_type_val,
                         "result": result,
                         "timestamp": datetime.datetime.now().isoformat(),
                     }
@@ -683,7 +686,7 @@ class QueueWorker:
                             "status": "COMPLETED",
                             "node_id": node_id,
                             "node_name": task_name,
-                            "node_type": "task",
+                            "node_type": node_type_val,
                             "result": norm_result,
                             "timestamp": datetime.datetime.now().isoformat(),
                         }
@@ -708,7 +711,7 @@ class QueueWorker:
                         "status": "ERROR",
                         "node_id": node_id,
                         "node_name": task_name,
-                        "node_type": "task",
+                        "node_type": node_type_val,
                         "error": f"{type(e).__name__}: {str(e)}",
                         "traceback": tb_text,
                         "result": {"error": str(e), "traceback": tb_text},

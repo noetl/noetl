@@ -209,7 +209,7 @@ def execute_loop_task(
         event_id = None
         if log_event_callback:
             event_id = log_event_callback(
-                'task_start', task_id, task_name, 'loop',
+                'task_start', task_id, task_name, 'iterator',
                 'in_progress', 0, context, None,
                 {'with_params': task_with, 'iterator': iterator_name, 'mode': mode, 'concurrency': concurrency, 'count': total}, None
             )
@@ -365,7 +365,7 @@ def execute_loop_task(
 
         if log_event_callback:
             log_event_callback(
-                'task_complete', task_id, task_name, 'loop',
+                'task_complete', task_id, task_name, 'iterator',
                 'success', duration, context,
                 {'results': final, 'items': final, 'count': len(final), 'errors': errors},
                 {'with_params': task_with, 'iterator': iterator_name, 'count': len(final)}, event_id
@@ -405,7 +405,7 @@ def execute_loop_task(
         duration = (end_time - start_time).total_seconds()
         if log_event_callback:
             log_event_callback(
-                'task_error', task_id, task_name, 'loop',
+                'task_error', task_id, task_name, 'iterator',
                 'error', duration, context, None,
                 {'with_params': task_with, 'error': str(e)}, None
             )
