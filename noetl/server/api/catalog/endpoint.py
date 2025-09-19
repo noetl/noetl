@@ -58,6 +58,7 @@ async def register_resource(
             detail=f"Error registering resource: {e}."
         )
 
+
 @router.get("/catalog/list", response_class=JSONResponse)
 async def list_resources(
     request: Request,
@@ -131,50 +132,14 @@ async def get_catalog_playbooks():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
-async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
-    """Get playbook by ID, optionally by version"""
-    try:
-        logger.info(f"Received playbook_id: '{playbook_id}'")
-        if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]
-            logger.info(f"Fixed playbook_id: '{playbook_id}'")
-
-        from .service import get_catalog_service
-        catalog_service = get_catalog_service()
-
-        if not version:
-            version = await catalog_service.get_latest_version(playbook_id)
-
-        entry = await catalog_service.fetch_entry(playbook_id, version)
-        if not entry:
-            raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
-
-        try:
-            content = entry.get('content') or ''
-            if isinstance(content, bytes):
-                content = content.decode('utf-8', errors='ignore')
-            entry['payload'] = yaml.safe_load(content) or {}
-        except Exception:
-            pass
-
-        return entry
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting playbook: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
 async def get_catalog_playbook_content(playbook_id: str, request: Request, version: Optional[str] = None):
-    """Get playbook content"""
+    """Get playbook raw content"""
     try:
         logger.info(f"Received playbook_id for content: '{playbook_id}'")
         if playbook_id.startswith("playbooks/"):
             playbook_id = playbook_id[10:]
             logger.info(f"Fixed playbook_id for content: '{playbook_id}'")
-
         body = None
         try:
             body = await request.json()
@@ -182,22 +147,14 @@ async def get_catalog_playbook_content(playbook_id: str, request: Request, versi
             pass
         if not version and isinstance(body, dict):
             version = body.get('version')
-
         from .service import get_catalog_service
         catalog_service = get_catalog_service()
-
         if not version:
             version = await catalog_service.get_latest_version(playbook_id)
-
         entry = await catalog_service.fetch_entry(playbook_id, version)
         if not entry:
             raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
-
-        return {
-            "path": playbook_id,
-            "version": version,
-            "content": entry.get('content')
-        }
+        return {"path": playbook_id, "version": version, "content": entry.get('content')}
     except HTTPException:
         raise
     except Exception as e:
@@ -207,35 +164,95 @@ async def get_catalog_playbook_content(playbook_id: str, request: Request, versi
 
 @router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
 async def save_catalog_playbook_content(playbook_id: str, request: Request):
-    """Save playbooks content"""
+    """Save playbook content (stores new version)."""
     try:
         logger.info(f"Received playbook_id for save: '{playbook_id}'")
         if playbook_id.startswith("playbooks/"):
             playbook_id = playbook_id[10:]
             logger.info(f"Fixed playbook_id for save: '{playbook_id}'")
-
         body = await request.json()
         content = body.get("content")
-
         if not content:
-            raise HTTPException(
-                status_code=400,
-                detail="Content is required."
-            )
+            raise HTTPException(status_code=400, detail="Content is required.")
+        # Normalize YAML so resource_path matches URL id
+        try:
+            parsed = yaml.safe_load(content) or {}
+            if isinstance(parsed, dict):
+                if 'metadata' in parsed and isinstance(parsed['metadata'], dict):
+                    parsed['metadata']['path'] = playbook_id
+                    parsed['metadata'].setdefault('name', playbook_id.split('/')[-1])
+                else:
+                    meta = parsed.get('metadata') if isinstance(parsed.get('metadata'), dict) else {}
+                    meta['path'] = playbook_id
+                    meta.setdefault('name', playbook_id.split('/')[-1])
+                    parsed['metadata'] = meta
+                parsed['path'] = playbook_id
+                parsed.setdefault('name', playbook_id.split('/')[-1])
+                content = yaml.safe_dump(parsed, sort_keys=False)
+        except Exception as norm_err:
+            logger.warning(f"Failed to normalize playbook path in YAML: {norm_err}")
         from .service import get_catalog_service
         catalog_service = get_catalog_service()
-        result = await catalog_service.register_resource(content, "playbooks")
-
-        return {
-            "status": "success",
-            "message": f"Playbook '{playbook_id}' content updated.",
-            "resource_path": result.get("resource_path"),
-            "resource_version": result.get("resource_version")
-        }
+        # Use consistent resource type capitalization
+        result = await catalog_service.register_resource(content, "Playbook")
+        return {"status": "success", "message": f"Playbook '{playbook_id}' content updated.", "resource_path": result.get("resource_path"), "resource_version": result.get("resource_version")}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error saving playbooks content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
+async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
+    """Get playbook by ID, optionally by version
+
+    Fallback: if a request meant for the /content endpoint is misrouted here (because of
+    path matching order or stale server code) we detect the trailing '/content' segment
+    and internally serve the raw content response to avoid a 404 like:
+      Playbook '.../content' with version 'x.y.z' not found.
+    """
+    try:
+        logger.info(f"Received playbook_id: '{playbook_id}'")
+        if playbook_id.startswith("playbooks/"):
+            playbook_id = playbook_id[10:]
+            logger.info(f"Fixed playbook_id: '{playbook_id}'")
+
+        # Fallback handling for misrouted content requests
+        if playbook_id.endswith("/content") or playbook_id.endswith("/content/"):
+            original_id = playbook_id.rstrip('/').rsplit('/content', 1)[0]
+            logger.warning(
+                "Misrouted playbook content request detected for '%s'; serving content via fallback.",
+                original_id
+            )
+            from .service import get_catalog_service
+            catalog_service = get_catalog_service()
+            if not version:
+                version = await catalog_service.get_latest_version(original_id)
+            entry = await catalog_service.fetch_entry(original_id, version)
+            if not entry:
+                raise HTTPException(status_code=404, detail=f"Playbook '{original_id}' with version '{version}' not found.")
+            return {"path": original_id, "version": version, "content": entry.get('content')}
+
+        from .service import get_catalog_service
+        catalog_service = get_catalog_service()
+        if not version:
+            version = await catalog_service.get_latest_version(playbook_id)
+        entry = await catalog_service.fetch_entry(playbook_id, version)
+        if not entry:
+            raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
+        try:
+            content = entry.get('content') or ''
+            if isinstance(content, bytes):
+                content = content.decode('utf-8', errors='ignore')
+            entry['payload'] = yaml.safe_load(content) or {}
+        except Exception:
+            pass
+        return entry
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting playbook: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
