@@ -33,6 +33,8 @@ from noetl.core.logger import setup_logger
 import duckdb
 import httpx
 
+from noetl.worker.secrets import fetch_credentials_by_keys
+
 logger = setup_logger(__name__, include_location=True)
 
 _duckdb_connections = {}
@@ -152,6 +154,39 @@ def execute_duckdb_task(
         except Exception:
             pass
 
+        # Warn when a GCS bucket is present but output base still targets local storage
+        try:
+            out_base = ''
+            if isinstance(processed_task_with, dict):
+                out_base = str(processed_task_with.get('output_uri_base') or '').strip()
+            wl = context.get('work') or context
+            wl_obj = wl.get('workload') if isinstance(wl, dict) else {}
+            gcs_bucket = None
+            if isinstance(wl_obj, dict):
+                gcs_bucket = wl_obj.get('gcs_bucket') or wl_obj.get('bucket')
+            # Default local markers and cloud markers
+            local_like = not out_base or out_base.lower().startswith('data') or out_base.startswith('/') or out_base.lower().startswith('./')
+            cloud_like = out_base.lower().startswith('gs://') or out_base.lower().startswith('s3://') or out_base.lower().startswith('file:')
+            # Check common env toggle
+            def _truthy(v):
+                return str(v).lower() in {'1','true','yes','on'}
+            enable_gcs_env = _truthy(os.environ.get('NOETL_ENABLE_GCS', 'false'))
+            if gcs_bucket and not cloud_like and (local_like or not out_base):
+                logger.warning(
+                    "DUCKDB: output_uri_base appears local ('%s') while workload.gcs_bucket='%s' is set. "
+                    "Files will be written locally. Set NOETL_ENABLE_GCS=true or set with.output_uri_base to 'gs://%s/<path>', "
+                    "or add with.require_cloud_output=true to fail if cloud write is missing.",
+                    out_base or 'data', gcs_bucket, gcs_bucket
+                )
+            elif gcs_bucket and cloud_like and not enable_gcs_env and out_base.lower().startswith('gs://'):
+                # Cloud base is set but env flag is off; still proceed, but hint.
+                logger.info(
+                    "DUCKDB: output_uri_base uses GCS ('%s'); ensure credentials are configured (credentials: mapping or NOETL_GCS_CREDENTIAL) and httpfs is available.",
+                    out_base
+                )
+        except Exception:
+            pass
+
         # Resolve credentials mapping early so users can refer to {{ credentials.<alias>.* }} in SQL
         # without relying on auto-attach/auto-secret logic.
         resolved_creds_for_tpl: Dict[str, Any] = {}
@@ -195,6 +230,8 @@ def execute_duckdb_task(
                                     dbn = view.get('db_name') or view.get('dbname') or view.get('database')
                                     if host and port and user and pwd and dbn:
                                         view['connstr'] = f"dbname={dbn} user={user} password={pwd} host={host} port={port}"
+                                    # Expose intended DuckDB secret name for this credential alias
+                                    view['secret'] = alias
                                 resolved_creds_for_tpl[alias] = view
                         except Exception:
                             continue
@@ -275,6 +312,178 @@ def execute_duckdb_task(
             duckdb_con.execute("LOAD httpfs;")
         except Exception as _httpfs_e:
             logger.warning(f"DUCKDB: failed to install/load httpfs: {_httpfs_e}")
+
+        # Optional: auto-create DuckDB secrets from credential records before any user SQL
+        # Supports both alias-map and batch form under credentials.secrets
+        try:
+            params = dict(processed_task_with or {})
+            auto_secrets = params.get('auto_secrets')
+            if isinstance(auto_secrets, str):
+                auto_secrets = auto_secrets.lower() in {'1','true','yes','on'}
+            if auto_secrets is None:
+                auto_secrets = True
+
+            if auto_secrets:
+                creds_block = task_config.get('credentials') or {}
+                alias_map: Dict[str, Dict[str, Any]] = {}
+                batch_list: list[Dict[str, Any]] = []
+                if isinstance(creds_block, dict):
+                    # alias map entries
+                    for k, v in creds_block.items():
+                        if k == 'secrets':
+                            # batch form: list of { key, [secret_name], [scope] }
+                            if isinstance(v, list):
+                                batch_list.extend([e for e in v if isinstance(e, dict)])
+                            continue
+                        if isinstance(v, dict):
+                            alias_map[k] = v
+                elif isinstance(creds_block, list):
+                    # legacy list form
+                    batch_list.extend([e for e in creds_block if isinstance(e, dict)])
+
+                # Gather secret keys from alias_map + batch_list + env override
+                wanted: list[str] = []
+                alias_specs: Dict[str, Dict[str, Any]] = {}
+                for alias, spec in alias_map.items():
+                    key = spec.get('key') or spec.get('credential') or spec.get('credentialRef')
+                    if key and key not in wanted:
+                        wanted.append(key)
+                    if key:
+                        alias_specs[key] = {**spec, 'alias': alias}
+
+                for ent in batch_list:
+                    key = ent.get('key') or ent.get('credential') or ent.get('credentialRef')
+                    if key and key not in wanted:
+                        wanted.append(key)
+                    # allow per-entry override of secret_name/scope
+                    if key:
+                        alias_specs.setdefault(key, {}).update({k: ent[k] for k in ('secret_name','scope') if k in ent})
+
+                env_keys = [s.strip() for s in str(os.environ.get('NOETL_DUCKDB_SECRETS','')).split(',') if s.strip()]
+                for k in env_keys:
+                    if k not in wanted:
+                        wanted.append(k)
+
+                # Fetch all records
+                recs = fetch_credentials_by_keys(wanted)
+
+                # Infer scope from output path if absent
+                out_base = str(params.get('output_uri_base') or '').strip()
+                inferred_scope = None
+                if out_base.startswith('gs://') or out_base.startswith('s3://'):
+                    inferred_scope = out_base.rstrip('/')
+
+                need_httpfs = False
+                need_pgext = False
+                created: set[str] = set()
+
+                # Ensure extensions for secret types
+                for key in wanted:
+                    rec = recs.get(key) or {}
+                    svc = (rec.get('service') or rec.get('type') or '').lower()
+                    if svc in {'gcs','s3'}:
+                        need_httpfs = True
+                    if svc == 'postgres':
+                        need_pgext = True
+                try:
+                    if need_httpfs:
+                        duckdb_con.execute("INSTALL httpfs;")
+                        duckdb_con.execute("LOAD httpfs;")
+                except Exception:
+                    pass
+                try:
+                    if need_pgext:
+                        duckdb_con.execute("INSTALL postgres;")
+                        duckdb_con.execute("LOAD postgres;")
+                except Exception:
+                    pass
+
+                # Create each secret
+                def q(s: Optional[str]) -> str:
+                    s = '' if s is None else str(s)
+                    return s.replace("'", "''")
+
+                for key in wanted:
+                    rec = recs.get(key) or {}
+                    data = rec.get('data') or {}
+                    svc = (rec.get('service') or rec.get('type') or '').lower()
+                    spec_over = alias_specs.get(key) or {}
+                    alias_name = spec_over.get('alias')
+                    # choose final secret name
+                    secret_name = spec_over.get('secret_name') or rec.get('secret_name') or alias_name or key
+                    if not secret_name or secret_name in created:
+                        continue
+
+                    try:
+                        if svc == 'postgres':
+                            host = data.get('db_host') or data.get('host')
+                            port = data.get('db_port') or data.get('port')
+                            user = data.get('db_user') or data.get('user')
+                            pwd = data.get('db_password') or data.get('password')
+                            dbn = data.get('db_name') or data.get('dbname') or data.get('database')
+                            sslmode = data.get('sslmode')
+                            if host and port and user and pwd and dbn:
+                                ddl = f"""
+                                    CREATE OR REPLACE SECRET {secret_name} (
+                                        TYPE POSTGRES,
+                                        HOST '{q(host)}',
+                                        PORT {int(port)},
+                                        DATABASE '{q(dbn)}',
+                                        USER '{q(user)}',
+                                        PASSWORD '{q(pwd)}'{' ,\n                                        SSLMODE \'' + q(sslmode) + '\'' if sslmode else ''}
+                                    );
+                                """
+                                duckdb_con.execute(ddl)
+                                created.add(secret_name)
+                                logger.info(f"DUCKDB: created POSTGRES secret '{secret_name}'")
+                        elif svc in {'gcs','s3'}:
+                            key_id = data.get('key_id') or data.get('access_key_id')
+                            secret = data.get('secret_key') or data.get('secret_access_key') or data.get('secret')
+                            region = data.get('region') or 'auto'
+                            endpoint = data.get('endpoint') or ('storage.googleapis.com' if svc == 'gcs' else 's3.amazonaws.com')
+                            url_style = data.get('url_style') or 'path'
+                            scope = spec_over.get('scope') or rec.get('scope') or inferred_scope
+                            if key_id and secret:
+                                try:
+                                    duckdb_con.execute("LOAD httpfs;")
+                                except Exception:
+                                    pass
+                                if svc == 'gcs':
+                                    ddl = f"""
+                                        CREATE OR REPLACE SECRET {secret_name} (
+                                            TYPE S3,
+                                            PROVIDER GCS,
+                                            KEY_ID '{q(key_id)}',
+                                            SECRET '{q(secret)}',
+                                            REGION '{q(region)}',
+                                            ENDPOINT '{q(endpoint)}',
+                                            URL_STYLE '{q(url_style)}'{' ,\n                                            SCOPE \'' + q(scope) + '\'' if scope else ''}
+                                        );
+                                    """
+                                else:  # s3
+                                    ddl = f"""
+                                        CREATE OR REPLACE SECRET {secret_name} (
+                                            TYPE S3,
+                                            KEY_ID '{q(key_id)}',
+                                            SECRET '{q(secret)}',
+                                            REGION '{q(region)}',
+                                            ENDPOINT '{q(endpoint)}'{' ,\n                                            SCOPE \'' + q(scope) + '\'' if scope else ''}
+                                        );
+                                    """
+                                duckdb_con.execute(ddl)
+                                created.add(secret_name)
+                                svc_label = 'GCS' if svc == 'gcs' else 'S3'
+                                if scope:
+                                    logger.info(f"DUCKDB: created {svc_label} secret '{secret_name}' (scoped)")
+                                else:
+                                    logger.info(f"DUCKDB: created {svc_label} secret '{secret_name}'")
+                        else:
+                            # Future: azure or others
+                            pass
+                    except Exception as _se_err:
+                        logger.warning(f"DUCKDB: failed to create secret '{secret_name}': {_se_err}")
+        except Exception:
+            logger.debug("DUCKDB: auto-secret registration skipped or failed", exc_info=True)
 
         # Optional: attach multiple external databases from credentials mapping/list
         # New preferred: task_config['credentials'] as a mapping of alias -> { key: <credential_name> }
@@ -390,6 +599,8 @@ def execute_duckdb_task(
                             continue
 
                         conn_string = dsn or ''
+                        # Capture discrete Postgres fields when available for SECRET creation
+                        _pg_host = _pg_port = _pg_user = _pg_pwd = _pg_dbn = None
                         if not conn_string:
                             # Build from spec/cred_data
                             src = {}
@@ -406,6 +617,7 @@ def execute_duckdb_task(
                                 user = src.get('user') or src.get('db_user') or os.environ.get('POSTGRES_USER', 'noetl')
                                 pwd = src.get('password') or src.get('db_password') or os.environ.get('POSTGRES_PASSWORD', 'noetl')
                                 dbn = src.get('dbname') or src.get('database') or src.get('db_name') or os.environ.get('POSTGRES_DB', 'noetl')
+                                _pg_host, _pg_port, _pg_user, _pg_pwd, _pg_dbn = host, port, user, pwd, dbn
                                 conn_string = f"dbname={dbn} user={user} password={pwd} host={host} port={port}"
                             elif (use_kind or kind or '') == 'sqlite':
                                 path = src.get('path') or src.get('db_path') or os.path.join(duckdb_data_dir, 'sqlite', 'noetl.db')
@@ -427,7 +639,9 @@ def execute_duckdb_task(
                         if (use_kind or kind or '').startswith('postgres'):
                             duckdb_con.execute("INSTALL postgres;")
                             duckdb_con.execute("LOAD postgres;")
-                            attach_opts = " (TYPE postgres)"
+                            # Prefer using a named SECRET matching the alias if present (created in auto-secret phase)
+                            safe_alias = re.sub(r"[^a-zA-Z0-9_]+", "_", str(alias))
+                            attach_opts = f" (TYPE postgres, SECRET {safe_alias})"
                         elif (use_kind or kind or '') == 'mysql':
                             duckdb_con.execute("INSTALL mysql;")
                             duckdb_con.execute("LOAD mysql;")
@@ -443,7 +657,8 @@ def execute_duckdb_task(
                             )
                             duckdb_con.execute(test_query)
                         except Exception:
-                            duckdb_con.execute(f"ATTACH '{conn_string}' AS {alias}{attach_opts};")
+                            attach_conn = '' if attach_opts.find('SECRET ') != -1 else conn_string
+                            duckdb_con.execute(f"ATTACH '{attach_conn}' AS {alias}{attach_opts};")
                             logger.info(f"Attached {kind} database as '{alias}'")
                     except Exception as _ent_err:
                         logger.warning(f"DUCKDB: Failed to attach credential entry {ent}: {_ent_err}")
@@ -686,11 +901,19 @@ def execute_duckdb_task(
                     raise
 
         results = {}
+        # Track COPY targets for verification and better error reporting
+        copy_cloud_targets = []  # list of dicts: { path, fmt }
         if commands:
             for i, cmd in enumerate(commands):
                 if isinstance(cmd, str) and ('{{' in cmd or '}}' in cmd):
-                    # Render templates only; avoid post-processing that may strip quotes needed by DuckDB
-                    cmd = render_template(jinja_env, cmd, context)
+                    # Render with full context (includes with: and resolved credentials if any)
+                    _local_ctx = {**context, **(processed_task_with or {})}
+                    try:
+                        if 'credentials' not in _local_ctx:
+                            _local_ctx['credentials'] = resolved_creds_for_tpl
+                    except Exception:
+                        pass
+                    cmd = render_template(jinja_env, cmd, _local_ctx)
 
                 logger.info(f"Executing DuckDB command: {cmd}")
 
@@ -770,6 +993,12 @@ def execute_duckdb_task(
                                 path = m.group(4) or m.group(5) or m.group(6) or ''
                                 # Leave URIs or file: scheme unchanged
                                 if '://' in path or path.startswith('file:'):
+                                    # Capture cloud targets for later verification when writing
+                                    if kw == 'TO' and (path.startswith('gs://') or path.startswith('s3://')):
+                                        # detect format
+                                        fm = _re.search(r"\(.*?FORMAT\s+([A-Z]+).*?\)", _cmd, _re.IGNORECASE)
+                                        fmt = (fm.group(1).upper() if fm else None)
+                                        copy_cloud_targets.append({"path": path, "fmt": fmt})
                                     return _cmd
                                 # Only rewrite absolute paths
                                 if path.startswith('/'):
@@ -792,8 +1021,22 @@ def execute_duckdb_task(
                                 return _cmd
 
                             cmd = _normalize_copy_local_path(cmd)
+                            # If critical statements still contain unresolved templates, surface as error
+                            if ('{{' in cmd or '}}' in cmd):
+                                raise ValueError(f"Unresolved template variables in COPY command: {cmd}")
                     except Exception:
                         pass
+                    # Fail early if unresolved templates remain in critical commands like ATTACH
+                    try:
+                        _cmd_upper = cmd.strip().upper()
+                        if ('{{' in cmd or '}}' in cmd) and (_cmd_upper.startswith('ATTACH') or _cmd_upper.startswith('CREATE SECRET')):
+                            raise ValueError(
+                                f"Unresolved template variables in critical SQL: {cmd}. "
+                                "Suggest defining 'credentials:' bindings or ensure context includes required values."
+                            )
+                    except Exception as _unres_err:
+                        raise
+
                     cursor = duckdb_con.execute(cmd)
                     result = cursor.fetchall()
 
@@ -826,6 +1069,58 @@ def execute_duckdb_task(
                             "message": f"Command executed successfully",
                             "raw_result": result
                         }
+
+            # Post-execution verification: ensure cloud COPY targets exist when requested
+            try:
+                if copy_cloud_targets:
+                    try:
+                        duckdb_con.execute("LOAD httpfs;")
+                    except Exception:
+                        pass
+                    for tgt in copy_cloud_targets:
+                        p = tgt.get('path') or ''
+                        fmt = (tgt.get('fmt') or '').upper()
+                        verify_sql = None
+                        if fmt == 'PARQUET':
+                            verify_sql = f"SELECT 1 FROM read_parquet('{p}') LIMIT 1"
+                        elif fmt == 'CSV':
+                            verify_sql = f"SELECT 1 FROM read_csv_auto('{p}') LIMIT 1"
+                        else:
+                            # Try parquet first, then CSV
+                            try:
+                                duckdb_con.execute(f"SELECT 1 FROM read_parquet('{p}') LIMIT 1").fetchall()
+                                verify_sql = None
+                                continue
+                            except Exception:
+                                verify_sql = f"SELECT 1 FROM read_csv_auto('{p}') LIMIT 1"
+                        if verify_sql:
+                            duckdb_con.execute(verify_sql).fetchall()
+                        # Optional: reveal which secret was selected by DuckDB (no sensitive values exposed)
+                        try:
+                            require_cloud = bool((processed_task_with or {}).get('require_cloud_output') or task_config.get('require_cloud_output'))
+                        except Exception:
+                            require_cloud = False
+                        if require_cloud:
+                            provider = 's3'  # httpfs treats GCS as S3 provider with PROVIDER GCS
+                            try:
+                                row = duckdb_con.execute(f"SELECT which_secret('{p}', '{provider}')").fetchone()
+                                sel = row[0] if row else None
+                                if sel:
+                                    logger.info(f"DUCKDB: which_secret selected '{sel}' for {p}")
+                            except Exception:
+                                pass
+                else:
+                    # Optional safety: if caller requires cloud output but no cloud COPY detected
+                    require_cloud = False
+                    try:
+                        require_cloud = bool((processed_task_with or {}).get('require_cloud_output') or task_config.get('require_cloud_output'))
+                    except Exception:
+                        require_cloud = False
+                    if require_cloud:
+                        raise ValueError("No cloud COPY targets detected (gs:// or s3://) while require_cloud_output=true.")
+            except Exception as _verify_err:
+                logger.error(f"Cloud COPY verification failed: {_verify_err}")
+                raise
 
         elif bucket and blob_path and table:
             temp_table = f"temp_{table}_{int(time.time())}"

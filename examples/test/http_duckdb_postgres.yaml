@@ -106,8 +106,9 @@ workflow:
       INSTALL postgres; LOAD postgres;
       INSTALL httpfs;  LOAD httpfs;
 
-      -- Native DuckDB attach using templated libpq connstring
-      ATTACH '{{ credentials.pg_db.connstr }}' AS pg_db (TYPE postgres);
+      -- Preferred: attach using a named DuckDB SECRET created from credentials alias
+      -- The plugin now auto-creates a POSTGRES SECRET named 'pg_db' from credential 'pg_local'.
+      ATTACH '' AS pg_db (TYPE postgres, SECRET pg_db);
 
       # GCS/S3 secrets are auto-created from credentials mapping when present; no SQL needed here.
 
