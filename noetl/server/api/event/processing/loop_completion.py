@@ -806,7 +806,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     'collection','element','mode','concurrency','enumerate','where','limit','chunk','order_by',
                     # unified payload fields
                     'input','payload','with','auth','data',
-                    'resource_path','content','path','loop','save','credential'
+                    'resource_path','content','path','loop','save','credential','credentials'
                 ):
                     if step_def.get(_fld) is not None:
                         task_def[_fld] = step_def.get(_fld)

@@ -243,7 +243,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     # unified payload fields (prefer input/payload over legacy with later)
                                     'input','payload','with','auth',
                                     'data',  # some steps embed data payloads directly
-                                    'resource_path','content','path','loop','save','credential'
+                                    'resource_path','content','path','loop','save','credential','credentials'
                                 ):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)

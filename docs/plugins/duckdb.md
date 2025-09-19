@@ -12,6 +12,7 @@ The DuckDB plugin can read/write local files and cloud storage, and attach exter
   - `SECRET <alias>` for both cloud and Postgres/MySQL auth
 - For Postgres, the plugin now auto-creates a DuckDB SECRET named after the alias when enough fields exist in the credential (HOST/PORT/DATABASE/USER/PASSWORD). Use the SECRET in ATTACH.
 - `credentials.<alias>.secret` exposes the secret name; `credentials.<alias>.connstr` remains for backward compat.
+ - For object stores (GCS/S3), provide `scope` in the credential record to let DuckDB select the right secret automatically. If `scope` is missing, the plugin attempts to infer it from `with.output_uri_base` when it is a cloud URI.
 
 ## Example
 

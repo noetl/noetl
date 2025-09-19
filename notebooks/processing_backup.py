@@ -980,7 +980,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                             for _fld in (
                                                 'task','code','command','commands','sql',
                                                 'url','endpoint','method','headers','params','data','payload',
-                                                'with','resource_path','content','path','loop'
+                                                'with','resource_path','content','path','loop','credentials'
                                             ):
                                                 if step_def.get(_fld) is not None:
                                                     task_def[_fld] = step_def.get(_fld)
@@ -1297,7 +1297,7 @@ async def evaluate_broker_for_execution(
                                     for _fld in (
                                         'task','code','command','commands','sql',
                                         'url','endpoint','method','headers','params','data','payload',
-                                        'with','resource_path','content','path','loop'
+                                        'with','resource_path','content','path','loop','credentials'
                                     ):
                                         if _def.get(_fld) is not None:
                                             _task[_fld] = _def.get(_fld)

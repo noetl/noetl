@@ -92,15 +92,16 @@ workflow:
     desc: "Read Postgres rows in DuckDB, aggregate, write to GCS using credential aliases"
     type: duckdb
     with:
-      # Compute destination base URI from env flag
-      output_uri_base: "{{ ('gs://' + workload.gcs_bucket) if (env.NOETL_ENABLE_GCS | default('false')) in ['true','1','yes','on','True'] else 'data' }}"
+      output_uri_base: "gs://noetl-demo-19700101/weather"
+      require_cloud_output: true
     credentials:
-      # ATTACH alias: pick the same name as you'll use in SQL
       pg_db:
         key: pg_local
       # SECRET alias: pick the same name you'll use in CREATE SECRET
       gcs_secret:
         key: gcs_hmac_local
+        type: gcs
+        scope: "gs://noetl-demo-19700101"
     commands: |
       -- Load needed extensions
       INSTALL postgres; LOAD postgres;
@@ -126,8 +127,8 @@ workflow:
 
       -- Write results
       -- Destination path is computed via with.output_uri_base
-      COPY weather_flat TO '{{ output_uri_base }}/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
-      COPY weather_agg  TO '{{ output_uri_base }}/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
+      COPY weather_flat TO 'gs://noetl-demo-19700101/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
+      COPY weather_agg  TO 'gs://noetl-demo-19700101/weather/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
     next:
       - step: ensure_metrics_table
 
