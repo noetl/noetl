@@ -10,7 +10,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT status FROM noetl.event_log
+                    SELECT status FROM noetl.event
                     WHERE execution_id = %s
                     ORDER BY timestamp
                     """,
@@ -24,7 +24,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT context FROM noetl.event_log
+                    SELECT context FROM noetl.event
                     WHERE execution_id = %s
                     ORDER BY timestamp ASC
                     LIMIT 1
@@ -39,7 +39,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT node_name, result FROM noetl.event_log
+                    SELECT node_name, result FROM noetl.event
                     WHERE execution_id = %s AND result IS NOT NULL AND result != '{}' AND result != 'null'
                     ORDER BY timestamp ASC
                     """,
@@ -56,7 +56,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT COUNT(*) FROM noetl.event_log
+                    SELECT COUNT(*) FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'result'
                       AND node_name = %s
@@ -72,7 +72,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT COUNT(*) FROM noetl.event_log
+                    SELECT COUNT(*) FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'action_completed'
                       AND node_name = %s
@@ -89,7 +89,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT result FROM noetl.event_log
+                    SELECT result FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'action_completed'
                       AND node_name = %s
@@ -107,8 +107,8 @@ class EventLog:
                 await cur.execute(
                     """
                     SELECT DISTINCT execution_id
-                    FROM noetl.event_log
-                    WHERE metadata LIKE %s
+                    FROM noetl.event
+                    WHERE meta LIKE %s
                     """,
                     (f'%"parent_execution_id": "{parent_execution_id}"%',),
                 )
@@ -120,7 +120,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT 1 FROM noetl.event_log
+                    SELECT 1 FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     LIMIT 1
                     """,
@@ -134,7 +134,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT 1 FROM noetl.event_log
+                    SELECT 1 FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'action_completed'
                       AND context::text LIKE %s
@@ -150,7 +150,7 @@ class EventLog:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT result FROM noetl.event_log
+                    SELECT result FROM noetl.event
                     WHERE execution_id = %s
                       AND result IS NOT NULL AND result != '{}' AND result != 'null'
                     ORDER BY timestamp DESC
@@ -183,21 +183,22 @@ class EventLog:
         iterator_json: Any,
         current_index: Any,
         current_item_json: Any,
+        stack_trace: Any = None,
     ):
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO noetl.event_log (
+                    INSERT INTO noetl.event (
                         execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type,
                         node_id, node_name, node_type, status, duration, context, result,
-                        metadata, error, trace_component, loop_id, loop_name, iterator,
-                        current_index, current_item
+                        meta, error, trace_component, loop_id, loop_name, iterator,
+                        current_index, current_item, stack_trace
                     ) VALUES (
                         %s, %s, %s, %s, CURRENT_TIMESTAMP, %s,
                         %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s::jsonb,
-                        %s, %s::jsonb
+                        %s, %s::jsonb, %s
                     )
                     ON CONFLICT (execution_id, event_id) DO NOTHING
                     """,
@@ -220,8 +221,9 @@ class EventLog:
                         loop_id,
                         loop_name,
                         iterator_json,
-                        current_index,
+                        current_index, 
                         current_item_json,
+                        stack_trace,
                     ),
                 )
                 try:

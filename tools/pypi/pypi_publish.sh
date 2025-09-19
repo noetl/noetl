@@ -1,11 +1,11 @@
 #!/bin/bash
 # Publish NoETL package to PyPI with UV dependency management support
 # Test on TestPyPI
-# ./scripts/pypi_publish.sh --test 0.1.25
+# ./tools/pypi/pypi_publish.sh --test 0.1.25
 # # Publish to PyPI
-# ./scripts/pypi_publish.sh 0.1.25
+# ./tools/pypi/pypi_publish.sh 0.1.25
 # Dry run
-# ./scripts/pypi_publish.sh --dry-run 0.1.15
+# ./tools/pypi/pypi_publish.sh --dry-run 0.1.15
 
 set -e
 
@@ -105,7 +105,8 @@ done
 echo -e "${BLUE}NoETL PyPI Publishing Script${NC}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Located in tools/pypi, repository root is parent of tools
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 echo -e "${BLUE}Project root: $PROJECT_ROOT${NC}"
 echo -e "${BLUE}Repository: $REPOSITORY${NC}"
@@ -198,7 +199,7 @@ build_package() {
     fi
 
     echo -e "${BLUE}Building package...${NC}"
-    "$SCRIPT_DIR/build_package.sh"
+    "$PROJECT_ROOT/tools/build_package.sh"
 }
 
 check_version_exists() {
@@ -417,7 +418,7 @@ verify_upload() {
 
     python3 -c "
 import noetl
-print(f'Installed version: {noetl.__version__ if hasattr(noetl, \"__version__\") else \"unknown\"}')
+print(f'Installed version: {noetl.__version__ if hasattr(noetl, "__version__") else "unknown"}')
 
 # Test UI availability
 try:

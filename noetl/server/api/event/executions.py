@@ -55,7 +55,7 @@ async def get_execution_summary(request: Request, execution_id: str):
                 await cur.execute(
                     """
                     SELECT event_type, COUNT(*)
-                    FROM noetl.event_log
+                    FROM noetl.event
                     WHERE execution_id = %s
                     GROUP BY event_type
                     """,
@@ -69,7 +69,7 @@ async def get_execution_summary(request: Request, execution_id: str):
             async with conn.cursor() as cur2:
                 await cur2.execute(
                     """
-                    SELECT result FROM noetl.event_log
+                    SELECT result FROM noetl.event
                     WHERE execution_id = %s AND event_type = 'action_completed'
                     """,
                     (execution_id,)
@@ -89,7 +89,7 @@ async def get_execution_summary(request: Request, execution_id: str):
                     await cur3.execute(
                         """
                         SELECT node_name, error, timestamp
-                        FROM noetl.event_log
+                        FROM noetl.event
                         WHERE execution_id = %s AND event_type = 'action_error'
                         ORDER BY timestamp DESC
                         LIMIT 3

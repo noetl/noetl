@@ -2,7 +2,7 @@
 Save action executor for NoETL jobs.
 
 Executes a declarative or statement-based save operation on the worker side.
-Initial implementation supports event_log "save" by returning the envelope;
+Initial implementation supports event (formerly event_log) "save" by returning the envelope;
 other storage kinds can be extended incrementally (postgres/duckdb/etc.).
 """
 
@@ -13,6 +13,17 @@ from jinja2 import Environment
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+def _pg_exec(pg_task, context, jinja_env, pg_with, log_event_callback):
+    """Helper to invoke the Postgres plugin from the save action.
+    Keeps the dependency local to avoid import cycles at module import time.
+    """
+    try:
+        from .postgres import execute_postgres_task
+        return execute_postgres_task(pg_task, context, jinja_env, pg_with, log_event_callback)
+    except Exception as e:
+        logger.error(f"SAVE: Failed delegating to postgres plugin: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 def _render_data_mapping(jinja_env: Environment, mapping: Any, context: Dict[str, Any]) -> Any:
@@ -51,7 +62,7 @@ def execute_save_task(
         # Support nested save: { save: { storage, data, statement, params, ... } }
         payload = task_config.get('save') or task_config
         storage = payload.get('storage') or {}
-        kind = str((storage or {}).get('kind') or 'event_log').strip().lower()
+        kind = str((storage or {}).get('kind') or 'event').strip().lower()
         # Spec-defined attributes (parsed now; handling may be added later)
         data_spec = payload.get('data')
         statement = payload.get('statement')
@@ -64,7 +75,9 @@ def execute_save_task(
         chunk_size = payload.get('chunk_size') or payload.get('chunksize')
         concurrency = payload.get('concurrency')
         # storage-level attributes (do not echo secrets)
-        credential_ref = storage.get('credential') or storage.get('credentialRef')
+        credential_ref = storage.get('auth') or storage.get('credential') or storage.get('credentialRef')
+        if storage.get('credential'):
+            logger.warning("SAVE: storage.credential is deprecated; use storage.auth instead")
         spec = storage.get('spec') or {}
 
         # Render data/params against the execution context
@@ -72,11 +85,25 @@ def execute_save_task(
         if data_spec is not None:
             rendered_data = _render_data_mapping(jinja_env, data_spec, context)
         rendered_params = _render_data_mapping(jinja_env, params, context) if params else {}
+        # Normalize complex param values (dict/list) to JSON strings to ensure
+        # safe embedding into SQL statements when using {{ params.* }} in strings.
+        try:
+            if isinstance(rendered_params, dict):
+                import json as _json
+                from noetl.core.common import DateTimeEncoder as _Enc
+                for _k, _v in list(rendered_params.items()):
+                    if isinstance(_v, (dict, list)):
+                        try:
+                            rendered_params[_k] = _json.dumps(_v, cls=_Enc)
+                        except Exception:
+                            rendered_params[_k] = str(_v)
+        except Exception:
+            pass
 
-        # Handle storage kinds - initial support for event_log only
-        if kind in ('event_log', ''):
+        # Handle storage kinds - initial support for event/event_log
+        if kind in ('event', 'event_log', ''):
             result_payload = {
-                'saved': 'event_log',
+                'saved': 'event',
                 'data': rendered_data,
             }
             meta_payload = {
@@ -199,6 +226,10 @@ def execute_save_task(
                 pg_with['params'] = rendered_params
             if isinstance(rendered_data, dict) and rendered_data:
                 pg_with['save_data'] = rendered_data
+
+            # Pass through auth alias so postgres plugin can resolve if needed
+            if credential_ref and 'auth' not in pg_with:
+                pg_with['auth'] = credential_ref
 
             pg_result = _pg_exec(pg_task, context, jinja_env, pg_with, log_event_callback)
             # Normalize into save envelope

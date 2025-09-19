@@ -116,12 +116,12 @@ workbook
           |-> uses: result.alerts
           `-> when: alerts exist
 
-batch_process (loop)
-  |-> in: items
-  |-> iterator: item
-  |-> with: batch_id
+batch_process (iterator)
+  |-> type: iterator
+  |-> collection: {{ items }}
+  |-> element: item
   |
-  `-> process_item (python) [for each item]
+  `-> task: process_item (python) [for each item]
       |-> input: current(item), batch
       |-> output: {item_id}
       |
@@ -129,15 +129,16 @@ batch_process (loop)
           |-> severity="high"
           `-> message=result.item_id
 
-data_pipeline (loop)
-  |-> in: data_sources
-  |-> iterator: source
+data_pipeline (iterator)
+  |-> type: iterator
+  |-> collection: {{ data_sources }}
+  |-> element: source
   |
-  |-> fetch_data (http)
+  |-> task: fetch_data (http)
   |   |-> endpoint: source.url
   |   `-> output: raw_data
   |
-  `-> transform_data (python)
+  `-> task: transform_data (python)
       |-> input: fetch_data.result
       |-> output: {transformed}
       |
@@ -178,4 +179,3 @@ Task -----> [when: condition] -----> Called Task
       `-----> [when: condition] -----> Another Called Task
 
 ```
-

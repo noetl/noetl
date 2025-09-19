@@ -271,6 +271,10 @@ def start_server(
             _run_with_gunicorn(settings.host, settings.port, workers, reload, log_level)
         else:
             import subprocess, sys
+            # Determine access log behavior (default: off to reduce noise for frequent endpoints like /queue/lease)
+            access_log_env = os.environ.get("NOETL_ACCESS_LOG", "false").strip().lower()
+            access_log = access_log_env in ("1","true","yes","y","on")
+
             cmd = [
                 sys.executable, "-m", "uvicorn",
                 "noetl.server:create_app",
@@ -279,6 +283,8 @@ def start_server(
                 "--port", str(settings.port),
                 "--log-level", log_level
             ]
+            if not access_log:
+                cmd.append("--no-access-log")
             if reload:
                 cmd.append("--reload")
             if workers and int(workers) > 1:
@@ -306,10 +312,29 @@ def start_server(
         raise
 
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
+    access_log_env = os.environ.get("NOETL_ACCESS_LOG", "false").strip().lower()
+    access_log = access_log_env in ("1","true","yes","y","on")
     if workers and workers > 1:
-        uvicorn.run("noetl.server:create_app", factory=True, host=host, port=port, workers=workers, reload=reload, log_level=log_level)
+        uvicorn.run(
+            "noetl.server:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            workers=workers,
+            reload=reload,
+            log_level=log_level,
+            access_log=access_log,
+        )
     else:
-        uvicorn.run("noetl.server:create_app", factory=True, host=host, port=port, reload=reload, log_level=log_level)
+        uvicorn.run(
+            "noetl.server:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=reload,
+            log_level=log_level,
+            access_log=access_log,
+        )
 
 
 def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
@@ -904,6 +929,46 @@ def run_playbook(
 
 execute_app = typer.Typer()
 cli_app.add_typer(execute_app, name="execute")
+
+@cli_app.command("plan")
+def plan_schedule(
+    path: str = typer.Argument(..., help="Path to playbook YAML file"),
+    resources: str = typer.Option("http_pool=4,pg_pool=5,duckdb_host=1", "--resources", help="Resource capacities as k=v comma list"),
+    max_solve_seconds: float = typer.Option(5.0, "--max-solve-seconds", help="Solver time limit in seconds"),
+    json_only: bool = typer.Option(True, "--json", "-j", help="Emit only JSON result"),
+):
+    """
+    Build a CP-SAT schedule for a playbook and print JSON.
+    """
+    try:
+        from noetl.core.common import ordered_yaml_load
+        from noetl.scheduler import build_plan, CpSatScheduler
+        with open(path, "r", encoding="utf-8") as f:
+            playbook = ordered_yaml_load(f)
+        cap_dict = {}
+        if resources:
+            for kv in resources.split(","):
+                if not kv.strip():
+                    continue
+                k, v = kv.split("=")
+                cap_dict[k.strip()] = int(v)
+        steps, edges, caps = build_plan(playbook, cap_dict)
+        sched = CpSatScheduler(max_seconds=max_solve_seconds).solve(steps, edges, caps)
+        out = {
+            "steps": [s.__dict__ for s in steps],
+            "edges": [e.__dict__ for e in edges],
+            "capacities": [{"name": c.name, "capacity": c.capacity} for c in caps],
+            "schedule": {
+                "starts_ms": sched.starts_ms,
+                "ends_ms": sched.ends_ms,
+                "durations_ms": sched.durations_ms,
+                "makespan_ms": max(sched.ends_ms.values()) if sched.ends_ms else 0,
+            },
+        }
+        typer.echo(json.dumps(out, indent=2 if not json_only else None))
+    except Exception as e:
+        typer.echo(f"Error building plan: {e}")
+        raise typer.Exit(code=1)
 
 
 @execute_app.command("playbook")

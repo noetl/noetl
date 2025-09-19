@@ -10,6 +10,7 @@ from jinja2 import Environment
 from noetl.core.common import DateTimeEncoder, make_serializable
 from noetl.core.logger import setup_logger, log_error
 from noetl.core.dsl.render import render_template
+from noetl.worker.secrets import fetch_credential_by_key
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -32,61 +33,54 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     task_name = task_config.get('task', 'postgres_task')
     start_time = datetime.datetime.now()
 
-    # Resolve credential alias if provided and merge into task_with best-effort
+    # Resolve auth/credential alias if provided and merge into task_with best-effort
     try:
-        cred_ref = task_with.get('credential') or task_config.get('credential')
+        cred_ref = (
+            task_with.get('auth') or task_config.get('auth') or
+            task_with.get('credential') or task_config.get('credential')
+        )
         if cred_ref:
-            import httpx as _httpx
-            server_url = (context.get('env', {}) or {}).get('NOETL_SERVER_URL') or os.getenv('NOETL_SERVER_URL', 'http://localhost:8082')
-            server_url = server_url.rstrip('/')
-            if not server_url.endswith('/api'):
-                server_url = server_url + '/api'
-            url = f"{server_url}/credentials/{cred_ref}?include_data=true"
             try:
-                with _httpx.Client(timeout=5.0) as _c:
-                    _r = _c.get(url)
-                    if _r.status_code == 200:
-                        body = _r.json() or {}
-                        data = body.get('data') or {}
-                        if isinstance(data, dict):
-                            # Merge only missing keys in task_with
-                            for src, dst in (
-                                ('dsn','db_conn_string'),
-                                ('db_conn_string','db_conn_string'),
-                                ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
-                                ('db_port','db_port'), ('port','db_port'),
-                                ('db_user','db_user'), ('user','db_user'),
-                                ('db_password','db_password'), ('password','db_password'),
-                                ('db_name','db_name'), ('dbname','db_name'),
-                            ):
-                                if dst not in task_with and data.get(src) is not None:
-                                    task_with[dst] = data.get(src)
+                data = fetch_credential_by_key(str(cred_ref))
             except Exception:
-                pass
+                data = {}
+            if isinstance(data, dict):
+                # Merge only missing keys in task_with
+                for src, dst in (
+                    ('dsn','db_conn_string'),
+                    ('db_conn_string','db_conn_string'),
+                    ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
+                    ('db_port','db_port'), ('port','db_port'),
+                    ('db_user','db_user'), ('user','db_user'),
+                    ('db_password','db_password'), ('password','db_password'),
+                    ('db_name','db_name'), ('dbname','db_name'),
+                ):
+                    if dst not in task_with and data.get(src) is not None:
+                        task_with[dst] = data.get(src)
+            # Deprecation warning for old key
+            if task_config.get('credential') or task_with.get('credential'):
+                logger.warning("POSTGRES: 'credential' is deprecated; use 'auth' instead")
     except Exception:
-        pass
+        logger.debug("POSTGRES: failed to resolve auth credential", exc_info=True)
 
     # Validate configuration first - these errors should not be caught
     # Get database connection parameters - must be provided in task 'with' parameters only
     pg_host_raw = task_with.get('db_host')
-    if not pg_host_raw:
-        raise ValueError("Database host not provided. Set 'db_host' in task 'with' parameters.")
-    
     pg_port_raw = task_with.get('db_port')
-    if not pg_port_raw:
-        raise ValueError("Database port not provided. Set 'db_port' in task 'with' parameters.")
-    
     pg_user_raw = task_with.get('db_user')
-    if not pg_user_raw:
-        raise ValueError("Database user not provided. Set 'db_user' in task 'with' parameters.")
-    
     pg_password_raw = task_with.get('db_password')
-    if not pg_password_raw:
-        raise ValueError("Database password not provided. Set 'db_password' in task 'with' parameters.")
-    
     pg_db_raw = task_with.get('db_name')
-    if not pg_db_raw:
-        raise ValueError("Database name not provided. Set 'db_name' in task 'with' parameters.")
+    _missing = []
+    if not pg_host_raw: _missing.append('db_host')
+    if not pg_port_raw: _missing.append('db_port')
+    if not pg_user_raw: _missing.append('db_user')
+    if not pg_password_raw: _missing.append('db_password')
+    if not pg_db_raw: _missing.append('db_name')
+    if _missing:
+        raise ValueError(
+            "Postgres connection is not configured. Missing: " + ", ".join(_missing) +
+            ". Use `auth: <credential_key>` on the step (preferred) or provide explicit db_* fields in `with:`."
+        )
 
     # Build a rendering context that includes a 'workload' alias for compatibility
     render_ctx = dict(context) if isinstance(context, dict) else {}
@@ -172,47 +166,64 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
 
         if isinstance(commands, str):
             commands_rendered = render_template(jinja_env, commands, {**context, **processed_task_with})
-            commands = []
-            current_command = []
-            dollar_quote = False
-            dollar_quote_tag = ""
-
+            # Remove comment-only lines and squash whitespace for robust splitting
             cmd_lines = []
             for line in commands_rendered.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('--'):
-                    cmd_lines.append(line)
-
+                s = line.strip()
+                if s and not s.startswith('--'):
+                    cmd_lines.append(s)
             commands_text = ' '.join(cmd_lines)
-            i = 0
-            while i < len(commands_text):
-                char = commands_text[i]
-                if char == '$' and (i + 1 < len(commands_text)) and (commands_text[i+1].isalnum() or commands_text[i+1] == '$'):
-                    j = i + 1
-                    while j < len(commands_text) and (commands_text[j].isalnum() or commands_text[j] == '_' or commands_text[j] == '$'):
-                        j += 1
-                    optional_tag = commands_text[i:j]
-                    if dollar_quote and optional_tag == dollar_quote_tag:
-                        dollar_quote = False
-                        dollar_quote_tag = ""
-                    elif not dollar_quote:
-                        dollar_quote = True
-                        dollar_quote_tag = optional_tag
 
-                    current_command.append(commands_text[i:j])
+            # Split on semicolons, respecting single/double quotes and dollar-quoted strings
+            commands = []
+            current = []
+            in_single = False
+            in_double = False
+            dollar_quote = False
+            dollar_tag = ""
+            i = 0
+            n = len(commands_text)
+            while i < n:
+                ch = commands_text[i]
+                # Handle dollar-quoted strings when not inside standard quotes
+                if not in_single and not in_double and ch == '$':
+                    j = i + 1
+                    while j < n and (commands_text[j].isalnum() or commands_text[j] in ['_', '$']):
+                        j += 1
+                    tag = commands_text[i:j]
+                    if dollar_quote and tag == dollar_tag:
+                        dollar_quote = False
+                        dollar_tag = ""
+                    elif not dollar_quote and tag.startswith('$') and tag.endswith('$'):
+                        dollar_quote = True
+                        dollar_tag = tag
+                    current.append(commands_text[i:j])
                     i = j
                     continue
-                if char == ';' and not dollar_quote:
-                    current_cmd = ''.join(current_command).strip()
-                    if current_cmd:
-                        commands.append(current_cmd)
-                    current_command = []
-                else:
-                    current_command.append(char)
+                # Toggle single/double quotes (ignore when in dollar-quote)
+                if not dollar_quote and ch == "'" and not in_double:
+                    in_single = not in_single
+                    current.append(ch)
+                    i += 1
+                    continue
+                if not dollar_quote and ch == '"' and not in_single:
+                    in_double = not in_double
+                    current.append(ch)
+                    i += 1
+                    continue
+                # Statement split
+                if ch == ';' and not in_single and not in_double and not dollar_quote:
+                    stmt = ''.join(current).strip()
+                    if stmt:
+                        commands.append(stmt)
+                    current = []
+                    i += 1
+                    continue
+                current.append(ch)
                 i += 1
-            current_cmd = ''.join(current_command).strip()
-            if current_cmd:
-                commands.append(current_cmd)
+            stmt = ''.join(current).strip()
+            if stmt:
+                commands.append(stmt)
 
         event_id = None
         if log_event_callback:
@@ -388,8 +399,12 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
                 {'error': error_msg, 'with_params': task_with}, None
             )
 
+        # Best-effort traceback for worker to propagate
+        import traceback as _tb
+        tb_text = _tb.format_exc()
         return {
             'id': task_id,
             'status': 'error',
-            'error': error_msg
+            'error': error_msg,
+            'traceback': tb_text
         }

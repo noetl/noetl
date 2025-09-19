@@ -3,14 +3,17 @@
 __NoETL__ is an automation framework for data processing and MLOps orchestration.
 
 [![PyPI version](https://badge.fury.io/py/noetl.svg)](https://badge.fury.io/py/noetl)
-[![Python Version](https://img.shields.io/pypi/pyversions/noetl.svg)](https://pypi.org/project/noetl/)
-[![License](https://img.shields.io/pypi/l/noetl.svg)](https://github.com/noetl/noetl/blob/main/LICENSE)
+
 
 ## System Architecture
 
 The following diagram illustrates the main components and intent of the NoETL system:
 
 ![NoETL System Diagram](docs/images/NoETL.png)
+
+- Worker (worker.py): background worker pool, no HTTP endpoints
+- Server (server.py): orchestration + API endpoints (credential lookup, catalog, events)
+- CLI (clictl.py): manages worker pools and server lifecycle
 
 ## Quick Start
 
@@ -44,7 +47,7 @@ For development or specific versions:
 
 - Python 3.11+
 - For full functionality:
-  - Postgres database (mandatory, for event log persistent storage and NoETL system metadata)
+  - Postgres database (mandatory, for the event-sourcing persistent storage and NoETL system metadata)
   - Docker (optional, for containerized development and deployment)
 
 ## Basic Usage
@@ -92,7 +95,7 @@ NOETL_WORKER_POOL_NAME=worker-gpu-01 NOETL_WORKER_POOL_RUNTIME=gpu make worker-s
 
 See [Multiple Workers Guide](docs/multiple_workers.md) for detailed instructions on running and managing multiple worker instances.
 
-NoETL provides a streamlined command-line interface for managing and executing playbooks:
+NoETL provides a command-line interface for managing and executing playbooks:
 
 - Register a playbook in the catalog
 ```bash
@@ -166,6 +169,70 @@ EOF
 
 See [Kubernetes Deployment Guide](k8s/KIND-README.md) for detailed instructions.
 
+## Credential Handling
+
+NoETL provides three distinct approaches for handling credentials and secrets in workflows:
+
+- **`auth:`** single credential reference resolved by the Server at runtime
+- **`credentials:`** multiple credential bindings with developer-chosen aliases (for steps needing several creds at once)  
+- **`secret:`** resolve values from an external secret manager at render/exec time (used inside templates like `{{ secret.NAME }}`)
+
+### “Why this needs to be”
+- No ambiguity: each keyword has a distinct role.
+- Separation of concerns:
+  - auth → lookup credential record (single)
+  - credentials → bind multiple credentials via aliases
+  - secret → resolve external secret value at runtime
+- Native SQL: DuckDB aliases and secret names are unchanged and under your control.
+
+### Quick Examples
+
+**Single Credential (Postgres):**
+```yaml
+- step: create_table
+  type: postgres
+  auth: pg_local
+  command: CREATE TABLE users (id SERIAL, name TEXT);
+```
+
+**Multiple Credentials (DuckDB):**
+```yaml
+- step: aggregate_data
+  type: duckdb
+  credentials:
+    pg_db:      { key: pg_local }
+    gcs_secret: { key: gcs_hmac_local }
+  commands: |
+    ATTACH '{{ credentials.pg_db.connstr }}' AS pg_db (TYPE postgres);
+    CREATE SECRET gcs_secret (
+      TYPE gcs,
+      KEY_ID '{{ credentials.gcs_secret.key_id }}',
+      SECRET '{{ credentials.gcs_secret.secret_key }}'
+    );
+```
+
+**External Secrets (HTTP):**
+```yaml
+- step: api_call
+  type: http
+  method: GET
+  endpoint: "https://api.example.com/data"
+  headers:
+    Authorization: "Bearer {{ secret.api_service_token }}"
+```
+
+### Why This Works
+- **No ambiguity**: each keyword has a distinct role
+- **Separation of concerns**:
+  - `auth` → lookup credential record (single)
+  - `credentials` → bind multiple credentials via aliases
+  - `secret` → resolve external secret value at runtime
+- **Native SQL**: DuckDB aliases and secret names are unchanged and under your control
+
+For detailed documentation, see [Credential Management Guide](docs/concepts/credentials.md).ion](https://img.shields.io/pypi/pyversions/noetl.svg)](https://pypi.org/project/noetl/)
+[![License](https://img.shields.io/pypi/l/noetl.svg)](https://github.com/noetl/noetl/blob/main/LICENSE)
+
+
 ## Workflow DSL Structure
 
 NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key components of a NoETL playbook include:
@@ -190,6 +257,20 @@ To run a playbook:
 noetl agent -f path/to/playbooks.yaml
 ```
 
+## CP-SAT Scheduler (experimental)
+
+NoETL includes an experimental OR-Tools CP-SAT planner to schedule playbooks with iterator expansion and resource capacities.
+
+Install dependency:
+
+pip install ortools
+
+Plan a playbook (no execution, just schedule JSON):
+
+noetl plan examples/test/http_duckdb_postgres.yaml --resources http_pool=4,pg_pool=5,duckdb_host=1 --max-solve-seconds 5 --json
+
+The output includes per-step start/end times and respects capacities (e.g., http_pool concurrency, exclusive duckdb_host).
+
 ## Documentation
 
 For more detailed information, please refer to the following documentation:
@@ -209,6 +290,7 @@ For more detailed information, please refer to the following documentation:
 - [Playbook Structure](https://github.com/noetl/noetl/blob/master/docs/playbook_structure.md) - Structure of NoETL playbooks
 - [Workflow Tasks](https://github.com/noetl/noetl/blob/master/docs/action_type.md) - Action types and parameters
 - [Environment Configuration](https://github.com/noetl/noetl/blob/master/docs/environment_variables.md) - Setting up environment variables
+- [Credential Management](docs/concepts/credentials.md) - auth vs credentials vs secret
 
 
 ### Examples
@@ -222,6 +304,63 @@ NoETL includes several example playbooks that demonstrate some capabilities:
 - **Multi-Playbook Workflows** - Complex workflow orchestration
 
 For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
+
+### After-refactor example (end-to-end)
+
+```yaml
+- step: ensure_pg_table
+  type: postgres
+  auth: pg_local
+  command: |
+    CREATE TABLE IF NOT EXISTS public.weather_http_raw (
+      id TEXT PRIMARY KEY,
+      execution_id TEXT,
+      iter_index INTEGER,
+      city TEXT,
+      url TEXT,
+      elapsed DOUBLE PRECISION,
+      payload TEXT,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+- step: aggregate_with_duckdb
+  type: duckdb
+  credentials:
+    pg_db:      { key: pg_local }
+    gcs_secret: { key: gcs_hmac_local }
+  commands: |
+    INSTALL postgres; LOAD postgres;
+    INSTALL httpfs;  LOAD httpfs;
+
+    ATTACH '{{ credentials.pg_db.connstr }}' AS pg_db (TYPE postgres);
+
+    CREATE OR REPLACE SECRET gcs_secret (
+      TYPE gcs,
+      KEY_ID  '{{ credentials.gcs_secret.key_id }}',
+      SECRET  '{{ credentials.gcs_secret.secret_key }}',
+      SCOPE   'gs://{{ workload.gcs_bucket }}'
+    );
+
+    CREATE OR REPLACE TABLE weather_flat AS
+    SELECT id, city, url, elapsed, payload
+    FROM   pg_db.public.weather_http_raw
+    WHERE  execution_id = '{{ execution_id }}';
+
+    COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
+
+- step: call_api
+  type: http
+  method: GET
+  endpoint: "https://api.example.com/data"
+  headers:
+    Authorization: "Bearer {{ secret.api_service_token }}"
+```
+
+## Security & Redaction
+
+- Ephemeral scope: step-scoped creds are injected only at runtime and not persisted into results.
+- Redacted logs: secrets and DSNs are redacted in logs and events.
+
 
 ## Development
 
@@ -250,4 +389,3 @@ NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for det
 - `cd ui-src`
 - `npm run dev`
 - before commit in ui use `npx prettier  . --write`
-

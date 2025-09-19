@@ -26,9 +26,9 @@
                           | metadata       |
                           +----------------+
 
--- Hierarchical Labels / Chats
+-- Hierarchical Labels
 +----------------+       +----------------+       +----------------+
-|     label      | 1:N   |      chat      | 1:N   |     member     |
+|     label      |       |                |       |                |
 |----------------|-------|----------------|-------|----------------|
 | id (PK)        |       | id (PK)        |       | id (PK)        |
 | parent_id (FK) |       | label_id (FK)  |       | chat_id (FK)   |
@@ -180,36 +180,33 @@ All **IDs are Snowflake-style globally unique integers**.
 
 ---
 
-## 3. Conversation System
+## 3. Hierarchy (Dentry)
+
+Inspired by Linux VFS dentries, this models hierarchical name lookups as directory entries.
 
 ### Tables
 
 | Table | Description |
 |-------|-------------|
-| `label` | Hierarchical container (folder/namespace) for chats. Supports `parent_id`. |
-| `chat` | Chat under a label. Each chat has an owner. |
-| `member` | Maps profiles to chats with a role (`owner`, `admin`, `member`). |
-| `message` | Stores messages in chats (`sender_type`: user, bot, AI, system). |
-| `attachment` | Files attached to labels or chats. Tracks uploader. |
+| `dentry` | Directory entries that map a name to a target under a parent. Supports recursion via `parent_id`. Can represent positive or negative entries. |
 
-### Relationships
+### Columns (dentry)
 
-- `label.parent_id → label.id` (recursive)
-- `chat.label_id → label.id`
-- `chat.owner_id → profile.id`
-- `member.chat_id → chat.id`
-- `member.profile_id → profile.id`
-- `message.chat_id → chat.id`
-- `message.sender_id → profile.id` (optional)
-- `attachment.label_id → label.id` (optional)
-- `attachment.chat_id → chat.id` (optional)
-- `attachment.uploaded_by → profile.id`
+- `id BIGINT PRIMARY KEY`
+- `parent_id BIGINT REFERENCES dentry(id) ON DELETE CASCADE`
+- `name TEXT NOT NULL`
+- `type TEXT NOT NULL` (e.g., `folder`)
+- `resource_type TEXT NULL` (optional logical target type)
+- `resource_id BIGINT NULL` (optional logical target id)
+- `is_positive BOOLEAN DEFAULT TRUE` (false indicates a cached negative lookup)
+- `metadata JSONB NULL`
+- `created_at TIMESTAMPTZ DEFAULT now()`
+- `UNIQUE(parent_id, name)`
 
-### Constraints
+### Indexes
 
-- Unique (`chat_id`, `profile_id`) in `member`.
-- Member roles limited to: `owner`, `admin`, `member`.
-- Message sender types: `user`, `bot`, `ai`, `system`.
+- `dentry(parent_id)`
+- `dentry(type)`
 
 ---
 
@@ -258,76 +255,37 @@ All **IDs are Snowflake-style globally unique integers**.
 
 ---
 
-## 7. Snowflake ID Generation
+## 6. Snowflake ID Generation
 
 - Function `noetl.snowflake_id()` generates globally unique IDs:
   - Millisecond timestamp
   - Shard ID
   - Sequence number
 
-- Used for tables: `role`, `profile`, `session`, `label`, `chat`, `member`, `message`, `attachment`.
-
+- Used for tables: `role`, `profile`, `session`, `dentry`.
 ---
 
-## 8. Hierarchy & Navigation
-
-- Labels form a **tree structure** via `parent_id`.
-- Chats reside under labels.
-- Messages reside under chats.
-- Attachments can attach to either labels or chats.
-- Members define **who can participate** in chats and their role.
-
----
-
-## 9. Indexes & Constraints
+## 7. Indexes & Constraints
 
 - Unique constraints:
-  - `label(parent_id, name)`
-  - `member(chat_id, profile_id)`
+  - `dentry(parent_id, name)`
 
 - Indexes for performance:
-  - `message(chat_id, created_at)`
-  - `attachment(chat_id, created_at)`
-  - `label(parent_id)`
-  - `chat(label_id)`
-  - `error_log(execution_id)`
+  - `dentry(parent_id)`
   - `runtime(component_type, name)`
   - `schedule(next_run_at)` (enabled only)
 
 ---
 
-## 10. ERD 
-
-## Identity & Collaboration
+## 8. ERD (Identity & Hierarchy)
 
 ROLE  
 └─< PROFILE  
       └─< SESSION  
-      └─< CHAT  
-            └─< MEMBER  
-      └─< ATTACHMENT (uploads)  
 
-## Conversation & Hierarchy
-
-LABEL  
-├─< LABEL (parent_id, recursive)  
-└─< CHAT  
-      ├─< MEMBER  
-      ├─< MESSAGE  
-      └─< ATTACHMENT  
-
-MEMBER  
-├─ references PROFILE  
-└─ references CHAT  
-
-MESSAGE  
-├─ belongs_to CHAT  
-└─ sender PROFILE (optional)  
-
-ATTACHMENT  
-├─ belongs_to CHAT (optional)  
-├─ belongs_to LABEL (optional)  
-└─ uploaded_by PROFILE  
+ENTRY (DENTRY)  
+├─< DENTRY (parent_id, recursive)  
+└─ maps names to logical targets (resource_type/resource_id)
 
 ## Resources & Catalog
 

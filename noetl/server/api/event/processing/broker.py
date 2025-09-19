@@ -24,7 +24,7 @@ async def evaluate_broker_for_execution(
 ):
     """Server-side broker evaluator.
 
-    - Builds execution context (workload + results) from event_log
+    - Builds execution context (workload + results) from event
     - Parses playbook and advances to the next actionable step
     - Evaluates step-level pass/when using server-side rendering (minimal for now)
     - Enqueues the first actionable step to the queue for workers
@@ -102,7 +102,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                 # Check if any action already completed for this execution
                 await cur.execute(
                     """
-                    SELECT COUNT(*) FROM noetl.event_log
+                    SELECT COUNT(*) FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('action_completed','execution_completed')
                     """,
                     (execution_id,)
@@ -130,7 +130,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                         # Try to get path from execution_start event
                         await cur.execute(
                             """
-                            SELECT context FROM noetl.event_log
+                            SELECT context FROM noetl.event
                             WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                             ORDER BY timestamp DESC LIMIT 1
                             """,
@@ -236,12 +236,14 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     'type': step_def.get('type') or 'python',
                                 }
                                 for fld in (
-                                    'task','code','command','commands','sql',
+                                    'task','run','code','command','commands','sql',
                                     'url','endpoint','method','headers','params',
+                                    # iterator fields
+                                    'collection','element','mode','concurrency','enumerate','where','limit','chunk','order_by',
                                     # unified payload fields (prefer input/payload over legacy with later)
-                                    'input','payload','with',
+                                    'input','payload','with','auth',
                                     'data',  # some steps embed data payloads directly
-                                    'resource_path','content','path','loop','save','credential'
+                                    'resource_path','content','path','loop','save','credential','credentials'
                                 ):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)
@@ -280,11 +282,12 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                 loop_cfg = task.get('loop') or {}
                                 has_loop = bool(loop_cfg.get('in'))
                                 if has_loop:
-                                    # Idempotency: if loop already initialized (loop_iteration exists), skip re-enqueue & re-emit
+                                    # Legacy loop support removed — require iterator step usage.
+                                    logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Step '{next_step_name}' uses legacy 'loop' config; wrap the nested action in a 'type: iterator' step with 'collection' and 'element'")
                                     try:
                                         await cur.execute(
                                             """
-                                            SELECT 1 FROM noetl.event_log
+                                            SELECT 1 FROM noetl.event
                                             WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
                                             LIMIT 1
                                             """,
@@ -297,7 +300,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                             try:
                                                 await cur.execute(
                                                     """
-                                                    SELECT 1 FROM noetl.event_log
+                                                    SELECT 1 FROM noetl.event
                                                     WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
                                                     LIMIT 1
                                                     """,
@@ -348,7 +351,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     try:
                                         await cur.execute(
                                             """
-                                            SELECT 1 FROM noetl.event_log
+                                            SELECT 1 FROM noetl.event
                                             WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
                                             LIMIT 1
                                             """,
@@ -369,6 +372,13 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                             })
                                         except Exception:
                                             logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit step_started for non-loop step", exc_info=True)
+
+                                    # Debug visibility: log keys for iterator tasks
+                                    try:
+                                        if (task.get('type') or '').lower() == 'iterator':
+                                            logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: iterator step '{next_step_name}' task keys={list(task.keys())} collection={task.get('collection')} element={task.get('element')}")
+                                    except Exception:
+                                        pass
 
                                     # Encode and enqueue task
                                     encoded = encode_task_for_queue(task)
@@ -450,6 +460,15 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
         # Remove loop config from task for workers
         task_loop_free = dict(task)
         task_loop_free.pop('loop', None)
+
+        # If loop defines an item-level save, propagate it into the per-iteration task
+        # so the worker performs an inline save after executing the action.
+        try:
+            loop_save = loop_cfg.get('save') if isinstance(loop_cfg, dict) else None
+            if isinstance(loop_save, dict) and not task_loop_free.get('save'):
+                task_loop_free['save'] = loop_save
+        except Exception:
+            pass
         encoded_task = encode_task_for_queue(task_loop_free)
         
         # Process each loop item
@@ -551,7 +570,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                 await cur.execute(
                     """
                     SELECT DISTINCT node_name
-                    FROM noetl.event_log
+                    FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'action_completed'
                       AND (loop_id IS NULL OR loop_id = '')
@@ -569,7 +588,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                 pb_ver = None
                 await cur.execute(
                     """
-                    SELECT metadata, context FROM noetl.event_log
+                    SELECT meta, context FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     ORDER BY timestamp ASC
                     LIMIT 1
@@ -626,7 +645,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                     # Skip if step_completed already recorded
                     await cur.execute(
                         """
-                        SELECT 1 FROM noetl.event_log
+                        SELECT 1 FROM noetl.event
                         WHERE execution_id = %s AND node_name = %s AND event_type = 'step_completed'
                         LIMIT 1
                         """,
@@ -659,7 +678,7 @@ def _is_actionable_step(step_def: dict) -> bool:
         if not t:
             return False
         # Include 'save' so save steps run on workers
-        if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save'}:
+        if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','iterator'}:
             # For python, require code in step_def
             if t == 'python':
                 c = step_def.get('code') or step_def.get('code_b64') or step_def.get('code_base64')

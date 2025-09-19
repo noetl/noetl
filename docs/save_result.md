@@ -42,7 +42,7 @@ save:
   on: success|error|always     # default success
   storage:
     kind: event_log|postgres|duckdb|bigquery|snowflake|s3|gcs|file|kv|vector|graph
-    credential: <name>         # optional; resolves through noetl.credential or secrets provider (alias: credentialRef)
+    auth: <name>               # optional; resolves through credential store (alias: credentialRef deprecated)
     spec:                      # storage-specific parameters (dsn/table/bucket/path/index/namespace/etc.)
       ...
   format: json|csv|parquet     # optional for file/object stores
@@ -60,7 +60,7 @@ save:
   on: success|error|always
   storage:
     kind: postgres|duckdb|bigquery|snowflake|graph
-    credential: <name>         # alias: credentialRef
+    auth: <name>               # alias: credentialRef (deprecated)
     spec:
       dialect: sql|cypher|gremlin|sparql   # graph/triple stores
   statement: |
@@ -87,7 +87,7 @@ Guidelines:
   save:
     storage:
       kind: postgres
-      credential: pg_main        # points to a row in noetl.credential (or secrets manager)
+      auth: pg_main              # points to a credential record by alias
       spec: { table: hello_world }
     mode: upsert
     key: [execution_id]
@@ -110,13 +110,13 @@ credentials:
 
 # Step/task level
 type: postgres
-credential: pg_main
+auth: pg_main
 
 # Save block
 save:
   storage:
     kind: s3
-    credential: s3_backup
+    auth: s3_backup
 ```
 
 Resolution order:
@@ -206,7 +206,7 @@ workflow:
 save:
   storage:
     kind: kv
-    credential: redis_main
+    auth: redis_main
     spec: { driver: redis, namespace: noetl }
   mode: upsert
   data:
@@ -221,7 +221,7 @@ save:
 save:
   storage:
     kind: vector
-    credential: pg_main
+    auth: pg_main
     spec: { driver: pgvector, table: embeddings, id_column: id, vector_column: embedding, meta_column: meta }
   mode: upsert
   data:
@@ -238,7 +238,7 @@ save:
 save:
   storage:
     kind: graph
-    credential: neo4j_main
+    auth: neo4j_main
     spec: { dialect: cypher }
   statement: |
     MERGE (e:Execution {id: $execution_id})
@@ -257,7 +257,7 @@ save:
 save:
   storage:
     kind: postgres
-    credential: pg_main
+    auth: pg_main
   statement: |
     INSERT INTO hello_world(execution_id, payload)
     VALUES (:execution_id, :payload)

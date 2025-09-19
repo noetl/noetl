@@ -9,11 +9,6 @@ path: examples/postgres_test
 
 workload:
   jobId: "{{ job.uuid }}"
-  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
-  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
-  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
-  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
   test_data: {
     "name": "Test User",
     "email": "test@example.com",
@@ -40,12 +35,7 @@ workflow:
     desc: "Create test tables in Postgres"
     pass: "{{ workload.steps.setup_tables }}"
     type: postgres
-    input:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
+    auth: pg_local
     command: |
       DROP TABLE IF EXISTS postgres_test_users;
 
@@ -104,12 +94,7 @@ workbook:
 
   - name: setup_tables_task
     type: postgres
-    input:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
+    auth: pg_local
     command: |
       DROP TABLE IF EXISTS postgres_test_users;
 
@@ -131,12 +116,8 @@ workbook:
 
   - name: insert_data_task
     type: postgres
-    input:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
+    auth: pg_local
+    with:
       test_data: "{{ workload.test_data }}"
     command: |
       INSERT INTO postgres_test_users (name, email, metadata)
@@ -156,12 +137,7 @@ workbook:
 
   - name: query_data_task
     type: postgres
-    input:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
+    auth: pg_local
     command: |
       SELECT 
         id, 
@@ -191,12 +167,7 @@ workbook:
 
   - name: update_data_task
     type: postgres
-    input:
-      db_host: "{{ workload.pg_host }}"
-      db_port: "{{ workload.pg_port }}"
-      db_user: "{{ workload.pg_user }}"
-      db_password: "{{ workload.pg_password }}"
-      db_name: "{{ workload.pg_db }}"
+    auth: pg_local
     command: |
       SELECT id, name, metadata->>'age' as age FROM postgres_test_users;
       UPDATE postgres_test_users SET metadata = jsonb_set(metadata, '{active}', 'false'::jsonb) WHERE id = 1;

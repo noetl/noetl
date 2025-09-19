@@ -423,22 +423,32 @@ def execute_playbook_via_broker(
             from noetl.server.api.event import evaluate_broker_for_execution
             import asyncio as _asyncio
 
-            logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: evaluate_broker_for_execution imported successfully")
+            logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: evaluate_broker_for_execution imported successfully")
 
-            if _asyncio.get_event_loop().is_running():
-                logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Running in async context, creating task for execution_id={execution_id}")
-                task = _asyncio.create_task(evaluate_broker_for_execution(execution_id))
-                logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Task created: {task}")
-            else:
-                logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Running in sync context, using asyncio.run for execution_id={execution_id}")
+            # Prefer scheduling on an existing loop; otherwise run synchronously without noisy errors
+            try:
+                loop = _asyncio.get_running_loop()
+                logger.info(
+                    f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Async loop detected, scheduling task for execution_id={execution_id}"
+                )
+                loop.create_task(evaluate_broker_for_execution(execution_id))
+            except RuntimeError:
+                # No running loop in this thread; run synchronously
+                logger.debug(
+                    f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: No running event loop; using asyncio.run for execution_id={execution_id}"
+                )
                 _asyncio.run(evaluate_broker_for_execution(execution_id))
 
-            logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Broker evaluation initiated successfully for execution_id={execution_id}")
+            logger.info(
+                f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Broker evaluation initiated successfully for execution_id={execution_id}"
+            )
 
-        except Exception as _ev:
-            logger.error(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to start broker evaluation for execution_id={execution_id}: {_ev}")
-            import traceback
-            logger.error(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Traceback: {traceback.format_exc()}")
+        except Exception:
+            # Avoid noisy stack traces for scheduling issues; fall back silently
+            logger.debug(
+                f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Silent fallback — broker evaluation scheduling problem for execution_id={execution_id}",
+                exc_info=True,
+            )
 
         logger.debug(
             f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Returning accepted result for execution_id={execution_id}"

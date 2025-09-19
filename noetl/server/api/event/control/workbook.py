@@ -42,7 +42,7 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                 # Load playbook path/version
                 await cur.execute(
                     """
-                    SELECT context, metadata FROM noetl.event_log
+                    SELECT context, meta FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     ORDER BY timestamp ASC LIMIT 1
                     """,

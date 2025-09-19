@@ -80,7 +80,7 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
                                     final_result = render_template(jenv, data_map, base_ctx, rules=None, strict_keys=False)
                         except Exception:
                             final_result = None
-                    # 3) Last resort: pull the latest action_completed result for this step from event_log
+                    # 3) Last resort: pull the latest action_completed result for this step from event
                     if final_result is None:
                         try:
                             from noetl.core.common import get_async_db_connection
@@ -88,7 +88,7 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
                                 async with conn.cursor() as cur:
                                     await cur.execute(
                                         """
-                                        SELECT result FROM noetl.event_log
+                                        SELECT result FROM noetl.event
                                         WHERE execution_id = %s
                                           AND node_name = %s
                                           AND event_type = 'action_completed'
@@ -183,7 +183,7 @@ async def _load_playbook_and_index(execution_id: str) -> Tuple[Dict[str, Dict[st
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT context, metadata FROM noetl.event_log
+                    SELECT context, meta FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     ORDER BY timestamp ASC LIMIT 1
                     """,

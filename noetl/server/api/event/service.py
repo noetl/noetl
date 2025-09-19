@@ -34,7 +34,7 @@ class EventService:
 
     async def get_all_executions(self) -> List[Dict[str, Any]]:
         """
-        Get all executions from the event_log table.
+        Get all executions from the event table.
 
         Returns:
             A list of execution data dictionaries
@@ -47,7 +47,7 @@ class EventService:
                             SELECT 
                                 execution_id,
                                 MAX(timestamp) as latest_timestamp
-                            FROM event_log
+                            FROM event
                             GROUP BY execution_id
                         )
                         SELECT 
@@ -55,11 +55,12 @@ class EventService:
                             e.event_type,
                             e.status,
                             e.timestamp,
-                            e.metadata,
+                            e.meta,
                             e.context,
                             e.result,
-                            e.error
-                        FROM event_log e
+                            e.error,
+                            e.stack_trace
+                        FROM event e
                         JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
                         ORDER BY e.timestamp DESC
                     """)
@@ -82,7 +83,7 @@ class EventService:
                         duration = None
 
                         await cursor.execute("""
-                            SELECT MIN(timestamp) FROM event_log WHERE execution_id = %s
+                            SELECT MIN(timestamp) FROM event WHERE execution_id = %s
                         """, (execution_id,))
                         min_time_row = await cursor.fetchone()
                         if min_time_row and min_time_row[0]:
@@ -90,7 +91,7 @@ class EventService:
 
                         if status in ['completed', 'failed']:
                             await cursor.execute("""
-                                SELECT MAX(timestamp) FROM event_log WHERE execution_id = %s
+                                SELECT MAX(timestamp) FROM event WHERE execution_id = %s
                             """, (execution_id,))
                             max_time_row = await cursor.fetchone()
                             if max_time_row and max_time_row[0]:
@@ -105,7 +106,7 @@ class EventService:
                         if status == 'running':
                             # Count total events & those considered finished (completed/failed)
                             await cursor.execute("""
-                                SELECT status FROM event_log WHERE execution_id = %s
+                                SELECT status FROM event WHERE execution_id = %s
                             """, (execution_id,))
                             event_statuses = [self._normalize_status(r[0]) for r in await cursor.fetchall()]
                             total_steps = len(event_statuses)
@@ -126,6 +127,13 @@ class EventService:
                             "error": row[7]
                         }
 
+                        # Attach stack trace when present
+                        try:
+                            st = row[8]
+                            if st:
+                                execution_data['stack_trace'] = st
+                        except Exception:
+                            pass
                         executions.append(execution_data)
 
                     return executions
@@ -223,7 +231,7 @@ class EventService:
                           if et_l == 'step_started':
                               await cursor.execute(
                                   """
-                                  SELECT 1 FROM event_log
+                                  SELECT 1 FROM event
                                   WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
                                   LIMIT 1
                                   """,
@@ -238,7 +246,7 @@ class EventService:
                               if _idx_txt is not None:
                                   await cursor.execute(
                                       """
-                                      SELECT 1 FROM event_log
+                                  SELECT 1 FROM event
                                       WHERE execution_id = %s AND node_name = %s AND event_type = 'loop_iteration'
                                         AND current_index::text = %s
                                       LIMIT 1
@@ -252,14 +260,14 @@ class EventService:
                       # Default parent_event_id if missing: link to previous event in the same execution
                       if not parent_event_id:
                           try:
-                              await cursor.execute("SELECT event_id FROM event_log WHERE execution_id = %s ORDER BY timestamp DESC LIMIT 1", (execution_id,))
+                              await cursor.execute("SELECT event_id FROM event WHERE execution_id = %s ORDER BY timestamp DESC LIMIT 1", (execution_id,))
                               _prev = await cursor.fetchone()
                               if _prev and _prev[0]:
                                   parent_event_id = _prev[0]
                           except Exception:
                               pass
                       await cursor.execute("""
-                          SELECT COUNT(*) FROM event_log
+                          SELECT COUNT(*) FROM event
                           WHERE execution_id = %s AND event_id = %s
                       """, (execution_id, event_id))
 
@@ -380,13 +388,13 @@ class EventService:
 
                       if exists:
                           await cursor.execute("""
-                              UPDATE event_log SET
+                              UPDATE event SET
                                   event_type = %s,
                                   status = %s,
                                   duration = %s,
                                   context = %s,
                                   result = %s,
-                                  metadata = %s,
+                                  meta = %s,
                                   error = %s,
                                   trace_component = %s::jsonb,
                                   loop_id = %s,
@@ -442,6 +450,7 @@ class EventService:
                               iterator_json=iterator_val,
                               current_index=current_index_val,
                               current_item_json=current_item_val,
+                              stack_trace=traceback_text,
                           )
 
                       try:
@@ -545,7 +554,7 @@ class EventService:
                                         await cur.execute(
                                             """
                                             SELECT context::json->>'parent_step' as parent_step
-                                            FROM noetl.event_log
+                                            FROM noetl.event
                                             WHERE execution_id = %s
                                               AND event_type = 'result'
                                               AND context LIKE %s
@@ -572,7 +581,7 @@ class EventService:
                                         await cur.execute(
                                             """
                                             SELECT result, context
-                                            FROM noetl.event_log
+                                            FROM noetl.event
                                             WHERE execution_id = %s
                                               AND event_type = 'action_completed'
                                               AND result IS NOT NULL
@@ -707,9 +716,9 @@ class EventService:
                             timestamp, 
                             context, 
                             result, 
-                            metadata, 
+                            meta, 
                             error
-                        FROM event_log 
+                        FROM event 
                         WHERE execution_id = %s
                         ORDER BY timestamp
                     """, (execution_id,))
@@ -787,10 +796,11 @@ class EventService:
                             timestamp, 
                             context, 
                             result, 
-                            metadata, 
+                            meta, 
                             error,
+                            stack_trace,
                             execution_id
-                        FROM event_log 
+                        FROM event 
                         WHERE event_id = %s
                     """, (event_id,))
 
@@ -809,7 +819,8 @@ class EventService:
                             "result": json.loads(row[9]) if row[9] else None,
                             "metadata": json.loads(row[10]) if row[10] else None,
                             "error": row[11],
-                            "execution_id": row[12],
+                            "stack_trace": row[12],
+                            "execution_id": row[13],
                             "resource_path": None,
                             "resource_version": None
                         }
@@ -848,7 +859,7 @@ class EventService:
             async with get_async_db_connection() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute("""
-                        SELECT COUNT(*) FROM event_log WHERE execution_id = %s
+                        SELECT COUNT(*) FROM event WHERE execution_id = %s
                     """, (id_param,))
                     row = await cursor.fetchone()
                     count = row[0] if row else 0
@@ -865,7 +876,7 @@ class EventService:
                 async with get_async_db_connection() as conn:
                     async with conn.cursor() as cursor:
                         await cursor.execute("""
-                            SELECT DISTINCT execution_id FROM event_log
+                            SELECT DISTINCT execution_id FROM event
                             WHERE event_id = %s
                         """, (id_param,))
                         execution_ids = [row[0] for row in await cursor.fetchall()]

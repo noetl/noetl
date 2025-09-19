@@ -511,13 +511,16 @@ class QueueWorker:
             except Exception:
                 parent_event_id = None
 
+            # Determine node_type for events (iterator vs task)
+            node_type_val = "iterator" if act_type == "iterator" else "task"
+
             start_event = {
                 "execution_id": execution_id,
                 "event_type": "action_started",
                 "status": "RUNNING",
                 "node_id": node_id,
                 "node_name": task_name,
-                "node_type": "task",
+                "node_type": node_type_val,
                 "context": {"work": context, "task": action_cfg},
                 "trace_component": {"worker_raw_context": raw_context},
                 "timestamp": datetime.datetime.now().isoformat(),
@@ -567,7 +570,8 @@ class QueueWorker:
                 except Exception:
                     pass
                 try:
-                    if 'execution_id' not in exec_ctx:
+                    # Ensure execution_id is present and non-empty in context
+                    if not exec_ctx.get('execution_id'):
                         exec_ctx['execution_id'] = execution_id
                 except Exception:
                     pass
@@ -601,6 +605,13 @@ class QueueWorker:
                         try:
                             exec_ctx_with_result = dict(exec_ctx)
                             exec_ctx_with_result['this'] = result
+                            # Convenience alias: expose current action's payload as `data`
+                            # so templates can use {{ data.* }} in inline save blocks.
+                            if isinstance(result, dict):
+                                _payload = result.get('data')
+                                # Do not overwrite an existing 'data' key in context
+                                if 'data' not in exec_ctx_with_result:
+                                    exec_ctx_with_result['data'] = _payload
                         except Exception:
                             exec_ctx_with_result = exec_ctx
                         from .plugin.save import execute_save_task as _do_save
@@ -634,7 +645,7 @@ class QueueWorker:
                         "status": "ERROR",
                         "node_id": node_id,
                         "node_name": task_name,
-                        "node_type": "task",
+                        "node_type": node_type_val,
                         "error": err_msg,
                         "traceback": tb_text,
                         "result": result,
@@ -654,7 +665,7 @@ class QueueWorker:
                         "status": "COMPLETED",
                         "node_id": node_id,
                         "node_name": task_name,
-                        "node_type": "task",
+                        "node_type": node_type_val,
                         "result": result,
                         "timestamp": datetime.datetime.now().isoformat(),
                     }
@@ -663,6 +674,29 @@ class QueueWorker:
                     if parent_event_id:
                         complete_event["parent_event_id"] = parent_event_id
                     report_event(complete_event, self.server_url)
+
+                    # Emit a companion step_result event for easier querying of results per step
+                    try:
+                        norm_result = result
+                        if isinstance(result, dict) and 'data' in result and result['data'] is not None:
+                            norm_result = result['data']
+                        step_result_event = {
+                            "execution_id": execution_id,
+                            "event_type": "step_result",
+                            "status": "COMPLETED",
+                            "node_id": node_id,
+                            "node_name": task_name,
+                            "node_type": node_type_val,
+                            "result": norm_result,
+                            "timestamp": datetime.datetime.now().isoformat(),
+                        }
+                        if loop_meta:
+                            step_result_event.update(loop_meta)
+                        if parent_event_id:
+                            step_result_event["parent_event_id"] = parent_event_id
+                        report_event(step_result_event, self.server_url)
+                    except Exception:
+                        logger.debug("WORKER: Failed to emit step_result companion event", exc_info=True)
 
             except Exception as e:
                 try:
@@ -677,7 +711,7 @@ class QueueWorker:
                         "status": "ERROR",
                         "node_id": node_id,
                         "node_name": task_name,
-                        "node_type": "task",
+                        "node_type": node_type_val,
                         "error": f"{type(e).__name__}: {str(e)}",
                         "traceback": tb_text,
                         "result": {"error": str(e), "traceback": tb_text},

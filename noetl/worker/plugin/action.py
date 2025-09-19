@@ -28,6 +28,51 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
     """
     try:
         import httpx
+        # Enrich metadata with worker pool/runtime hints
+        try:
+            import os as _os
+            meta = event_data.get('meta') or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            wp = _os.environ.get('NOETL_WORKER_POOL_NAME')
+            wr = _os.environ.get('NOETL_WORKER_POOL_RUNTIME')
+            if wp and not meta.get('worker_pool'):
+                meta['worker_pool'] = wp
+            if wr and not meta.get('worker_runtime'):
+                meta['worker_runtime'] = wr
+            event_data['meta'] = meta
+        except Exception:
+            pass
+
+        # Attach trace component with worker details (pool, runtime, pid, hostname, id)
+        try:
+            import os as _os
+            import socket as _socket
+            tc = event_data.get('trace_component') or {}
+            if not isinstance(tc, dict):
+                tc = {}
+            worker_tc = tc.get('worker') or {}
+            if not isinstance(worker_tc, dict):
+                worker_tc = {}
+            wp = _os.environ.get('NOETL_WORKER_POOL_NAME')
+            wr = _os.environ.get('NOETL_WORKER_POOL_RUNTIME')
+            wid = _os.environ.get('NOETL_WORKER_ID')
+            # Set fields if not already present to avoid overwriting upstream info
+            if wp and 'pool' not in worker_tc:
+                worker_tc['pool'] = wp
+            if wr and 'runtime' not in worker_tc:
+                worker_tc['runtime'] = wr
+            if wid and 'id' not in worker_tc:
+                worker_tc['id'] = wid
+            if 'pid' not in worker_tc:
+                worker_tc['pid'] = _os.getpid()
+            if 'hostname' not in worker_tc:
+                worker_tc['hostname'] = _socket.gethostname()
+            tc['worker'] = worker_tc
+            event_data['trace_component'] = tc
+        except Exception:
+            pass
+
         # Handle server_url that may already include /api
         if server_url.endswith('/api'):
             url = f"{server_url}/events"
@@ -64,11 +109,15 @@ def sql_split(sql_text: str) -> list[str]:
 
     for char in sql_text:
         if not in_string and char in ('"', "'"):
+            # Enter string literal and keep the quote
             in_string = True
             string_char = char
+            current_statement.append(char)
         elif in_string and char == string_char:
+            # Exit string literal and keep the quote
             in_string = False
             string_char = None
+            current_statement.append(char)
         elif not in_string and char == ';':
             statement = ''.join(current_statement).strip()
             if statement:

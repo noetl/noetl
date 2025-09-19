@@ -82,7 +82,7 @@ noetl/
 │   ├── utils/            # Utility functions
 │   └── workflow/         # Workflow engine
 ├── playbook/             # Example playbooks
-├── scripts/              # Development and build scripts
+├── tools/                # Developer tools and scripts (build, versioning); PyPI helpers under tools/pypi
 ├── tests/                # Tests
 └── ui/                   # Web UI
 ```
@@ -184,13 +184,13 @@ NoETL provides scripts for publishing to PyPI:
 
 ```bash
 # Publish to TestPyPI
-./scripts/pypi_publish.sh --test <version>
+./tools/pypi/pypi_publish.sh --test <version>
 
 # Publish to PyPI
-./scripts/pypi_publish.sh <version>
+./tools/pypi/pypi_publish.sh <version>
 
 # Interactive publishing wizard
-./scripts/interactive_publish.sh
+./tools/pypi/interactive_publish.sh
 ```
 
 For more detailed instructions, see the [PyPI Publishing Guide](pypi_manual.md).

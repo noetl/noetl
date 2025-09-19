@@ -377,10 +377,10 @@ WHERE id = %s
 
 ### 9. Loop Handling
 
-NoETL supports two types of loops:
+NoETL iteration is modeled via iterator steps.
 
-#### 9.1 Distributed Loops
-For `playbook` type steps with `loop` attribute:
+#### 9.1 Distributed Iterators
+For iterator steps that delegate to child playbooks (nested playbook as the iterator.task):
 
 ```python
 # Create child executions for each loop item
@@ -390,7 +390,7 @@ for idx, item in enumerate(items):
     # Store child workload
     child_workload = {
         **workload,
-        iterator: item,
+        element: item,
         '_loop': {
             'loop_id': f"{execution_id}:{step_name}",
             'current_index': idx,
@@ -409,13 +409,13 @@ for idx, item in enumerate(items):
     })
 ```
 
-#### 9.2 Inline Loops
-For task-type steps with `loop` attribute:
+#### 9.2 Inline Iterators
+For iterator steps that run a nested task directly:
 
 ```python
 # Queue multiple tasks for the same step
 for idx, item in enumerate(items):
-    task_context = {**context, iterator: item}
+    task_context = {**context, element: item}
     
     await enqueue_job({
         'execution_id': execution_id,

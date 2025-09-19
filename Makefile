@@ -76,6 +76,7 @@ help:
 	@echo "  make noetl-start										Start NoETL runtime"
 	@echo "  make noetl-stop										Stop NoETL runtime"
 	@echo "  make noetl-restart										Restart NoETL runtime"
+	@echo "  make validate-playbooks\t\t\t\tValidate playbooks for iterator+metadata schema"
 	@echo "  make noetl-run PLAYBOOK=examples/weather/weather_loop_example HOST=localhost PORT=8082	Execute specific playbook"
 	@echo "  make noetl-execute PLAYBOOK=examples/weather/weather_loop_example				Execute specific playbook"
 	@echo "  make export-execution-logs ID=222437726840946688 HOST=localhost PORT=8082			Dump execution to logs for specific ID"
@@ -95,14 +96,14 @@ docker-login:
 .PHONY: build
 build:
 	@echo "Building UI assets"
-	set -a; [ -f .env.docker ] && . .env.docker; set +a; bash scripts/build_ui.sh
+	set -a; [ -f .env.docker ] && . .env.docker; set +a; bash tools/build_ui.sh
 	@echo "Building Docker images"
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build
 
 .PHONY: rebuild
 rebuild:
 	@echo "Building UI assets first with no cache"
-	@bash scripts/build_ui.sh
+	@bash tools/build_ui.sh
 	@echo "Rebuilding Docker images with no cache"
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) build --no-cache
 
@@ -441,9 +442,10 @@ export-event-log:
 	@set -a; [ -f .env ] && . .env; set +a; \
 	if [ -z "$(ID)" ]; then echo "Usage: make export-event-log ID=<execution_id>"; exit 1; fi; \
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
-	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, metadata, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value FROM noetl.event_log WHERE execution_id = $(ID) ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event_log.json; \
-	[ -s logs/event_log.json ] && (jq . logs/event_log.json >/dev/null 2>&1 && jq . logs/event_log.json > logs/event_log.json.tmp && mv logs/event_log.json.tmp logs/event_log.json || true) || true; \
-	echo "Wrote logs/event_log.json"
+	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, meta, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, trace_component, stack_trace FROM noetl.event WHERE execution_id = $(ID) ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
+	ln -sf event.json logs/event_log.json; \
+	[ -s logs/event.json ] && (jq . logs/event.json >/dev/null 2>&1 && jq . logs/event.json > logs/event.json.tmp && mv logs/event.json.tmp logs/event.json || true) || true; \
+	echo "Wrote logs/event.json (symlinked to event_log.json)"
 
 export-queue:
 	@mkdir -p logs
@@ -455,7 +457,7 @@ export-queue:
 	  SELECT $(ID)::bigint AS execution_id \
 	  UNION \
 	  SELECT DISTINCT execution_id \
-	  FROM noetl.event_log \
+	  FROM noetl.event \
 	  WHERE event_type = 'execution_start' \
 	    AND metadata::text LIKE '%"parent_execution_id": "$(ID)"%' \
 	), q AS ( \
@@ -531,9 +533,10 @@ export-all-event-log:
 	@mkdir -p logs
 	@set -a; [ -f .env ] && . .env; set +a; \
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
-	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, metadata, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value FROM noetl.event_log ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event_log.json; \
-	[ -s logs/event_log.json ] && (jq . logs/event_log.json >/dev/null 2>&1 && jq . logs/event_log.json > logs/event_log.json.tmp && mv logs/event_log.json.tmp logs/event_log.json || true) || true; \
-	echo "Wrote logs/event_log.json"
+	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, metadata, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, stack_trace FROM noetl.event ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
+	ln -sf event.json logs/event_log.json; \
+	[ -s logs/event.json ] && (jq . logs/event.json >/dev/null 2>&1 && jq . logs/event.json > logs/event.json.tmp && mv logs/event.json.tmp logs/event.json || true) || true; \
+	echo "Wrote logs/event.json (symlinked to event_log.json)"
 
 noetl-dump-lineage:
 	@if [ -z "$(ID)" ]; then \

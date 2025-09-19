@@ -190,7 +190,7 @@ async def complete_job(job_id: int):
                             # 0) Prefer execution_complete final result
                             await cur.execute(
                                 """
-                                SELECT result FROM noetl.event_log
+                                SELECT result FROM noetl.event
                                 WHERE execution_id = %s AND event_type = 'execution_complete'
                                 ORDER BY timestamp DESC
                                 LIMIT 1
@@ -202,7 +202,7 @@ async def complete_job(job_id: int):
                             if return_step:
                                 await cur.execute(
                                     """
-                                    SELECT result FROM noetl.event_log
+                                    SELECT result FROM noetl.event
                                     WHERE execution_id = %s
                                       AND node_name = %s
                                       AND event_type = 'action_completed'
@@ -223,7 +223,7 @@ async def complete_job(job_id: int):
                                 for step_name in ['evaluate_weather_step', 'evaluate_weather', 'alert_step', 'log_step']:
                                     await cur.execute(
                                         """
-                                        SELECT result FROM noetl.event_log
+                                        SELECT result FROM noetl.event
                                         WHERE execution_id = %s
                                           AND node_name = %s
                                           AND event_type = 'action_completed'
@@ -245,7 +245,7 @@ async def complete_job(job_id: int):
                             if not result_row:
                                 await cur.execute(
                                     """
-                                    SELECT result FROM noetl.event_log
+                                    SELECT result FROM noetl.event
                                     WHERE execution_id = %s
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
@@ -264,7 +264,7 @@ async def complete_job(job_id: int):
                             if not result_row:
                                 await cur.execute(
                                     """
-                                    SELECT result FROM noetl.event_log
+                                    SELECT result FROM noetl.event
                                     WHERE execution_id = %s
                                       AND event_type = 'result'
                                       AND lower(status) IN ('completed','success')
@@ -281,7 +281,7 @@ async def complete_job(job_id: int):
                             if not result_row:
                                 await cur.execute(
                                     """
-                                    SELECT result FROM noetl.event_log
+                                    SELECT result FROM noetl.event
                                     WHERE execution_id = %s
                                       AND node_name = 'end'
                                       AND event_type = 'action_completed'
@@ -312,7 +312,7 @@ async def complete_job(job_id: int):
                             if not child_result:
                                 await cur.execute(
                                     """
-                                    SELECT result FROM noetl.event_log
+                                    SELECT result FROM noetl.event
                                     WHERE execution_id = %s
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
@@ -336,7 +336,7 @@ async def complete_job(job_id: int):
                             await cur.execute(
                                 """
                                 SELECT node_id, iterator, current_index, current_item, loop_id, loop_name
-                                FROM noetl.event_log
+                                FROM noetl.event
                                 WHERE execution_id = %s
                                   AND event_type = 'loop_iteration'
                                   AND node_name = %s
@@ -392,7 +392,7 @@ async def complete_job(job_id: int):
                                     # Count expected iterations for this loop on the parent
                                     await cur.execute(
                                         """
-                                        SELECT COUNT(*) FROM noetl.event_log
+                                        SELECT COUNT(*) FROM noetl.event
                                         WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
                                         """,
                                         (parent_execution_id, parent_step)
@@ -402,7 +402,7 @@ async def complete_job(job_id: int):
                                     # Count completed iteration mapping events so far
                                     await cur.execute(
                                         """
-                                        SELECT COUNT(*) FROM noetl.event_log
+                                        SELECT COUNT(*) FROM noetl.event
                                         WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
                                           AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
                                           AND result IS NOT NULL AND result != '{}'
@@ -416,7 +416,7 @@ async def complete_job(job_id: int):
                                     # Guard: if a final aggregate already exists, skip
                                     await cur.execute(
                                         """
-                                        SELECT COUNT(*) FROM noetl.event_log
+                                        SELECT COUNT(*) FROM noetl.event
                                         WHERE execution_id = %s AND event_type = 'action_completed' AND node_name = %s
                                           AND context::text LIKE '%%loop_completed%%' AND context::text LIKE '%%true%%'
                                         """,
@@ -428,7 +428,7 @@ async def complete_job(job_id: int):
                                         # Collect results from each iteration mapping event
                                         await cur.execute(
                                             """
-                                            SELECT result FROM noetl.event_log
+                                            SELECT result FROM noetl.event
                                             WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
                                               AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
                                               AND result IS NOT NULL AND result != '{}'

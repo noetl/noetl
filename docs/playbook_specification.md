@@ -27,12 +27,35 @@ Step ::= Map {
 }
 ```
 
-Execution semantics:
-- Start at the step with `type: start` (must define `next`).
-- Follow `next` edges; missing `next` ends the branch implicitly.
-- `type: end` is terminal and must not define `next`.
-- Each widget accepts only its own fields; structures are not uniform.
-- Widgets may publish results into context via `as:`.
+#### 1.3.1. Iterator Task (Step-Level Iteration)
+```yaml
+IteratorTask ::= Map {
+  "type": "iterator",
+  "collection": JinjaExpression<String|Array>,
+  "element": Identifier,
+  "task": TaskDefinition,
+  "save"?: SaveBlock
+}
+```
+- Iteration is modeled as a dedicated step with `type: iterator`.
+- The current element is exposed under the provided `element` name and is also available in the nested task context.
+- `collection` must resolve to an array (or a scalar that will be treated as a single-item list).
+- The nested `task` executes once per element; its own `save` can persist per-item results; the step-level `save` can persist aggregated results.
+- Example of an iterator step:
+```yaml
+- step: city_loop
+  type: iterator
+  collection: "{{ workload.cities }}"
+  element: city
+  task:
+    type: http
+    endpoint: "{{ workload.base_url }}/forecast"
+    params:
+      latitude:  "{{ city.lat }}"
+      longitude: "{{ city.lon }}"
+  next:
+    - step: aggregate_alerts
+```
 
 ### 2.1 start
 Inputs: none
@@ -231,3 +254,177 @@ workflow:
   - step: end
     type: end
 ```
+
+##### 1.4.1.1. `"run"` Nested Tasks
+- Final result is taken from the last executed subtask
+- Cannot reference top-level tasks
+- A task can define a `"run"` list of inline tasks.
+- These are executed in order.
+- The final task result in `"run"` is bubbled up to the parent.
+
+### 1.4.2. Supported Task Types
+##### 1.4.2.1. Composite Task
+```yaml
+<task_definition> ::=
+  {
+    task: <task_name>,
+    type: "http" | "python" | "task",
+    desc?: <string>,
+    with?: { <key>: <quoted_template> },
+    when?: <quoted_template>,
+    run?: [ <task_definition>+ ],
+    <task_type_specific_fields>
+  }
+```
+- A `"task"` with both `"type"` and `"run"` will:
+  - Be executed according to its `"type"` if supported (e.g., `"http"`, `"python"`).
+  - Otherwise, if `"type": "task"`, it is treated as a composite task and will evaluate each nested task in `"run"` in order.
+- `"task"`: A composite task that runs a list of nested tasks.
+```yaml
+- task: process_city_weather
+  type: task
+  run:
+    - task: get_forecast
+    - task: evaluate_weather
+```
+
+##### 1.4.2.2. HTTP Task
+```yaml
+HTTPTask ::= Map {
+  "method": "GET" | "POST" | "PUT" | "DELETE",
+  "endpoint": JinjaExpression,
+  "params"?: ContextMap,
+  "payload"?: JinjaExpression | ContextMap,
+  "retry"?: Number,
+  "retry_delay"?: Number,
+  "on_error"?: "continue" | "fail"
+}
+```
+
+- `"http"`: Executes an HTTP request.
+```yaml
+- task: get_forecast
+  type: http
+  method: GET
+  endpoint: "{{ base_url }}/forecast"
+  params: { ... } 
+```
+
+##### 1.4.2.3. Python Task
+```yaml
+PythonTask ::= Map {
+  "code": PythonFunctionString
+}
+```
+- `"python"`: Executes a Python function.
+```yaml
+- task: evaluate_weather
+  type: python
+  with: { forecast_data: "..." }
+  code: |
+    def main(forecast_data):
+        return { "alert": True }
+```
+## 2. Semantics
+- Tasks in `"workbook"` are statically declared and cannot be nested referentially.
+  - Any `"task"` may contain a `"run"` clause consisting of _inline, locally scoped_ tasks.
+  - Tasks defined inside `"run"` __are not globally referable__ (they're not in the top-level `"workbook"`).
+  - Nested tasks can themselves define a `"run"`, enabling recursive structures.
+- Step `"loop"` executes a chain of transitions per item.
+- Conditional `"next"` applies per iteration.
+- Aggregation is handled via `"join"` with collected `"join_results"` context.
+- Use `"join: end"` to terminate loop branches independently without aggregation.
+- `"next"` defines transition logic between steps; conditional routing is based on Jinja2-expressed conditions.
+
+## 3. Execution Flow
+
+- Workflow starts at step with `"step: start"`.
+- Each step optionally applies a `"with"` context.
+- If `"loop"` is defined, the step is executed per iteration.
+- If `"call"` is used, the specified task is invoked.
+- Task execution may contain inline `"run"` blocks for nesting.
+- Step's tasks' output is captured in the calling context as `"task_name.result"`.
+- `"next"` transitions use Jinja-based conditions to route control.
+- Execution ends when `"step: end"` is reached.
+
+## 4. Execution Semantics for Tasks and Steps
+- __Parallel Execution:__
+  - Subtasks defined at the same level under `"run"` are executed in parallel.
+  - Multiple steps listed under the same `"next"` transition (e.g., in `"then"`) are also executed in parallel.
+- __Sequential Execution:__
+  - Nested `"run"` blocks: A subtask that has its own `"run"` block will wait for the outer task to complete, then execute its nested tasks in sequence.
+
+- __Example Interpretation:__
+  ```yaml
+  run:
+    - task: A       # Starts in parallel
+    - task: B       # Starts in parallel
+      run:
+        - task: C   # Executes after B completes (sequential to B) 
+  ```
+  - `A` and `B` run in parallel.
+  - `C` runs after `B` completes, sequentially nested.
+
+## 5. Scope
+
+- `"with"` defines local context for a `"step"` or `"task"`.
+- Loop iterator values are injected into context.
+- Results from tasks are passed into subsequent steps using `"with"`.
+- Nested `"run"` results bubble up to the parent task and into the step context.
+
+## 6. Reserved Names
+- `"start"`: entry point of the workflow
+- `"end"`: terminates the workflow execution
+
+## 7. Validation Constraints
+
+- Unique `"step"` and `"task"` names.
+- Only one task `"call"` per step.
+- `"loop"` allowed only in steps.
+- `"run"` may be used only inside task definitions.
+- Task `"run"` cannot reference top-level tasks.
+- Loop handling strictly at the step level.
+- Task invocation using `"call"` from steps.
+- Context passing with `"with"`.
+- Inline nested tasks using `"run"`.
+- Step transition routing via `"next"`, `"when"`, `"then"`, `"else"`.
+
+## 8. Result Handling
+- `"call"` result is bound to task name.
+- `"run"` bubbles last task result up.
+- `"join"` receives `"join_results`" as `list`
+
+## 9. Conformance
+- Validates playbooks as YAML + Jinja2 expressions.
+- Executes task types correctly.
+- Supports loop, call, join transitions.
+- Maintains context scoping and result propagation.
+- Preserves deterministic resolution of top-level task names.
+
+## 10. Playbook Example with Loops and Calls
+
+- [**data/catalog/playbooks/weather_loop_chain_example.yaml**](../catalog/playbooks/weather_loop_chain_commented_example.yaml)
+
+## 11. Execution Model
+- Start at step `"start"`
+- If `"loop"` exists, execute transitions per item
+- Each iteration result is routed by `"next"`
+- After loop finishes, transition to the `"join"` step
+- The `"join"` step receives `"join_results"` with all iteration outputs
+- If `"join: end"` is declared, loop is terminal and non-aggregating
+- Each step may `"call"` a task
+- Task `"run"` executes nested logic
+- End at step `"end"`
+
+## 12. Notes
+- Jinja2 expressions inside quoted strings: `"{{ expression }}"`
+- Errors not caught unless on_error is specified.
+- Deterministic and context-driven model.
+- External I/O via typed tasks.
+- Aggregation supported using `"join"` (required) or explicitly terminated with `"join: end"`.
+- Calls: only one task per step.
+- Task invocation is explicit via `"call"`.
+- Step-to-step data flow via `"next"`.
+- Scopes are template-driven.
+- Nested tasks execute in isolation and return to parent task.
+- `"run"` allows defining task chains without polluting global scope.

@@ -189,6 +189,22 @@ class DatabaseSchema:
 
     def create_postgres_tables_sync(self):
         try:
+            # Execute canonical SQL DDL from file and return
+            ddl_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "database", "ddl", "postgres", "schema_ddl.sql"))
+            if not os.path.isfile(ddl_path):
+                raise FileNotFoundError(f"Canonical DDL file not found at {ddl_path}")
+            with self.conn.cursor() as cursor:
+                with open(ddl_path, "r", encoding="utf-8") as f:
+                    ddl_sql = f.read()
+                cursor.execute(ddl_sql)
+                if not getattr(self.conn, "autocommit", False):
+                    self.conn.commit()
+                logger.info("Executed canonical Postgres DDL from schema_ddl.sql (sync).")
+            return
+        except Exception as e:
+            logger.error(f"FATAL: Error creating postgres tables from canonical DDL (sync): {e}", exc_info=True)
+            raise
+        try:
             with self.conn.cursor() as cursor:
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.resource (
@@ -218,13 +234,14 @@ class DatabaseSchema:
                         PRIMARY KEY (execution_id)
                     )
                 """)
+                # Create unified event table (renamed from event_log) with optional stack_trace column
                 cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.event_log (
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.event (
                         execution_id BIGINT,
                         event_id BIGINT,
                         parent_event_id BIGINT,
                         parent_execution_id BIGINT,
-                        timestamp TIMESTAMP,
+                        timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         event_type VARCHAR,
                         node_id VARCHAR,
                         node_name VARCHAR,
@@ -233,7 +250,7 @@ class DatabaseSchema:
                         duration DOUBLE PRECISION,
                         context TEXT,
                         result TEXT,
-                        metadata TEXT,
+                        meta TEXT,
                         error TEXT,
                         loop_id VARCHAR,
                         loop_name VARCHAR,
@@ -246,23 +263,49 @@ class DatabaseSchema:
                         context_key VARCHAR,
                         context_value TEXT,
                         trace_component JSONB,
+                        stack_trace TEXT,
                         PRIMARY KEY (execution_id, event_id)
                     )
                 """)
+                # Migration: rename legacy column 'metadata' -> 'meta' if needed
                 try:
-                    cursor.execute(
-                        f"ALTER TABLE {self.noetl_schema}.event_log ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP"
-                    )
+                    cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_schema=%s AND table_name='event'", (self.noetl_schema,))
+                    cols = {r[0] for r in (cursor.fetchall() or [])}
+                    if 'metadata' in cols and 'meta' not in cols:
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.event RENAME COLUMN metadata TO meta")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                # Back-compat: if event_log table exists but event does not, try to rename event_log -> event
+                try:
+                    cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.event') IS NOT NULL")
+                    ev_exists = (cursor.fetchone() or [False])[0]
+                    cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.event_log') IS NOT NULL")
+                    evlog_exists = (cursor.fetchone() or [False])[0]
+                    if (not ev_exists) and evlog_exists:
+                        cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log RENAME TO event")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                # Ensure helper columns exist
+                try:
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS trace_component JSONB")
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):
                         self.conn.rollback()
                 try:
-                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB")
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):
                         self.conn.rollback()
                 try:
-                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
+                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS stack_trace TEXT")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
+                # Create back-compat view event_log -> event
+                try:
+                    cursor.execute(f"CREATE OR REPLACE VIEW {self.noetl_schema}.event_log AS SELECT * FROM {self.noetl_schema}.event")
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):
                         self.conn.rollback()
@@ -297,37 +340,51 @@ class DatabaseSchema:
                         PRIMARY KEY (execution_id, from_step, to_step, condition)
                     )
                 """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.error_log (
-                        error_id BIGINT PRIMARY KEY,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        error_type VARCHAR(50),
-                        error_message TEXT,
-                        execution_id BIGINT,
-                        step_id VARCHAR,
-                        step_name VARCHAR,
-                        template_string TEXT,
-                        context_data JSONB,
-                        stack_trace TEXT,
-                        input_data JSONB,
-                        output_data JSONB,
-                        severity VARCHAR(20) DEFAULT 'error',
-                        resolved BOOLEAN DEFAULT FALSE,
-                        resolution_notes TEXT,
-                        resolution_timestamp TIMESTAMP
-                    )
-                """)
+                # Remove legacy error_log table if present (after best-effort migration)
                 try:
-                    cursor.execute(f"ALTER TABLE {self.noetl_schema}.error_log OWNER TO {self.noetl_user}")
+                    # Migrate a subset of error_log into event as error events if both exist
+                    cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.error_log') IS NOT NULL")
+                    err_exists = (cursor.fetchone() or [False])[0]
+                    if err_exists:
+                        try:
+                            cursor.execute(f"""
+                                INSERT INTO {self.noetl_schema}.event (
+                                    execution_id, event_id, timestamp, event_type, node_id, node_name, status,
+                                    context, result, metadata, error, stack_trace
+                                )
+                                SELECT 
+                                    COALESCE(execution_id, 0) as execution_id,
+                                    error_id as event_id,
+                                    COALESCE(timestamp, CURRENT_TIMESTAMP) as timestamp,
+                                    'error' as event_type,
+                                    step_id as node_id,
+                                    step_name as node_name,
+                                    'FAILED' as status,
+                                    context_data::text as context,
+                                    output_data::text as result,
+                                    json_build_object(
+                                        'error_type', error_type,
+                                        'severity', severity,
+                                        'resolved', resolved,
+                                        'resolution_notes', resolution_notes,
+                                        'template_string', template_string
+                                    )::text as metadata,
+                                    error_message as error,
+                                    stack_trace as stack_trace
+                                FROM {self.noetl_schema}.error_log
+                                ON CONFLICT (execution_id, event_id) DO NOTHING
+                            """)
+                        except Exception:
+                            if not getattr(self.conn, "autocommit", False):
+                                self.conn.rollback()
+                        try:
+                            cursor.execute(f"DROP TABLE IF EXISTS {self.noetl_schema}.error_log CASCADE")
+                        except Exception:
+                            if not getattr(self.conn, "autocommit", False):
+                                self.conn.rollback()
                 except Exception:
                     if not getattr(self.conn, "autocommit", False):
                         self.conn.rollback()
-                cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON {self.noetl_schema}.error_log (timestamp);
-                    CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON {self.noetl_schema}.error_log (error_type);
-                    CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON {self.noetl_schema}.error_log (execution_id);
-                    CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON {self.noetl_schema}.error_log (resolved);
-                """)
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.credential (
                         id SERIAL PRIMARY KEY,
@@ -540,64 +597,25 @@ class DatabaseSchema:
                         metadata JSONB
                     )
                 """)
+                # Dentry-based hierarchy replacing label/attachment
                 cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.label (
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.dentry (
                         id BIGINT PRIMARY KEY,
-                        parent_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        parent_id BIGINT REFERENCES {self.noetl_schema}.dentry(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
-                        id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
-                        name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.member (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id) ON DELETE CASCADE,
-                        role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-                        joined_at TIMESTAMPTZ DEFAULT now(),
-                        UNIQUE(chat_id, profile_id)
-                    )
-                """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.message (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
-                        sender_id BIGINT,
-                        role TEXT,
-                        content TEXT NOT NULL,
+                        type TEXT NOT NULL CHECK (type IN ('folder')),
+                        resource_type TEXT,
+                        resource_id BIGINT,
+                        is_positive BOOLEAN DEFAULT TRUE,
                         metadata JSONB,
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.attachment (
-                        id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        filename TEXT NOT NULL,
-                        filepath TEXT NOT NULL,
-                        uploaded_by BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
+                        created_at TIMESTAMPTZ DEFAULT now(),
+                        UNIQUE(parent_id, name)
                     )
                 """)
                 try:
                     cursor.execute(f"""
-                        CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                        CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
-                        CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                        CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                     """)
                 except Exception as e:
                     logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (sync): {e}. Retrying as admin.")
@@ -607,16 +625,19 @@ class DatabaseSchema:
                             admin.autocommit = True
                             with admin.cursor() as ac:
                                 ac.execute(f"""
-                                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
-                                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                                 """)
                         finally:
                             admin.close()
                     except Exception as e2:
                         logger.error(f"Admin fallback also failed creating identity/collab indexes (sync): {e2}")
+                # Best-effort removal of legacy chat table (and its FKs) if present
+                try:
+                    cursor.execute(f"DROP TABLE IF EXISTS {self.noetl_schema}.chat CASCADE")
+                except Exception:
+                    if not getattr(self.conn, "autocommit", False):
+                        self.conn.rollback()
                 if not getattr(self.conn, "autocommit", False):
                     self.conn.commit()
                 logger.info("Postgres database tables initialized in noetl schema (sync).")
@@ -769,6 +790,20 @@ class DatabaseSchema:
 
     async def create_postgres_tables(self):
         try:
+            ddl_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "database", "ddl", "postgres", "schema_ddl.sql"))
+            if not os.path.isfile(ddl_path):
+                raise FileNotFoundError(f"Canonical DDL file not found at {ddl_path}")
+            async with self.conn.cursor() as cursor:
+                with open(ddl_path, "r", encoding="utf-8") as f:
+                    ddl_sql = f.read()
+                await cursor.execute(ddl_sql)
+                await self.conn.commit()
+                logger.info("Executed canonical Postgres DDL from schema_ddl.sql (async).")
+            return
+        except Exception as e:
+            logger.error(f"FATAL: Error creating postgres tables from canonical DDL (async): {e}", exc_info=True)
+            raise
+        try:
             async with self.conn.cursor() as cursor:
                 logger.info("Creating resource table (async).")
                 await cursor.execute(f"""
@@ -805,14 +840,14 @@ class DatabaseSchema:
                 """)
                 await self.test_workload_table()
 
-                logger.info("Creating event_log table (async).")
+                logger.info("Creating event table (async).")
                 await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.event_log (
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.event (
                         execution_id BIGINT,
                         event_id BIGINT,
                         parent_event_id BIGINT,
                         parent_execution_id BIGINT,
-                        timestamp TIMESTAMP,
+                        timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         event_type VARCHAR,
                         node_id VARCHAR,
                         node_name VARCHAR,
@@ -821,7 +856,7 @@ class DatabaseSchema:
                         duration DOUBLE PRECISION,
                         context TEXT,
                         result TEXT,
-                        metadata TEXT,
+                        meta TEXT,
                         error TEXT,
                         loop_id VARCHAR,
                         loop_name VARCHAR,
@@ -834,36 +869,77 @@ class DatabaseSchema:
                         context_key VARCHAR,
                         context_value TEXT,
                         trace_component JSONB,
+                        stack_trace TEXT,
                         PRIMARY KEY (execution_id, event_id)
                     )
                 """)
+                # Migration: rename legacy column 'metadata' -> 'meta' if needed (async)
                 try:
-                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB")
-                except Exception as e:
-                    logger.warning(f"ALTER event_log add trace_component failed as noetl user, retrying as admin: {e}")
+                    await cursor.execute(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = 'event'
+                        """,
+                        (self.noetl_schema,)
+                    )
+                    rows = await cursor.fetchall() or []
+                    cols = {r[0] if isinstance(r, (list,tuple)) else r.get('column_name') for r in rows}
+                    if 'metadata' in cols and 'meta' not in cols:
+                        await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event RENAME COLUMN metadata TO meta")
+                except Exception:
+                    pass
+                # Back-compat: rename event_log -> event if event not present
+                try:
+                    await cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.event') IS NOT NULL")
+                    ev_exists = (await cursor.fetchone() or [False])[0]
+                    await cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.event_log') IS NOT NULL")
+                    evlog_exists = (await cursor.fetchone() or [False])[0]
+                    if (not ev_exists) and evlog_exists:
+                        await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log RENAME TO event")
+                except Exception:
+                    pass
+                # Ensure helper columns exist
+                try:
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS trace_component JSONB")
+                except Exception:
                     try:
                         admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
                         await admin_conn.set_autocommit(True)
                         async with admin_conn.cursor() as ac:
-                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB")
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS trace_component JSONB")
                         await admin_conn.close()
                     except Exception:
                         if not getattr(self.conn, "autocommit", False):
                             await self.conn.rollback()
-                
                 try:
-                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
-                except Exception as e:
-                    logger.warning(f"ALTER event_log add parent_execution_id failed as noetl user, retrying as admin: {e}")
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
+                except Exception:
                     try:
                         admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
                         await admin_conn.set_autocommit(True)
                         async with admin_conn.cursor() as ac:
-                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT")
                         await admin_conn.close()
                     except Exception:
                         if not getattr(self.conn, "autocommit", False):
                             await self.conn.rollback()
+                try:
+                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS stack_trace TEXT")
+                except Exception:
+                    try:
+                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
+                        await admin_conn.set_autocommit(True)
+                        async with admin_conn.cursor() as ac:
+                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.event ADD COLUMN IF NOT EXISTS stack_trace TEXT")
+                        await admin_conn.close()
+                    except Exception:
+                        if not getattr(self.conn, "autocommit", False):
+                            await self.conn.rollback()
+                # Back-compat view
+                try:
+                    await cursor.execute(f"CREATE OR REPLACE VIEW {self.noetl_schema}.event_log AS SELECT * FROM {self.noetl_schema}.event")
+                except Exception:
+                    pass
 
                 logger.info("Creating workflow table (async).")
                 await cursor.execute(f"""
@@ -902,53 +978,47 @@ class DatabaseSchema:
                     )
                 """)
             
-                logger.info("Creating error_log table (async).")
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.error_log (
-                        error_id BIGINT PRIMARY KEY,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        error_type VARCHAR(50),
-                        error_message TEXT,
-                        execution_id BIGINT,
-                        step_id VARCHAR,
-                        step_name VARCHAR,
-                        template_string TEXT,
-                        context_data JSONB,
-                        stack_trace TEXT,
-                        input_data JSONB,
-                        output_data JSONB,
-                        severity VARCHAR(20) DEFAULT 'error',
-                        resolved BOOLEAN DEFAULT FALSE,
-                        resolution_notes TEXT,
-                        resolution_timestamp TIMESTAMP
-                    )
-                """)
+                # Migrate legacy error_log into event and drop it
                 try:
-                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.error_log OWNER TO {self.noetl_user}")
-                except Exception as e:
-                    logger.warning(f"Failed to change owner for error_log as noetl user, retrying as admin: {e}")
-                    try:
-                        admin_conn = await psycopg.AsyncConnection.connect(self.admin_conn)
-                        await admin_conn.set_autocommit(True)
-                        async with admin_conn.cursor() as ac:
-                            await ac.execute(f"ALTER TABLE {self.noetl_schema}.error_log OWNER TO {self.noetl_user}")
-                        await admin_conn.close()
-                    except Exception as own_e:
-                        logger.warning(f"Admin ownership change for error_log failed: {own_e}")
-                        if not getattr(self.conn, "autocommit", False):
-                            await self.conn.rollback()
-
-                try:
-                    await cursor.execute(f"ALTER TABLE {self.noetl_schema}.error_log ALTER COLUMN error_id TYPE BIGINT")
+                    await cursor.execute(f"SELECT to_regclass('{self.noetl_schema}.error_log') IS NOT NULL")
+                    row = await cursor.fetchone()
+                    if row and row[0]:
+                        try:
+                            await cursor.execute(f"""
+                                INSERT INTO {self.noetl_schema}.event (
+                                    execution_id, event_id, timestamp, event_type, node_id, node_name, status,
+                                    context, result, metadata, error, stack_trace
+                                )
+                                SELECT 
+                                    COALESCE(execution_id, 0) as execution_id,
+                                    error_id as event_id,
+                                    COALESCE(timestamp, CURRENT_TIMESTAMP) as timestamp,
+                                    'error' as event_type,
+                                    step_id as node_id,
+                                    step_name as node_name,
+                                    'FAILED' as status,
+                                    context_data::text as context,
+                                    output_data::text as result,
+                                    json_build_object(
+                                        'error_type', error_type,
+                                        'severity', severity,
+                                        'resolved', resolved,
+                                        'resolution_notes', resolution_notes,
+                                        'template_string', template_string
+                                    )::text as metadata,
+                                    error_message as error,
+                                    stack_trace as stack_trace
+                                FROM {self.noetl_schema}.error_log
+                                ON CONFLICT (execution_id, event_id) DO NOTHING
+                            """)
+                        except Exception:
+                            pass
+                        try:
+                            await cursor.execute(f"DROP TABLE IF EXISTS {self.noetl_schema}.error_log CASCADE")
+                        except Exception:
+                            pass
                 except Exception:
                     pass
-
-                await cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON {self.noetl_schema}.error_log (timestamp);
-                    CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON {self.noetl_schema}.error_log (error_type);
-                    CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON {self.noetl_schema}.error_log (execution_id);
-                    CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON {self.noetl_schema}.error_log (resolved);
-                """)
 
                 await cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.noetl_schema}.credential (
@@ -1146,64 +1216,25 @@ class DatabaseSchema:
                         metadata JSONB
                     )
                 """)
+                # Dentry-based hierarchy replacing label/attachment (async)
                 await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.label (
+                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.dentry (
                         id BIGINT PRIMARY KEY,
-                        parent_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
+                        parent_id BIGINT REFERENCES {self.noetl_schema}.dentry(id) ON DELETE CASCADE,
                         name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.chat (
-                        id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
-                        name TEXT NOT NULL,
-                        owner_id BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.member (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        profile_id BIGINT REFERENCES {self.noetl_schema}.profile(id) ON DELETE CASCADE,
-                        role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-                        joined_at TIMESTAMPTZ DEFAULT now(),
-                        UNIQUE(chat_id, profile_id)
-                    )
-                """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.message (
-                        id BIGINT PRIMARY KEY,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
-                        sender_id BIGINT,
-                        role TEXT,
-                        content TEXT NOT NULL,
+                        type TEXT NOT NULL CHECK (type IN ('folder')),
+                        resource_type TEXT,
+                        resource_id BIGINT,
+                        is_positive BOOLEAN DEFAULT TRUE,
                         metadata JSONB,
-                        created_at TIMESTAMPTZ DEFAULT now()
-                    )
-                """)
-                await cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.noetl_schema}.attachment (
-                        id BIGINT PRIMARY KEY,
-                        label_id BIGINT REFERENCES {self.noetl_schema}.label(id) ON DELETE CASCADE,
-                        chat_id BIGINT REFERENCES {self.noetl_schema}.chat(id) ON DELETE CASCADE,
-                        filename TEXT NOT NULL,
-                        filepath TEXT NOT NULL,
-                        uploaded_by BIGINT REFERENCES {self.noetl_schema}.profile(id),
-                        created_at TIMESTAMPTZ DEFAULT now()
+                        created_at TIMESTAMPTZ DEFAULT now(),
+                        UNIQUE(parent_id, name)
                     )
                 """)
                 try:
                     await cursor.execute(f"""
-                        CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                        CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
-                        CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                        CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                        CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                     """)
                 except Exception as e:
                     logger.warning(f"Failed to create identity/collab indexes as {self.noetl_user} (async): {e}. Retrying as admin.")
@@ -1213,16 +1244,18 @@ class DatabaseSchema:
                             await admin_conn.set_autocommit(True)
                             async with admin_conn.cursor() as ac:
                                 await ac.execute(f"""
-                                    CREATE INDEX IF NOT EXISTS idx_label_parent ON {self.noetl_schema}.label(parent_id);
-                                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON {self.noetl_schema}.label(parent_id, name);
-                                    CREATE INDEX IF NOT EXISTS idx_chat_label ON {self.noetl_schema}.chat(label_id);
-                                    CREATE INDEX IF NOT EXISTS idx_message_chat_created ON {self.noetl_schema}.message(chat_id, created_at);
-                                    CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON {self.noetl_schema}.attachment(chat_id, created_at);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_parent ON {self.noetl_schema}.dentry(parent_id);
+                                    CREATE INDEX IF NOT EXISTS idx_dentry_type ON {self.noetl_schema}.dentry(type);
                                 """)
                         finally:
                             await admin_conn.close()
                     except Exception as e2:
                         logger.error(f"Admin fallback also failed creating identity/collab indexes (async): {e2}")
+                # Best-effort removal of legacy chat table (and its FKs) if present
+                try:
+                    await cursor.execute(f"DROP TABLE IF EXISTS {self.noetl_schema}.chat CASCADE")
+                except Exception:
+                    pass
 
                 # Snowflake-like ID function (best-effort) and defaults
                 try:
@@ -1285,7 +1318,7 @@ class DatabaseSchema:
                         await admin_conn.close()
                     except Exception:
                         pass
-                for tbl in ['role','profile','session','label','chat','member','message','attachment']:
+                for tbl in ['role','profile','session','dentry']:
                     try:
                         await cursor.execute(f"ALTER TABLE {self.noetl_schema}." + tbl + " ALTER COLUMN id SET DEFAULT {self.noetl_schema}.snowflake_id();")
                     except Exception:
@@ -1485,7 +1518,7 @@ class DatabaseSchema:
                 output_data: Any = None,
                 severity: str = "error") -> Optional[int]:
         """
-        Log an error to the error_log table.
+        Log an error as an event into the unified event table.
         
         Args:
             error_type: The type of error (e.g., "template_rendering", "sql_rendering")
@@ -1519,23 +1552,31 @@ class DatabaseSchema:
                     from noetl.core.common import get_snowflake_id
                 except Exception:
                     get_snowflake_id = lambda: int(datetime.datetime.now().timestamp() * 1000)
-                sf_id = get_snowflake_id()
+                event_id = get_snowflake_id()
+                # Build metadata envelope (as text) for extra details
+                meta_env = json.dumps(make_serializable({
+                    'error_type': error_type,
+                    'severity': severity,
+                    'template_string': template_string,
+                    'input_data': make_serializable(input_data),
+                    'output_data': make_serializable(output_data)
+                }))
                 cursor.execute(f"""
-                    INSERT INTO {self.noetl_schema}.error_log (
-                        error_id, error_type, error_message, execution_id, step_id, step_name,
-                        template_string, context_data, stack_trace, input_data, output_data, severity
+                    INSERT INTO {self.noetl_schema}.event (
+                        execution_id, event_id, timestamp, event_type, node_id, node_name, status,
+                        context, result, meta, error, stack_trace
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
-                    ) RETURNING error_id
+                        %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s
+                    ) RETURNING event_id
                 """, (
-                    sf_id, error_type, error_message, execution_id, step_id, step_name,
-                    template_string, context_data_json, stack_trace, input_data_json, output_data_json, severity
+                    execution_id, event_id, 'error', step_id, step_name, 'FAILED',
+                    context_data_json, output_data_json, meta_env, error_message, stack_trace
                 ))
-                
-                error_id = cursor.fetchone()[0]
+                inserted = cursor.fetchone()[0]
                 self.conn.commit()
-                logger.info(f"Logged error to error_log table with error_id: {error_id}")
-                return error_id
+                logger.info(f"Logged error event with event_id: {inserted}")
+                return inserted
                 
         except Exception as e:
             logger.error(f"Failed to log error to error_log table: {e}", exc_info=True)
@@ -1546,41 +1587,25 @@ class DatabaseSchema:
                     pass
             return None
     
-    def mark_error_resolved(self, error_id: int, resolution_notes: str = None) -> bool:
-        """
-        Mark an error as resolved in the error_log table.
-        
-        Args:
-            error_id: The ID of the error to mark as resolved
-            resolution_notes: Notes on how the error was resolved
-            
-        Returns:
-            True if the error was marked as resolved, False otherwise
-        """
+    def mark_error_resolved(self, error_event_id: int, resolution_notes: str = None) -> bool:
+        """Record an 'error_resolved' event in the unified event table."""
         try:
             if not self.conn or self.conn.closed:
                 self.initialize_connection_sync()
-                
             with self.conn.cursor() as cursor:
                 cursor.execute(f"""
-                    UPDATE {self.noetl_schema}.error_log
-                    SET resolved = TRUE, 
-                        resolution_notes = %s,
-                        resolution_timestamp = CURRENT_TIMESTAMP
-                    WHERE error_id = %s
-                """, (resolution_notes, error_id))
-                
+                    INSERT INTO {self.noetl_schema}.event (execution_id, event_id, timestamp, event_type, status, meta)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, 'error_resolved', 'COMPLETED', %s)
+                """, (
+                    0, error_event_id, json.dumps({'resolution_notes': resolution_notes}) if resolution_notes else None
+                ))
                 self.conn.commit()
-                logger.info(f"Marked error with error_id {error_id} as resolved")
                 return True
-                
-        except Exception as e:
-            logger.error(f"Failed to mark error as resolved: {e}", exc_info=True)
-            if self.conn:
-                try:
-                    self.conn.rollback()
-                except:
-                    pass
+        except Exception:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
             return False
     
     def get_errors(self, 
@@ -1606,52 +1631,48 @@ class DatabaseSchema:
             if not self.conn or self.conn.closed:
                 self.initialize_connection_sync()
                 
-            query = f"SELECT * FROM {self.noetl_schema}.error_log WHERE 1=1"
+            query = f"SELECT execution_id, event_id, timestamp, node_id, node_name, error, meta, stack_trace FROM {self.noetl_schema}.event WHERE event_type = 'error'"
             params = []
-            
             if error_type:
-                query += " AND error_type = %s"
-                params.append(error_type)
-                
+                query += " AND meta LIKE %s"
+                params.append(f'%"error_type": "{error_type}"%')
             if execution_id:
                 query += " AND execution_id = %s"
                 params.append(execution_id)
-                
-            if resolved is not None:
-                query += " AND resolved = %s"
-                params.append(resolved)
-                
+            # 'resolved' state is not a first-class column; skip
             query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
             
             with self.conn.cursor() as cursor:
                 cursor.execute(query, params)
-                columns = [desc[0] for desc in cursor.description]
-                errors = []
-                
-                for row in cursor.fetchall():
-                    error_dict = dict(zip(columns, row))
-                    
-                    for field in ['context_data', 'input_data', 'output_data']:
-                        if error_dict.get(field) and isinstance(error_dict[field], str):
-                            try:
-                                error_dict[field] = json.loads(error_dict[field])
-                            except:
-                                pass
-                    
-                    errors.append(error_dict)
-                
+                rows = cursor.fetchall()
+                errors: List[Dict[str, Any]] = []
+                for exec_id, eid, ts, node_id, node_name, err, meta_txt, stack in rows:
+                    try:
+                        meta = json.loads(meta_txt) if isinstance(meta_txt, str) else (meta_txt or {})
+                    except Exception:
+                        meta = meta_txt or {}
+                    errors.append({
+                        'execution_id': exec_id,
+                        'event_id': eid,
+                        'timestamp': ts.isoformat() if hasattr(ts, 'isoformat') else ts,
+                        'step_id': node_id,
+                        'step_name': node_name,
+                        'error_message': err,
+                        'metadata': meta,
+                        'stack_trace': stack,
+                    })
                 return errors
                 
         except Exception as e:
             logger.error(f"Failed to get errors from error_log table: {e}", exc_info=True)
             return []
     
-    async def log_error_async(self,
-                error_type: str,
-                error_message: str,
-                execution_id: str = None,
-                step_id: str = None,
+    async def log_error_async(self, 
+                error_type: str, 
+                error_message: str, 
+                execution_id: str = None, 
+                step_id: str = None, 
                 step_name: str = None,
                 template_string: str = None,
                 context_data: Dict = None,
@@ -1675,25 +1696,33 @@ class DatabaseSchema:
                     from noetl.core.common import get_snowflake_id
                 except Exception:
                     get_snowflake_id = lambda: int(datetime.datetime.now().timestamp() * 1000)
-                sf_id = get_snowflake_id()
+                event_id = get_snowflake_id()
+                meta_env = json.dumps(make_serializable({
+                    'error_type': error_type,
+                    'severity': severity,
+                    'template_string': template_string,
+                    'input_data': make_serializable(input_data),
+                    'output_data': make_serializable(output_data)
+                }))
                 await cursor.execute(f"""
-                    INSERT INTO {self.noetl_schema}.error_log (
-                        error_id, error_type, error_message, execution_id, step_id, step_name,
-                        template_string, context_data, stack_trace, input_data, output_data, severity
+                    INSERT INTO {self.noetl_schema}.event (
+                        execution_id, event_id, timestamp, event_type, node_id, node_name, status,
+                        context, result, meta, error, stack_trace
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s
-                    ) RETURNING error_id
+                        %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s
+                    ) RETURNING event_id
                 """, (
-                    sf_id, error_type, error_message, execution_id, step_id, step_name,
-                    template_string, context_data_json, stack_trace, input_data_json, output_data_json, severity
+                    execution_id, event_id, 'error', step_id, step_name, 'FAILED',
+                    context_data_json, output_data_json, meta_env, error_message, stack_trace
                 ))
                 row = await cursor.fetchone()
                 await self.conn.commit()
-                error_id = row[0] if row else None
-                logger.info(f"Logged error to error_log table with error_id: {error_id}")
-                return error_id
+                event_row_id = row[0] if row else None
+                logger.info(f"Logged error event with event_id: {event_row_id}")
+                return event_row_id
         except Exception as e:
-            logger.error(f"Failed to log error to error_log table (async): {e}", exc_info=True)
+            logger.error(f"Failed to log error (async): {e}", exc_info=True)
             try:
                 if self.conn and not getattr(self.conn, 'autocommit', False):
                     await self.conn.rollback()
@@ -1701,23 +1730,20 @@ class DatabaseSchema:
                 pass
             return None
 
-    async def mark_error_resolved_async(self, error_id: int, resolution_notes: str = None) -> bool:
+    async def mark_error_resolved_async(self, error_event_id: int, resolution_notes: str = None) -> bool:
         try:
             if not self.conn or getattr(self.conn, 'closed', False):
                 await self.initialize_connection()
             async with self.conn.cursor() as cursor:
                 await cursor.execute(f"""
-                    UPDATE {self.noetl_schema}.error_log
-                    SET resolved = TRUE,
-                        resolution_notes = %s,
-                        resolution_timestamp = CURRENT_TIMESTAMP
-                    WHERE error_id = %s
-                """, (resolution_notes, error_id))
+                    INSERT INTO {self.noetl_schema}.event (execution_id, event_id, timestamp, event_type, status, meta)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, 'error_resolved', 'COMPLETED', %s)
+                """, (
+                    0, error_event_id, json.dumps({'resolution_notes': resolution_notes}) if resolution_notes else None
+                ))
                 await self.conn.commit()
-                logger.info(f"Marked error with error_id {error_id} as resolved (async)")
                 return True
-        except Exception as e:
-            logger.error(f"Failed to mark error as resolved (async): {e}", exc_info=True)
+        except Exception:
             try:
                 if self.conn and not getattr(self.conn, 'autocommit', False):
                     await self.conn.rollback()
@@ -1735,17 +1761,15 @@ class DatabaseSchema:
             if not self.conn or getattr(self.conn, 'closed', False):
                 await self.initialize_connection()
 
-            query = f"SELECT * FROM {self.noetl_schema}.error_log WHERE 1=1"
+            query = f"SELECT * FROM {self.noetl_schema}.event WHERE event_type = 'error'"
             params: list[Any] = []
             if error_type:
-                query += " AND error_type = %s"
-                params.append(error_type)
+                query += " AND meta LIKE %s"
+                params.append(f'%"error_type": "{error_type}"%')
             if execution_id:
                 query += " AND execution_id = %s"
                 params.append(execution_id)
-            if resolved is not None:
-                query += " AND resolved = %s"
-                params.append(resolved)
+            # resolved filter not supported in unified event table; encode in metadata if needed
             query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
 
@@ -1756,6 +1780,12 @@ class DatabaseSchema:
                 errors: List[Dict[str, Any]] = []
                 for row in rows:
                     error_dict = dict(zip(columns, row))
+                    # Back-compat: expose 'metadata' key sourced from 'meta' column if present
+                    try:
+                        if 'metadata' not in error_dict and 'meta' in error_dict:
+                            error_dict['metadata'] = error_dict.get('meta')
+                    except Exception:
+                        pass
                     for field in ['context_data', 'input_data', 'output_data']:
                         if error_dict.get(field) and isinstance(error_dict[field], str):
                             try:

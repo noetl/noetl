@@ -39,7 +39,7 @@ version = "0.1.19"  # Update this version number
 You can use the provided script to update the version:
 
 ```bash
-python scripts/update_version.py 0.1.19
+python tools/update_version.py 0.1.19
 ```
 
 ## Building the Package
@@ -47,7 +47,7 @@ python scripts/update_version.py 0.1.19
 NoETL provides a script for building the package:
 
 ```bash
-./scripts/build_package.sh
+./tools/build_package.sh
 ```
 
 This script:
@@ -90,7 +90,7 @@ It's recommended to publish to TestPyPI first to verify the package works correc
 
 ```bash
 # Using the provided script
-./scripts/pypi_publish.sh --test 0.1.19
+./tools/pypi/pypi_publish.sh --test 0.1.19
 
 # Or manually
 python -m twine upload --repository testpypi dist/*
@@ -108,7 +108,7 @@ Once you've verified the package works correctly on TestPyPI, you can publish to
 
 ```bash
 # Using the provided script
-./scripts/pypi_publish.sh 0.1.19
+./tools/pypi/pypi_publish.sh 0.1.19
 
 # Or manually
 python -m twine upload dist/*
@@ -119,7 +119,7 @@ python -m twine upload dist/*
 NoETL provides an interactive publishing wizard that guides you through the process:
 
 ```bash
-./scripts/interactive_publish.sh
+./tools/pypi/interactive_publish.sh
 ```
 
 This wizard will:
@@ -166,8 +166,8 @@ export PYPI_TOKEN=pypi-your-api-token
 export TESTPYPI_TOKEN=pypi-your-test-api-token
 
 # Then use the scripts with the environment variables
-./scripts/pypi_publish.sh --test 0.1.19
-./scripts/pypi_publish.sh 0.1.19
+./tools/pypi/pypi_publish.sh --test 0.1.19
+./tools/pypi/pypi_publish.sh 0.1.19
 ```
 
 ## Troubleshooting

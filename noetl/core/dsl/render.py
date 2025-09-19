@@ -6,6 +6,7 @@ import traceback
 from typing import Any, Dict, List, Union, Optional
 from jinja2 import Environment, meta, StrictUndefined, BaseLoader, Undefined
 from noetl.core.logger import log_error
+from noetl.core.common import DateTimeEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ def add_b64encode_filter(env: Environment) -> Environment:
     """
     if 'b64encode' not in env.filters:
         env.filters['b64encode'] = lambda s: base64.b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else base64.b64encode(str(s).encode('utf-8')).decode('utf-8')
+    # Provide a tojson filter for templates that need JSON stringification
+    if 'tojson' not in env.filters:
+        env.filters['tojson'] = lambda obj: json.dumps(obj, cls=DateTimeEncoder)
     return env
 
 
@@ -143,13 +147,14 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 logger.debug(f"render_template: Successfully rendered: {rendered}")
             except Exception as e:
                 error_msg = f"Template rendering error: {e}, template: {template}"
-                # Reduce noise: don't persist undefined-variable errors when not strict
+                # Reduce noise: always suppress persistence for undefined-variable cases.
+                # These are expected when rendering loop-scoped variables like {{ city_item }} before evaluation.
                 msg = str(e)
-                if not strict_keys and ("is undefined" in msg or "UndefinedError" in msg):
+                if ("is undefined" in msg) or ("UndefinedError" in msg):
                     logger.debug(error_msg)
                 else:
                     logger.error(error_msg)
-                    # Persist to DB for strict failures or non-undefined errors
+                    # Persist to DB for non-undefined errors
                     log_error(
                         error=e,
                         error_type="template_rendering",

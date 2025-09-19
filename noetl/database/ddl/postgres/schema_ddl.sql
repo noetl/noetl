@@ -12,7 +12,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;
 
 -- Resource
 CREATE TABLE IF NOT EXISTS noetl.resource (
-    name TEXT PRIMARY KEY
+    name TEXT PRIMARY KEY,
+    type TEXT,
+    meta JSONB
 );
 ALTER TABLE noetl.resource OWNER TO noetl;
 
@@ -41,8 +43,8 @@ CREATE TABLE IF NOT EXISTS noetl.workload (
 );
 ALTER TABLE noetl.workload OWNER TO noetl;
 
--- Event log
-CREATE TABLE IF NOT EXISTS noetl.event_log (
+-- Event
+CREATE TABLE IF NOT EXISTS noetl.event (
     execution_id BIGINT,
     event_id BIGINT,
     parent_event_id BIGINT,
@@ -56,7 +58,7 @@ CREATE TABLE IF NOT EXISTS noetl.event_log (
     duration DOUBLE PRECISION,
     context TEXT,
     result TEXT,
-    metadata TEXT,
+    meta TEXT,
     error TEXT,
     loop_id VARCHAR,
     loop_name VARCHAR,
@@ -69,13 +71,15 @@ CREATE TABLE IF NOT EXISTS noetl.event_log (
     context_key VARCHAR,
     context_value TEXT,
     trace_component JSONB,
+    stack_trace TEXT,
     PRIMARY KEY (execution_id, event_id)
 );
-ALTER TABLE noetl.event_log OWNER TO noetl;
-ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS trace_component JSONB;
-ALTER TABLE noetl.event_log ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
+ALTER TABLE noetl.event OWNER TO noetl;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS trace_component JSONB;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS stack_trace TEXT;
 DO $$ BEGIN
-    ALTER TABLE noetl.event_log ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE noetl.event ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP;
 EXCEPTION WHEN others THEN NULL; END $$;
 
 -- Workflow/workbook/transition
@@ -110,30 +114,8 @@ CREATE TABLE IF NOT EXISTS noetl.transition (
 );
 ALTER TABLE noetl.transition OWNER TO noetl;
 
--- Error log
-CREATE TABLE IF NOT EXISTS noetl.error_log (
-    error_id BIGINT PRIMARY KEY,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    error_type VARCHAR(50),
-    error_message TEXT,
-    execution_id BIGINT,
-    step_id VARCHAR,
-    step_name VARCHAR,
-    template_string TEXT,
-    context_data JSONB,
-    stack_trace TEXT,
-    input_data JSONB,
-    output_data JSONB,
-    severity VARCHAR(20) DEFAULT 'error',
-    resolved BOOLEAN DEFAULT FALSE,
-    resolution_notes TEXT,
-    resolution_timestamp TIMESTAMP
-);
-ALTER TABLE noetl.error_log OWNER TO noetl;
-CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON noetl.error_log (timestamp);
-CREATE INDEX IF NOT EXISTS idx_error_log_error_type ON noetl.error_log (error_type);
-CREATE INDEX IF NOT EXISTS idx_error_log_execution_id ON noetl.error_log (execution_id);
-CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON noetl.error_log (resolved);
+-- Legacy compatibility view for event_log
+CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
 
 -- Credential
 CREATE TABLE IF NOT EXISTS noetl.credential (
@@ -245,65 +227,31 @@ CREATE TABLE IF NOT EXISTS noetl.session (
     session_type TEXT NOT NULL CHECK (session_type IN ('user','bot','ai')),
     connected_at TIMESTAMPTZ DEFAULT now(),
     disconnected_at TIMESTAMPTZ,
-    metadata JSONB
+    meta JSONB
 );
 ALTER TABLE noetl.session OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.label (
+-- Dentry-based hierarchy replacing label/attachment
+CREATE TABLE IF NOT EXISTS noetl.dentry (
     id BIGINT PRIMARY KEY,
-    parent_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
+    parent_id BIGINT REFERENCES noetl.dentry(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    owner_id BIGINT REFERENCES noetl.profile(id),
-    created_at TIMESTAMPTZ DEFAULT now()
+    type TEXT NOT NULL CHECK (type IN ('folder')),
+    resource_type TEXT,
+    resource_id BIGINT,
+    is_positive BOOLEAN DEFAULT TRUE,
+    meta JSONB,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(parent_id, name)
 );
-ALTER TABLE noetl.label OWNER TO noetl;
+ALTER TABLE noetl.dentry OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.chat (
-    id BIGINT PRIMARY KEY,
-    label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    owner_id BIGINT REFERENCES noetl.profile(id),
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE noetl.chat OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.member (
-    id BIGINT PRIMARY KEY,
-    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
-    profile_id BIGINT REFERENCES noetl.profile(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-    joined_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(chat_id, profile_id)
-);
-ALTER TABLE noetl.member OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.message (
-    id BIGINT PRIMARY KEY,
-    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
-    sender_type TEXT NOT NULL CHECK (sender_type IN ('user','bot','ai','system')),
-    sender_id BIGINT,
-    role TEXT,
-    content TEXT NOT NULL,
-    metadata JSONB,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE noetl.message OWNER TO noetl;
 
-CREATE TABLE IF NOT EXISTS noetl.attachment (
-    id BIGINT PRIMARY KEY,
-    label_id BIGINT REFERENCES noetl.label(id) ON DELETE CASCADE,
-    chat_id BIGINT REFERENCES noetl.chat(id) ON DELETE CASCADE,
-    filename TEXT NOT NULL,
-    filepath TEXT NOT NULL,
-    uploaded_by BIGINT REFERENCES noetl.profile(id),
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE noetl.attachment OWNER TO noetl;
-CREATE INDEX IF NOT EXISTS idx_label_parent ON noetl.label(parent_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_label_parent_name ON noetl.label(parent_id, name);
-CREATE INDEX IF NOT EXISTS idx_chat_label ON noetl.chat(label_id);
-CREATE INDEX IF NOT EXISTS idx_message_chat_created ON noetl.message(chat_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_attachment_chat_created ON noetl.attachment(chat_id, created_at);
+-- Indexes for dentry and messages
+CREATE INDEX IF NOT EXISTS idx_dentry_parent ON noetl.dentry(parent_id);
+CREATE INDEX IF NOT EXISTS idx_dentry_type ON noetl.dentry(type);
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
@@ -326,11 +274,7 @@ ALTER FUNCTION noetl.snowflake_id() OWNER TO noetl;
 ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.label ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.chat ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.member ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.message ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.attachment ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 
 -- Seed sample roles (ids via function)
 INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'admin', 'Administrator') ON CONFLICT (name) DO NOTHING;

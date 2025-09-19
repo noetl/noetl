@@ -83,13 +83,13 @@ async def render_context(request: Request):
         playbook_path = None
         playbook_version = None
         steps = []
-        # The event_log table doesn't have playbook_path/version columns; derive from
+        # The event table doesn't have playbook_path/version columns; derive from
         # the earliest event's input_context/metadata like evaluate_broker_for_execution
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
-                    SELECT context, metadata FROM event_log
+                    SELECT context, meta FROM event
                     WHERE execution_id = %s
                     ORDER BY timestamp ASC
                     LIMIT 1
@@ -103,9 +103,9 @@ async def render_context(request: Request):
                     except Exception:
                         context = row.get("context") or {}
                     try:
-                        metadata = json.loads(row["metadata"]) if row.get("metadata") else {}
+                        metadata = json.loads(row.get("meta")) if row.get("meta") else {}
                     except Exception:
-                        metadata = row.get("metadata") or {}
+                        metadata = row.get("meta") or {}
                     playbook_path = (context.get('path') or
                                      (metadata.get('playbook_path') if isinstance(metadata, dict) else None) or
                                      (metadata.get('resource_path') if isinstance(metadata, dict) else None))

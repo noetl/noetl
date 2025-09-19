@@ -56,7 +56,7 @@ async def create_event(
                                     await cur.execute(
                                         """
                                         SELECT context::json->>'parent_step' as parent_step
-                                        FROM noetl.event_log
+                                        FROM noetl.event
                                         WHERE execution_id = %s
                                           AND event_type = 'result'
                                           AND context LIKE %s
@@ -89,7 +89,7 @@ async def create_event(
                                     print(f"completion handler: checking step {step_name} for results")
                                     await cur.execute(
                                         """
-                                        SELECT result FROM noetl.event_log
+                                        SELECT result FROM noetl.event
                                         WHERE execution_id = %s
                                           AND node_name = %s
                                           AND event_type = 'action_completed'
@@ -133,7 +133,7 @@ async def create_event(
                                     await cur.execute(
                                     """
                                     SELECT node_id, loop_id, loop_name, iterator, current_index, current_item 
-                                    FROM noetl.event_log
+                                    FROM noetl.event
                                     WHERE execution_id = %s
                                       AND event_type = 'loop_iteration'
                                       AND node_name = %s
