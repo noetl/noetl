@@ -75,9 +75,22 @@ def execute_save_task(
         chunk_size = payload.get('chunk_size') or payload.get('chunksize')
         concurrency = payload.get('concurrency')
         # storage-level attributes (do not echo secrets)
-        credential_ref = storage.get('auth') or storage.get('credential') or storage.get('credentialRef')
-        if storage.get('credential'):
-            logger.warning("SAVE: storage.credential is deprecated; use storage.auth instead")
+        auth_config = storage.get('auth')
+        credential_ref = None
+        
+        # Handle both unified auth dictionary and legacy string reference
+        if isinstance(auth_config, dict):
+            # For unified auth, we'll pass the entire auth config to the target plugin
+            logger.debug("SAVE: Using unified auth dictionary")
+        elif isinstance(auth_config, str):
+            # Legacy string reference
+            credential_ref = auth_config
+            logger.debug("SAVE: Using legacy auth string reference")
+        else:
+            # Check for legacy credential fields
+            credential_ref = storage.get('credential') or storage.get('credentialRef')
+            if storage.get('credential'):
+                logger.warning("SAVE: storage.credential is deprecated; use storage.auth instead")
         spec = storage.get('spec') or {}
 
         # Render data/params against the execution context
@@ -227,8 +240,10 @@ def execute_save_task(
             if isinstance(rendered_data, dict) and rendered_data:
                 pg_with['save_data'] = rendered_data
 
-            # Pass through auth alias so postgres plugin can resolve if needed
-            if credential_ref and 'auth' not in pg_with:
+            # Pass through unified auth or legacy credential reference
+            if isinstance(auth_config, dict) and 'auth' not in pg_with:
+                pg_with['auth'] = auth_config
+            elif credential_ref and 'auth' not in pg_with:
                 pg_with['auth'] = credential_ref
 
             pg_result = _pg_exec(pg_task, context, jinja_env, pg_with, log_event_callback)

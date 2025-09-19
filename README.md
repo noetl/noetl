@@ -191,7 +191,10 @@ NoETL provides three distinct approaches for handling credentials and secrets in
 ```yaml
 - step: create_table
   type: postgres
-  auth: pg_local
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
   command: CREATE TABLE users (id SERIAL, name TEXT);
 ```
 
@@ -310,7 +313,10 @@ For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/b
 ```yaml
 - step: ensure_pg_table
   type: postgres
-  auth: pg_local
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_http_raw (
       id TEXT PRIMARY KEY,

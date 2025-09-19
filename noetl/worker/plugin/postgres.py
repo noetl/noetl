@@ -11,6 +11,7 @@ from noetl.core.common import DateTimeEncoder, make_serializable
 from noetl.core.logger import setup_logger, log_error
 from noetl.core.dsl.render import render_template
 from noetl.worker.secrets import fetch_credential_by_key
+from noetl.worker.plugin._auth import resolve_auth_map, get_postgres_auth
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -33,35 +34,64 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
     task_name = task_config.get('task', 'postgres_task')
     start_time = datetime.datetime.now()
 
-    # Resolve auth/credential alias if provided and merge into task_with best-effort
+    # Resolve unified auth system
+    postgres_auth = None
     try:
-        cred_ref = (
-            task_with.get('auth') or task_config.get('auth') or
-            task_with.get('credential') or task_config.get('credential')
-        )
-        if cred_ref:
-            try:
-                data = fetch_credential_by_key(str(cred_ref))
-            except Exception:
-                data = {}
-            if isinstance(data, dict):
-                # Merge only missing keys in task_with
+        resolved_auth = resolve_auth_map(task_config, task_with, jinja_env, context)
+        if resolved_auth:
+            # Check for explicit use_auth parameter
+            use_auth = task_with.get('use_auth') or task_config.get('use_auth')
+            postgres_auth = get_postgres_auth(resolved_auth, use_auth)
+            
+            if postgres_auth:
+                logger.debug("POSTGRES: Using unified auth system")
+                # Merge postgres auth fields into task_with (task_with overrides)
                 for src, dst in (
-                    ('dsn','db_conn_string'),
-                    ('db_conn_string','db_conn_string'),
-                    ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
-                    ('db_port','db_port'), ('port','db_port'),
-                    ('db_user','db_user'), ('user','db_user'),
-                    ('db_password','db_password'), ('password','db_password'),
-                    ('db_name','db_name'), ('dbname','db_name'),
+                    ('db_host', 'db_host'),
+                    ('db_port', 'db_port'), 
+                    ('db_user', 'db_user'),
+                    ('db_password', 'db_password'),
+                    ('db_name', 'db_name'),
+                    ('sslmode', 'sslmode')
                 ):
-                    if dst not in task_with and data.get(src) is not None:
-                        task_with[dst] = data.get(src)
-            # Deprecation warning for old key
-            if task_config.get('credential') or task_with.get('credential'):
-                logger.warning("POSTGRES: 'credential' is deprecated; use 'auth' instead")
-    except Exception:
-        logger.debug("POSTGRES: failed to resolve auth credential", exc_info=True)
+                    if dst not in task_with and postgres_auth.get(src) is not None:
+                        task_with[dst] = postgres_auth.get(src)
+            else:
+                logger.debug("POSTGRES: No postgres auth found in unified auth system")
+    except Exception as e:
+        logger.debug(f"POSTGRES: Unified auth processing failed: {e}", exc_info=True)
+    
+    # Legacy fallback: resolve single auth/credential reference 
+    if not postgres_auth:
+        try:
+            cred_ref = (
+                task_with.get('auth') or task_config.get('auth') or
+                task_with.get('credential') or task_config.get('credential')
+            )
+            if cred_ref and isinstance(cred_ref, str):
+                logger.debug("POSTGRES: Using legacy auth system")
+                try:
+                    data = fetch_credential_by_key(str(cred_ref))
+                except Exception:
+                    data = {}
+                if isinstance(data, dict):
+                    # Merge only missing keys in task_with
+                    for src, dst in (
+                        ('dsn','db_conn_string'),
+                        ('db_conn_string','db_conn_string'),
+                        ('db_host','db_host'), ('host','db_host'), ('pg_host','db_host'),
+                        ('db_port','db_port'), ('port','db_port'),
+                        ('db_user','db_user'), ('user','db_user'),
+                        ('db_password','db_password'), ('password','db_password'),
+                        ('db_name','db_name'), ('dbname','db_name'),
+                    ):
+                        if dst not in task_with and data.get(src) is not None:
+                            task_with[dst] = data.get(src)
+                # Deprecation warning for old key
+                if task_config.get('credential') or task_with.get('credential'):
+                    logger.warning("POSTGRES: 'credential' is deprecated; use 'auth' instead")
+        except Exception:
+            logger.debug("POSTGRES: failed to resolve legacy auth credential", exc_info=True)
 
     # Validate configuration first - these errors should not be caught
     # Get database connection parameters - must be provided in task 'with' parameters only

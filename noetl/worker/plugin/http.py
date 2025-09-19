@@ -12,6 +12,7 @@ from jinja2 import Environment
 
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
+from noetl.worker.plugin._auth import resolve_auth_map, build_http_headers
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -65,6 +66,21 @@ def execute_http_task(
 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers={headers}")
+
+        # Process unified auth system to add authentication headers
+        try:
+            resolved_auth = resolve_auth_map(task_config, task_with, jinja_env, context)
+            if resolved_auth:
+                use_auth = task_with.get('use_auth') or task_config.get('use_auth')
+                auth_headers = build_http_headers(resolved_auth, use_auth)
+                if auth_headers:
+                    logger.debug(f"HTTP: Adding auth headers from unified auth system")
+                    # Auth headers override user-specified headers
+                    headers.update(auth_headers)
+            else:
+                logger.debug("HTTP: No unified auth configuration found")
+        except Exception as e:
+            logger.debug(f"HTTP: Unified auth processing failed: {e}", exc_info=True)
 
         timeout = task_config.get('timeout', 30)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout}")
@@ -128,7 +144,16 @@ def execute_http_task(
                         request_args['params'] = params
                 except Exception:
                     pass
-                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Initial request_args={request_args}")
+                
+                # Log request args with redacted sensitive headers
+                redacted_headers = {}
+                for k, v in (headers or {}).items():
+                    if any(sensitive in k.lower() for sensitive in ['authorization', 'token', 'key', 'secret', 'password']):
+                        redacted_headers[k] = '[REDACTED]'
+                    else:
+                        redacted_headers[k] = v
+                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Request headers (redacted)={redacted_headers}")
+                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Initial request_args (without sensitive headers)")
 
                 if method in ['POST', 'PUT', 'PATCH'] and payload:
                     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Processing payload for {method} request")

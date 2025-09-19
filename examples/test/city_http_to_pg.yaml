@@ -33,7 +33,10 @@ workflow:
     save:
       storage:
         kind: postgres
-        auth: pg_local
+        auth:
+          pg:
+            type: postgres
+            key: pg_local
       statement: |
         INSERT INTO public.weather_http_raw (
           id, execution_id, iter_index, city, url, elapsed, payload
