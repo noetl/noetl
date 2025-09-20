@@ -263,9 +263,11 @@ def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Optional
                 val = render_template(jenv, cond, base_ctx, rules=None, strict_keys=False) if isinstance(cond, (str, dict, list)) else cond
                 if _truthy(val):
                     step_nm = item.get('step') or item.get('name')
-                    # Support input/payload/with as transition payloads (input wins, then payload, then with)
+                    # Support data overlay and legacy inputs (prefer data)
                     payload = None
-                    if isinstance(item.get('input'), dict):
+                    if isinstance(item.get('data'), dict):
+                        payload = item.get('data')
+                    elif isinstance(item.get('input'), dict):
                         payload = item.get('input')
                     elif isinstance(item.get('payload'), dict):
                         payload = item.get('payload')
@@ -282,7 +284,9 @@ def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Optional
                 nm = item.get('step') or item.get('name')
                 if nm:
                     payload = None
-                    if isinstance(item.get('input'), dict):
+                    if isinstance(item.get('data'), dict):
+                        payload = item.get('data')
+                    elif isinstance(item.get('input'), dict):
                         payload = item.get('input')
                     elif isinstance(item.get('payload'), dict):
                         payload = item.get('payload')

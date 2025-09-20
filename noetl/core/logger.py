@@ -5,7 +5,7 @@ from typing import Dict, TYPE_CHECKING
 import traceback
 
 if TYPE_CHECKING:
-    from noetl.schema import DatabaseSchema
+    from noetl.core.dsl.schema import DatabaseSchema
 
 try:
     from psycopg_pool import ConnectionPool
@@ -22,7 +22,7 @@ async def get_db_schema() -> 'DatabaseSchema':
     """
     global _db_schema
     if _db_schema is None:
-        from noetl.schema import DatabaseSchema
+        from noetl.core.dsl.schema import DatabaseSchema
         # Avoid schema migrations/DDL during error logging to prevent deadlocks
         _db_schema = DatabaseSchema(auto_setup=False)
         logging.getLogger(__name__).info("Initialized global DatabaseSchema for logger (auto_setup=False)")

@@ -458,7 +458,7 @@ class EventService:
                           evt_l = (str(event_type) if event_type is not None else '').lower()
                           is_error = ("error" in status_l) or ("failed" in status_l) or ("error" in evt_l) or (error is not None)
                           if is_error:
-                              from noetl.schema import DatabaseSchema
+                              from noetl.core.dsl.schema import DatabaseSchema
                               ds = DatabaseSchema(auto_setup=False)
                               err_type = event_type or 'action_error'
                               err_msg = str(error) if error is not None else 'Unknown error'
@@ -510,7 +510,7 @@ class EventService:
                         pass
                     # Best-effort error_log entry even if event insert failed
                     try:
-                        from noetl.schema import DatabaseSchema
+                        from noetl.core.dsl.schema import DatabaseSchema
                         ds = DatabaseSchema(auto_setup=False)
                         await ds.log_error_async(
                             error_type='event_emit_error',

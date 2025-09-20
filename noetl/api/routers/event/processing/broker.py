@@ -247,37 +247,50 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                 ):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)
-                                # Merge transition payload into unified input (and keep 'with' for back-compat)
+                                # Merge transition payload: support new data overlay and legacy input/payload/with
                                 if next_with:
                                     try:
-                                        # Merge legacy with first
+                                        # If next_with carries a 'data' overlay, apply over step's own data
+                                        nx_data = next_with.get('data') if isinstance(next_with, dict) else None
+                                        try:
+                                            if isinstance(nx_data, dict):
+                                                base_data = {}
+                                                try:
+                                                    if isinstance(task.get('data'), dict):
+                                                        base_data.update(task['data'])
+                                                except Exception:
+                                                    pass
+                                                base_data.update(nx_data)  # transition wins
+                                                task['data'] = base_data
+                                        except Exception:
+                                            pass
+                                        # Maintain legacy compatibility by building 'input' from with/payload/input
                                         existing_with = task.get('with') if isinstance(task.get('with'), dict) else {}
-                                        merged_with = {**existing_with, **next_with}
-                                        task['with'] = merged_with
+                                        merged_with = {**existing_with, **({k: v for k, v in next_with.items() if k != 'data'})}
+                                        if merged_with:
+                                            task['with'] = merged_with
 
-                                        # Now build unified input with precedence input > payload > with
                                         base = {}
-                                        try:
-                                            w = task.get('with') if isinstance(task.get('with'), dict) else None
-                                            if w:
-                                                base.update(w)
-                                        except Exception:
-                                            pass
-                                        try:
-                                            p = task.get('payload') if isinstance(task.get('payload'), dict) else None
-                                            if p:
-                                                base.update(p)
-                                        except Exception:
-                                            pass
-                                        try:
-                                            i = task.get('input') if isinstance(task.get('input'), dict) else None
-                                            if i:
-                                                base.update(i)
-                                        except Exception:
-                                            pass
-                                        task['input'] = base
+                                        w = task.get('with') if isinstance(task.get('with'), dict) else None
+                                        if w:
+                                            base.update(w)
+                                        p = task.get('payload') if isinstance(task.get('payload'), dict) else None
+                                        if p:
+                                            base.update(p)
+                                        i = task.get('input') if isinstance(task.get('input'), dict) else None
+                                        if i:
+                                            base.update(i)
+                                        if base:
+                                            task['input'] = base
                                     except Exception:
-                                        task['with'] = next_with
+                                        task['with'] = {k: v for k, v in (next_with or {}).items() if k != 'data'}
+
+                                # Normalize aliases to data and loop->iterator early
+                                try:
+                                    from noetl.core.dsl.normalize import normalize_step as _normalize_step
+                                    task = _normalize_step(task)
+                                except Exception:
+                                    pass
                                 # Check if this step has a loop
                                 loop_cfg = task.get('loop') or {}
                                 has_loop = bool(loop_cfg.get('in'))

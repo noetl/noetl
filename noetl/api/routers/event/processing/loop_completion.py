@@ -810,14 +810,24 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 ):
                     if step_def.get(_fld) is not None:
                         task_def[_fld] = step_def.get(_fld)
-                # Merge transition payload into unified input (and keep 'with' for back-compat)
+                # Merge transition payload into task_def: apply data overlay then rebuild legacy inputs
                 if next_with:
                     try:
-                        existing_with = task_def.get('with') if isinstance(task_def.get('with'), dict) else {}
-                        merged_with = {**existing_with, **next_with}
-                        task_def['with'] = merged_with
+                        # Apply 'data' overlay from transition over target step data
+                        nx_data = next_with.get('data') if isinstance(next_with, dict) else None
+                        if isinstance(nx_data, dict):
+                            merged_data = {}
+                            if isinstance(task_def.get('data'), dict):
+                                merged_data.update(task_def.get('data'))
+                            merged_data.update(nx_data)  # transition wins
+                            task_def['data'] = merged_data
 
-                        # Rebuild unified input (with precedence: input > payload > with)
+                        # Keep legacy with/input/payload for backwards-compat
+                        existing_with = task_def.get('with') if isinstance(task_def.get('with'), dict) else {}
+                        merged_with = {**existing_with, **{k: v for k, v in next_with.items() if k != 'data'}}
+                        if merged_with:
+                            task_def['with'] = merged_with
+
                         base = {}
                         w = task_def.get('with') if isinstance(task_def.get('with'), dict) else None
                         if w:
@@ -828,9 +838,17 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                         i = task_def.get('input') if isinstance(task_def.get('input'), dict) else None
                         if i:
                             base.update(i)
-                        task_def['input'] = base
+                        if base:
+                            task_def['input'] = base
                     except Exception:
-                        task_def['with'] = next_with
+                        task_def['with'] = {k: v for k, v in (next_with or {}).items() if k != 'data'}
+
+                # Normalize aliases to data and loop->iterator early
+                try:
+                    from noetl.core.dsl.normalize import normalize_step as _normalize_step
+                    task_def = _normalize_step(task_def)
+                except Exception:
+                    pass
             else:
                 # Non-actionable next step: finalize control step immediately
                 try:

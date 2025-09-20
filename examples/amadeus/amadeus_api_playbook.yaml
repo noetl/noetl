@@ -1,423 +1,297 @@
-# NoETL DSL Playbook for Amadeus API integration using REST API calls
-# This playbook demonstrates how to:
-# 1. Use Google Cloud Secret Manager to retrieve API keys
-# 2. Convert natural language queries to Amadeus API calls using OpenAI REST API
-# 3. Execute Amadeus API calls using REST endpoints
-# 4. Convert Amadeus API responses to natural language using OpenAI REST API
-# 5. Store all events and results in Postgres tables with optional base64 encoding for markdown text
-#
-# Usage:
-# noetl playbooks --register playbooks/amadeus_api_playbook.yaml --port 8080
-# noetl playbooks --execute --path "amadeus/amadeus_api" --payload '{"query": "I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult"}'
-#
-# Note: This playbook includes options to store markdown text as-is or convert it to base64 encoding.
-# To change this behavior, modify the 'encode_as_base64' parameter in the insert_final_result_task
-# and store_openai_response_event_task. Set to 'true' to encode as base64, 'false' to keep as text.
-
 apiVersion: noetl.io/v1
 kind: Playbook
 name: amadeus_api
 path: amadeus/amadeus_api
-
 workload:
-  jobId: "{{ job.uuid }}"
-  execution_id: "{{ job.uuid }}"
-  project_id: "noetl-demo-19700101"
-  query: "I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult"
-  pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
-  pg_user: "{{ env.POSTGRES_USER | default('postgres') }}"
-  pg_password: "{{ env.POSTGRES_PASSWORD | default('postgres') }}"
-  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
-
+  jobId: '{{ job.uuid }}'
+  execution_id: '{{ job.uuid }}'
+  project_id: noetl-demo-19700101
+  query: I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult
+  pg_host: '{{ env.POSTGRES_HOST | default(''localhost'') }}'
+  pg_port: '{{ env.POSTGRES_PORT | default(''5432'') }}'
+  pg_user: '{{ env.POSTGRES_USER | default(''postgres'') }}'
+  pg_password: '{{ env.POSTGRES_PASSWORD | default(''postgres'') }}'
+  pg_db: '{{ env.POSTGRES_DB | default(''noetl'') }}'
 workflow:
-  - step: start
-    desc: "Start Amadeus API Workflow"
-    next:
-      - step: create_results_table
-
+- step: start
+  desc: Start Amadeus API Workflow
+  next:
   - step: create_results_table
-    desc: "Create results table in Postgres if not exists"
-    type: workbook
-    task: create_results_table_task
-    next:
-      - step: create_amadeus_ai_event_table
-
+- step: create_results_table
+  desc: Create results table in Postgres if not exists
+  type: workbook
+  task: create_results_table_task
+  next:
   - step: create_amadeus_ai_event_table
-    desc: "Create Amadeus AI event table in Postgres if not exists"
-    type: workbook
-    task: create_amadeus_ai_event_table_task
-    next:
-      - step: get_openai_api_key
-
+- step: create_amadeus_ai_event_table
+  desc: Create Amadeus AI event table in Postgres if not exists
+  type: workbook
+  task: create_amadeus_ai_event_table_task
+  next:
   - step: get_openai_api_key
-    desc: "Retrieve OpenAI API key from Google Secret Manager"
-    type: workbook
-    task: get_openai_api_key_task
-    next:
-      - step: get_amadeus_api_key
-
+- step: get_openai_api_key
+  desc: Retrieve OpenAI API key from Google Secret Manager
+  type: workbook
+  task: get_openai_api_key_task
+  next:
   - step: get_amadeus_api_key
-    desc: "Retrieve Amadeus API key from Google Secret Manager"
-    type: workbook
-    task: get_amadeus_api_key_task
-    next:
-      - step: get_amadeus_api_secret
-
+- step: get_amadeus_api_key
+  desc: Retrieve Amadeus API key from Google Secret Manager
+  type: workbook
+  task: get_amadeus_api_key_task
+  next:
   - step: get_amadeus_api_secret
-    desc: "Retrieve Amadeus API secret from Google Secret Manager"
-    type: workbook
-    task: get_amadeus_api_secret_task
-    next:
-      - step: get_amadeus_token
-
+- step: get_amadeus_api_secret
+  desc: Retrieve Amadeus API secret from Google Secret Manager
+  type: workbook
+  task: get_amadeus_api_secret_task
+  next:
   - step: get_amadeus_token
-    desc: "Get Amadeus API access token using REST API"
-    type: workbook
-    task: get_amadeus_token_task
-    with:
-      amadeus_api_key: "{{ get_amadeus_api_key.secret_value }}"
-      amadeus_api_secret: "{{ get_amadeus_api_secret.secret_value }}"
-    next:
-      - step: translate_query_to_amadeus
-
+- data:
+    amadeus_api_key: '{{ get_amadeus_api_key.secret_value }}'
+    amadeus_api_secret: '{{ get_amadeus_api_secret.secret_value }}'
+  step: get_amadeus_token
+  desc: Get Amadeus API access token using REST API
+  type: workbook
+  task: get_amadeus_token_task
+  next:
   - step: translate_query_to_amadeus
-    desc: "Convert natural language query to Amadeus API endpoint and parameters using OpenAI REST API"
-    type: workbook
-    task: translate_query_to_amadeus_task
-    with:
-      query: "{{ workload.query }}"
-      openai_api_key: "{{ get_openai_api_key.secret_value }}"
-    next:
-      - step: store_openai_query_event
-
+- data:
+    query: '{{ workload.query }}'
+    openai_api_key: '{{ get_openai_api_key.secret_value }}'
+  step: translate_query_to_amadeus
+  desc: Convert natural language query to Amadeus API endpoint and parameters using
+    OpenAI REST API
+  type: workbook
+  task: translate_query_to_amadeus_task
+  next:
   - step: store_openai_query_event
-    desc: "Store the OpenAI query translation event"
-    type: workbook
-    task: store_openai_query_event_task
-    with:
-      query: "{{ workload.query }}"
-    next:
-      - step: parse_openai_response
-
+- data:
+    query: '{{ workload.query }}'
+  step: store_openai_query_event
+  desc: Store the OpenAI query translation event
+  type: workbook
+  task: store_openai_query_event_task
+  next:
   - step: parse_openai_response
-    desc: "Parse OpenAI response to extract Amadeus endpoint and parameters"
-    type: workbook
-    task: parse_openai_response_task
-    with:
-      openai_response: "{{ translate_query_to_amadeus.data }}"
-    next:
-      - step: execute_amadeus_query
-
+- data:
+    openai_response: '{{ translate_query_to_amadeus.data }}'
+  step: parse_openai_response
+  desc: Parse OpenAI response to extract Amadeus endpoint and parameters
+  type: workbook
+  task: parse_openai_response_task
+  next:
   - step: execute_amadeus_query
-    desc: "Execute Amadeus API query using REST API"
-    type: workbook
-    task: execute_amadeus_query_task
-    with:
-      endpoint: "{{ parse_openai_response.endpoint }}"
-      params: "{{ parse_openai_response.params }}"
-      access_token: "{{ get_amadeus_token.data.access_token }}"
-    next:
-      - step: store_amadeus_query_event
-
+- data:
+    endpoint: '{{ parse_openai_response.endpoint }}'
+    access_token: '{{ get_amadeus_token.data.access_token }}'
+  step: execute_amadeus_query
+  desc: Execute Amadeus API query using REST API
+  type: workbook
+  task: execute_amadeus_query_task
+  next:
   - step: store_amadeus_query_event
-    desc: "Store the Amadeus API query event"
-    type: workbook
-    task: store_amadeus_query_event_task
-    next:
-      - step: translate_amadeus_response
-
+- step: store_amadeus_query_event
+  desc: Store the Amadeus API query event
+  type: workbook
+  task: store_amadeus_query_event_task
+  next:
   - step: translate_amadeus_response
-    desc: "Convert Amadeus API response to natural language using OpenAI REST API"
-    type: workbook
-    task: translate_amadeus_response_task
-    with:
-      amadeus_response: "{{ execute_amadeus_query.data }}"
-      openai_api_key: "{{ get_openai_api_key.secret_value }}"
-    next:
-      - step: store_openai_response_event
-
+- data:
+    amadeus_response: '{{ execute_amadeus_query.data }}'
+    openai_api_key: '{{ get_openai_api_key.secret_value }}'
+  step: translate_amadeus_response
+  desc: Convert Amadeus API response to natural language using OpenAI REST API
+  type: workbook
+  task: translate_amadeus_response_task
+  next:
   - step: store_openai_response_event
-    desc: "Store the OpenAI response translation event"
-    type: workbook
-    task: store_openai_response_event_task
-    next:
-      - step: insert_final_result
-
+- step: store_openai_response_event
+  desc: Store the OpenAI response translation event
+  type: workbook
+  task: store_openai_response_event_task
+  next:
   - step: insert_final_result
-    desc: "Insert final natural language result into PostgreSQL"
-    type: workbook
-    task: insert_final_result_task
-    with:
-      result: "{{ translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data and translate_amadeus_response.data.choices else 'No response generated' }}"
-    next:
-      - step: end
-
+- data:
+    result: '{{ translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data
+      and translate_amadeus_response.data.choices else ''No response generated'' }}'
+  step: insert_final_result
+  desc: Insert final natural language result into PostgreSQL
+  type: workbook
+  task: insert_final_result_task
+  next:
   - step: end
-    desc: "End of workflow"
-    with:
-      result: "{{ translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data.choices else 'Workflow completed' }}"
-
+- data:
+    result: '{{ translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data.choices
+      else ''Workflow completed'' }}'
+  step: end
+  desc: End of workflow
 workbook:
-  - name: get_openai_api_key_task
-    type: secrets
-    provider: google
-    project_id: "{{ workload.project_id }}"
-    secret_name: "openai-api-key"
-
-  - name: get_amadeus_api_key_task
-    type: secrets
-    provider: google
-    project_id: "{{ workload.project_id }}"
-    secret_name: "api-key-test-api-amadeus-com"
-
-  - name: get_amadeus_api_secret_task
-    type: secrets
-    provider: google
-    project_id: "{{ workload.project_id }}"
-    secret_name: "api-secret-test-api-amadeus-com"
-
-  - name: get_amadeus_token_task
-    type: http
-    method: POST
-    endpoint: "https://test.api.amadeus.com/v1/security/oauth2/token"
-    headers:
-      Content-Type: "application/x-www-form-urlencoded"
-    payload:
-      grant_type: "client_credentials"
-      client_id: "{{ amadeus_api_key }}"
-      client_secret: "{{ amadeus_api_secret }}"
-
-  - name: translate_query_to_amadeus_task
-    type: http
-    method: POST
-    endpoint: "https://api.openai.com/v1/chat/completions"
-    headers:
-      Content-Type: "application/json"
-      Authorization: "Bearer {{ openai_api_key }}"
-    payload:
-      model: "gpt-4o"
-      messages:
-        - role: "system"
-          content: |
-            You are a translator that converts natural-language travel queries into Amadeus API endpoints and parameters.
-
-            When given a request, follow these steps:
-            1. Understand what the user wants: flight search, hotel offers, airport search, etc.
-            2. Map the details (origin, destination, dates, passengers, etc.) to the correct REST API endpoint and parameters.
-            3. Return ONLY a JSON object with two properties:
-               - "endpoint": The Amadeus API endpoint (e.g., "/v2/shopping/flight-offers")
-               - "params": An object containing all query parameters
-
-            4. Use real values from user input, and apply correct formatting (e.g., ISO dates).
-            5. If values are ambiguous or missing, make reasonable assumptions.
-            6. If the user provides a travel date **without a year**, assume they mean 2025.
-            7. Always **limit the number of returned results to 3** where applicable.
-
-            Examples:
-
-            User:
-            > I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult.
-
-            A:
-            {
-              "endpoint": "/v2/shopping/flight-offers",
-              "params": {
-                "originLocationCode": "SFO",
-                "destinationLocationCode": "JFK",
-                "departureDate": "2025-09-15",
-                "adults": 1,
-                "max": 3
-              }
-            }
-        - role: "user"
-          content: "{{ query }}"
-      temperature: 0.1
-
-  - name: parse_openai_response_task
-    type: python
-    with:
-      openai_response: "{{ openai_response }}"
-    code: |
-      def main(openai_response):
-          import json
-          
-          try:
-              if not openai_response or not openai_response.get('choices'):
-                  return {
-                      "status": "error",
-                      "message": "No response from OpenAI"
-                  }
-              
-              content = openai_response['choices'][0]['message']['content'].strip()
-              
-              # Handle markdown code blocks if present
-              if content.startswith('```json'):
-                  lines = content.split('\n')
-                  json_lines = []
-                  in_json_block = False
-                  for line in lines:
-                      if line.strip() == '```json':
-                          in_json_block = True
-                      elif line.strip() == '```' and in_json_block:
-                          break
-                      elif in_json_block:
-                          json_lines.append(line)
-                  content = '\n'.join(json_lines)
-              
-              # Parse JSON
-              parsed = json.loads(content)
-              
-              return {
-                  "status": "success",
-                  "endpoint": parsed.get('endpoint'),
-                  "params": parsed.get('params')
-              }
-              
-          except Exception as e:
-              return {
-                  "status": "error",
-                  "message": f"Failed to parse OpenAI response: {str(e)}"
-              }
-
-  - name: execute_amadeus_query_task
-    type: http
-    method: GET
-    endpoint: "https://test.api.amadeus.com{{ endpoint }}"
-    headers:
-      Authorization: "Bearer {{ access_token }}"
-      Content-Type: "application/json"
-    params: "{{ params }}"
-
-  - name: translate_amadeus_response_task
-    type: http
-    method: POST
-    endpoint: "https://api.openai.com/v1/chat/completions"
-    headers:
-      Content-Type: "application/json"
-      Authorization: "Bearer {{ openai_api_key }}"
-    payload:
-      model: "gpt-4o"
-      messages:
-        - role: "system"
-          content: |
-            You are a helpful assistant that reads raw JSON responses from the Amadeus API and summarizes them into clear, human-readable language.
-
-            Your task is to:
-            1. Read and understand the JSON response structure (e.g. flights, hotels, etc.).
-            2. Identify key information relevant to the user (e.g. origin/destination, dates, price, airline, stops, hotel name, stars, location, price).
-            3. Summarize the most important details in **clean, natural English**.
-            4. Use lists, bullet points, and grouping if appropriate.
-            5. Do not show any raw JSON keys or code — just understandable sentences.
-            6. For IATA codes always write a transcription (i.e. SVO will be Sheremetyevo International Airport)
-        - role: "user"
-          content: "{{ amadeus_response | tojson }}"
-      temperature: 0.3
-
-  - name: create_results_table_task
-    type: postgres
-    command: |
-      CREATE TABLE IF NOT EXISTS api_results (
-        id SERIAL PRIMARY KEY,
-        execution_id VARCHAR(64),
-        source VARCHAR(32),
-        result JSONB,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-
-  - name: create_amadeus_ai_event_table_task
-    type: postgres
-    command: |
-      CREATE TABLE IF NOT EXISTS amadeus_ai_events (
-        id SERIAL PRIMARY KEY,
-        execution_id VARCHAR(64),
-        event_type VARCHAR(32),
-        api_call_type VARCHAR(32),
-        input_data JSONB,
-        output_data JSONB,
-        status_code INTEGER,
-        event_time TIMESTAMP DEFAULT NOW(),
-        duration_ms INTEGER,
-        details JSONB
-      );
-
-  - name: store_openai_query_event_task
-    type: postgres
-    command: |
-      INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)
-      VALUES (
-        '{{ job.uuid }}',
-        'openai_query_translation',
-        'openai',
-        '{{ {"user_query": query, "model": "gpt-4o", "system_prompt": "natural_language_to_amadeus_rest_api"} | tojson }}',
-        {% if translate_query_to_amadeus.data is defined %}
-          '{{ translate_query_to_amadeus.data | tojson }}'
-        {% else %}
-          NULL
-        {% endif %},
-        {{ translate_query_to_amadeus.status_code | default(0) }},
-        {{ (translate_query_to_amadeus.elapsed * 1000) | round | int if translate_query_to_amadeus.elapsed else 0 }},
-        '{{ {"endpoint": "https://api.openai.com/v1/chat/completions", "method": "POST"} | tojson }}'
-      );
-
-  - name: store_amadeus_query_event_task
-    type: postgres
-    command: |
-      INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)
-      VALUES (
-        '{{ job.uuid }}',
-        'amadeus_api_search',
-        'amadeus',
-        '{{ {"endpoint": parse_openai_response.endpoint, "params": parse_openai_response.params, "access_token_used": true} | tojson }}',
-        {% if execute_amadeus_query.data is defined %}
-          '{{ execute_amadeus_query.data | tojson }}'
-        {% else %}
-          NULL
-        {% endif %},
-        {{ execute_amadeus_query.status_code | default(0) }},
-        {{ (execute_amadeus_query.elapsed * 1000) | round | int if execute_amadeus_query.elapsed else 0 }},
-        '{{ {"full_endpoint": execute_amadeus_query.url, "method": "GET"} | tojson }}'
-      );
-
-  - name: store_openai_response_event_task
-    type: postgres
-    with:
-      # Set to true to encode response as base64, false to keep as text
-      encode_as_base64: true
-    command: |
-      INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)
-      VALUES (
-        '{{ job.uuid }}',
-        'openai_response_translation',
-        'openai',
-        '{{ {"amadeus_response_base64": execute_amadeus_query.data | tojson | b64encode, "model": "gpt-4o", "system_prompt": "amadeus_response_to_natural_language"} | tojson }}',
-        {% if translate_amadeus_response.data is defined %}
-          {% if encode_as_base64 %}
-            '{{ {"response_base64": translate_amadeus_response.data | tojson | b64encode, "is_base64_encoded": true} | tojson }}'
-          {% else %}
-            '{{ {"response": translate_amadeus_response.data, "is_base64_encoded": false} | tojson }}'
-          {% endif %}
-        {% else %}
-          NULL
-        {% endif %},
-        {{ translate_amadeus_response.status_code | default(0) }},
-        {{ (translate_amadeus_response.elapsed * 1000) | round | int if translate_amadeus_response.elapsed else 0 }},
-        '{{ {"endpoint": "https://api.openai.com/v1/chat/completions", "method": "POST"} | tojson }}'
-      );
-
-  - name: insert_final_result_task
-    type: postgres
-    with:
-      # Set to true to encode markdown text as base64, false to keep as text
-      encode_as_base64: true
-    command: |
-      INSERT INTO api_results (execution_id, source, result)
-      VALUES (
-        '{{ job.uuid }}',
-        'amadeus_api',
-        {% if encode_as_base64 %}
-          '{{ {"query": workload.query, "natural_language_result": result | b64encode, "execution_id": job.uuid, "is_base64_encoded": true} | tojson }}'
-        {% else %}
-          '{{ {"query": workload.query, "natural_language_result": result, "execution_id": job.uuid, "is_base64_encoded": false} | tojson }}'
-        {% endif %}
-      );
+- name: get_openai_api_key_task
+  type: secrets
+  provider: google
+  project_id: '{{ workload.project_id }}'
+  secret_name: openai-api-key
+- name: get_amadeus_api_key_task
+  type: secrets
+  provider: google
+  project_id: '{{ workload.project_id }}'
+  secret_name: api-key-test-api-amadeus-com
+- name: get_amadeus_api_secret_task
+  type: secrets
+  provider: google
+  project_id: '{{ workload.project_id }}'
+  secret_name: api-secret-test-api-amadeus-com
+- name: get_amadeus_token_task
+  type: http
+  method: POST
+  endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
+  headers:
+    Content-Type: application/x-www-form-urlencoded
+  payload:
+    grant_type: client_credentials
+    client_id: '{{ amadeus_api_key }}'
+    client_secret: '{{ amadeus_api_secret }}'
+- name: translate_query_to_amadeus_task
+  type: http
+  method: POST
+  endpoint: https://api.openai.com/v1/chat/completions
+  headers:
+    Content-Type: application/json
+    Authorization: Bearer {{ openai_api_key }}
+  payload:
+    model: gpt-4o
+    messages:
+    - role: system
+      content: "You are a translator that converts natural-language travel queries\
+        \ into Amadeus API endpoints and parameters.\n\nWhen given a request, follow\
+        \ these steps:\n1. Understand what the user wants: flight search, hotel offers,\
+        \ airport search, etc.\n2. Map the details (origin, destination, dates, passengers,\
+        \ etc.) to the correct REST API endpoint and parameters.\n3. Return ONLY a\
+        \ JSON object with two properties:\n   - \"endpoint\": The Amadeus API endpoint\
+        \ (e.g., \"/v2/shopping/flight-offers\")\n   - \"params\": An object containing\
+        \ all query parameters\n\n4. Use real values from user input, and apply correct\
+        \ formatting (e.g., ISO dates).\n5. If values are ambiguous or missing, make\
+        \ reasonable assumptions.\n6. If the user provides a travel date **without\
+        \ a year**, assume they mean 2025.\n7. Always **limit the number of returned\
+        \ results to 3** where applicable.\n\nExamples:\n\nUser:\n> I want a one-way\
+        \ flight from SFO to JFK on September 15, 2025 for 1 adult.\n\nA:\n{\n  \"\
+        endpoint\": \"/v2/shopping/flight-offers\",\n  \"params\": {\n    \"originLocationCode\"\
+        : \"SFO\",\n    \"destinationLocationCode\": \"JFK\",\n    \"departureDate\"\
+        : \"2025-09-15\",\n    \"adults\": 1,\n    \"max\": 3\n  }\n}\n"
+    - role: user
+      content: '{{ query }}'
+    temperature: 0.1
+- data:
+    openai_response: '{{ openai_response }}'
+  name: parse_openai_response_task
+  type: python
+  code: "def main(openai_response):\n    import json\n    \n    try:\n        if not\
+    \ openai_response or not openai_response.get('choices'):\n            return {\n\
+    \                \"status\": \"error\",\n                \"message\": \"No response\
+    \ from OpenAI\"\n            }\n        \n        content = openai_response['choices'][0]['message']['content'].strip()\n\
+    \        \n        # Handle markdown code blocks if present\n        if content.startswith('```json'):\n\
+    \            lines = content.split('\\n')\n            json_lines = []\n     \
+    \       in_json_block = False\n            for line in lines:\n              \
+    \  if line.strip() == '```json':\n                    in_json_block = True\n \
+    \               elif line.strip() == '```' and in_json_block:\n              \
+    \      break\n                elif in_json_block:\n                    json_lines.append(line)\n\
+    \            content = '\\n'.join(json_lines)\n        \n        # Parse JSON\n\
+    \        parsed = json.loads(content)\n        \n        return {\n          \
+    \  \"status\": \"success\",\n            \"endpoint\": parsed.get('endpoint'),\n\
+    \            \"params\": parsed.get('params')\n        }\n        \n    except\
+    \ Exception as e:\n        return {\n            \"status\": \"error\",\n    \
+    \        \"message\": f\"Failed to parse OpenAI response: {str(e)}\"\n       \
+    \ }\n"
+- name: execute_amadeus_query_task
+  type: http
+  method: GET
+  endpoint: https://test.api.amadeus.com{{ endpoint }}
+  headers:
+    Authorization: Bearer {{ access_token }}
+    Content-Type: application/json
+- name: translate_amadeus_response_task
+  type: http
+  method: POST
+  endpoint: https://api.openai.com/v1/chat/completions
+  headers:
+    Content-Type: application/json
+    Authorization: Bearer {{ openai_api_key }}
+  payload:
+    model: gpt-4o
+    messages:
+    - role: system
+      content: "You are a helpful assistant that reads raw JSON responses from the\
+        \ Amadeus API and summarizes them into clear, human-readable language.\n\n\
+        Your task is to:\n1. Read and understand the JSON response structure (e.g.\
+        \ flights, hotels, etc.).\n2. Identify key information relevant to the user\
+        \ (e.g. origin/destination, dates, price, airline, stops, hotel name, stars,\
+        \ location, price).\n3. Summarize the most important details in **clean, natural\
+        \ English**.\n4. Use lists, bullet points, and grouping if appropriate.\n\
+        5. Do not show any raw JSON keys or code \u2014 just understandable sentences.\n\
+        6. For IATA codes always write a transcription (i.e. SVO will be Sheremetyevo\
+        \ International Airport)\n"
+    - role: user
+      content: '{{ amadeus_response | tojson }}'
+    temperature: 0.3
+- name: create_results_table_task
+  type: postgres
+  command: "CREATE TABLE IF NOT EXISTS api_results (\n  id SERIAL PRIMARY KEY,\n \
+    \ execution_id VARCHAR(64),\n  source VARCHAR(32),\n  result JSONB,\n  created_at\
+    \ TIMESTAMP DEFAULT NOW()\n);\n"
+- name: create_amadeus_ai_event_table_task
+  type: postgres
+  command: "CREATE TABLE IF NOT EXISTS amadeus_ai_events (\n  id SERIAL PRIMARY KEY,\n\
+    \  execution_id VARCHAR(64),\n  event_type VARCHAR(32),\n  api_call_type VARCHAR(32),\n\
+    \  input_data JSONB,\n  output_data JSONB,\n  status_code INTEGER,\n  event_time\
+    \ TIMESTAMP DEFAULT NOW(),\n  duration_ms INTEGER,\n  details JSONB\n);\n"
+- name: store_openai_query_event_task
+  type: postgres
+  command: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type,\
+    \ input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{\
+    \ job.uuid }}',\n  'openai_query_translation',\n  'openai',\n  '{{ {\"user_query\"\
+    : query, \"model\": \"gpt-4o\", \"system_prompt\": \"natural_language_to_amadeus_rest_api\"\
+    } | tojson }}',\n  {% if translate_query_to_amadeus.data is defined %}\n    '{{\
+    \ translate_query_to_amadeus.data | tojson }}'\n  {% else %}\n    NULL\n  {% endif\
+    \ %},\n  {{ translate_query_to_amadeus.status_code | default(0) }},\n  {{ (translate_query_to_amadeus.elapsed\
+    \ * 1000) | round | int if translate_query_to_amadeus.elapsed else 0 }},\n  '{{\
+    \ {\"endpoint\": \"https://api.openai.com/v1/chat/completions\", \"method\": \"\
+    POST\"} | tojson }}'\n);\n"
+- name: store_amadeus_query_event_task
+  type: postgres
+  command: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type,\
+    \ input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{\
+    \ job.uuid }}',\n  'amadeus_api_search',\n  'amadeus',\n  '{{ {\"endpoint\": parse_openai_response.endpoint,\
+    \ \"params\": parse_openai_response.params, \"access_token_used\": true} | tojson\
+    \ }}',\n  {% if execute_amadeus_query.data is defined %}\n    '{{ execute_amadeus_query.data\
+    \ | tojson }}'\n  {% else %}\n    NULL\n  {% endif %},\n  {{ execute_amadeus_query.status_code\
+    \ | default(0) }},\n  {{ (execute_amadeus_query.elapsed * 1000) | round | int\
+    \ if execute_amadeus_query.elapsed else 0 }},\n  '{{ {\"full_endpoint\": execute_amadeus_query.url,\
+    \ \"method\": \"GET\"} | tojson }}'\n);\n"
+- data:
+    encode_as_base64: true
+  name: store_openai_response_event_task
+  type: postgres
+  command: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type,\
+    \ input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{\
+    \ job.uuid }}',\n  'openai_response_translation',\n  'openai',\n  '{{ {\"amadeus_response_base64\"\
+    : execute_amadeus_query.data | tojson | b64encode, \"model\": \"gpt-4o\", \"system_prompt\"\
+    : \"amadeus_response_to_natural_language\"} | tojson }}',\n  {% if translate_amadeus_response.data\
+    \ is defined %}\n    {% if encode_as_base64 %}\n      '{{ {\"response_base64\"\
+    : translate_amadeus_response.data | tojson | b64encode, \"is_base64_encoded\"\
+    : true} | tojson }}'\n    {% else %}\n      '{{ {\"response\": translate_amadeus_response.data,\
+    \ \"is_base64_encoded\": false} | tojson }}'\n    {% endif %}\n  {% else %}\n\
+    \    NULL\n  {% endif %},\n  {{ translate_amadeus_response.status_code | default(0)\
+    \ }},\n  {{ (translate_amadeus_response.elapsed * 1000) | round | int if translate_amadeus_response.elapsed\
+    \ else 0 }},\n  '{{ {\"endpoint\": \"https://api.openai.com/v1/chat/completions\"\
+    , \"method\": \"POST\"} | tojson }}'\n);\n"
+- data:
+    encode_as_base64: true
+  name: insert_final_result_task
+  type: postgres
+  command: "INSERT INTO api_results (execution_id, source, result)\nVALUES (\n  '{{\
+    \ job.uuid }}',\n  'amadeus_api',\n  {% if encode_as_base64 %}\n    '{{ {\"query\"\
+    : workload.query, \"natural_language_result\": result | b64encode, \"execution_id\"\
+    : job.uuid, \"is_base64_encoded\": true} | tojson }}'\n  {% else %}\n    '{{ {\"\
+    query\": workload.query, \"natural_language_result\": result, \"execution_id\"\
+    : job.uuid, \"is_base64_encoded\": false} | tojson }}'\n  {% endif %}\n);\n"

@@ -72,7 +72,7 @@ def execute_loop_task(
 
     Expected task_config keys (standard only):
       - type: iterator
-      - collection: expression or list of items
+      - data|collection: expression or list of items
       - element: name of the per-item variable
       - mode: 'sequential' (default) or 'async'
       - concurrency: int (default 8 when mode=async)
@@ -92,7 +92,7 @@ def execute_loop_task(
     try:
         # Strict: only new standard keys supported
         iterator_name = task_config.get('element')
-        items_expr = task_config.get('collection')
+        items_expr = task_config.get('collection') if task_config.get('collection') is not None else task_config.get('data')
         if iterator_name is None or items_expr is None:
             raise ValueError("Iterator requires 'element' and 'collection' keys (type: iterator)")
         nested_task = task_config.get('task') or {}
@@ -248,6 +248,12 @@ def execute_loop_task(
                     'item': item_for_task,
                     'count': total,
                 }
+                # Expose <loop_step>.result_index during the body
+                try:
+                    step_nm = task_config.get('name') or task_config.get('task') or 'iterator'
+                    iter_ctx[str(step_nm)] = {'result_index': iter_index}
+                except Exception:
+                    pass
                 if enumerate_flag:
                     iter_ctx['index'] = iter_index
                 # Provide batch binding when chunking is enabled
@@ -389,15 +395,11 @@ def execute_loop_task(
         except Exception:
             logger.debug("LOOP: step-level aggregated save failed", exc_info=True)
 
+        # Canonical: expose result list as step data
         return {
             'id': task_id,
             'status': 'success',
-            'data': {
-                'results': final,
-                'items': final,
-                'count': len(final),
-                'errors': errors
-            }
+            'data': final
         }
 
     except Exception as e:

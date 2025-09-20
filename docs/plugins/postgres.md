@@ -54,7 +54,7 @@ The Postgres plugin executes SQL commands against PostgreSQL databases. It uses 
     ) VALUES (
       '{{ data.id }}',
       '{{ execution_id }}',
-      {{ _loop.current_index | default(0) }},
+      {{ http_loop.result_index | default(0) }},
       '{{ city.name }}',
       '{{ data.url }}',
       {{ data.elapsed | default(0) }},
@@ -91,4 +91,3 @@ The Postgres plugin executes SQL commands against PostgreSQL databases. It uses 
 - DSNs containing passwords are automatically redacted in logs
 - Credential payloads are ephemeral and not persisted to execution results
 - Use `auth:` instead of passing credentials via `with:` to maintain security
-

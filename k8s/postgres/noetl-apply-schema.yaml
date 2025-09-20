@@ -15,29 +15,19 @@ spec:
     spec:
       restartPolicy: Never
       containers:
-        - name: apply-schema
-          # Image must contain the noetl package with the db CLI; overridable via NOETL_IMAGE/NOETL_TAG
-          image: ${NOETL_IMAGE:-ghcr.io/noetl/noetl}:${NOETL_TAG:-latest}
-          imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -e
-              echo "Applying NoETL schema to ${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB} as ${POSTGRES_USER}";
-              for i in $(seq 1 30); do
-                if noetl db apply-schema --ensure-role; then
-                  echo "Schema applied successfully."; exit 0;
-                fi
-                echo "Attempt $i failed; retrying in 3s..."; sleep 3;
-              done
-              echo "Failed to apply schema after multiple attempts."; exit 1
-          env:
-            - name: POSTGRES_HOST
-              value: "postgres.postgres.svc.cluster.local"
-            - name: POSTGRES_PORT
-              value: "5432"
-          envFrom:
-            - configMapRef:
-                name: postgres-config
-            - secretRef:
-                name: postgres-secret
+      - name: apply-schema
+        image: ${NOETL_IMAGE:-ghcr.io/noetl/noetl}:${NOETL_TAG:-latest}
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        env:
+        - name: POSTGRES_HOST
+          value: postgres.postgres.svc.cluster.local
+        - name: POSTGRES_PORT
+          value: '5432'
+        envFrom:
+        - configMapRef:
+            name: postgres-config
+        - secretRef:
+            name: postgres-secret

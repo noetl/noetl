@@ -24,7 +24,7 @@ workflow:
     endpoint: "{{ workload.base_url }}/forecast"
     headers:
       User-Agent: "NoETL City HTTP -> PG Demo/1.0"
-    params:
+    data:
       latitude: "{{ workload.city.lat }}"
       longitude: "{{ workload.city.lon }}"
       hourly: "temperature_2m"
@@ -47,14 +47,14 @@ workflow:
           url = EXCLUDED.url,
           elapsed = EXCLUDED.elapsed,
           payload = EXCLUDED.payload;
-      params:
+      data:
         id: "{{ workload.parent_execution_id }}:{{ workload.city.name }}{{ (':' ~ workload.index) if workload.index is not none else '' }}"
         execution_id: "{{ workload.parent_execution_id }}"
         iter_index: "{{ workload.index if workload.index is not none else null }}"
         city: "{{ workload.city.name }}"
-        url: "{{ data.url }}"
-        elapsed: "{{ data.elapsed | default(0) }}"
-        payload: "{{ data | tojson }}"
+        url: "{{ result.url }}"
+        elapsed: "{{ result.elapsed | default(0) }}"
+        payload: "{{ result | tojson }}"
     next:
       - step: end
 

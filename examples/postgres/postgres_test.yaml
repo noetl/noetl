@@ -1,189 +1,117 @@
-# NoETL DSL Playbook for testing the postgres task type.
-# This playbooks tests SQL execution in Postgres,
-# noetl playbooks --register playbooks/postgres_test.yaml --port 8080
-# noetl playbooks --execute --path "workflows/examples/postgres_test"
 apiVersion: noetl.io/v1
 kind: Playbook
 name: postgres_test
 path: examples/postgres_test
-
 workload:
-  jobId: "{{ job.uuid }}"
-  test_data: {
-    "name": "Test User",
-    "email": "test@example.com",
-    "metadata": {
-      "age": 30,
-      "active": true,
-      "tags": ["test", "example", "jsonb"]
-    }
-  }
-#  steps:
-#    setup_tables: run
-#    insert_data: run
-#    query_data: run
-#    update_data: pass
-
-
+  jobId: '{{ job.uuid }}'
+  test_data:
+    name: Test User
+    email: test@example.com
+    metadata:
+      age: 30
+      active: true
+      tags:
+      - test
+      - example
+      - jsonb
 workflow:
-  - step: start
-    desc: "Start Postgres Test Workflow"
-    next:
-      - step: setup_tables
-
+- step: start
+  desc: Start Postgres Test Workflow
+  next:
   - step: setup_tables
-    desc: "Create test tables in Postgres"
-    pass: "{{ workload.steps.setup_tables }}"
-    type: postgres
-    auth:
-      pg:
-        type: postgres
-        key: pg_local
-    command: |
-      DROP TABLE IF EXISTS postgres_test_users;
-
-      CREATE TABLE IF NOT EXISTS postgres_test_users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        metadata JSONB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE OR REPLACE FUNCTION get_json_field(data JSONB, field TEXT)
-      RETURNS TEXT AS $$
-      BEGIN
-        RETURN data->>field;
-      END
-      $$ LANGUAGE plpgsql;
-    next:
-      - step: insert_data
-
+- step: setup_tables
+  desc: Create test tables in Postgres
+  pass: '{{ workload.steps.setup_tables }}'
+  type: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
+  command: "DROP TABLE IF EXISTS postgres_test_users;\n\nCREATE TABLE IF NOT EXISTS\
+    \ postgres_test_users (\n  id SERIAL PRIMARY KEY,\n  name VARCHAR(100) NOT NULL,\n\
+    \  email VARCHAR(100) UNIQUE NOT NULL,\n  metadata JSONB,\n  created_at TIMESTAMP\
+    \ DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE OR REPLACE FUNCTION get_json_field(data\
+    \ JSONB, field TEXT)\nRETURNS TEXT AS $$\nBEGIN\n  RETURN data->>field;\nEND\n\
+    $$ LANGUAGE plpgsql;\n"
+  next:
   - step: insert_data
-    desc: "Insert test data with JSONB"
-    pass: "{{ workload.steps.insert_data }}"
-    type: workbook
-    task: insert_data_task
-    next:
-      - step: query_data
-
+- step: insert_data
+  desc: Insert test data with JSONB
+  pass: '{{ workload.steps.insert_data }}'
+  type: workbook
+  task: insert_data_task
+  next:
   - step: query_data
-    desc: "Query data including JSONB fields"
-    pass: "{{ workload.steps.query_data }}"
-    type: workbook
-    task: query_data_task
-    next:
-      - step: update_data
-
+- step: query_data
+  desc: Query data including JSONB fields
+  pass: '{{ workload.steps.query_data }}'
+  type: workbook
+  task: query_data_task
+  next:
   - step: update_data
-    desc: "Update data task"
-    pass: "{{ workload.steps.update_data }}"
-    type: workbook
-    task: update_data_task
-    next:
-      - step: end
-
+- step: update_data
+  desc: Update data task
+  pass: '{{ workload.steps.update_data }}'
+  type: workbook
+  task: update_data_task
+  next:
   - step: end
-    desc: "End of workflow"
-    type: python
-    code: |
-      def main():
-          return {
-              'status': 'completed',
-              'message': 'Postgres test workflow completed successfully'
-          }
-
+- step: end
+  desc: End of workflow
+  type: python
+  code: "def main():\n    return {\n        'status': 'completed',\n        'message':\
+    \ 'Postgres test workflow completed successfully'\n    }\n"
 workbook:
+- name: create_table
+  type: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
+  command: "DROP TABLE IF EXISTS postgres_test_users;\n\nCREATE TABLE IF NOT EXISTS\
+    \ postgres_test_users (\n  id SERIAL PRIMARY KEY,\n  name VARCHAR(100) NOT NULL,\n\
+    \  email VARCHAR(100) UNIQUE NOT NULL,\n  metadata JSONB,\n  created_at TIMESTAMP\
+    \ DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE OR REPLACE FUNCTION get_json_field(data\
+    \ JSONB, field TEXT)\nRETURNS TEXT AS $$\nBEGIN\n  RETURN data->>field;\nEND\n\
+    $$ LANGUAGE plpgsql;\n"
+- data:
+    test_data: '{{ workload.test_data }}'
+  name: insert_data_task
+  type: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
+  command: "INSERT INTO postgres_test_users (name, email, metadata)\nVALUES (\n  '{{\
+    \ test_data.name }}',\n  '{{ test_data.email }}',\n  '{\"age\": 30, \"active\"\
+    : true, \"tags\": [\"test\", \"example\", \"jsonb\"]}'::JSONB\n);\n\nINSERT INTO\
+    \ postgres_test_users (name, email, metadata)\nVALUES (\n  'Another User',\n \
+    \ 'another@example.com',\n  '{\"age\": 25, \"active\": false, \"tags\": [\"another\"\
+    , \"test\"]}'::JSONB\n);\n"
+- name: query_data_task
+  type: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
+  command: "SELECT \n  id, \n  name, \n  email, \n  metadata,\n  created_at::TEXT\
+    \ as created_at\nFROM postgres_test_users;\n\nSELECT \n  id, \n  name, \n  email,\
+    \ \n  metadata,\n  created_at::TEXT as created_at\nFROM postgres_test_users \n\
+    WHERE metadata->>'active' = 'true';\n\nSELECT \n  id, \n  name, \n  email, \n\
+    \  metadata,\n  created_at::TEXT as created_at\nFROM postgres_test_users \nWHERE\
+    \ metadata->'tags' ? 'test';\n"
+- name: update_data_task
+  type: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
+  command: 'SELECT id, name, metadata->>''age'' as age FROM postgres_test_users;
 
-  - name: create_table
-    type: postgres
-    auth:
-      pg:
-        type: postgres
-        key: pg_local
-    command: |
-      DROP TABLE IF EXISTS postgres_test_users;
+    UPDATE postgres_test_users SET metadata = jsonb_set(metadata, ''{active}'', ''false''::jsonb)
+    WHERE id = 1;
 
-      CREATE TABLE IF NOT EXISTS postgres_test_users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        metadata JSONB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+    SELECT id, name, metadata->>''active'' as is_active FROM postgres_test_users WHERE
+    id = 1;
 
-      CREATE OR REPLACE FUNCTION get_json_field(data JSONB, field TEXT)
-      RETURNS TEXT AS $$
-      BEGIN
-        RETURN data->>field;
-      END
-      $$ LANGUAGE plpgsql;
-
-
-  - name: insert_data_task
-    type: postgres
-    auth:
-      pg:
-        type: postgres
-        key: pg_local
-    with:
-      test_data: "{{ workload.test_data }}"
-    command: |
-      INSERT INTO postgres_test_users (name, email, metadata)
-      VALUES (
-        '{{ test_data.name }}',
-        '{{ test_data.email }}',
-        '{"age": 30, "active": true, "tags": ["test", "example", "jsonb"]}'::JSONB
-      );
-
-      INSERT INTO postgres_test_users (name, email, metadata)
-      VALUES (
-        'Another User',
-        'another@example.com',
-        '{"age": 25, "active": false, "tags": ["another", "test"]}'::JSONB
-      );
-
-
-  - name: query_data_task
-    type: postgres
-    auth:
-      pg:
-        type: postgres
-        key: pg_local
-    command: |
-      SELECT 
-        id, 
-        name, 
-        email, 
-        metadata,
-        created_at::TEXT as created_at
-      FROM postgres_test_users;
-
-      SELECT 
-        id, 
-        name, 
-        email, 
-        metadata,
-        created_at::TEXT as created_at
-      FROM postgres_test_users 
-      WHERE metadata->>'active' = 'true';
-
-      SELECT 
-        id, 
-        name, 
-        email, 
-        metadata,
-        created_at::TEXT as created_at
-      FROM postgres_test_users 
-      WHERE metadata->'tags' ? 'test';
-
-  - name: update_data_task
-    type: postgres
-    auth:
-      pg:
-        type: postgres
-        key: pg_local
-    command: |
-      SELECT id, name, metadata->>'age' as age FROM postgres_test_users;
-      UPDATE postgres_test_users SET metadata = jsonb_set(metadata, '{active}', 'false'::jsonb) WHERE id = 1;
-      SELECT id, name, metadata->>'active' as is_active FROM postgres_test_users WHERE id = 1;
+    '

@@ -126,7 +126,7 @@ The engine fetches the credential secret material (DSN/token/keys) securely and 
 
 Loop steps emit one result per item and may produce an aggregated result for the step. References:
 
-- Per-item context: templates receive `_loop.current_index` and `_loop.current_item`.
+- Per-item context: templates receive `<loop_step>.result_index` and `_loop.current_item`.
 - Aggregated result: `{{ loop_step.result }}` (array or object), and often `{{ loop_step.data }}` when using the envelope.
 
 Persisting loop results:

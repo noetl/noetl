@@ -13,7 +13,7 @@ workflow:
     desc: "Start simple test"
     next:
       - step: test_step
-        input:
+        data:
           message: "{{ workload.message }}"
 
   - step: test_step

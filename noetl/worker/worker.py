@@ -533,33 +533,33 @@ class QueueWorker:
             report_event(start_event, self.server_url)
 
             try:
-                # Unify step payloads: prefer 'input', then 'payload', then legacy 'with'
+                # Normalize payloads: canonical 'data' with legacy aliases
+                task_data = {}
                 if isinstance(action_cfg, dict):
-                    # Merge with priority input > payload > with
-                    merged = {}
+                    # Start from explicit data first
+                    if isinstance(action_cfg.get('data'), dict):
+                        task_data.update(action_cfg.get('data'))
+                    # Merge legacy aliases with precedence: input > payload > with
                     try:
                         w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
                         if w:
-                            merged.update(w)
+                            task_data = {**w, **task_data}
                     except Exception:
                         pass
                     try:
                         p = action_cfg.get('payload') if isinstance(action_cfg.get('payload'), dict) else None
                         if p:
-                            merged.update(p)
+                            task_data = {**p, **task_data}
                     except Exception:
                         pass
                     try:
                         i = action_cfg.get('input') if isinstance(action_cfg.get('input'), dict) else None
                         if i:
-                            merged.update(i)
+                            task_data = {**i, **task_data}
                     except Exception:
                         pass
-                    task_with = merged
-                else:
-                    task_with = {}
-                if not isinstance(task_with, dict):
-                    task_with = {}
+                if not isinstance(task_data, dict):
+                    task_data = {}
                 try:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
                 except Exception:
@@ -567,7 +567,8 @@ class QueueWorker:
                 # Expose unified payload under exec_ctx['input'] for template convenience
                 try:
                     if isinstance(exec_ctx, dict):
-                        exec_ctx['input'] = task_with
+                        exec_ctx['input'] = dict(task_data)
+                        exec_ctx['data'] = dict(task_data)
                 except Exception:
                     pass
                 try:
@@ -594,7 +595,7 @@ class QueueWorker:
                     pass
                 
                 from noetl.plugin import execute_task
-                result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
+                result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_data)
 
                 # Inline save: if the action config declares a `save` block, perform the save on worker
                 inline_save = None
@@ -607,14 +608,13 @@ class QueueWorker:
                         # Provide current result to rendering context as `this` for convenience
                         try:
                             exec_ctx_with_result = dict(exec_ctx)
+                            # Provide current step output as 'result' for inline save templates
+                            _current = result.get('data') if isinstance(result, dict) and result.get('data') is not None else result
+                            exec_ctx_with_result['result'] = _current
+                            # Back-compat aliases
                             exec_ctx_with_result['this'] = result
-                            # Convenience alias: expose current action's payload as `data`
-                            # so templates can use {{ data.* }} in inline save blocks.
-                            if isinstance(result, dict):
-                                _payload = result.get('data')
-                                # Do not overwrite an existing 'data' key in context
-                                if 'data' not in exec_ctx_with_result:
-                                    exec_ctx_with_result['data'] = _payload
+                            if 'data' not in exec_ctx_with_result:
+                                exec_ctx_with_result['data'] = _current
                         except Exception:
                             exec_ctx_with_result = exec_ctx
                         from ..plugin.save import execute_save_task as _do_save

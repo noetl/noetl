@@ -1,128 +1,109 @@
 apiVersion: noetl.io/v1
 kind: Playbook
-
 metadata:
   name: loop_controller_http_save
   path: examples/test/loop_controller_http_save
-
 workload:
-  message: "Loop controller HTTP -> Postgres test"
+  message: Loop controller HTTP -> Postgres test
   cities:
-    - name: "London"
-      lat: 51.51
-      lon: -0.13
-    - name: "Paris"
-      lat: 48.85
-      lon: 2.35
-  base_url: "https://api.open-meteo.com/v1"
-
+  - name: London
+    lat: 51.51
+    lon: -0.13
+  - name: Paris
+    lat: 48.85
+    lon: 2.35
+  base_url: https://api.open-meteo.com/v1
 workflow:
-  - step: start
-    desc: "Init"
-    next:
-      - step: ensure_pg_table
-
+- step: start
+  desc: Init
+  next:
   - step: ensure_pg_table
-    desc: "Ensure raw HTTP results table exists"
-    type: postgres
-    auth:
-      pg:
-        type: postgres
-        key: pg_local
-    command: |
-      CREATE TABLE IF NOT EXISTS public.weather_http_raw (
-        id TEXT PRIMARY KEY,
-        execution_id TEXT,
-        iter_index INTEGER,
-        city TEXT,
-        url TEXT,
-        elapsed DOUBLE PRECISION,
-        payload TEXT,
-        created_at TIMESTAMPTZ DEFAULT now()
-      );
-    next:
-      - step: ensure_agg_table
-
+- step: ensure_pg_table
+  desc: Ensure raw HTTP results table exists
+  type: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
+  command: "CREATE TABLE IF NOT EXISTS public.weather_http_raw (\n  id TEXT PRIMARY\
+    \ KEY,\n  execution_id TEXT,\n  iter_index INTEGER,\n  city TEXT,\n  url TEXT,\n\
+    \  elapsed DOUBLE PRECISION,\n  payload TEXT,\n  created_at TIMESTAMPTZ DEFAULT\
+    \ now()\n);\n"
+  next:
   - step: ensure_agg_table
-    desc: "Ensure aggregated HTTP results table exists"
-    type: postgres
+- step: ensure_agg_table
+  desc: Ensure aggregated HTTP results table exists
+  type: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
+  command: "CREATE TABLE IF NOT EXISTS public.weather_http_agg (\n  execution_id TEXT\
+    \ PRIMARY KEY,\n  results_json JSONB,\n  count INTEGER,\n  created_at TIMESTAMPTZ\
+    \ DEFAULT now()\n);\n"
+  next:
+  - step: loop_http
+- step: loop_http
+  desc: 'Loop controller: HTTP per city, save each row'
+  type: iterator
+  element: city
+  task:
+    data:
+      latitude: '{{ city.lat }}'
+      longitude: '{{ city.lon }}'
+      hourly: temperature_2m
+      forecast_days: 1
+    name: fetch_weather
+    type: http
+    endpoint: '{{ workload.base_url }}/forecast'
+    headers:
+      User-Agent: NoETL Loop Controller Demo/1.0
+    save:
+      data:
+        id: '{{ execution_id }}:{{ city.name }}:{{ loop_http.result_index }}'
+        execution_id: '{{ execution_id }}'
+        iter_index: '{{ loop_http.result_index }}'
+        city: '{{ city.name }}'
+        url: '{{ data.url }}'
+        elapsed: '{{ data.elapsed | default(0) }}'
+        payload: '{{ data | tojson }}'
+      storage: postgres
+      auth:
+        pg:
+          type: postgres
+          key: pg_local
+      table: public.weather_http_raw
+      mode: upsert
+      key: id
+  save:
+    data:
+      execution_id: '{{ execution_id }}'
+      results_json: '{{ results | tojson }}'
+      count: '{{ count }}'
+    storage: postgres
     auth:
       pg:
         type: postgres
         key: pg_local
-    command: |
-      CREATE TABLE IF NOT EXISTS public.weather_http_agg (
-        execution_id TEXT PRIMARY KEY,
-        results_json JSONB,
-        count INTEGER,
-        created_at TIMESTAMPTZ DEFAULT now()
-      );
-    next:
-      - step: loop_http
-
-  - step: loop_http
-    desc: "Loop controller: HTTP per city, save each row"
-    type: iterator
-    collection: "{{ workload.cities }}"
-    element: city
-    task:
-      name: fetch_weather
-      type: http
-      endpoint: "{{ workload.base_url }}/forecast"
-      headers:
-        User-Agent: "NoETL Loop Controller Demo/1.0"
-      params:
-        latitude: "{{ city.lat }}"
-        longitude: "{{ city.lon }}"
-        hourly: "temperature_2m"
-        forecast_days: 1
-      save:
-        storage: postgres
-        auth:
-          pg:
-            type: postgres
-            key: pg_local
-        table: public.weather_http_raw
-        mode: upsert
-        key: id
-        data:
-          id: "{{ execution_id }}:{{ city.name }}:{{ _loop.current_index }}"
-          execution_id: "{{ execution_id }}"
-          iter_index: "{{ _loop.current_index }}"
-          city: "{{ city.name }}"
-          url: "{{ data.url }}"
-          elapsed: "{{ data.elapsed | default(0) }}"
-          payload: "{{ data | tojson }}"
-    # Step-level aggregated save: write the results array and count
-    save:
-      storage: postgres
-      auth:
-        pg:
-          type: postgres
-          key: pg_local
-      table: public.weather_http_agg
-      mode: upsert
-      key: execution_id
-      data:
-        execution_id: "{{ execution_id }}"
-        results_json: "{{ results | tojson }}"
-        count: "{{ count }}"
-    next:
-      - step: end
-
+    table: public.weather_http_agg
+    mode: upsert
+    key: execution_id
+  next:
   - step: end
-    desc: "Finish and write metrics"
-    save:
-      storage: postgres
-      auth:
-        pg:
-          type: postgres
-          key: pg_local
-      table: public.weather_pipeline_metrics
-      mode: upsert
-      key: execution_id
-      data:
-        execution_id: "{{ execution_id }}"
-        pg_rows_saved: "{{ loop_http.count }}"
-        gcs_flat_uri: ""
-        gcs_agg_uri:  ""
+  data: '{{ workload.cities }}'
+- step: end
+  desc: Finish and write metrics
+  save:
+    data:
+      execution_id: '{{ execution_id }}'
+      pg_rows_saved: '{{ loop_http.count }}'
+      gcs_flat_uri: ''
+      gcs_agg_uri: ''
+    storage: postgres
+    auth:
+      pg:
+        type: postgres
+        key: pg_local
+    table: public.weather_pipeline_metrics
+    mode: upsert
+    key: execution_id

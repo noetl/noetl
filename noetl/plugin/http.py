@@ -63,11 +63,16 @@ def execute_http_task(
         endpoint = render_template(jinja_env, raw_endpoint_template, context)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
 
-        params = render_template(jinja_env, task_config.get('params', {}), context)
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered params={params}")
+        # Unified data model: render step.data and allow explicit data.query/data.body
+        raw_data = task_config.get('data') if isinstance(task_config, dict) else None
+        data_map = render_template(jinja_env, raw_data or {}, context)
+        if not isinstance(data_map, dict):
+            data_map = {}
+        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered data={data_map}")
 
-        payload = render_template(jinja_env, task_config.get('payload', {}), context)
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered payload={payload}")
+        # Legacy back-compat: also accept params/payload when provided
+        params_legacy = render_template(jinja_env, task_config.get('params', {}), context)
+        payload_legacy = render_template(jinja_env, task_config.get('payload', {}), context)
 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers={headers}")
@@ -167,7 +172,14 @@ def execute_http_task(
                     'headers': {},
                     'url': str(endpoint),
                     'elapsed': 0,
-                    'data': {'mocked': True, 'endpoint': str(endpoint), 'method': method, 'params': params, 'payload': payload}
+                    'data': {
+                        'mocked': True,
+                        'endpoint': str(endpoint),
+                        'method': method,
+                        'params': params_legacy,
+                        'payload': payload_legacy,
+                        'data': data_map
+                    }
                 }
                 end_time = datetime.datetime.now()
                 duration = (end_time - start_time).total_seconds()
@@ -185,12 +197,41 @@ def execute_http_task(
                     'url': endpoint,
                     'headers': headers,
                 }
-                # Only include params when provided to avoid overwriting query string in endpoint
+                # Route data to query/body automatically with overrides
+                params = None
+                json_body = None
                 try:
-                    if isinstance(params, dict) and params:
-                        request_args['params'] = params
+                    # Explicit overrides
+                    if 'query' in data_map:
+                        params = data_map.get('query') if isinstance(data_map.get('query'), dict) else None
+                    if 'body' in data_map:
+                        json_body = data_map.get('body')
                 except Exception:
                     pass
+                if method in ['GET', 'DELETE']:
+                    if params is None:  # default: use whole data_map as query when no explicit query/body
+                        if 'query' not in data_map and 'body' not in data_map:
+                            params = {k: v for k, v in data_map.items()}
+                    if params is None and isinstance(params_legacy, dict) and params_legacy:
+                        params = params_legacy
+                    if params:
+                        request_args['params'] = params
+                else:
+                    # POST/PUT/PATCH methods
+                    if json_body is None:
+                        if 'query' not in data_map and 'body' not in data_map:
+                            json_body = data_map
+                        elif isinstance(payload_legacy, (dict, list)) and not json_body:
+                            json_body = payload_legacy
+                    if json_body is not None:
+                        # Honor content-type if user set form/multipart; otherwise default to JSON
+                        content_type = headers.get('Content-Type', '').lower()
+                        if 'application/x-www-form-urlencoded' in content_type:
+                            request_args['data'] = json_body
+                        elif 'multipart/form-data' in content_type:
+                            request_args['files'] = json_body
+                        else:
+                            request_args['json'] = json_body
                 
                 # Log request args with redacted sensitive headers
                 redacted_headers = {}
@@ -202,27 +243,7 @@ def execute_http_task(
                 logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Request headers (redacted)={redacted_headers}")
                 logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Initial request_args (without sensitive headers)")
 
-                if method in ['POST', 'PUT', 'PATCH'] and payload:
-                    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Processing payload for {method} request")
-                    content_type = headers.get('Content-Type', '').lower()
-                    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Content-Type={content_type}")
-
-                    if 'application/json' in content_type:
-                        request_args['json'] = payload
-                        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Using JSON payload")
-                    elif 'application/x-www-form-urlencoded' in content_type:
-                        request_args['data'] = payload
-                        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Using form data payload")
-                    elif 'multipart/form-data' in content_type:
-                        request_args['files'] = payload
-                        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Using multipart form data payload")
-                    else:
-                        if isinstance(payload, (dict, list)):
-                            request_args['json'] = payload
-                            logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Using default JSON payload for dict/list")
-                        else:
-                            request_args['data'] = payload
-                            logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Using data payload for non-dict/list")
+                # Remove legacy payload handling block (handled above via data routing)
 
                 logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Final request_args={request_args}")
                 logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Making HTTP request")

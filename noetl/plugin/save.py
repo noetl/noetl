@@ -104,6 +104,7 @@ def execute_save_task(
         rendered_data = None
         if data_spec is not None:
             rendered_data = _render_data_mapping(jinja_env, data_spec, context)
+        # Prefer canonical data mapping; keep params for legacy only
         rendered_params = _render_data_mapping(jinja_env, params, context) if params else {}
         # Normalize complex param values (dict/list) to JSON strings to ensure
         # safe embedding into SQL statements when using {{ params.* }} in strings.
@@ -178,13 +179,21 @@ def execute_save_task(
             # Prepare the SQL to pass to the postgres plugin
             sql_text = None
             if isinstance(statement, str) and statement.strip():
-                # If the statement isn't templated, allow :param style by mapping to Jinja params
+                # If the statement isn't templated, allow :name style by mapping to Jinja data
                 sql_text = statement
-                if ('{{' not in sql_text) and isinstance(rendered_params, dict) and rendered_params:
+                # Use explicit data mapping to render binds; fall back to legacy params
+                bind_keys = []
+                try:
+                    if isinstance(rendered_data, dict):
+                        bind_keys = list(rendered_data.keys())
+                    elif isinstance(rendered_params, dict):
+                        bind_keys = list(rendered_params.keys())
+                except Exception:
+                    bind_keys = []
+                if ('{{' not in sql_text) and bind_keys:
                     try:
-                        for _k in rendered_params.keys():
-                            # Replace only plain tokens :key (very simple heuristic)
-                            sql_text = sql_text.replace(f":{_k}", f"{{{{ params.{_k} }}}}")
+                        for _k in bind_keys:
+                            sql_text = sql_text.replace(f":{_k}", f"{{{{ data.{_k} }}}}")
                     except Exception:
                         pass
             else:
@@ -192,11 +201,11 @@ def execute_save_task(
                 if not table or not isinstance(rendered_data, dict):
                     raise ValueError("postgres save requires 'table' and mapping 'data' when no 'statement' provided")
                 cols = list(rendered_data.keys())
-                # Use Jinja to render values from save_data mapping we pass via with
+                # Use Jinja to render values from data mapping we pass via with
                 # Wrap values in single quotes and escape to ensure valid SQL for text values
                 vals = []
                 for c in cols:
-                    vals.append("{{\"'\" ~ (save_data.%s|string)|replace(\"'\", \"''\") ~ \"'\"}}" % c)
+                    vals.append("{{\"'\" ~ (data.%s|string)|replace(\"'\", \"''\") ~ \"'\"}}" % c)
                 insert_sql = f"INSERT INTO {table} (" + ", ".join(cols) + ") VALUES (" + ", ".join(vals) + ")"
                 if (mode or '').lower() == 'upsert' and key_cols:
                     key_list = key_cols if isinstance(key_cols, (list, tuple)) else [key_cols]
@@ -241,11 +250,21 @@ def execute_save_task(
                             pg_with[dst] = spec.get(src)
             except Exception:
                 pass
-            # Provide params/save_data to rendering context for the postgres plugin renderer
-            if isinstance(rendered_params, dict) and rendered_params:
-                pg_with['params'] = rendered_params
+            # Provide data to rendering context for the postgres plugin renderer
+            # Canonical mapping: pass as 'data' for the postgres plugin to render
             if isinstance(rendered_data, dict) and rendered_data:
-                pg_with['save_data'] = rendered_data
+                pg_with['data'] = rendered_data
+            elif isinstance(rendered_params, dict) and rendered_params:
+                # Legacy: still allow 'params' to be passed for old statements
+                pg_with['data'] = rendered_params
+
+            # Migration helper: if the statement still refers to params.*, rewrite to data.*
+            try:
+                if isinstance(sql_text, str) and ('params.' in sql_text):
+                    sql_text = sql_text.replace('params.', 'data.')
+                    pg_task['command_b64'] = base64.b64encode(sql_text.encode('utf-8')).decode('ascii')
+            except Exception:
+                pass
 
             # Pass through unified auth or legacy credential reference
             if isinstance(auth_config, dict) and 'auth' not in pg_with:

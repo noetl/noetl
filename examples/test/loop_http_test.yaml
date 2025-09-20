@@ -24,13 +24,13 @@ workflow:
     desc: "Start HTTP loop test"
     next:
       - step: http_loop
-        input:
+        data:
           cities: "{{ workload.cities }}"
 
   - step: http_loop
     desc: "Loop through cities making weather API HTTP calls"
     type: iterator
-    collection: "{{ cities }}"
+    data: "{{ cities }}"
     element: city_item
     task:
       type: http
@@ -38,7 +38,7 @@ workflow:
       endpoint: "{{ workload.base_url }}/forecast"
       headers:
         User-Agent: "NoETL HTTP Loop Test/1.0"
-      params:
+      data:
         latitude: "{{ city_item.lat }}"
         longitude: "{{ city_item.lon }}"
         hourly: "temperature_2m"
@@ -46,8 +46,8 @@ workflow:
       timeout: 10
     next:
       - step: aggregate_results
-        input:
-          http_results: "{{ http_loop.results }}"
+        data:
+          http_results: "{{ http_loop.result }}"
           original_message: "{{ workload.message }}"
 
   - step: aggregate_results
@@ -152,7 +152,7 @@ workflow:
           print(f"AGGREGATE_RESULTS: Final weather aggregated result: {aggregated_result}")
           return aggregated_result
     input:
-      http_results: "{{ http_loop.results }}"
+      http_results: "{{ http_loop.result }}"
       original_message: "{{ workload.message }}"
     next:
       - step: end
