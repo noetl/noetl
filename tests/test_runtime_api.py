@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from noetl.server.api import runtime
+from noetl.api.routers import runtime
 
 
 def test_worker_pool_routes():

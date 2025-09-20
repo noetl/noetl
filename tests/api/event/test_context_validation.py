@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 @pytest.mark.asyncio
 async def test_context_validation():
-    from noetl.server.api.event.context import router as context_router
+    from noetl.api.routers.event.context import router as context_router
 
     app = FastAPI()
     app.include_router(context_router, prefix="/api")

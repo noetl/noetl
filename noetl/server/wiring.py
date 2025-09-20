@@ -3,7 +3,7 @@ Server wiring: FastAPI app creation, DI, and configuration skeleton.
 """
 
 from fastapi import FastAPI
-from noetl.server.api import router as api_router
+from noetl.api.routers import router as api_router
 
 
 def create_app() -> FastAPI:

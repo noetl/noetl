@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 
 def test_catalog_validate_requires_content():
-    from noetl.server.api import catalog
+    from noetl.api.routers import catalog
     app = FastAPI()
     app.include_router(catalog.router, prefix="/api")
     client = TestClient(app)

@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 
 def test_dashboard_routes_basic():
-    from noetl.server.api import dashboard
+    from noetl.api.routers import dashboard
     app = FastAPI()
     app.include_router(dashboard.router, prefix="/api")
     client = TestClient(app)

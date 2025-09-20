@@ -5,8 +5,8 @@ from fastapi.responses import JSONResponse
 import json
 from noetl.core.logger import setup_logger
 from noetl.core.common import get_async_db_connection, get_snowflake_id
-from noetl.server.api.broker import execute_playbook_via_broker
-from noetl.server.api.catalog import get_playbook_entry_from_catalog
+from noetl.api.routers.broker import execute_playbook_via_broker
+from noetl.api.routers.catalog import get_playbook_entry_from_catalog
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()

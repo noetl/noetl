@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
-from noetl.server.api.event.event_log import EventLog
+from noetl.api.routers.event.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -659,7 +659,7 @@ class EventService:
 
             # Notify central BrokerService that an event has been persisted (non-blocking)
             try:
-                from noetl.server.api.broker import get_broker_service
+                from noetl.api.routers.broker import get_broker_service
                 get_broker_service().on_event_persisted(event_data)
             except Exception:
                 logger.debug("Failed to notify BrokerService.on_event_persisted", exc_info=True)

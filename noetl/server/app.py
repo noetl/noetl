@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from noetl.core.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection
 from noetl.core.logger import setup_logger
-from noetl.server.api.broker import Broker, execute_playbook_via_broker
-from noetl.server.api import router as api_router
+from noetl.api.routers.broker import Broker, execute_playbook_via_broker
+from noetl.api.routers import router as api_router
 logger = setup_logger(__name__, include_location=True)
 
 from fastapi import FastAPI

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
-from noetl.server.api.catalog import get_catalog_service
+from noetl.api.routers.catalog import get_catalog_service
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -38,7 +38,7 @@ async def render_context(request: Request):
 
         workload = {}
         results: Dict[str, Any] = {}
-        from noetl.server.api.event.event_log import EventLog
+        from noetl.api.routers.event.event_log import EventLog
         dao = EventLog()
         first_ctx = await dao.get_earliest_context(execution_id)
         if first_ctx:

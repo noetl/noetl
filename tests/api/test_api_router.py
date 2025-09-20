@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 
 
 def test_all_api_routes_loaded():
-    from noetl.server.api import router as api_router
+    from noetl.api.routers import router as api_router
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")

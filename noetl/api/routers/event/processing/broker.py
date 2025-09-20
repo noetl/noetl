@@ -8,7 +8,7 @@ import json
 import yaml
 from noetl.core.common import get_async_db_connection, snowflake_id_to_int
 from noetl.core.logger import setup_logger
-from noetl.server.api.event.event_log import EventLog
+from noetl.api.routers.event.event_log import EventLog
 from .workflow import populate_workflow_tables
 from ..service import get_event_service
 
@@ -84,7 +84,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
     try:
         logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Starting initial dispatch for {execution_id}")
         
-        from noetl.server.api.broker import encode_task_for_queue
+        from noetl.api.routers.broker import encode_task_for_queue
         
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
@@ -147,7 +147,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                     
                     if pb_path:
                         # Get catalog service and fetch playbook
-                        from noetl.server.api.catalog import get_catalog_service
+                        from noetl.api.routers.catalog import get_catalog_service
                         catalog = get_catalog_service()
                         
                         if not pb_ver:
@@ -418,7 +418,7 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
     try:
         from noetl.core.dsl.render import render_template
         from jinja2 import Environment, StrictUndefined
-        from noetl.server.api.broker import encode_task_for_queue
+        from noetl.api.routers.broker import encode_task_for_queue
         
         jenv = Environment(undefined=StrictUndefined)
         iterator = loop_cfg.get('iterator') or 'item'
@@ -617,7 +617,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                 by_name = {}
                 if pb_path:
                     try:
-                        from noetl.server.api.catalog import get_catalog_service
+                        from noetl.api.routers.catalog import get_catalog_service
                         catalog = get_catalog_service()
                         if not pb_ver:
                             try:

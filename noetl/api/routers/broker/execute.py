@@ -359,7 +359,7 @@ def execute_playbook_via_broker(
                 "workload": merged_workload,
             }
             try:
-                from noetl.server.api.event import get_event_service
+                from noetl.api.routers.event import get_event_service
                 es = get_event_service()
                 import asyncio as _asyncio
                 if _asyncio.get_event_loop().is_running():
@@ -420,7 +420,7 @@ def execute_playbook_via_broker(
         # Kick off broker evaluation for this execution id
         logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Attempting to start broker evaluation for execution_id={execution_id}")
         try:
-            from noetl.server.api.event import evaluate_broker_for_execution
+            from noetl.api.routers.event import evaluate_broker_for_execution
             import asyncio as _asyncio
 
             logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: evaluate_broker_for_execution imported successfully")

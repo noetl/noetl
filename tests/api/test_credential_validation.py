@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 @pytest.mark.asyncio
 async def test_credential_validation():
-    from noetl.server.api import credential
+    from noetl.api.routers import credential
     app = FastAPI()
     app.include_router(credential.router, prefix="/api")
     client = TestClient(app)

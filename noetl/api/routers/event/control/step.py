@@ -55,7 +55,7 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
             # If this is the terminal 'end' step, emit execution_complete using declared result/save mapping
             try:
                 if str(step_name).strip().lower() == 'end':
-                    from noetl.server.api.event import get_event_service
+                    from noetl.api.routers.event import get_event_service
                     es = get_event_service()
                     # Compute final result from 'result' mapping or fallback to save.data
                     final_result = None
@@ -202,7 +202,7 @@ async def _load_playbook_and_index(execution_id: str) -> Tuple[Dict[str, Dict[st
                     pb_path = (ctx.get('path') or (meta.get('playbook_path') if isinstance(meta, dict) else None) or (meta.get('resource_path') if isinstance(meta, dict) else None))
                     pb_ver = (ctx.get('version') or (meta.get('resource_version') if isinstance(meta, dict) else None))
         if pb_path:
-            from noetl.server.api.catalog import get_catalog_service
+            from noetl.api.routers.catalog import get_catalog_service
             catalog = get_catalog_service()
             if not pb_ver:
                 try:

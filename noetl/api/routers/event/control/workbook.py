@@ -32,8 +32,8 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
     - Adds _meta.parent_event_id to the job context for lineage
     """
     from noetl.core.common import get_async_db_connection
-    from noetl.server.api.broker.endpoint import encode_task_for_queue
-    from noetl.server.api.catalog import get_catalog_service
+    from noetl.api.routers.broker.endpoint import encode_task_for_queue
+    from noetl.api.routers.catalog import get_catalog_service
     import yaml as _yaml
 
     try:

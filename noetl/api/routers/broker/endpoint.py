@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from noetl.core.logger import setup_logger
 
 # Processing functions live in the event processing module
-from noetl.server.api.event.processing import (
+from noetl.api.routers.event.processing import (
     evaluate_broker_for_execution,
     check_and_process_completed_loops,
 )
