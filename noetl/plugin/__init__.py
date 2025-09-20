@@ -1,8 +1,8 @@
 """
-Worker plugin execution package for NoETL.
+NoETL Plugin Registry
 
-This package provides modular action types for executing various tasks
-such as HTTP requests, database operations, Python code execution, etc.
+This package contains all NoETL plugins that handle different action types
+and data processing tasks.
 """
 
 from typing import Dict, Any, Optional, Callable
@@ -22,7 +22,7 @@ from .playbook import execute_playbook_task
 from .workbook import execute_workbook_task
 from .save import execute_save_task
 from .iterator import execute_loop_task as execute_iterator_task
-from .action import report_event, sql_split
+from .base import report_event, sql_split
 
 
 def execute_task(
@@ -114,6 +114,15 @@ def execute_task_resolved(
     return execute_task(task_config, task_name, context, jinja_env, task_with, log_event_callback)
 
 
+# Plugin registry mapping action types to their respective modules
+REGISTRY = {
+    "http": http,
+    "postgres": postgres,
+    "duckdb": duckdb,
+    "python": python,
+}
+
+
 # Export public API
 __all__ = [
     'execute_task',
@@ -129,5 +138,6 @@ __all__ = [
     'execute_iterator_task',
     'get_duckdb_connection',
     'report_event',
-    'sql_split'
+    'sql_split',
+    'REGISTRY',
 ]

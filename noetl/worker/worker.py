@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
 
 from noetl.core.logger import setup_logger
-from noetl.worker.plugin import execute_task, execute_task_resolved, report_event
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -449,7 +448,7 @@ class QueueWorker:
                 act_type = ''
             if act_type == 'result_aggregation':
                 # Process loop result aggregation job via worker-side coroutine
-                from noetl.worker.plugin.result import process_loop_aggregation_job
+                from noetl.plugin.result import process_loop_aggregation_job
                 import asyncio as _a
                 try:
                     _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
@@ -529,6 +528,8 @@ class QueueWorker:
                 start_event.update(loop_meta)
             if parent_event_id:
                 start_event["parent_event_id"] = parent_event_id
+            
+            from noetl.plugin import report_event
             report_event(start_event, self.server_url)
 
             try:
@@ -591,6 +592,8 @@ class QueueWorker:
                         }
                 except Exception:
                     pass
+                
+                from noetl.plugin import execute_task
                 result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
 
                 # Inline save: if the action config declares a `save` block, perform the save on worker
@@ -614,7 +617,7 @@ class QueueWorker:
                                     exec_ctx_with_result['data'] = _payload
                         except Exception:
                             exec_ctx_with_result = exec_ctx
-                        from .plugin.save import execute_save_task as _do_save
+                        from ..plugin.save import execute_save_task as _do_save
                         save_payload = {'save': inline_save}
                         save_out = _do_save(save_payload, exec_ctx_with_result, self._jinja, task_with)
                         # Attach save outcome to result envelope under meta.save or data.save
@@ -655,6 +658,8 @@ class QueueWorker:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    
+                    from noetl.plugin import report_event
                     report_event(error_event, self.server_url)
                     emitted_error = True
                     raise RuntimeError(err_msg or "Task returned error status")
@@ -673,6 +678,8 @@ class QueueWorker:
                         complete_event.update(loop_meta)
                     if parent_event_id:
                         complete_event["parent_event_id"] = parent_event_id
+                    
+                    from noetl.plugin import report_event
                     report_event(complete_event, self.server_url)
 
                     # Emit a companion step_result event for easier querying of results per step
@@ -694,6 +701,8 @@ class QueueWorker:
                             step_result_event.update(loop_meta)
                         if parent_event_id:
                             step_result_event["parent_event_id"] = parent_event_id
+                        
+                        from noetl.plugin import report_event
                         report_event(step_result_event, self.server_url)
                     except Exception:
                         logger.debug("WORKER: Failed to emit step_result companion event", exc_info=True)
@@ -721,6 +730,8 @@ class QueueWorker:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    
+                    from noetl.plugin import report_event
                     report_event(error_event, self.server_url)
                 raise  # Re-raise to let the worker handle job failure
         else:

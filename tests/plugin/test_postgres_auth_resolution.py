@@ -1,6 +1,6 @@
 import types
 
-import noetl.worker.plugin.postgres as pgmod
+import noetl.plugin.postgres as pgmod
 
 
 class DummyJinja:

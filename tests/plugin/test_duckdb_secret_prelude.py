@@ -8,7 +8,7 @@ and auto-generates CREATE SECRET statements.
 
 import pytest
 from jinja2 import Environment
-import noetl.worker.plugin.duckdb as ddb
+import noetl.plugin.duckdb as ddb
 
 
 def test_build_duckdb_secret_prelude_gcs_pg():

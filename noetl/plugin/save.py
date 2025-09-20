@@ -173,7 +173,7 @@ def execute_save_task(
             except Exception:
                 pass
             import base64
-            from noetl.worker.plugin.postgres import execute_postgres_task as _pg_exec
+            from noetl.plugin.postgres import execute_postgres_task as _pg_exec
 
             # Prepare the SQL to pass to the postgres plugin
             sql_text = None

@@ -2,7 +2,7 @@ import pytest
 
 from jinja2 import Environment
 
-from noetl.worker.plugin import execute_task
+from noetl.plugin import execute_task
 
 
 def make_python_task(func_body: str):

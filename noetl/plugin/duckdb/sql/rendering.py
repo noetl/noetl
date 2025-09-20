@@ -96,8 +96,8 @@ def clean_sql_text(sql_text: str) -> List[str]:
     
     commands_text = ' '.join(cmd_lines)
     
-    # Import sql_split from action module
-    from ...action import sql_split
+    # Import sql_split from base module
+    from ...base import sql_split
     return sql_split(commands_text)
 
 

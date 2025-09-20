@@ -12,7 +12,7 @@ import datetime
 from typing import Dict, Any, Optional
 
 from noetl.core.common import deep_merge
-from noetl.worker.plugin import report_event
+from noetl.plugin import report_event
 from noetl.core.logger import setup_logger
 from .broker import Broker
 

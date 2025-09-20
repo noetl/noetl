@@ -282,7 +282,7 @@ def execute_loop_task(
 
             # Execute nested task
             try:
-                from noetl.worker import plugin as _plugin
+                from noetl import plugin as _plugin
                 nested_result = _plugin.execute_task(
                     nested_task,
                     nested_task.get('name') or nested_task.get('task') or 'nested',
@@ -310,7 +310,7 @@ def execute_loop_task(
                             ctx_for_save.setdefault('data', nested_result.get('data'))
                     except Exception:
                         pass
-                    from noetl.worker.plugin.save import execute_save_task as _do_save
+                    from noetl.plugin.save import execute_save_task as _do_save
                     _ = _do_save({'save': nested_save}, ctx_for_save, jinja_env, nested_with)
                 except Exception:
                     logger.debug("ITERATOR: per-item save failed for iteration", exc_info=True)
@@ -375,7 +375,7 @@ def execute_loop_task(
         try:
             step_save = task_config.get('save')
             if step_save:
-                from noetl.worker.plugin.save import execute_save_task as _do_save
+                from noetl.plugin.save import execute_save_task as _do_save
                 save_ctx = dict(context) if isinstance(context, dict) else {}
                 try:
                     save_ctx['results'] = final

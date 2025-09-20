@@ -1,10 +1,20 @@
 """
-Security tests for NoETL unified authentication system.
-
-Tests to ensure sensitive information (passwords, tokens, secrets) are properly
-redacted in logs, error messages, and string representations to prevent
-accidental exposure in development, debugging, or production environments.
+Security tests for NoETL auth system.
+Test secure handling of credentials, SQL injection prevention, and sanitization.
 """
+
+import pytest
+import json
+import base64
+from unittest.mock import Mock, patch, MagicMock
+from jinja2 import Environment
+import tempfile
+import os
+from pathlib import Path
+
+from noetl.plugin.postgres import execute_postgres_task
+from noetl.plugin.http import execute_http_task
+from noetl.plugin.duckdb import execute_duckdb_task
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -13,9 +23,6 @@ from io import StringIO
 from jinja2 import Environment
 
 from noetl.worker.auth_resolver import resolve_auth, ResolvedAuthItem
-from noetl.worker.plugin.postgres import execute_postgres_task
-from noetl.worker.plugin.http import execute_http_task
-from noetl.worker.plugin.duckdb import execute_duckdb_task
 
 
 class TestAuthSecurity:
@@ -34,9 +41,9 @@ class TestAuthSecurity:
         # Add handler to relevant loggers
         loggers = [
             logging.getLogger("noetl.worker.auth_resolver"),
-            logging.getLogger("noetl.worker.plugin.postgres"),
-            logging.getLogger("noetl.worker.plugin.http"),
-            logging.getLogger("noetl.worker.plugin.duckdb")
+            logging.getLogger("noetl.plugin.postgres"),
+            logging.getLogger("noetl.plugin.http"),
+            logging.getLogger("noetl.plugin.duckdb")
         ]
         
         for logger in loggers:
@@ -48,9 +55,9 @@ class TestAuthSecurity:
         # Remove log handler
         loggers = [
             logging.getLogger("noetl.worker.auth_resolver"),
-            logging.getLogger("noetl.worker.plugin.postgres"),
-            logging.getLogger("noetl.worker.plugin.http"),
-            logging.getLogger("noetl.worker.plugin.duckdb")
+            logging.getLogger("noetl.plugin.postgres"),
+            logging.getLogger("noetl.plugin.http"),
+            logging.getLogger("noetl.plugin.duckdb")
         ]
         
         for logger in loggers:
@@ -125,7 +132,7 @@ class TestAuthSecurity:
         # Non-sensitive information should be logged (for debugging)
         assert "db.example.com" in log_content or log_content == "", "Host info should be in logs or logs should be minimal"
     
-    @patch('noetl.worker.plugin.postgres.psycopg.connect')
+    @patch('noetl.plugin.postgres.psycopg.connect')
     def test_postgres_connection_string_redaction(self, mock_connect):
         """Test that Postgres connection strings are redacted in logs."""
         mock_conn = MagicMock()
