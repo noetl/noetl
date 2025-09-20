@@ -57,7 +57,7 @@ async def process_loop_aggregation_job(job_row: Dict[str, Any]) -> Dict[str, Any
             'result': agg_list,
             'count': len(agg_list)
         }
-        from noetl.api.event import get_event_service
+        from noetl.server.api.event import get_event_service
         es = get_event_service()
         await es.emit({
             'execution_id': execution_id,

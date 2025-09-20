@@ -3,7 +3,13 @@ from fastapi.testclient import TestClient
 
 
 def test_credential_requires_name_and_data():
-    from noetl.api import credential
+    import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+@pytest.mark.asyncio
+async def test_credential_validation():
+    from noetl.server.api import credential
     app = FastAPI()
     app.include_router(credential.router, prefix="/api")
     client = TestClient(app)

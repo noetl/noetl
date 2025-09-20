@@ -3,7 +3,12 @@ from fastapi.testclient import TestClient
 
 
 def test_system_status_and_threads():
-    from noetl.api import system
+    import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+def test_system_routes_basic():
+    from noetl.server.api import system
     app = FastAPI()
     app.include_router(system.router, prefix="/api/sys")
     client = TestClient(app)

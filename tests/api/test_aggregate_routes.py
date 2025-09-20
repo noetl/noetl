@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 
 def test_aggregate_routes_registered():
-    from noetl.api import aggregate
+    from noetl.server.api import aggregate
     app = FastAPI()
     app.include_router(aggregate.router, prefix="/api")
 

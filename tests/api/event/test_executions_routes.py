@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 
 def test_executions_routes_registered():
-    from noetl.api.event.executions import router as executions_router
+    from noetl.server.api.event.executions import router as executions_router
     app = FastAPI()
     app.include_router(executions_router, prefix="/api")
 
