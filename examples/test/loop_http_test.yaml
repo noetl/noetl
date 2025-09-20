@@ -151,7 +151,7 @@ workflow:
 
           print(f"AGGREGATE_RESULTS: Final weather aggregated result: {aggregated_result}")
           return aggregated_result
-    input:
+    data:
       http_results: "{{ http_loop.result }}"
       original_message: "{{ workload.message }}"
     next:
@@ -159,8 +159,7 @@ workflow:
 
   - step: end
     desc: "End HTTP loop test"
-    save:
-      # Default storage is event_log; add storage/auth to persist elsewhere
-      data:
-        loop_http_response: "{{ aggregate_results }}"
-        test_summary: "Completed weather HTTP loop test with {{ aggregate_results.total_cities }} cities"
+    type: save
+    data:
+      loop_http_response: "{{ aggregate_results.result }}"
+      test_summary: "Completed weather HTTP loop test with {{ aggregate_results.result.total_cities }} cities"

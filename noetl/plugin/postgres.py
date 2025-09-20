@@ -246,6 +246,13 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
             raise ValueError("No command_b64 or commands_b64 field found - PostgreSQL tasks require base64 encoded commands")
 
         if isinstance(commands, str):
+            logger.debug(f"POSTGRES: Rendering commands with context keys: {list(context.keys()) if isinstance(context, dict) else type(context)}")
+            if isinstance(context, dict) and 'result' in context:
+                result_val = context['result']
+                logger.debug(f"POSTGRES: Found 'result' in context - type: {type(result_val)}, keys: {list(result_val.keys()) if isinstance(result_val, dict) else 'not dict'}")
+            else:
+                logger.debug("POSTGRES: No 'result' found in context")
+            
             commands_rendered = render_template(jinja_env, commands, {**context, **processed_task_with})
             # Remove comment-only lines and squash whitespace for robust splitting
             cmd_lines = []

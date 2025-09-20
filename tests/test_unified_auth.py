@@ -478,7 +478,7 @@ class TestDuckDBAuth:
         assert "REGION 'us-west-2'" in stmt
     
     def test_get_required_extensions(self):
-        """Test getting required DuckDB extensions."""
+        """Test getting required DuckDB extensions with dict inputs."""
         resolved_auth = {
             'pg': {'type': 'postgres'},
             'gcs': {'type': 'hmac', 'service': 'gcs'},
@@ -490,6 +490,118 @@ class TestDuckDBAuth:
         assert 'postgres' in extensions
         assert 'httpfs' in extensions
         assert len(extensions) == 2  # No extension needed for bearer
+
+    def test_get_required_extensions_with_objects(self):
+        """Test getting required DuckDB extensions with ResolvedAuthItem objects."""
+        from noetl.worker.auth_resolver import ResolvedAuthItem
+        
+        resolved_auth = {
+            'pg_db': ResolvedAuthItem(
+                alias='pg_db',
+                source='credential',
+                service='postgres',  # This should map to postgres extension
+                payload={'db_host': 'localhost', 'db_name': 'test'}
+            ),
+            'gcs_secret': ResolvedAuthItem(
+                alias='gcs_secret', 
+                source='credential',
+                service='gcs',  # This should map to httpfs extension
+                payload={'access_key': 'test'}
+            )
+        }
+        
+        extensions = get_required_extensions(resolved_auth)
+        
+        assert 'postgres' in extensions
+        assert 'httpfs' in extensions
+        assert len(extensions) == 2
+
+    def test_get_required_extensions_type_variations(self):
+        """Test various type field names and values."""
+        resolved_auth = {
+            'pg1': {'type': 'postgres'},
+            'pg2': {'kind': 'pg'},
+            'gcs1': {'provider': 'gcs'},
+            's3': {'engine': 's3'},
+            'azure': {'source': 'azure'},
+            'mysql': {'service': 'mysql'},
+        }
+        
+        extensions = get_required_extensions(resolved_auth)
+        
+        assert 'postgres' in extensions
+        assert 'httpfs' in extensions  # for gcs, s3, azure
+        assert 'azure' in extensions  # for azure
+        assert 'mysql' in extensions
+        
+        # Should have all unique extensions
+        expected_extensions = {'postgres', 'httpfs', 'azure', 'mysql'}
+        assert set(extensions) == expected_extensions
+
+    def test_get_required_extensions_edge_cases(self):
+        """Test edge cases and error conditions."""
+        # Empty/None inputs
+        assert get_required_extensions({}) == []
+        assert get_required_extensions(None) == []
+        
+        # Missing type information
+        resolved_auth = {
+            'no_type': {'some_field': 'value'},
+            'empty': {},
+            'none_type': {'type': None},
+        }
+        
+        extensions = get_required_extensions(resolved_auth)
+        assert extensions == []  # No extensions for unknown types
+
+    def test_get_required_extensions_unknown_types(self):
+        """Test handling of unknown auth types."""
+        resolved_auth = {
+            'unknown1': {'type': 'unknown_service'},
+            'unknown2': {'kind': 'mystery_auth'},
+            'known': {'type': 'postgres'},  # This should still work
+        }
+        
+        extensions = get_required_extensions(resolved_auth)
+        
+        # Should only get extensions for known types
+        assert 'postgres' in extensions
+        assert len(extensions) == 1
+
+    def test_get_required_extensions_case_insensitive(self):
+        """Test that auth type matching is case insensitive."""
+        resolved_auth = {
+            'pg1': {'type': 'POSTGRES'},
+            'pg2': {'type': 'PostgreS'},
+            'gcs1': {'type': 'HMAC'},
+            'gcs2': {'type': 'GCS'},
+        }
+        
+        extensions = get_required_extensions(resolved_auth)
+        
+        assert 'postgres' in extensions
+        assert 'httpfs' in extensions
+        assert len(extensions) == 2
+
+    def test_get_required_extensions_mixed_inputs(self):
+        """Test mixed dict and object inputs."""
+        from noetl.worker.auth_resolver import ResolvedAuthItem
+        
+        resolved_auth = {
+            'dict_pg': {'type': 'postgres'},
+            'obj_gcs': ResolvedAuthItem(
+                alias='obj_gcs',
+                source='credential',
+                service='gcs',  # This should map to httpfs extension
+                payload={'access_key': 'test'}
+            )
+        }
+        
+        extensions = get_required_extensions(resolved_auth)
+        
+        assert 'postgres' in extensions
+        assert 'httpfs' in extensions  # gcs -> httpfs
+        assert len(extensions) == 2
 
 
 class TestEnvironmentIntegration:

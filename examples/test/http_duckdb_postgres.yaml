@@ -3,6 +3,7 @@ kind: Playbook
 metadata:
   name: http_duckdb_postgres
   path: examples/test/http_duckdb_postgres
+  version: 0.1.2
 workload:
   message: HTTP -> DuckDB -> Postgres pipeline
   cities:
@@ -26,10 +27,17 @@ workflow:
   desc: Ensure raw HTTP results table exists in Postgres
   type: postgres
   auth: pg_local
-  command: "CREATE TABLE IF NOT EXISTS public.weather_http_raw (\n  id TEXT PRIMARY\
-    \ KEY,\n  execution_id TEXT,\n  iter_index INTEGER,\n  city TEXT,\n  url TEXT,\n\
-    \  elapsed DOUBLE PRECISION,\n  payload TEXT,\n  created_at TIMESTAMPTZ DEFAULT\
-    \ now()\n);\n"
+  command: |
+    CREATE TABLE IF NOT EXISTS public.weather_http_raw (
+      id TEXT PRIMARY KEY,
+      execution_id TEXT,
+      iter_index INTEGER,
+      city TEXT,
+      url TEXT,
+      elapsed DOUBLE PRECISION,
+      payload TEXT,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
   next:
   - step: http_loop
     data:
@@ -55,9 +63,9 @@ workflow:
         execution_id: '{{ execution_id }}'
         iter_index: '{{ http_loop.result_index }}'
         city: '{{ city.name }}'
-        url: '{{ data.url }}'
-        elapsed: '{{ data.elapsed | default(0) }}'
-        payload: '{{ data | tojson }}'
+        url: "{{ this.data.url if this is defined and this.data is defined else '' }}"
+        elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
+        payload: '{{ this | tojson }}'
       storage: postgres
       auth: pg_local
       table: public.weather_http_raw
@@ -65,11 +73,10 @@ workflow:
       key: id
   next:
   - step: aggregate_with_duckdb
-  data: '{{ cities }}'
-- data:
+- step: aggregate_with_duckdb
+  data:
     output_uri_base: gs://noetl-demo-19700101/weather
     require_cloud_output: true
-  step: aggregate_with_duckdb
   desc: Read Postgres rows in DuckDB, aggregate, write to GCS using unified auth dictionary
   type: duckdb
   auth:
@@ -82,73 +89,62 @@ workflow:
       type: hmac
       key: gcs_hmac_local
       scope: gs://{{ workload.gcs_bucket }}
-  commands: '-- Load needed extensions
-
+  commands: |
+    -- Load needed extensions
     INSTALL postgres; LOAD postgres;
-
     INSTALL httpfs;  LOAD httpfs;
 
+    -- Attach using the postgres credential via alias 'pg_db'
+    ATTACH '' AS pg_db (TYPE postgres, SECRET pg_db);
 
-    -- Attach using the postgres credential via alias ''pg_db''
-
-    ATTACH '''' AS pg_db (TYPE postgres, SECRET pg_db);
-
-
-    # GCS secrets are auto-created from auth mapping; no SQL needed here.
-
+    -- GCS secrets are auto-created from auth mapping; no SQL needed here.
 
     -- Flattened view from Postgres-attached table
-
     CREATE OR REPLACE TABLE weather_flat AS
-
     SELECT id, city, url AS source_url, elapsed AS elapsed_sec, payload
-
     FROM pg_db.public.weather_http_raw
-
-    WHERE execution_id = ''{{ execution_id }}'';
-
+    WHERE execution_id = '{{ execution_id }}';
 
     -- Aggregate by city (simple count)
-
     CREATE OR REPLACE TABLE weather_agg AS
-
     SELECT city, COUNT(*) AS rows_per_city
-
     FROM weather_flat
-
     GROUP BY city;
 
-
     -- Write results using the GCS credential
-
-    COPY weather_flat TO ''gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id
-    }}.parquet'' (FORMAT PARQUET);
-
-    COPY weather_agg  TO ''gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id
-    }}.parquet''  (FORMAT PARQUET);
-
-    '
+    COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
+    COPY weather_agg  TO 'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
   next:
   - step: ensure_metrics_table
 - step: ensure_metrics_table
   desc: Ensure metrics table exists in Postgres
   type: postgres
   auth: pg_local
-  command: "CREATE TABLE IF NOT EXISTS public.weather_pipeline_metrics (\n  execution_id\
-    \ TEXT PRIMARY KEY,\n  pg_rows_saved INTEGER,\n  gcs_flat_uri TEXT,\n  gcs_agg_uri\
-    \  TEXT,\n  created_at   TIMESTAMPTZ DEFAULT now()\n);\n"
+  command: |
+    CREATE TABLE IF NOT EXISTS public.weather_pipeline_metrics (
+      execution_id TEXT PRIMARY KEY,
+      pg_rows_saved INTEGER,
+      gcs_flat_uri TEXT,
+      gcs_agg_uri  TEXT,
+      created_at   TIMESTAMPTZ DEFAULT now()
+    );
   next:
   - step: end
 - step: end
   desc: Finish
   type: save
-  save:
-    storage: postgres
-    auth: pg_local
-    statement: "INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved,\
-      \ gcs_flat_uri, gcs_agg_uri)\nVALUES (\n  '{{ execution_id }}',\n  (SELECT COUNT(*)\
-      \ FROM public.weather_http_raw WHERE execution_id = '{{ execution_id }}'),\n\
-      \  'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet',\n\
-      \  'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'\n\
-      )\nON CONFLICT (execution_id) DO UPDATE SET\n  pg_rows_saved = EXCLUDED.pg_rows_saved,\n\
-      \  gcs_flat_uri = EXCLUDED.gcs_flat_uri,\n  gcs_agg_uri = EXCLUDED.gcs_agg_uri\n"
+  storage: postgres
+  auth: pg_local
+  statement: |
+    INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved, gcs_flat_uri, gcs_agg_uri)
+    VALUES (
+      '{{ execution_id }}',
+      (SELECT COUNT(*) FROM public.weather_http_raw WHERE execution_id = '{{ execution_id }}'),
+      'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet',
+      'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'
+    )
+    ON CONFLICT (execution_id) DO UPDATE SET
+      pg_rows_saved = EXCLUDED.pg_rows_saved,
+      gcs_flat_uri = EXCLUDED.gcs_flat_uri,
+      gcs_agg_uri = EXCLUDED.gcs_agg_uri
+  data: {}

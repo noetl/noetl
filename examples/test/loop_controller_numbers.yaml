@@ -20,9 +20,15 @@ workflow:
     pg:
       type: postgres
       key: pg_local
-  command: "CREATE TABLE IF NOT EXISTS public.loop_numbers (\n  id TEXT PRIMARY KEY,\n\
-    \  execution_id TEXT,\n  iter_index INTEGER,\n  input_val INTEGER,\n  output_val\
-    \ INTEGER,\n  created_at TIMESTAMPTZ DEFAULT now()\n);\n"
+  command: |
+    CREATE TABLE IF NOT EXISTS public.loop_numbers (
+      id TEXT PRIMARY KEY,
+      execution_id TEXT,
+      iter_index INTEGER,
+      input_val INTEGER,
+      output_val INTEGER,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
   next:
   - step: ensure_table_agg
 - step: ensure_table_agg
@@ -32,9 +38,13 @@ workflow:
     pg:
       type: postgres
       key: pg_local
-  command: "CREATE TABLE IF NOT EXISTS public.loop_numbers_agg (\n  execution_id TEXT\
-    \ PRIMARY KEY,\n  results_json JSONB,\n  count INTEGER,\n  created_at TIMESTAMPTZ\
-    \ DEFAULT now()\n);\n"
+  command: |
+    CREATE TABLE IF NOT EXISTS public.loop_numbers_agg (
+      execution_id TEXT PRIMARY KEY,
+      results_json JSONB,
+      count INTEGER,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
   next:
   - step: loop_numbers
 - step: loop_numbers
@@ -53,8 +63,8 @@ workflow:
         id: '{{ execution_id }}:{{ loop_numbers.result_index }}'
         execution_id: '{{ execution_id }}'
         iter_index: '{{ loop_numbers.result_index }}'
-        input_val: '{{ data.value }}'
-        output_val: '{{ data.square }}'
+        input_val: '{{ result.value }}'
+        output_val: '{{ result.square }}'
       storage: postgres
       auth:
         pg:

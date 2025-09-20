@@ -22,7 +22,7 @@ workflow:
     desc: "Test postgres insertion"
     type: workbook
     name: store_summary_postgres_task
-    input:
+    data:
       alert_cities: "[]"
       alert_count: 0
       db_host: "{{ workload.pg_host }}"
@@ -39,7 +39,7 @@ workflow:
 workbook:
   - name: store_summary_postgres_task
     type: postgres
-    input:
+    data:
       alert_cities: "{{ alert_cities }}"
       alert_count: "{{ alert_count }}"
       db_host: "{{ db_host }}"

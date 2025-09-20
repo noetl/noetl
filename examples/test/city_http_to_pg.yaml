@@ -52,8 +52,8 @@ workflow:
         execution_id: "{{ workload.parent_execution_id }}"
         iter_index: "{{ workload.index if workload.index is not none else null }}"
         city: "{{ workload.city.name }}"
-        url: "{{ result.url }}"
-        elapsed: "{{ result.elapsed | default(0) }}"
+        url: "{{ result.data.url if result is defined and result.data is defined else '' }}"
+        elapsed: "{{ (result.data.elapsed | default(0)) if result is defined and result.data is defined else 0 }}"
         payload: "{{ result | tojson }}"
     next:
       - step: end

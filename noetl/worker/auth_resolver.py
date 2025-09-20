@@ -12,8 +12,9 @@ Security Notes:
 """
 import os
 import logging
-from typing import Dict, Any, Optional, Tuple, Union, List
-from dataclasses import dataclass
+from typing import Dict, Any, Optional, Tuple, Union, List, Iterator
+from dataclasses import dataclass, asdict
+from collections.abc import Mapping
 from jinja2 import Environment
 
 # Import existing credential fetching functions
@@ -28,7 +29,7 @@ RESERVED_SINGLE_AUTH_KEYS = {
 }
 
 @dataclass
-class ResolvedAuthItem:
+class ResolvedAuthItem(Mapping[str, Any]):
     """Resolved authentication item with all required information."""
     alias: str
     source: str  # 'credential', 'secret', 'env', 'inline'
@@ -38,6 +39,41 @@ class ResolvedAuthItem:
     payload: Dict[str, Any] = None  # Resolved credential data
     is_scalar_value: bool = False  # True for simple string values
     inject: Optional[Dict[str, Any]] = None  # Injection configuration
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return asdict(self)
+
+    # Mapping protocol implementation for backward compatibility
+    def __getitem__(self, key: str) -> Any:
+        """Get item by key - supports dict-like access."""
+        data = self.to_dict()
+        return data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over keys - supports dict-like iteration."""
+        return iter(self.to_dict())
+
+    def __len__(self) -> int:
+        """Get number of items - supports len()."""
+        return len(self.to_dict())
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get item with default - supports dict-like .get() method."""
+        data = self.to_dict()
+        return data.get(key, default)
+    
+    def keys(self):
+        """Get keys - supports dict-like .keys() method."""
+        return self.to_dict().keys()
+    
+    def values(self):
+        """Get values - supports dict-like .values() method.""" 
+        return self.to_dict().values()
+    
+    def items(self):
+        """Get items - supports dict-like .items() method."""
+        return self.to_dict().items()
 
 
 def _render_deep(value: Any, jinja_env: Environment, context: Dict[str, Any]) -> Any:

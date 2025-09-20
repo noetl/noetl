@@ -615,11 +615,16 @@ class QueueWorker:
                             exec_ctx_with_result['this'] = result
                             if 'data' not in exec_ctx_with_result:
                                 exec_ctx_with_result['data'] = _current
-                        except Exception:
+                            logger.debug(f"WORKER: Added result context variables - result keys: {list(_current.keys()) if isinstance(_current, dict) else type(_current)}, this keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+                        except Exception as ctx_err:
+                            logger.warning(f"WORKER: Failed to add result context variables, falling back to original context: {ctx_err}")
                             exec_ctx_with_result = exec_ctx
                         from ..plugin.save import execute_save_task as _do_save
                         save_payload = {'save': inline_save}
-                        save_out = _do_save(save_payload, exec_ctx_with_result, self._jinja, task_with)
+                        logger.debug(f"WORKER: About to call save plugin with context keys: {list(exec_ctx_with_result.keys()) if isinstance(exec_ctx_with_result, dict) else type(exec_ctx_with_result)}")
+                        if isinstance(exec_ctx_with_result, dict) and 'result' in exec_ctx_with_result:
+                            logger.debug(f"WORKER: Context has 'result' of type: {type(exec_ctx_with_result['result'])}")
+                        save_out = _do_save(save_payload, exec_ctx_with_result, self._jinja, task_data)
                         # Attach save outcome to result envelope under meta.save or data.save
                         if isinstance(result, dict):
                             if 'meta' in result and isinstance(result['meta'], dict):

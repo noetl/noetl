@@ -31,7 +31,10 @@ def _render_data_mapping(jinja_env: Environment, mapping: Any, context: Dict[str
         # Lazy import to avoid circulars
         from noetl.core.dsl.render import render_template
         return render_template(jinja_env, mapping, context, rules=None, strict_keys=False)
-    except Exception:
+    except Exception as render_err:
+        # Log the rendering failure for debugging
+        logger.warning(f"SAVE: Template rendering failed for mapping {mapping}, falling back to unrendered: {render_err}")
+        logger.debug(f"SAVE: Available context keys: {list(context.keys()) if isinstance(context, dict) else type(context)}")
         # Fallback: return as-is if rendering fails
         return mapping
 
@@ -272,6 +275,14 @@ def execute_save_task(
             elif credential_ref and 'auth' not in pg_with:
                 pg_with['auth'] = credential_ref
 
+            # DEBUG: Log context keys before calling postgres plugin
+            logger.debug(f"SAVE: Calling postgres plugin with context keys: {list(context.keys()) if isinstance(context, dict) else type(context)}")
+            if isinstance(context, dict) and 'result' in context:
+                result_val = context['result']
+                logger.debug(f"SAVE: Found 'result' in context - type: {type(result_val)}, keys: {list(result_val.keys()) if isinstance(result_val, dict) else 'not dict'}")
+            else:
+                logger.debug("SAVE: No 'result' found in context")
+            
             pg_result = _pg_exec(pg_task, context, jinja_env, pg_with, log_event_callback)
             # Normalize into save envelope
             if isinstance(pg_result, dict) and pg_result.get('status') == 'success':

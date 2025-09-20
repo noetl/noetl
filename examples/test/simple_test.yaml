@@ -30,9 +30,8 @@ workflow:
   - step: end
     desc: "End simple test"
     type: save
-    save:
-      storage: event_log
+    storage: event_log
+    data:
+      status: "success"
       data:
-        status: "success"
-        data:
-          message: "{{ test_step.data.message }}"
+        message: "{{ test_step.result.data.message }}"
