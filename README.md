@@ -232,9 +232,41 @@ NoETL provides three distinct approaches for handling credentials and secrets in
   - `secret` → resolve external secret value at runtime
 - **Native SQL**: DuckDB aliases and secret names are unchanged and under your control
 
-For detailed documentation, see [Credential Management Guide](docs/concepts/credentials.md).ion](https://img.shields.io/pypi/pyversions/noetl.svg)](https://pypi.org/project/noetl/)
-[![License](https://img.shields.io/pypi/l/noetl.svg)](https://github.com/noetl/noetl/blob/main/LICENSE)
+For detailed documentation, see [Credential Management Guide](docs/concepts/credentials.md).
 
+### Unified Authentication System (v1.0+)
+
+NoETL v1.0+ introduces a unified authentication system that consolidates authentication patterns under a single `auth` attribute:
+
+```yaml
+# New unified syntax
+- step: postgres_task
+  type: postgres
+  auth:
+    type: postgres
+    credential: pg_local
+  
+- step: http_task
+  type: http
+  auth:
+    type: bearer
+    env: API_TOKEN
+    
+- step: duckdb_task
+  type: duckdb
+  auth:
+    db: {type: postgres, credential: pg_main}
+    storage: {type: gcs, credential: gcs_hmac}
+```
+
+**Key Features:**
+- Single `auth` syntax across all plugins
+- Multiple sources: credential store, environment variables, secret managers, inline
+- Plugin-specific validation (single vs multi-auth)
+- Automatic security redaction in logs
+- Full backwards compatibility with deprecation warnings
+
+For complete migration guide, see [Unified Auth Migration Guide](docs/migration/auth-unified.md).
 
 ## Workflow DSL Structure
 

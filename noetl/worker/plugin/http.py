@@ -12,7 +12,8 @@ from jinja2 import Environment
 
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
-from noetl.worker.plugin._auth import resolve_auth_map, build_http_headers
+from noetl.worker.auth_resolver import resolve_auth
+from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -44,6 +45,10 @@ def execute_http_task(
     task_name = task_config.get('task', 'http_task')
     start_time = datetime.datetime.now()
 
+    # Apply backwards compatibility transformation for deprecated 'credentials' field
+    validate_auth_transition(task_config, task_with)
+    task_config, task_with = transform_credentials_to_auth(task_config, task_with)
+
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Generated task_id={task_id}")
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Task name={task_name}")
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Start time={start_time.isoformat()}")
@@ -69,23 +74,68 @@ def execute_http_task(
 
         # Process unified auth system to add authentication headers
         try:
-            resolved_auth = resolve_auth_map(task_config, task_with, jinja_env, context)
-            if resolved_auth:
-                use_auth = task_with.get('use_auth') or task_config.get('use_auth')
-                auth_headers = build_http_headers(resolved_auth, use_auth)
-                if auth_headers:
-                    logger.debug(f"HTTP: Adding auth headers from unified auth system")
-                    # Auth headers override user-specified headers
-                    headers.update(auth_headers)
+            auth_config = task_config.get('auth') or task_with.get('auth')
+            if auth_config:
+                logger.debug("HTTP: Using unified auth system")
+                mode, resolved_items = resolve_auth(auth_config, jinja_env, context)
+                
+                if resolved_items:
+                    # Build authentication headers based on auth type
+                    auth_headers = {}
+                    
+                    # For HTTP plugin, we expect single auth mode or use the first resolved item
+                    resolved_auth = None
+                    if mode == 'single' or len(resolved_items) == 1:
+                        resolved_auth = list(resolved_items.values())[0]
+                    
+                    if resolved_auth and resolved_auth.service == 'bearer':
+                        # Bearer token authentication
+                        token = resolved_auth.payload.get('token')
+                        if token:
+                            auth_headers['Authorization'] = f'Bearer {token}'
+                            logger.debug("HTTP: Added Bearer authorization header")
+                    
+                    elif resolved_auth and resolved_auth.service == 'basic':
+                        # Basic authentication
+                        username = resolved_auth.payload.get('username') or resolved_auth.payload.get('user')
+                        password = resolved_auth.payload.get('password')
+                        if username and password:
+                            import base64
+                            credentials = base64.b64encode(f'{username}:{password}'.encode()).decode()
+                            auth_headers['Authorization'] = f'Basic {credentials}'
+                            logger.debug("HTTP: Added Basic authorization header")
+                    
+                    elif resolved_auth and resolved_auth.service == 'api_key':
+                        # API key authentication
+                        key = resolved_auth.payload.get('key')
+                        value = resolved_auth.payload.get('value')
+                        if key and value:
+                            auth_headers[key] = value
+                            logger.debug(f"HTTP: Added API key header: {key}")
+                    
+                    elif resolved_auth and resolved_auth.service == 'header':
+                        # Direct header injection
+                        header_config = resolved_auth.payload
+                        if isinstance(header_config, dict):
+                            auth_headers.update(header_config)
+                            logger.debug(f"HTTP: Added custom headers: {list(header_config.keys())}")
+                    
+                    else:
+                        logger.debug(f"HTTP: Unsupported auth type for HTTP injection: {resolved_auth.auth_type}")
+                    
+                    # Apply auth headers (they override user-specified headers)
+                    if auth_headers:
+                        logger.debug(f"HTTP: Applying {len(auth_headers)} auth headers")
+                        headers.update(auth_headers)
+                else:
+                    logger.debug("HTTP: Auth config provided but resolution failed")
             else:
-                logger.debug("HTTP: No unified auth configuration found")
+                logger.debug("HTTP: No auth configuration found")
         except Exception as e:
             logger.debug(f"HTTP: Unified auth processing failed: {e}", exc_info=True)
 
         timeout = task_config.get('timeout', 30)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout}")
-
-        logger.info(f"HTTP.EXECUTE_HTTP_TASK: Executing HTTP {method} request to {endpoint}")
 
         event_id = None
         if log_event_callback:
@@ -95,9 +145,6 @@ def execute_http_task(
                 'in_progress', 0, context, None,
                 {'method': method, 'endpoint': endpoint, 'with_params': task_with}, None
             )
-
-        headers = render_template(jinja_env, task_config.get('headers', {}), context)
-        timeout = task_config.get('timeout', 30)
 
         try:
             # Pre-flight mocking for local/dev domains

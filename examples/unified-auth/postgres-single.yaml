@@ -1,0 +1,57 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: unified_auth_postgres_example
+  path: examples/unified-auth/postgres-single
+
+workload:
+  message: "Demonstrate unified auth with Postgres"
+  table_name: "unified_auth_demo"
+
+workflow:
+  - step: start
+    desc: "Start unified auth demo"
+    next:
+      - step: create_demo_table
+
+  - step: create_demo_table
+    desc: "Create demo table using unified auth"
+    type: postgres
+    auth:
+      type: postgres
+      credential: pg_local
+    command_b64: |
+      Q1JFQVRFIFRBQkxFIElGIE5PVCBFWElTVFMgcHVibGljLnVuaWZpZWRfYXV0aF9kZW1vICgKICBpZCBTRVJJQUwgUFJJTUFSWSBLRVksCiAgbWVzc2FnZSBURVhULAogIGNyZWF0ZWRfYXQgVElNRVNUQU1QVFogREVGQVVMVCBub3coKQopOw==
+    next:
+      - step: insert_demo_data
+
+  - step: insert_demo_data
+    desc: "Insert demo data with templated values"
+    type: postgres
+    auth:
+      type: postgres
+      credential: pg_local
+    command_b64: |
+      SU5TRVJUIElOVE8gcHVibGljLnVuaWZpZWRfYXV0aF9kZW1vIChtZXNzYWdlKSAKVkFMVUVTICgnVW5pZmllZCBBdXRoIERlbW86IHt7IHdvcmtsb2FkLm1lc3NhZ2UgfX0nKTs=
+    next:
+      - step: query_demo_data
+
+  - step: query_demo_data
+    desc: "Query demo data to verify insertion"
+    type: postgres
+    auth:
+      type: postgres
+      credential: pg_local
+    command_b64: |
+      U0VMRUNUIGlkLCBtZXNzYWdlLCBjcmVhdGVkX2F0IAogRlJPTSBwdWJsaWMudW5pZmllZF9hdXRoX2RlbW8gCk9SREVSIEJZIGNyZWF0ZWRfYXQgREVTQyAKTElNSVQgNTs=
+    next:
+      - step: end
+
+  - step: end
+    desc: "End unified auth demo"
+
+# Base64 Decoded Commands:
+# create_demo_table: CREATE TABLE IF NOT EXISTS public.unified_auth_demo (id SERIAL PRIMARY KEY, message TEXT, created_at TIMESTAMPTZ DEFAULT now());
+# insert_demo_data: INSERT INTO public.unified_auth_demo (message) VALUES ('Unified Auth Demo: {{ workload.message }}');
+# query_demo_data: SELECT id, message, created_at FROM public.unified_auth_demo ORDER BY created_at DESC LIMIT 5;

@@ -34,9 +34,8 @@ import duckdb
 import httpx
 
 from noetl.worker.secrets import fetch_credentials_by_keys, fetch_credential_by_key
-from noetl.worker.plugin._auth import (
-    resolve_auth_map, get_duckdb_secrets, get_required_extensions
-)
+from noetl.worker.auth_resolver import resolve_auth
+from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -165,6 +164,102 @@ def _build_duckdb_secret_prelude(task_config, params, jinja_env, context, fetch_
     return prelude
 
 
+def _get_required_extensions(resolved_auth_map):
+    """Get DuckDB extensions needed for resolved auth configurations."""
+    extensions = set()
+    
+    for alias, auth_item in (resolved_auth_map or {}).items():
+        if not auth_item:
+            continue
+        
+        auth_type = auth_item.service
+        if auth_type == "gcs":
+            extensions.add("httpfs")
+        elif auth_type == "postgres":
+            extensions.add("postgres")
+        elif auth_type == "s3":
+            extensions.add("httpfs")
+    
+    return list(extensions)
+
+
+def _generate_duckdb_secrets(resolved_auth_map):
+    """Generate DuckDB CREATE SECRET statements from resolved auth."""
+    statements = []
+    
+    for alias, auth_item in (resolved_auth_map or {}).items():
+        if not auth_item:
+            continue
+        
+        config = auth_item.payload
+        auth_type = auth_item.service
+        
+        if auth_type in ("gcs", "hmac"):
+            key_id = config.get("key_id")
+            secret_key = config.get("secret_key") or config.get("secret")
+            scope = config.get("scope")
+            
+            if not (key_id and secret_key):
+                raise ValueError(f"GCS secret '{alias}' missing key_id/secret_key (HMAC required).")
+            
+            stmt = (
+                f"CREATE OR REPLACE SECRET {alias} (\n"
+                f"  TYPE gcs,\n"
+                f"  KEY_ID '{_escape_sql(key_id)}',\n"
+                f"  SECRET '{_escape_sql(secret_key)}'"
+                + (f",\n  SCOPE '{_escape_sql(scope)}'" if scope else "")
+                + "\n);"
+            )
+            statements.append(stmt)
+        
+        elif auth_type == "postgres":
+            host = config.get("host") or config.get("db_host")
+            port = int(config.get("port") or config.get("db_port") or 5432)
+            database = config.get("database") or config.get("db_name") or config.get("dbname")
+            user = config.get("user") or config.get("db_user") or config.get("username")
+            password = config.get("password") or config.get("db_password")
+            sslmode = config.get("sslmode")
+            
+            for val in (host, database, user, password):
+                if val in (None, ""):
+                    raise ValueError(f"Postgres secret '{alias}' incomplete (need host, database, user, password).")
+            
+            stmt = (
+                f"CREATE OR REPLACE SECRET {alias} (\n"
+                f"  TYPE postgres,\n"
+                f"  HOST '{_escape_sql(host)}',\n"
+                f"  PORT {port},\n"
+                f"  DATABASE '{_escape_sql(database)}',\n"
+                f"  USER '{_escape_sql(user)}',\n"
+                f"  PASSWORD '{_escape_sql(password)}'"
+                + (f",\n  SSLMODE '{_escape_sql(sslmode)}'" if sslmode else "")
+                + "\n);"
+            )
+            statements.append(stmt)
+        
+        elif auth_type == "s3":
+            access_key_id = config.get("access_key_id") or config.get("key_id")
+            secret_access_key = config.get("secret_access_key") or config.get("secret_key") or config.get("secret")
+            region = config.get("region")
+            endpoint = config.get("endpoint")
+            
+            if not (access_key_id and secret_access_key):
+                raise ValueError(f"S3 secret '{alias}' missing access_key_id/secret_access_key.")
+            
+            stmt = (
+                f"CREATE OR REPLACE SECRET {alias} (\n"
+                f"  TYPE s3,\n"
+                f"  KEY_ID '{_escape_sql(access_key_id)}',\n"
+                f"  SECRET '{_escape_sql(secret_access_key)}'"
+                + (f",\n  REGION '{_escape_sql(region)}'" if region else "")
+                + (f",\n  ENDPOINT '{_escape_sql(endpoint)}'" if endpoint else "")
+                + "\n);"
+            )
+            statements.append(stmt)
+    
+    return statements
+
+
 @contextmanager
 def get_duckdb_connection(duckdb_file_path):
     """Context manager for shared DuckDB connections to maintain attachments"""
@@ -208,6 +303,10 @@ def execute_duckdb_task(
     """
     logger.debug("=== DUCKDB.EXECUTE_DUCKDB_TASK: Function entry ===")
     logger.debug(f"DUCKDB.EXECUTE_DUCKDB_TASK: Parameters - task_config={task_config}, task_with={task_with}")
+
+    # Apply backwards compatibility transformation for deprecated 'credentials' field
+    validate_auth_transition(task_config, task_with)
+    task_config, task_with = transform_credentials_to_auth(task_config, task_with)
 
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'duckdb_task')
@@ -458,12 +557,37 @@ def execute_duckdb_task(
         if auto_secrets:
             try:
                 # Use the new unified auth system
-                resolved_auth = resolve_auth_map(task_config, params, jinja_env, context)
-                logger.debug(f"DUCKDB: resolved unified auth with {len(resolved_auth)} aliases")
+                auth_config = task_config.get('auth') or params.get('auth')
+                resolved_auth_map = {}
                 
-                if resolved_auth:
+                if auth_config:
+                    logger.debug("DUCKDB: Using unified auth system")
+                    
+                    # DuckDB supports multi-auth mode, but if single auth provided, auto-wrap it
+                    if isinstance(auth_config, dict) and not any(
+                        isinstance(v, dict) and ('type' in v or 'credential' in v or 'secret' in v or 'env' in v or 'inline' in v)
+                        for v in auth_config.values()
+                    ):
+                        # This looks like a single auth config, not an alias map
+                        # Auto-wrap it as the "default" alias
+                        logger.debug("DUCKDB: Auto-wrapping single auth config as 'default' alias")
+                        mode, resolved_items = resolve_auth(auth_config, jinja_env, context)
+                        if mode == 'single' and resolved_items:
+                            # Single auth mode - get the first (and only) resolved item
+                            resolved_auth_map['default'] = list(resolved_items.values())[0]
+                        elif resolved_items:
+                            # Multi auth mode - use all resolved items
+                            resolved_auth_map = resolved_items
+                    else:
+                        # This is an alias map, resolve each alias
+                        mode, resolved_items = resolve_auth(auth_config, jinja_env, context)
+                        resolved_auth_map = resolved_items
+                        
+                logger.debug(f"DUCKDB: resolved unified auth with {len(resolved_auth_map)} aliases")
+                
+                if resolved_auth_map:
                     # Get required extensions and install them
-                    required_extensions = get_required_extensions(resolved_auth)
+                    required_extensions = _get_required_extensions(resolved_auth_map)
                     for ext in required_extensions:
                         try:
                             logger.debug(f"DUCKDB: installing/loading extension: {ext}")
@@ -473,7 +597,7 @@ def execute_duckdb_task(
                             logger.warning(f"DUCKDB: failed to install/load {ext}: {ext_e}")
                     
                     # Generate and execute DuckDB secret creation statements
-                    secret_statements = get_duckdb_secrets(resolved_auth)
+                    secret_statements = _generate_duckdb_secrets(resolved_auth_map)
                     for stmt in secret_statements:
                         # Log statement without revealing secrets
                         redacted_stmt = stmt
@@ -488,7 +612,7 @@ def execute_duckdb_task(
                     # Expose resolved auth in template context for user SQL
                     if isinstance(commands, str):
                         tpl_ctx = {**context, **(processed_task_with or {})}
-                        tpl_ctx['auth'] = resolved_auth  # New unified auth access
+                        tpl_ctx['auth'] = resolved_auth_map  # New unified auth access
                         commands_rendered = render_template(jinja_env, commands, tpl_ctx)
                         logger.info(f"DUCKDB: commands_rendered (first 400 chars)={commands_rendered[:400]}")
                         cmd_lines = []
