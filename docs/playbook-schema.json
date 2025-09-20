@@ -122,25 +122,8 @@
           "enum": ["success", "error", "always"]
         },
         "storage": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": ["postgres", "duckdb", "http", "event", "event_log"]
-            },
-            {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "enum": ["postgres", "duckdb", "http", "event", "event_log"]
-                },
-                "auth": { "$ref": "#/$defs/authConfig" },
-                "spec": { "type": "object" }
-              },
-              "required": ["kind"],
-              "additionalProperties": true
-            }
-          ]
+          "type": "string",
+          "enum": ["postgres", "duckdb", "http", "event", "event_log"]
         },
         "auth": { "$ref": "#/$defs/authConfig" },
         "statement": { "type": "string" },

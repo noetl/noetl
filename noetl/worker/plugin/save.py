@@ -2,8 +2,8 @@
 Save action executor for NoETL jobs.
 
 Executes a declarative or statement-based save operation on the worker side.
-Initial implementation supports event (formerly event_log) "save" by returning the envelope;
-other storage kinds can be extended incrementally (postgres/duckdb/etc.).
+Uses flattened save.storage structure (e.g., save.storage: 'postgres').
+Supports event_log, postgres, and other storage kinds.
 """
 
 from typing import Dict, Any, Optional, Callable
@@ -36,46 +36,6 @@ def _render_data_mapping(jinja_env: Environment, mapping: Any, context: Dict[str
         return mapping
 
 
-def normalize_save(save: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize save configuration to handle backward compatibility.
-    
-    Converts legacy save.storage.kind structure to new flattened save.storage structure:
-    - save.storage.kind -> save.storage (string enum)
-    - save.storage.auth -> save.auth (hoisted to top level)
-    
-    Issues a deprecation warning once per execution if legacy structure is detected.
-    """
-    if not isinstance(save, dict):
-        return save
-        
-    storage = save.get('storage')
-    if isinstance(storage, dict) and 'kind' in storage:
-        # Legacy structure detected
-        legacy_kind = storage.get('kind')
-        legacy_auth = storage.get('auth')
-        
-        # Log deprecation warning once (use a simple module-level flag)
-        global _deprecation_warned
-        if not getattr(normalize_save, '_deprecation_warned', False):
-            logger.warning(
-                "SAVE: Legacy save.storage.kind structure is deprecated. "
-                "Use save.storage as string enum and move auth to save.auth. "
-                "See migration docs for details."
-            )
-            normalize_save._deprecation_warned = True
-            
-        # Migrate structure
-        save = save.copy()  # Don't modify original
-        save['storage'] = legacy_kind
-        
-        # Hoist auth if present and not already set at top level
-        if legacy_auth and 'auth' not in save:
-            save['auth'] = legacy_auth
-            
-    return save
-
-
 def execute_save_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
@@ -87,12 +47,15 @@ def execute_save_task(
     Execute a 'save' task.
 
     Expected task_config keys (declarative):
-      - storage: { kind: <kind>, credential?: <name>, spec?: {...} }
+      - storage: <string> (e.g. 'postgres', 'event_log', 'duckdb')
+      - auth: <string|dict> (credential reference or auth config)
       - data: <object/list/scalar>
+      - table: <string> (for database storage)
       - mode/key/format (optional)
 
     Statement mode:
-      - storage as above (with dialect for graph/bigquery, etc.)
+      - storage: <string> (database type)
+      - auth: <string|dict> (credential reference or auth config)
       - statement: str, params: dict
 
     Current implementation persists to event_log implicitly (via returned result envelope).
@@ -102,17 +65,14 @@ def execute_save_task(
         # Support nested save: { save: { storage, data, statement, params, ... } }
         payload = task_config.get('save') or task_config
         
-        # Apply backward compatibility normalization for save structure
-        payload = normalize_save(payload)
-        
-        storage = payload.get('storage') or {}
-        # Handle flattened storage: storage can now be a string directly
-        if isinstance(storage, str):
-            kind = storage.strip().lower()
-            storage = {}  # No additional spec/auth info when it's just a string
+        # Get storage - must be a string (flattened structure)
+        storage_value = payload.get('storage') or 'event'
+        if isinstance(storage_value, str):
+            kind = storage_value.strip().lower()
         else:
-            kind = str((storage or {}).get('kind') or 'event').strip().lower()
-        # Spec-defined attributes (parsed now; handling may be added later)
+            raise ValueError("save.storage must be a string enum (e.g., 'postgres', 'event_log'). Legacy save.storage.kind structure is no longer supported.")
+            
+        # Get save configuration attributes  
         data_spec = payload.get('data')
         statement = payload.get('statement')
         params = payload.get('params') or {}
@@ -123,25 +83,22 @@ def execute_save_task(
         batch = payload.get('batch')
         chunk_size = payload.get('chunk_size') or payload.get('chunksize')
         concurrency = payload.get('concurrency')
-        # storage-level attributes (do not echo secrets)
-        # Check for auth at top level (new structure) or in storage (legacy)
-        auth_config = payload.get('auth') or storage.get('auth')
+        
+        # Get auth configuration (top-level only)
+        auth_config = payload.get('auth')
         credential_ref = None
         
-        # Handle both unified auth dictionary and legacy string reference
+        # Handle auth configuration
         if isinstance(auth_config, dict):
-            # For unified auth, we'll pass the entire auth config to the target plugin
+            # Unified auth dictionary
             logger.debug("SAVE: Using unified auth dictionary")
         elif isinstance(auth_config, str):
-            # Legacy string reference
+            # String reference to credential
             credential_ref = auth_config
-            logger.debug("SAVE: Using legacy auth string reference")
-        else:
-            # Check for legacy credential fields
-            credential_ref = storage.get('credential') or storage.get('credentialRef')
-            if storage.get('credential'):
-                logger.warning("SAVE: storage.credential is deprecated; use storage.auth instead")
-        spec = storage.get('spec') or {}
+            logger.debug("SAVE: Using auth string reference")
+        
+        # Get spec configuration
+        spec = payload.get('spec') or {}
 
         # Render data/params against the execution context
         rendered_data = None

@@ -58,7 +58,7 @@ save_clause =
     "{",
     ["when", ":", quoted_template_literal, ","],
     ["on", ":", ("success" | "error" | "always"), ","],
-    "storage", ":", (identifier_literal | legacy_storage_clause), ",",
+    "storage", ":", identifier_literal, ",",
     ["auth", ":", auth_value, ","],
     ["statement", ":", string_literal, ","],
     ["params", ":", mapping_literal, ","],
@@ -67,14 +67,6 @@ save_clause =
     ["key", ":", (identifier_literal | "[", identifier_literal, {",", identifier_literal}, "]"), ","],
     ["table", ":", identifier_literal, ","],
     ["format", ":", ("json" | "csv" | "parquet")]
-    "}"
-    ;
-
-legacy_storage_clause =
-    "{",
-    "kind", ":", identifier_literal,
-    ["auth", ":", auth_value],
-    ["spec", ":", mapping_literal]
     "}"
     ;
 
