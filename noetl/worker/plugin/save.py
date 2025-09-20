@@ -36,6 +36,46 @@ def _render_data_mapping(jinja_env: Environment, mapping: Any, context: Dict[str
         return mapping
 
 
+def normalize_save(save: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize save configuration to handle backward compatibility.
+    
+    Converts legacy save.storage.kind structure to new flattened save.storage structure:
+    - save.storage.kind -> save.storage (string enum)
+    - save.storage.auth -> save.auth (hoisted to top level)
+    
+    Issues a deprecation warning once per execution if legacy structure is detected.
+    """
+    if not isinstance(save, dict):
+        return save
+        
+    storage = save.get('storage')
+    if isinstance(storage, dict) and 'kind' in storage:
+        # Legacy structure detected
+        legacy_kind = storage.get('kind')
+        legacy_auth = storage.get('auth')
+        
+        # Log deprecation warning once (use a simple module-level flag)
+        global _deprecation_warned
+        if not getattr(normalize_save, '_deprecation_warned', False):
+            logger.warning(
+                "SAVE: Legacy save.storage.kind structure is deprecated. "
+                "Use save.storage as string enum and move auth to save.auth. "
+                "See migration docs for details."
+            )
+            normalize_save._deprecation_warned = True
+            
+        # Migrate structure
+        save = save.copy()  # Don't modify original
+        save['storage'] = legacy_kind
+        
+        # Hoist auth if present and not already set at top level
+        if legacy_auth and 'auth' not in save:
+            save['auth'] = legacy_auth
+            
+    return save
+
+
 def execute_save_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
@@ -61,8 +101,17 @@ def execute_save_task(
     try:
         # Support nested save: { save: { storage, data, statement, params, ... } }
         payload = task_config.get('save') or task_config
+        
+        # Apply backward compatibility normalization for save structure
+        payload = normalize_save(payload)
+        
         storage = payload.get('storage') or {}
-        kind = str((storage or {}).get('kind') or 'event').strip().lower()
+        # Handle flattened storage: storage can now be a string directly
+        if isinstance(storage, str):
+            kind = storage.strip().lower()
+            storage = {}  # No additional spec/auth info when it's just a string
+        else:
+            kind = str((storage or {}).get('kind') or 'event').strip().lower()
         # Spec-defined attributes (parsed now; handling may be added later)
         data_spec = payload.get('data')
         statement = payload.get('statement')
@@ -75,7 +124,8 @@ def execute_save_task(
         chunk_size = payload.get('chunk_size') or payload.get('chunksize')
         concurrency = payload.get('concurrency')
         # storage-level attributes (do not echo secrets)
-        auth_config = storage.get('auth')
+        # Check for auth at top level (new structure) or in storage (legacy)
+        auth_config = payload.get('auth') or storage.get('auth')
         credential_ref = None
         
         # Handle both unified auth dictionary and legacy string reference

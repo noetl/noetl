@@ -160,7 +160,7 @@ workflow:
   - step: end
     desc: "End HTTP loop test"
     save:
-      # Default storage is event_log; add storage.kind/credential to persist elsewhere
+      # Default storage is event_log; add storage/auth to persist elsewhere
       data:
         loop_http_response: "{{ aggregate_results }}"
         test_summary: "Completed weather HTTP loop test with {{ aggregate_results.total_cities }} cities"

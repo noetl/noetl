@@ -31,8 +31,7 @@ workflow:
     desc: "End simple test"
     type: save
     save:
-      storage:
-        kind: event_log
+      storage: event_log
       data:
         status: "success"
         data:

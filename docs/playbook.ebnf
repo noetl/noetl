@@ -50,7 +50,36 @@ step_definition =
     ["desc", ":", string_literal],
     ["run", ":", "[", {task_invocation}, "]"],
     ["with", ":", mapping_literal],
+    ["save", ":", save_clause],
     ["next", ":", "[", {transition}, "]"]
+    ;
+
+save_clause =
+    "{",
+    ["when", ":", quoted_template_literal, ","],
+    ["on", ":", ("success" | "error" | "always"), ","],
+    "storage", ":", (identifier_literal | legacy_storage_clause), ",",
+    ["auth", ":", auth_value, ","],
+    ["statement", ":", string_literal, ","],
+    ["params", ":", mapping_literal, ","],
+    ["data", ":", mapping_literal, ","],
+    ["mode", ":", ("append" | "overwrite" | "update" | "upsert"), ","],
+    ["key", ":", (identifier_literal | "[", identifier_literal, {",", identifier_literal}, "]"), ","],
+    ["table", ":", identifier_literal, ","],
+    ["format", ":", ("json" | "csv" | "parquet")]
+    "}"
+    ;
+
+legacy_storage_clause =
+    "{",
+    "kind", ":", identifier_literal,
+    ["auth", ":", auth_value],
+    ["spec", ":", mapping_literal]
+    "}"
+    ;
+
+auth_value =
+    identifier_literal | mapping_literal
     ;
 
 task_invocation =

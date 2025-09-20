@@ -95,12 +95,11 @@ workflow:
     desc: "Save step showing auth dictionary in storage config"
     type: save
     save:
-      storage:
-        kind: postgres
-        auth:
-          pg_main:
-            type: postgres
-            key: pg_local
+      storage: postgres
+      auth:
+        pg_main:
+          type: postgres
+          key: pg_local
       table: public.execution_log
       mode: insert
       data:

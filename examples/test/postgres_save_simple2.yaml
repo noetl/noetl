@@ -35,12 +35,11 @@ workflow:
     desc: "Save one row via save(plugin=postgres)"
     type: save
     save:
-      storage:
-        kind: postgres
-        auth:
-          pg:
-            type: postgres
-            key: pg_local
+      storage: postgres
+      auth:
+        pg:
+          type: postgres
+          key: pg_local
       table: public.postgres_save_demo
       mode: upsert
       key: id

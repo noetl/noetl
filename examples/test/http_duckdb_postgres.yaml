@@ -68,9 +68,8 @@ workflow:
         hourly: "temperature_2m"
         forecast_days: 1
       save:
-        storage:
-          kind: postgres
-          auth: pg_local
+        storage: postgres
+        auth: pg_local
         table: public.weather_http_raw
         mode: upsert
         key: id
@@ -148,9 +147,8 @@ workflow:
     desc: "Finish"
     type: save
     save:
-      storage:
-        kind: postgres
-        auth: pg_local
+      storage: postgres
+      auth: pg_local
       statement: |
         INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved, gcs_flat_uri, gcs_agg_uri)
         VALUES (

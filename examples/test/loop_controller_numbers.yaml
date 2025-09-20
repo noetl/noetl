@@ -63,12 +63,11 @@ workflow:
       with:
         value: "{{ n }}"
       save:
-        storage:
-          kind: postgres
-          auth:
-            pg:
-              type: postgres
-              key: pg_local
+        storage: postgres
+        auth:
+          pg:
+            type: postgres
+            key: pg_local
         table: public.loop_numbers
         mode: upsert
         key: id
@@ -80,12 +79,11 @@ workflow:
           output_val: "{{ data.square }}"
     # Step-level aggregated save: write the results array and count
     save:
-      storage:
-        kind: postgres
-        auth:
-          pg:
-            type: postgres
-            key: pg_local
+      storage: postgres
+      auth:
+        pg:
+          type: postgres
+          key: pg_local
       table: public.loop_numbers_agg
       mode: upsert
       key: execution_id

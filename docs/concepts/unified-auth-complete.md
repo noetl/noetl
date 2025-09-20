@@ -219,12 +219,11 @@ workflow:
   - step: save_results
     type: save
     save:
-      storage:
-        kind: postgres
-        auth:
-          pg_results:
-            type: postgres
-            key: pg_local
+      storage: postgres
+      auth:
+        pg_results:
+          type: postgres
+          key: pg_local
       table: pipeline_results
       mode: upsert
       key: execution_id

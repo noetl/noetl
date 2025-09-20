@@ -118,21 +118,19 @@ Or access explicitly in templates:
 **Before:**
 ```yaml
 save:
-  storage:
-    kind: postgres
-    auth: {pg: {type: postgres, key: pg_local}}  # Use dictionary format consistently
+  storage: postgres  # Legacy nested structure converted
+  auth: {pg: {type: postgres, key: pg_local}}  # Use dictionary format consistently
   table: results
 ```
 
 **After:**
 ```yaml
 save:
-  storage:
-    kind: postgres
-    auth:
-      pg:
-        type: postgres
-        key: pg_local
+  storage: postgres
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
   table: results
 ```
 
