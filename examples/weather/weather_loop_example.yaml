@@ -36,6 +36,7 @@ workflow:
     - step: end
 - step: city_loop
   type: iterator
+  collection: '{{ workload.cities }}'
   element: city_item
   task:
     data:
@@ -46,7 +47,6 @@ workflow:
     path: examples/weather/city_process
   next:
   - step: debug_results
-  data: '{{ workload.cities }}'
 - data:
     results: '{{ city_loop.results }}'
   step: debug_results

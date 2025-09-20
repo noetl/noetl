@@ -50,6 +50,7 @@ workflow:
 - step: loop_numbers
   desc: 'Loop controller: Python per number, save each row'
   type: iterator
+  collection: '{{ workload.numbers }}'
   element: n
   task:
     data:
@@ -88,6 +89,5 @@ workflow:
     key: execution_id
   next:
   - step: end
-  data: '{{ workload.numbers }}'
 - step: end
   desc: Finish

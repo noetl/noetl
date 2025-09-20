@@ -30,7 +30,7 @@ workflow:
   - step: http_loop
     desc: "Loop through cities making weather API HTTP calls"
     type: iterator
-    data: "{{ cities }}"
+    collection: "{{ cities }}"
     element: city_item
     task:
       type: http

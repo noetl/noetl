@@ -3,7 +3,7 @@ kind: Playbook
 metadata:
   name: http_duckdb_postgres
   path: examples/test/http_duckdb_postgres
-  version: 0.1.2
+  version: 0.1.7
 workload:
   message: HTTP -> DuckDB -> Postgres pipeline
   cities:
@@ -45,6 +45,7 @@ workflow:
 - step: http_loop
   desc: Fetch hourly temperatures for each city and save raw rows
   type: iterator
+  collection: '{{ workload.cities }}'
   element: city
   mode: async
   task:
@@ -65,7 +66,7 @@ workflow:
         city: '{{ city.name }}'
         url: "{{ this.data.url if this is defined and this.data is defined else '' }}"
         elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
-        payload: '{{ this | tojson }}'
+        payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
       storage: postgres
       auth: pg_local
       table: public.weather_http_raw
@@ -75,7 +76,6 @@ workflow:
   - step: aggregate_with_duckdb
 - step: aggregate_with_duckdb
   data:
-    output_uri_base: gs://noetl-demo-19700101/weather
     require_cloud_output: true
   desc: Read Postgres rows in DuckDB, aggregate, write to GCS using unified auth dictionary
   type: duckdb
@@ -132,10 +132,9 @@ workflow:
   - step: end
 - step: end
   desc: Finish
-  type: save
-  storage: postgres
+  type: postgres
   auth: pg_local
-  statement: |
+  command: |
     INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved, gcs_flat_uri, gcs_agg_uri)
     VALUES (
       '{{ execution_id }}',
@@ -147,4 +146,3 @@ workflow:
       pg_rows_saved = EXCLUDED.pg_rows_saved,
       gcs_flat_uri = EXCLUDED.gcs_flat_uri,
       gcs_agg_uri = EXCLUDED.gcs_agg_uri
-  data: {}

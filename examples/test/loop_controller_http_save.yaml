@@ -57,6 +57,7 @@ workflow:
 - step: loop_http
   desc: 'Loop controller: HTTP per city, save each row'
   type: iterator
+  collection: '{{ workload.cities }}'
   element: city
   task:
     data:
@@ -75,9 +76,9 @@ workflow:
         execution_id: '{{ execution_id }}'
         iter_index: '{{ loop_http.result_index }}'
         city: '{{ city.name }}'
-        url: "{{ result.data.url if result is defined and result.data is defined else '' }}"
-        elapsed: "{{ (result.data.elapsed | default(0)) if result is defined and result.data is defined else 0 }}"
-        payload: '{{ result | tojson }}'
+        url: "{{ this.data.url if this is defined and this.data is defined else '' }}"
+        elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
+        payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
       storage: postgres
       auth:
         pg:
@@ -101,7 +102,6 @@ workflow:
     key: execution_id
   next:
   - step: end
-  data: '{{ workload.cities }}'
 - step: end
   desc: Finish and write metrics
   type: save
