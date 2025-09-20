@@ -683,7 +683,7 @@ def manage_catalog(
             if host is None or port is None:
                 logger.error("Error: --host and --port are required for this client command")
                 raise typer.Exit(code=1)
-            url = f"http://{host}:{port}/api/agent/execute"
+            url = f"http://{host}:{port}/api/execute"
             headers = {"Content-Type": "application/json"}
             data = {
                 "path": path,
@@ -705,10 +705,14 @@ def manage_catalog(
                 result = response.json()
                 logger.info(f"{resource_type.capitalize()} executed.")
 
-                if result.get("execution_id"):
-                    logger.info(f"Execution ID: {result.get('execution_id')}")
+                execution_id = result.get("execution_id")
+                if execution_id:
+                    logger.info(f"Execution ID: {execution_id}")
+                    
+                    # The execution result may be in the 'result' field
                     execution_result = result.get('result', {})
-                    logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
+                    if execution_result:
+                        logger.debug(f"Full execution result: {json.dumps(execution_result, indent=2, cls=DateTimeEncoder)}")
 
                     any_errors = any(
                         isinstance(step_result, dict) and step_result.get('status') == 'error'
@@ -1061,76 +1065,6 @@ def execution_status(
                 typer.echo(f"Server returned {resp.status_code}")
                 typer.echo(resp.text)
             raise typer.Exit(code=1)
-    except Exception as e:
-        typer.echo(f"Error: {e}")
-        raise typer.Exit(code=1)
-
-
-@cli_app.command("execute-agent")
-def execute_playbook(
-    playbook_path: str = typer.Argument(..., help="Path or name of the playbook to execute."),
-    version: str = typer.Option(None, "--version", "-v", help="Version of the playbook."),
-    input: str = typer.Option(None, "--input", "-i", help="Path to payload file."),
-    payload: str = typer.Option(None, "--payload", help="Payload string."),
-    host: str | None = typer.Option(None, "--host", help="NoETL server host."),
-    port: int | None = typer.Option(None, "--port", help="NoETL server port."),
-):
-    """
-    Execute a NoETL playbook via the legacy /api/agent/execute endpoint.
-    """
-
-    try:
-        input_payload = {}
-        if input:
-            try:
-                with open(input, "r") as file:
-                    input_payload = json.load(file)
-                typer.echo(f"Loaded input payload from {input}")
-            except Exception as e:
-                typer.echo(f"Error loading input payload from file: {e}")
-                raise typer.Exit(code=1)
-        elif payload:
-            try:
-                input_payload = json.loads(payload)
-                typer.echo("Parsed input payload from command line")
-            except Exception as e:
-                typer.echo(f"Error parsing payload JSON: {e}")
-                raise typer.Exit(code=1)
-
-        if host is None or port is None:
-            typer.echo("Error: --host and --port are required for this client command")
-            raise typer.Exit(code=1)
-
-        url = f"http://{host}:{port}/api/agent/execute"
-        request_data = {
-            "path": playbook_path,
-            "input_payload": input_payload
-        }
-
-        if version:
-            request_data["version"] = version
-            typer.echo(f"Executing playbook '{playbook_path}' version '{version}'")
-        else:
-            typer.echo(f"Executing playbook '{playbook_path}' (latest version)")
-
-        typer.echo(f"Sending request to {url}")
-
-        try:
-            response = requests.post(url, json=request_data)
-
-            if response.status_code == 200:
-                result = response.json()
-                typer.echo("Playbook executed successfully!")
-                typer.echo(json.dumps(result, indent=2, cls=DateTimeEncoder))
-            else:
-                typer.echo(f"Execution failed: {response.status_code}")
-                typer.echo(response.text)
-                raise typer.Exit(code=1)
-
-        except requests.RequestException as e:
-            typer.echo(f"Error: {e}")
-            raise typer.Exit(code=1)
-
     except Exception as e:
         typer.echo(f"Error: {e}")
         raise typer.Exit(code=1)
