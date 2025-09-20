@@ -84,3 +84,28 @@ def test_iterator_chunking():
     assert res['status'] == 'success'
     sums = [x['batch_sum'] for x in res['data']]
     assert sums == [3, 7, 5]
+
+
+def test_iterator_collection_from_task_payload():
+    jenv = Environment()
+    cities = [
+        {'name': 'London', 'lat': 51.51, 'lon': -0.13},
+        {'name': 'Paris', 'lat': 48.85, 'lon': 2.35},
+        {'name': 'Berlin', 'lat': 52.52, 'lon': 13.41},
+    ]
+    ctx = {
+        'workload': {},
+        'execution_id': 'test-exec',
+        'data': {'cities': cities},
+    }
+    task = {
+        'type': 'iterator',
+        'element': 'city',
+        'task': make_python_task("return {'name': value['name'], 'lat': value['lat']}")
+    }
+
+    res = execute_task(task, 'iter', ctx, jenv, {'cities': cities})
+    assert res['status'] == 'success'
+    payload = res['data']
+    assert [row['name'] for row in payload] == ['London', 'Paris', 'Berlin']
+    assert payload[0]['lat'] == pytest.approx(51.51)

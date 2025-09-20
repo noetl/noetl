@@ -92,7 +92,53 @@ def execute_loop_task(
     try:
         # Strict: only new standard keys supported
         iterator_name = task_config.get('element')
-        items_expr = task_config.get('collection') if task_config.get('collection') is not None else task_config.get('data')
+        raw_items_expr = task_config.get('collection') if task_config.get('collection') is not None else task_config.get('data')
+
+        # Support implicit collection references via task data / with payloads.
+        def _candidate_keys(name: Optional[str]) -> List[str]:
+            keys = []
+            if not name:
+                return keys
+            base = str(name)
+            keys.extend([
+                base,
+                f"{base}s",
+                f"{base}_list",
+                f"{base}_items",
+            ])
+            return keys
+
+        def _extract_from_mapping(mapping: Any, name_keys: List[str]) -> Optional[Any]:
+            if not isinstance(mapping, dict):
+                return None
+            for key in name_keys + ['items', 'values', 'collection']:
+                if key in mapping and mapping[key] is not None:
+                    return mapping[key]
+            if len(mapping) == 1:
+                # Single-entry dict: treat sole value as the collection
+                return next(iter(mapping.values()))
+            return None
+
+        name_keys = _candidate_keys(iterator_name)
+        items_expr = raw_items_expr
+
+        if isinstance(items_expr, dict):
+            items_expr = _extract_from_mapping(items_expr, name_keys)
+
+        if items_expr is None:
+            # Try task_with first (rendered with/inputs)
+            picked = _extract_from_mapping(task_with, name_keys)
+            if picked is not None:
+                items_expr = picked
+
+        if items_expr is None and isinstance(context, dict):
+            # Fallback to data/input sections that workers populate
+            for ctx_key in ('data', 'input', 'work'):  # prefer explicit payloads
+                picked = _extract_from_mapping(context.get(ctx_key), name_keys)
+                if picked is not None:
+                    items_expr = picked
+                    break
+
         if iterator_name is None or items_expr is None:
             raise ValueError("Iterator requires 'element' and 'collection' keys (type: iterator)")
         nested_task = task_config.get('task') or {}
