@@ -38,3 +38,4 @@ env/
 /.vscode/
 /status.json.clean
 /status.json
+/tests/fixtures/credentials/gcs_hmac_local.json
