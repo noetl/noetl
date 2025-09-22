@@ -1,31 +1,29 @@
 // Central export for all node type definitions
 // Each node category/type now lives in its own folder under ../nodes/[type]/index.tsx
 
-import { NodeTypeMap } from './NodeType.ts';
+// Refactored to example style: import default React components, build nodeTypes map for ReactFlow
+import StartNode from '../nodes/start/start';
+import EndNode from '../nodes/end/end';
+import WorkbookNode from '../nodes/workbook/workbook';
+import PythonNode from '../nodes/python/python';
+import HttpNode from '../nodes/http/http';
+import DuckDbNode from '../nodes/duckdb/duckdb';
+import PostgresNode from '../nodes/postgres/postgres';
+import SecretsNode from '../nodes/secrets/secrets';
+import PlaybooksNode from '../nodes/playbooks/playbooks';
+import LoopNode from '../nodes/loop/loop';
 
-// Import node definitions from the new folder-based structure
-import { startNode } from '../nodes/start';
-import { endNode } from '../nodes/end';
-import { workbookNode } from '../nodes/workbook';
-import { pythonNode } from '../nodes/python';
-import { httpNode } from '../nodes/http';
-import { duckdbNode } from '../nodes/duckdb';
-import { postgresNode } from '../nodes/postgres';
-import { secretsNode } from '../nodes/secrets';
-import { playbooksNode } from '../nodes/playbooks';
-import { loopNode } from '../nodes/loop';
-
-export const nodeTypeMap: NodeTypeMap = {
-    [startNode.type]: startNode,
-    [endNode.type]: endNode,
-    [workbookNode.type]: workbookNode,
-    [pythonNode.type]: pythonNode,
-    [httpNode.type]: httpNode,
-    [duckdbNode.type]: duckdbNode,
-    [postgresNode.type]: postgresNode,
-    [secretsNode.type]: secretsNode,
-    [playbooksNode.type]: playbooksNode,
-    [loopNode.type]: loopNode,
+export const nodeTypes = {
+    start: StartNode,
+    end: EndNode,
+    workbook: WorkbookNode,
+    python: PythonNode,
+    http: HttpNode,
+    duckdb: DuckDbNode,
+    postgres: PostgresNode,
+    secrets: SecretsNode,
+    playbooks: PlaybooksNode,
+    loop: LoopNode,
 };
 
 export const orderedNodeTypes = [
@@ -40,5 +38,3 @@ export const orderedNodeTypes = [
     'loop',
     'end',
 ];
-
-export * from './NodeType.ts';

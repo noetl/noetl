@@ -1,33 +1,17 @@
-import React from 'react';
-import { Input } from 'antd';
-import { NodeTypeDef, NodeEditorProps } from '../../nodeTypes/NodeType';
+import { memo } from 'react';
+import { Handle, Position } from '@xyflow/react';
 
-const PostgresEditor: React.FC<NodeEditorProps> = ({ task, readOnly, updateField }) => {
-    const config = task.config || {};
-    const setConfig = (k: string, v: any) => updateField('config', { ...config, [k]: v });
-
+function PostgresNode({ data }: any) {
+    const task = data?.task || {};
+    const cfg = task.config || {};
+    const sqlPreview = (cfg.sql || '').toString();
     return (
-        <div className="node-editor postgres-editor">
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">SQL</span>
-                <Input.TextArea
-                    className="xy-theme__input nodrag"
-                    rows={6}
-                    value={config.sql || ''}
-                    onChange={(e) => setConfig('sql', e.target.value)}
-                    placeholder="-- PostgreSQL SQL here"
-                    disabled={!!readOnly}
-                />
-            </div>
+        <div style={{ padding: 8, border: '1px solid #336791', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
+            <Handle type="target" position={Position.Left} />
+            <Handle type="source" position={Position.Right} />
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🐘 {task.name || 'postgres'}</div>
+            {sqlPreview && <div style={{ fontSize: 10, opacity: 0.8 }}>{sqlPreview.length > 46 ? sqlPreview.slice(0, 43) + '…' : sqlPreview}</div>}
         </div>
     );
-};
-
-export const postgresNode: NodeTypeDef = {
-    type: 'postgres',
-    label: 'Postgres',
-    icon: '🐘',
-    color: '#336791',
-    description: 'Executes PostgreSQL SQL.',
-    editor: PostgresEditor,
-};
+}
+export default memo(PostgresNode);

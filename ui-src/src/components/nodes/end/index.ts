@@ -1,1 +1,1 @@
-export { endNode } from './end';
+export { default as endNode } from './end';

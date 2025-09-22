@@ -1,43 +1,17 @@
-import React from 'react';
-import { Input, Select } from 'antd';
-import { NodeTypeDef, NodeEditorProps } from '../../nodeTypes/NodeType';
+import { memo } from 'react';
+import { Handle, Position } from '@xyflow/react';
 
-const LoopEditor: React.FC<NodeEditorProps> = ({ task, readOnly, updateField }) => {
-    const config = task.config || {};
-    const setConfig = (k: string, v: any) => updateField('config', { ...config, [k]: v });
-
+function LoopNode({ data }: any) {
+    const task = data?.task || {};
+    const cfg = task.config || {};
     return (
-        <div className="node-editor loop-editor">
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">Scope</span>
-                <Select
-                    className="flow-node-select nodrag"
-                    value={config.scope || 'workbook'}
-                    onChange={(v) => setConfig('scope', v)}
-                    options={[{ value: 'workbook', label: 'Workbook' }, { value: 'playbook', label: 'Playbook' }]}
-                    disabled={!!readOnly}
-                />
-            </div>
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">over: (JSON)</span>
-                <Input.TextArea
-                    className="xy-theme__input nodrag"
-                    rows={4}
-                    value={config.overJSON || ''}
-                    onChange={(e) => setConfig('overJSON', e.target.value)}
-                    placeholder='[1,2,3] or "$.items"'
-                    disabled={!!readOnly}
-                />
-            </div>
+        <div style={{ padding: 8, border: '1px solid #faad14', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
+            <Handle type="target" position={Position.Left} />
+            <Handle type="source" position={Position.Right} />
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🔁 {task.name || 'loop'}</div>
+            {cfg.scope && <div style={{ fontSize: 11 }}>scope: {cfg.scope}</div>}
+            {cfg.overJSON && <div style={{ fontSize: 10, opacity: 0.7 }}>{cfg.overJSON.length > 42 ? cfg.overJSON.slice(0, 39) + '…' : cfg.overJSON}</div>}
         </div>
     );
-};
-
-export const loopNode: NodeTypeDef = {
-    type: 'loop',
-    label: 'Loop',
-    icon: '🔁',
-    color: '#faad14',
-    description: 'Loop over workbook or playbook scope.',
-    editor: LoopEditor,
-};
+}
+export default memo(LoopNode);

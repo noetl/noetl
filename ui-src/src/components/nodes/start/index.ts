@@ -1,1 +1,1 @@
-export { startNode } from './start';
+export { default as startNode } from './start';

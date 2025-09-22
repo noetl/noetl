@@ -1,1 +1,1 @@
-export { postgresNode } from './postgres';
+export { default as postgresNode } from './postgres';

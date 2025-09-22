@@ -1,43 +1,19 @@
-import React from 'react';
-import { Input } from 'antd';
-import { NodeTypeDef, NodeEditorProps } from '../../nodeTypes/NodeType';
+import { memo } from 'react';
+import { Handle, Position } from '@xyflow/react';
 
-const WorkbookEditor: React.FC<NodeEditorProps> = ({ task, readOnly, updateField }) => {
-    const config = task.config || {};
-    const setConfig = (k: string, v: any) => updateField('config', { ...config, [k]: v });
-
+// Minimal visual workbook node – mirrors the simple example structure
+function WorkbookNode({ data }: any) {
+    const task = data?.task || {};
+    const cfg = task.config || {};
     return (
-        <div className="node-editor workbook-editor">
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">Task</span>
-                <Input
-                    className="xy-theme__input nodrag"
-                    value={config.task || ''}
-                    onChange={(e) => setConfig('task', e.target.value)}
-                    placeholder="workbook.task_name"
-                    disabled={!!readOnly}
-                />
-            </div>
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">with: (JSON)</span>
-                <Input.TextArea
-                    className="xy-theme__input nodrag"
-                    rows={4}
-                    value={config.withJSON || ''}
-                    onChange={(e) => setConfig('withJSON', e.target.value)}
-                    placeholder='{"arg1": "value"}'
-                    disabled={!!readOnly}
-                />
-            </div>
+        <div style={{ padding: 8, border: '1px solid #ff6b35', borderRadius: 8, fontSize: 12, background: '#fff' }}>
+            <Handle type="target" position={Position.Left} />
+            <Handle type="source" position={Position.Right} />
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>📊 {task.name || task.id || 'workbook'}</div>
+            {cfg.task && <div><strong>task:</strong> {cfg.task}</div>}
+            {cfg.withJSON && <div><strong>with:</strong> {(cfg.withJSON.length > 40) ? cfg.withJSON.slice(0, 37) + '…' : cfg.withJSON}</div>}
         </div>
     );
-};
+}
 
-export const workbookNode: NodeTypeDef = {
-    type: 'workbook',
-    label: 'Workbook',
-    icon: '📊',
-    color: '#ff6b35',
-    description: 'Invoke a workbook task.',
-    editor: WorkbookEditor,
-};
+export default memo(WorkbookNode);

@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, memo, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useMemo } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -11,25 +11,18 @@ import {
   Edge,
   Connection,
   BackgroundVariant,
-  NodeTypes,
-  NodeProps,
-  Handle,
-  Position,
-  MarkerType,
-  useReactFlow,
 } from "@xyflow/react";
-import { Modal, Button, Spin, message, Select, Space, Popconfirm, Tag } from "antd";
+import { Modal, Button, Spin, message, Select } from "antd";
 import {
   CloseOutlined,
   FullscreenOutlined,
-  DeleteOutlined,
   PlusOutlined,
   SaveOutlined,
 } from "@ant-design/icons";
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
-import { nodeTypeMap, orderedNodeTypes } from './nodeTypes';
+import { nodeTypes, orderedNodeTypes } from './nodeTypes';
 import { EditableTaskNode, TaskNode } from "./types";
 import MonacoEditor from '@monaco-editor/react';
 // @ts-ignore
@@ -40,61 +33,25 @@ interface FlowVisualizationProps {
   onClose: () => void;
   playbookId: string;
   playbookName: string;
-  content?: string; // Optional content to use instead of fetching from API
-  readOnly?: boolean; // NEW: render in read-only (view) mode
-  hideTitle?: boolean; // NEW: suppress internal title (avoid duplicates)
-  onUpdateContent?: (newContent: string) => void; // NEW: callback to push updated YAML back to editor
+  content?: string;
+  readOnly?: boolean;
+  hideTitle?: boolean;
+  onUpdateContent?: (newContent: string) => void;
 }
 
-// New base node component (style driven by nodeTypeMap + task.type)
-const TaskNodeBase: React.FC<NodeProps> = memo(({ data, id, selected }) => {
-  const { task, readOnly } = data as { task: EditableTaskNode; readOnly?: boolean };
-  const def = nodeTypeMap[task.type] || { icon: '❓', color: '#666', label: task.type } as any;
-  return (
-    <div
-      className={`TaskNode TaskNode--${task.type} ${selected ? 'is-selected' : ''}`}
-      style={{
-        border: `1px solid ${def.color || '#666'}`,
-        background: '#fff',
-        color: def.color || '#222',
-        borderRadius: 12,
-        padding: '6px 10px 8px',
-        minWidth: 150,
-        boxShadow: selected ? `0 0 0 2px ${(def.color || '#666')}33` : '0 1px 3px rgba(0,0,0,0.18)',
-        fontSize: 12,
-        fontWeight: 500,
-        cursor: readOnly ? 'default' : 'pointer',
-        transition: 'box-shadow 120ms, transform 120ms',
-        backgroundImage: 'linear-gradient(145deg, #ffffff, #f7f9fb)',
-      }}
-      data-node-id={id}
-    >
-      <Handle type="target" position={Position.Left} className="flow-node-handle flow-node-handle-target" />
-      <Handle type="source" position={Position.Right} className="flow-node-handle flow-node-handle-source" />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 16 }} aria-hidden>{def.icon}</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.name || task.id}</div>
-          <div style={{ fontSize: 10, opacity: 0.75, textTransform: 'uppercase', letterSpacing: 0.5 }}>{task.type}</div>
-        </div>
-      </div>
-      {!!task.config && Object.keys(task.config).length > 0 && (
-        <div style={{ marginTop: 6, fontSize: 10, maxHeight: 52, overflow: 'hidden', lineHeight: 1.25 }}>
-          {Object.entries(task.config).slice(0, 3).map(([k, v]) => (
-            <div key={k}><strong>{k}</strong>: {typeof v === 'string' ? (v.length > 26 ? v.slice(0, 24) + '…' : v) : typeof v}</div>
-          ))}
-          {Object.keys(task.config).length > 3 && <div>…</div>}
-        </div>
-      )}
-    </div>
-  );
-});
-
-// Build nodeTypes map: one entry per task type referencing same base component
-const buildNodeTypes = (): NodeTypes => {
-  const map: NodeTypes = {};
-  orderedNodeTypes.forEach(t => { map[t] = TaskNodeBase; });
-  return map;
+// Minimal metadata retained locally only for icons/colors (no editors/complex config)
+const nodeMeta: Record<string, { icon: string; color: string; label: string }> = {
+  start: { icon: '🚀', color: '#2563eb', label: 'start' },
+  workbook: { icon: '📊', color: '#ff6b35', label: 'workbook' },
+  python: { icon: '🐍', color: '#15803d', label: 'python' },
+  http: { icon: '🌐', color: '#9333ea', label: 'http' },
+  duckdb: { icon: '🦆', color: '#0d9488', label: 'duckdb' },
+  postgres: { icon: '🐘', color: '#1d4ed8', label: 'postgres' },
+  secrets: { icon: '🔐', color: '#6d28d9', label: 'secrets' },
+  playbooks: { icon: '📘', color: '#4b5563', label: 'playbooks' },
+  loop: { icon: '🔁', color: '#a16207', label: 'loop' },
+  end: { icon: '🏁', color: '#dc2626', label: 'end' },
+  log: { icon: '📝', color: '#64748b', label: 'log' },
 };
 
 const FlowVisualization: React.FC<FlowVisualizationProps> = ({
@@ -111,19 +68,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  // Modal/editor state
   const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
   const [editorTab, setEditorTab] = useState<'config' | 'code' | 'json' | 'raw'>('config');
-
-  // antd message with context (avoid static API)
   const [messageApi, contextHolder] = message.useMessage();
-
-  // Editing state
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Define custom node types (per task type now)
-  const customNodeTypes = useMemo<NodeTypes>(() => buildNodeTypes(), []);
+  // Provide nodeTypes directly (already a stable object export)
+  const customNodeTypes = useMemo(() => nodeTypes, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -168,16 +120,16 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         }
         return t;
       }));
-      setNodes((currentNodes) => currentNodes.map((node) => {
-        if (node.id === updatedTask.id) {
-          const existingTask: EditableTaskNode = (node.data as any)?.task || { id: updatedTask.id, name: '', type: 'workbook' };
+      setNodes((current) => current.map((n) => {
+        if (n.id === updatedTask.id) {
+          const existingTask: EditableTaskNode = (n.data as any)?.task || { id: updatedTask.id, name: '', type: 'workbook' };
           const merged: EditableTaskNode = { ...existingTask, ...updatedTask, id: existingTask.id };
-          return { ...node, data: { ...node.data, task: merged } } as any;
+          return { ...n, type: merged.type, data: { ...n.data, task: merged } } as any;
         }
-        return node;
+        return n;
       }));
       setHasChanges(true);
-      setActiveTask((prev) => prev && prev.id === updatedTask.id ? { ...prev, ...updatedTask, id: prev.id } : prev); // keep modal in sync
+      setActiveTask((prev) => (prev && prev.id === updatedTask.id ? { ...prev, ...updatedTask, id: prev.id } : prev)); // keep modal in sync
     },
     [setNodes, readOnly]
   );
@@ -220,7 +172,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             task,
             onEdit: handleEditTask,
             onDelete: handleDeleteTask,
-            label: null,
             readOnly,
             onOpen: () => setActiveTask(task),
           },
@@ -569,7 +520,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 <MiniMap
                   nodeColor={(node) => {
                     const type = (node.data as any)?.task?.type ?? 'workbook';
-                    return nodeTypeMap[type]?.color || '#8c8c8c';
+                    return nodeMeta[type]?.color || '#8c8c8c';
                   }}
                   pannable
                   zoomable
@@ -611,7 +562,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               disabled={!!readOnly}
               value={activeTask.type}
               onChange={(val) => handleEditTask({ ...activeTask, type: val })}
-              options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeTypeMap[t].icon} ${nodeTypeMap[t].label}` }))}
+              options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
               style={{ width: 180 }}
             />
             <Select
@@ -636,13 +587,9 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               style={{ width: '100%', padding: '6px 8px' }}
             />
           </div>
-          {editorTab === 'config' && (() => {
-            const nodeDef = nodeTypeMap[activeTask.type] || nodeTypeMap['workbook'] || { editor: null, label: activeTask.type } as any;
-            const EditorComp = (nodeDef as any)?.editor;
-            if (!EditorComp) return <div style={{ padding: 8 }}>No editor UI for type: <code>{activeTask.type}</code></div>;
-            const updateField = (field: keyof EditableTaskNode, value: any) => handleEditTask({ ...activeTask, [field]: value });
-            return <EditorComp task={activeTask} readOnly={readOnly} updateField={updateField} />;
-          })()}
+          {editorTab === 'config' && (
+            <div style={{ padding: 8 }}>No structured editor for this node type. Use JSON or Code tabs.</div>
+          )}
           {editorTab === 'code' && (
             <div style={{ height: 300 }}>
               <MonacoEditor
@@ -669,10 +616,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 value={JSON.stringify(activeTask.config || {}, null, 2)}
                 onChange={(val) => {
                   if (readOnly) return;
-                  try {
-                    const parsed = JSON.parse(val || '{}');
-                    handleEditTask({ ...activeTask, config: parsed });
-                  } catch { }
+                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...activeTask, config: parsed }); } catch { }
                 }}
                 theme="vs-dark"
                 options={{ minimap: { enabled: false }, fontSize: 13 }}
@@ -687,10 +631,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 value={JSON.stringify(activeTask, null, 2)}
                 onChange={(val) => {
                   if (readOnly) return;
-                  try {
-                    const parsed = JSON.parse(val || '{}');
-                    handleEditTask({ ...(parsed as any), id: activeTask.id });
-                  } catch { }
+                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...(parsed as any), id: activeTask.id }); } catch { }
                 }}
                 theme="vs-dark"
                 options={{ minimap: { enabled: false }, fontSize: 13 }}

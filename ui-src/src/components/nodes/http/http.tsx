@@ -1,66 +1,17 @@
-import React from 'react';
-import { Input, Select } from 'antd';
-import { NodeTypeDef, NodeEditorProps } from '../../nodeTypes/NodeType';
+import { memo } from 'react';
+import { Handle, Position } from '@xyflow/react';
 
-const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-
-const HttpEditor: React.FC<NodeEditorProps> = ({ task, readOnly, updateField }) => {
-    const config = task.config || {};
-    const setConfig = (k: string, v: any) => updateField('config', { ...config, [k]: v });
-
+function HttpNode({ data }: any) {
+    const task = data?.task || {};
+    const cfg = task.config || {};
     return (
-        <div className="node-editor http-editor">
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">Endpoint</span>
-                <Input
-                    className="xy-theme__input nodrag"
-                    value={config.url || ''}
-                    onChange={(e) => setConfig('url', e.target.value)}
-                    placeholder="https://api.example.com/resource"
-                    disabled={!!readOnly}
-                />
-            </div>
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">Method</span>
-                <Select
-                    className="flow-node-select nodrag"
-                    value={config.method || 'GET'}
-                    onChange={(val) => setConfig('method', val)}
-                    options={methods.map(m => ({ value: m, label: m }))}
-                    disabled={!!readOnly}
-                />
-            </div>
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">Headers (JSON)</span>
-                <Input.TextArea
-                    className="xy-theme__input nodrag"
-                    rows={2}
-                    value={config.headersJSON || ''}
-                    onChange={(e) => setConfig('headersJSON', e.target.value)}
-                    placeholder='{"Authorization": "Bearer ..."}'
-                    disabled={!!readOnly}
-                />
-            </div>
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">Params/Payload (JSON)</span>
-                <Input.TextArea
-                    className="xy-theme__input nodrag"
-                    rows={3}
-                    value={config.payloadJSON || ''}
-                    onChange={(e) => setConfig('payloadJSON', e.target.value)}
-                    placeholder='{"id": 123, "q": "text"}'
-                    disabled={!!readOnly}
-                />
-            </div>
+        <div style={{ padding: 8, border: '1px solid #1890ff', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
+            <Handle type="target" position={Position.Left} />
+            <Handle type="source" position={Position.Right} />
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🌐 {task.name || 'http'}</div>
+            {cfg.url && <div style={{ fontSize: 11, wordBreak: 'break-all' }}>{cfg.url}</div>}
+            {cfg.method && <div style={{ fontSize: 10, opacity: 0.7 }}>{cfg.method}</div>}
         </div>
     );
-};
-
-export const httpNode: NodeTypeDef = {
-    type: 'http',
-    label: 'HTTP',
-    icon: '🌐',
-    color: '#1890ff',
-    description: 'Makes an HTTP call.',
-    editor: HttpEditor,
-};
+}
+export default memo(HttpNode);

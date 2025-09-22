@@ -1,33 +1,17 @@
-import React from 'react';
-import { Input } from 'antd';
-import { NodeTypeDef, NodeEditorProps } from '../../nodeTypes/NodeType';
+import { memo } from 'react';
+import { Handle, Position } from '@xyflow/react';
 
-const DuckDbEditor: React.FC<NodeEditorProps> = ({ task, readOnly, updateField }) => {
-    const config = task.config || {};
-    const setConfig = (k: string, v: any) => updateField('config', { ...config, [k]: v });
-
+function DuckDbNode({ data }: any) {
+    const task = data?.task || {};
+    const cfg = task.config || {};
+    const sqlPreview = (cfg.sql || '').toString();
     return (
-        <div className="node-editor duckdb-editor">
-            <div className="flow-node-field">
-                <span className="flow-node-field-label">SQL</span>
-                <Input.TextArea
-                    className="xy-theme__input nodrag"
-                    rows={6}
-                    value={config.sql || ''}
-                    onChange={(e) => setConfig('sql', e.target.value)}
-                    placeholder="-- DuckDB SQL here"
-                    disabled={!!readOnly}
-                />
-            </div>
+        <div style={{ padding: 8, border: '1px solid #8c61ff', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
+            <Handle type="target" position={Position.Left} />
+            <Handle type="source" position={Position.Right} />
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🦆 {task.name || 'duckdb'}</div>
+            {sqlPreview && <div style={{ fontSize: 10, opacity: 0.8 }}>{sqlPreview.length > 46 ? sqlPreview.slice(0, 43) + '…' : sqlPreview}</div>}
         </div>
     );
-};
-
-export const duckdbNode: NodeTypeDef = {
-    type: 'duckdb',
-    label: 'DuckDB',
-    icon: '🦆',
-    color: '#8c61ff',
-    description: 'Executes DuckDB SQL.',
-    editor: DuckDbEditor,
-};
+}
+export default memo(DuckDbNode);
