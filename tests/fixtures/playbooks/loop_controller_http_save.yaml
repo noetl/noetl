@@ -1,8 +1,10 @@
 apiVersion: noetl.io/v1
 kind: Playbook
+
 metadata:
   name: loop_controller_http_save
-  path: examples/test/loop_controller_http_save
+  path: tests/loop_controller_http_save
+
 workload:
   message: Loop controller HTTP -> Postgres test
   cities:

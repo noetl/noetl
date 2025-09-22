@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: simple_test
-  path: examples/test/simple_test
+  path: tests/simple_test
 
 workload:
   message: "Hello World"

@@ -422,7 +422,7 @@ NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for det
 - `make install-dev`
 - `docker compose up database -d`
 - `./start_server.sh`
-- `./bin/register_examples.sh`
+- `make register-examples`
 - check __API_BASE_URL__ in vite.config.js for actual noetl base url
 - `cd ui-src`
 - `npm run dev`

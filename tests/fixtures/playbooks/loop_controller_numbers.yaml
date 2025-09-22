@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: loop_controller_numbers
-  path: examples/test/loop_controller_numbers
+  path: tests/loop_controller_numbers
 workload:
   numbers:
   - 1

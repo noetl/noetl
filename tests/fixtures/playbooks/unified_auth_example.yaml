@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: unified_auth_example
-  path: examples/test/unified_auth_example
+  path: tests/unified_auth_example
 
 workload:
   gcs_bucket: "noetl-demo-19700101"

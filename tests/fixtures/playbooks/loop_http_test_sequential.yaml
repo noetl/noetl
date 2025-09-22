@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: loop_http_test_sequential
-  path: examples/test/loop_http_test_sequential
+  path: tests/loop_http_test_sequential
 
 workload:
   message: "Testing HTTP loop over cities with weather API aggregation (sequential mode)"

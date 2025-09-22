@@ -1,9 +1,10 @@
 apiVersion: noetl.io/v1
 kind: Playbook
+
 metadata:
   name: http_duckdb_postgres
-  path: examples/test/http_duckdb_postgres
-  version: 0.1.7
+  path: tests/http_duckdb_postgres
+
 workload:
   message: HTTP -> DuckDB -> Postgres pipeline
   cities:

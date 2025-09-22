@@ -83,8 +83,10 @@ help:
 	@echo "  make noetl-execute-watch ID=222437726840946688 HOST=localhost PORT=8082			Watch status with live updates"
 	@echo "  make noetl-execute-status ID=222437726840946688 > logs/status.json					Get status for specific ID"
 	@echo "  make noetl-validate-status FILE=logs/status.json							Validate and clean up a status.json file"
-	@echo "  make register-credential FILE=examples/test/credentials/pg_local.json HOST=localhost PORT=8082	Register one credential payload"
-	@echo "  make register-test-credentials HOST=localhost PORT=8082			Upload all example test credentials"
+	@echo "  make register-examples HOST=localhost PORT=8082			Register example catalog playbooks"
+	@echo "  make register-test-playbooks HOST=localhost PORT=8082		Register test fixture playbooks"
+	@echo "  make register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=localhost PORT=8082	Register one credential payload"
+	@echo "  make register-test-credentials HOST=localhost PORT=8082			Upload all test fixture credentials"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -129,7 +131,7 @@ restart: down up
 logs:
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) logs -f
 
-.PHONY: clean install-uv create-venv install-dev uv-lock run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-setup build-uv publish encode-playbook register-playbook execute-playbook register-examples start-workers stop-multiple clean-logs
+.PHONY: clean install-uv create-venv install-dev uv-lock run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-setup build-uv publish encode-playbook register-playbook execute-playbook register-examples register-test-playbooks start-workers stop-multiple clean-logs
 
 clean:
 	docker system prune -af --volumes
@@ -300,7 +302,10 @@ clean-logs:
 	@rm -rf logs/*
 
 register-examples:
-	examples/register_examples.sh 8082
+	examples/register_examples.sh $(PORT) $(HOST)
+
+register-test-playbooks:
+	tests/fixtures/register_test_playbooks.sh $(PORT) $(HOST)
 
 start-workers:
 	scripts/start_workers.sh
@@ -508,7 +513,7 @@ export-workbook:
 
 register-credential:
 	@if [ -z "$(FILE)" ]; then \
-	  echo "Usage: make register-credential FILE=examples/test/credentials/pg_local.json [HOST=localhost] [PORT=8082]"; \
+	  echo "Usage: make register-credential FILE=tests/fixtures/credentials/pg_local.json [HOST=localhost] [PORT=8082]"; \
 	  exit 1; \
 	fi; \
 	url="http://$(HOST):$(PORT)/api/credentials"; \
@@ -522,7 +527,7 @@ register-credential:
 register-test-credentials:
 	@set -e; \
 	shopt -s nullglob; \
-	for f in examples/test/credentials/*.json; do \
+	for f in tests/fixtures/credentials/*.json; do \
 	  echo "Registering credential payload: $$f"; \
 	  $(MAKE) -s register-credential FILE="$$f" HOST=$(HOST) PORT=$(PORT); \
 	done; \

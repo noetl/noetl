@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: city_http_to_pg
-  path: examples/test/city_http_to_pg
+  path: tests/city_http_to_pg
 
 workload:
   city: {}

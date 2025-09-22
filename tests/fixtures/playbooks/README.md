@@ -1,114 +1,117 @@
-# Examples: Test Playbooks
+# Test Fixtures: Playbooks
 
-This folder contains small, fast playbooks you can use to validate a local NoETL setup end‑to‑end. They cover Python, HTTP, Postgres, and Save flows, and demonstrate the unified step payload convention using `input` (with `payload` and `with` still supported for backward compatibility).
+This directory hosts the fast integration playbooks used by our automated tests. The YAML files live in `tests/fixtures/playbooks/`, but every fixture keeps its original `metadata.path` so it still registers in NoETL under the `examples/test/...` namespace. Use the table below to map catalog paths to on-disk files.
+
+## Fixture inventory
+
+| metadata.path | fixture file | notes |
+| ------------- | ------------ | ----- |
+| tests/simple_test | simple_test.yaml | Minimal start/end smoke check.
+| tests/loop_http_test | loop_http_test.yaml | Async HTTP iterator that aggregates city metrics.
+| tests/loop_http_test_sequential | loop_http_test_sequential.yaml | Sequential variant of the HTTP loop.
+| tests/postgres_save_simple | postgres_save_simple.yaml | Writes a greeting row into `public.postgres_save_demo`.
+| tests/postgres_save_simple2 | postgres_save_simple2.yaml | Alternate save flow that reuses the same table.
+| tests/test_postgres_storage | test_postgres_storage.yaml | Populates `weather_alert_summary` with mock alert data.
+| tests/http_duckdb_postgres | http_duckdb_postgres.yaml | HTTP fetch -> DuckDB transformation -> Postgres + GCS export.
+| tests/city_http_to_pg | city_http_to_pg.yaml | Simple weather ingestion that lands rows in Postgres.
+| tests/loop_controller_http_save | loop_controller_http_save.yaml | Loop controller showcasing per-iteration HTTP saves.
+| tests/loop_controller_numbers | loop_controller_numbers.yaml | Synthetic numeric loop used by iterator unit tests.
+| tests/unified_auth_example | unified_auth_example.yaml | Demonstrates unified auth payload mapping.
+| tests/unified_auth_demo | auth_credentials_secret_example.yaml | Legacy unified auth example kept for backward compatibility.
+
+Supporting credential payloads now live in `tests/fixtures/credentials/` alongside a template you can copy for new secrets.
 
 ## Prerequisites
 
 - Python environment with NoETL installed (dev):
   - `make create-venv && make install-dev`
-- A running Postgres you can write to. The repo’s default expects:
+- Running Postgres instance (defaults below match `docker-compose` and local dev):
   - host: `localhost`
   - port: `30543`
   - user: `demo`
   - password: `demo`
   - database: `demo_noetl`
-- Local env configured (see `.env`). The defaults in this repo work with the dev Postgres above.
+- Local `.env` populated (the repo defaults align with the Postgres settings above).
 
 ## Start server and workers
 
-- Option A (one command):
-  - `make noetl-start`
-- Option B (manual):
+- One command: `make noetl-start`
+- Manual sequence:
   - `make start-server`
   - `make start-workers`
 
-Check server status: `make server-status`
+Check status with `make server-status`.
 
-## Register examples and credentials
+## Register fixtures and credentials
 
-- Register all example playbooks:
-  - `make register-examples`
-- Register test credentials (installs pg_local):
-  - `make register-test-credentials`
-  - or individually: `make register-credential FILE=examples/test/credentials/pg_local.json`
+- Prefer the helper targets: `make register-test-playbooks HOST=localhost PORT=8082` and `make register-test-credentials HOST=localhost PORT=8082`
 
-## Running the tests
+- Or, one command: 
+- `make postgres-reset-schema && make noetl-restart && make register-test-credentials HOST=localhost PORT=8082 && make register-test-playbooks HOST=localhost PORT=8082`
 
-Use the helper target that prints the execution acceptance and exports logs automatically when successful:
+The CLI expects actual file paths when registering. Point it at the fixtures directory (the metadata paths remain unchanged inside the files):
 
-- `make noetl-execute PLAYBOOK=<path>`
+```bash
+for pb in tests/fixtures/playbooks/*.yaml; do \
+  noetl register "$pb" --host localhost --port 8082; \
+done
+```
 
-Where `<path>` is one of:
+Register credential payloads required by the fixtures:
 
-- `examples/test/simple_test`
-- `examples/test/loop_http_test`
-- `examples/test/loop_http_test_sequential`
-- `examples/test/postgres_save_simple`
-- `examples/test/postgres_save_simple2`
-- `examples/test/test_postgres_storage`
+```bash
+for cred in tests/fixtures/credentials/*.json; do \
+  noetl credential register "$cred" --host localhost --port 8082; \
+done
+```
 
-### 1) Simple Test
+> Tip: replace `noetl` with `.venv/bin/noetl` if you rely on the project virtualenv.
 
-- Run: `make noetl-execute PLAYBOOK=examples/test/simple_test`
-- Expect: a quick execution that emits `execution_complete` with the message from the start step.
-- Inspect logs (exported automatically): `logs/event_log.json`
+## Running the fixtures
 
-### 2) HTTP Loop (async) and (sequential)
+Use `make noetl-execute PLAYBOOK=<Playbook Path>` with the fixture metadata path (unchanged `tests/...` identifiers):
 
-- Run:
-  - `make noetl-execute PLAYBOOK=examples/test/loop_http_test`
-  - `make noetl-execute PLAYBOOK=examples/test/loop_http_test_sequential`
-- Expect: an aggregate result with per‑city metrics and counts.
-- Inspect: `logs/event_log.json` shows `aggregate_results` output and a final summary at `step: end`.
+- Basic smoke test: `make noetl-execute PLAYBOOK=tests/simple_test`
+- HTTP loop variants: run both `make noetl-execute PLAYBOOK=tests/loop_http_test` and `make noetl-execute PLAYBOOK=tests/loop_http_test_sequential`
+- Loop controller demos: `make noetl-execute PLAYBOOK=tests/loop_controller_http_save` and `make noetl-execute PLAYBOOK=tests/loop_controller_numbers`
+- Postgres saves: `make noetl-execute PLAYBOOK=tests/postgres_save_simple`, `make noetl-execute PLAYBOOK=tests/postgres_save_simple2`, and `make noetl-execute PLAYBOOK=tests/test_postgres_storage`
+- Multi-stage pipeline: `make noetl-execute PLAYBOOK=tests/http_duckdb_postgres`
+- Lightweight ingestion: `make noetl-execute PLAYBOOK=tests/city_http_to_pg`
+- Unified auth showcase: `make noetl-execute PLAYBOOK=tests/unified_auth_example` (and legacy `tests/unified_auth_demo`)
 
-### 3) Postgres Save (simple) and (simple2)
+Each execution writes an event log to `logs/event.json`. The Postgres scenarios also write rows into the tables noted in the inventory above.
 
-These create (if not present) and write into `public.postgres_save_demo` using the `pg_local` credential.
+## Verifying results
 
-- Run:
-  - `make noetl-execute PLAYBOOK=examples/test/postgres_save_simple`
-  - `make noetl-execute PLAYBOOK=examples/test/postgres_save_simple2`
-- Verify in Postgres:
-  - `export PGPASSWORD=demo`
-  - `psql -h localhost -p 30543 -U demo -d demo_noetl -c "SELECT id, message, created_at FROM public.postgres_save_demo ORDER BY created_at DESC LIMIT 5"`
-- Expect: a new row per execution; `id` equals the execution id and `message` equals `Hello Save`.
+- Postgres saves: query `public.postgres_save_demo` to confirm new rows (`SELECT id, message, created_at FROM public.postgres_save_demo ORDER BY created_at DESC LIMIT 5;`).
+- Storage demo: inspect `weather_alert_summary` for the alert aggregates generated by `tests/test_postgres_storage`.
+- HTTP pipelines: review `logs/event_log.json` for aggregate payloads or exported URIs. The DuckDB fixture emits COPY commands targeting `gs://...` URIs when the unified credentials are present.
 
-### 4) Test Postgres Storage
+## Exporting logs again later
 
-This stores rows into `weather_alert_summary` and returns a short preview.
-
-- Run: `make noetl-execute PLAYBOOK=examples/test/test_postgres_storage`
-- Verify in Postgres:
-  - `psql -h localhost -p 30543 -U demo -d demo_noetl -c "SELECT id, alert_cities, alert_count, created_at FROM weather_alert_summary ORDER BY id DESC LIMIT 5"`
-- Expect: recent rows with the JSON array of cities and an integer count.
-
-## Exporting and inspecting logs manually
-
-If you need to re‑export for a specific execution:
+If you need to re-export execution artifacts, use:
 
 - `make export-event-log ID=<execution_id>`
 - `make export-queue ID=<execution_id>`
 
-Outputs are written to:
-
-- `logs/event_log.json` — all events for the execution
-- `logs/queue.json` — queue rows for the execution
+Outputs land in `logs/event.json` and `logs/queue.json` respectively.
 
 ## Troubleshooting
 
-- Credential not found or DB connection error:
-  - Ensure you ran `make register-test-credentials` and the server is up.
-  - Confirm Postgres variables in `.env` match your instance (host/port/user/password/db).
-- HTTP failures:
-  - Network issues can cause errors for the loop tests. Re‑run or set a different city set if needed.
-- Nothing happens after acceptance:
-  - Ensure workers are running: `ps aux | grep 'noetl worker' | grep -v grep`
-  - Check server and worker logs under `logs/`.
+- Credential or connection errors:
+  - Ensure you registered every JSON credential from `tests/fixtures/credentials/` and that the server is running.
+  - Double-check Postgres settings in `.env`.
+- HTTP flakiness:
+  - Remote weather APIs occasionally error; rerun the fixture or adjust city lists as needed.
+- No executions appear:
+  - Confirm workers are running with `ps aux | grep 'noetl worker' | grep -v grep`.
+  - Inspect the worker and server logs in the `logs/` directory.
 
 ## Clean up
 
-- Stop workers and server:
-  - `make noetl-stop`
-- Optional DB cleanup:
-  - Remove tables created during tests if you wish (e.g., `DROP TABLE public.postgres_save_demo;` and `DROP TABLE weather_alert_summary;`).
+- Stop workers and server: `make noetl-stop`
+- Optional database cleanup:
+  - `DROP TABLE public.postgres_save_demo;`
+  - `DROP TABLE weather_alert_summary;`
 
+The fixtures remain in `tests/fixtures/playbooks/` so future migrations can reuse the same registration commands without touching metadata paths.

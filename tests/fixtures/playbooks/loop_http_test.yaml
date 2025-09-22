@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: loop_http_test
-  path: examples/test/loop_http_test
+  path: tests/loop_http_test
 
 workload:
   message: "Testing HTTP loop over cities with weather API aggregation"
