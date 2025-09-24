@@ -183,7 +183,7 @@ workflow:
         # Execute the playbook (support loop expansion when provided)
         try:
             # Dynamic import to avoid circular dependency
-            from noetl.server.api.broker.execute import execute_playbook_via_broker
+            from noetl.api.routers.broker.execute import execute_playbook_via_broker
 
             # Legacy loop support has been removed. Enforce the new iterator task wrapper.
             if isinstance(task_config.get('loop'), dict):

@@ -1,0 +1,179 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: playbook_composition
+  path: tests/fixtures/playbooks/playbook_composition
+
+workload:
+  message: "Playbook composition with iterator validation"
+  users:
+    - name: "Alice"
+      age: 28
+      department: "Engineering"
+      years_experience: 5
+      performance_rating: 4.2
+    - name: "Bob"
+      age: 34
+      department: "Marketing"
+      years_experience: 8
+      performance_rating: 3.8
+    - name: "Charlie"
+      age: 29
+      department: "Engineering"
+      years_experience: 3
+      performance_rating: 4.5
+    - name: "Diana"
+      age: 42
+      department: "Management"
+      years_experience: 15
+      performance_rating: 4.0
+
+workflow:
+  - step: start
+    desc: "Initialize user profile processing"
+    next:
+      - step: setup_storage
+
+  - step: setup_storage
+    desc: "Ensure results table exists"
+    type: postgres
+    auth: pg_local
+    command: |
+      CREATE TABLE IF NOT EXISTS public.user_profile_results (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT,
+        user_name TEXT,
+        profile_score DOUBLE PRECISION,
+        score_category TEXT,
+        processed_at TIMESTAMPTZ DEFAULT now()
+      );
+    next:
+      - step: process_users
+
+  - step: process_users
+    desc: "Process each user through profile scoring sub-playbook"
+    type: iterator
+    collection: "{{ workload.users }}"
+    element: user
+    mode: sequential
+    task:
+      type: playbook
+      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+      data:
+        user_data: "{{ user }}"
+        execution_context: "{{ execution_id }}"
+      save:
+        data:
+          id: "{{ execution_id }}:{{ user.name }}"
+          execution_id: "{{ execution_id }}"
+          user_name: "{{ user.name }}"
+          profile_score: "{{ this.data.profile_score if (this is defined and this.data is defined and this.data.profile_score is defined) else 0.0 }}"
+          score_category: "{{ this.data.score_category if (this is defined and this.data is defined and this.data.score_category is defined) else 'unknown' }}"
+        storage: postgres
+        auth: pg_local
+        table: public.user_profile_results
+        mode: upsert
+        key: id
+    next:
+      - step: validate_results
+
+  - step: validate_results
+    desc: "Validate all profile scores are within expected range and categories are correct"
+    type: python
+    data:
+      user_results: "{{ process_users.data }}"
+      expected_min_score: 0.0
+      expected_max_score: 100.0
+      valid_categories: ["Junior", "Mid-Level", "Senior", "Executive"]
+    code: |
+      def main(user_results, expected_min_score, expected_max_score, valid_categories):
+          if not isinstance(user_results, list):
+              return {
+                  "status": "error",
+                  "message": f"Expected list of results, got {type(user_results)}",
+                  "valid": False
+              }
+          
+          validation_results = []
+          all_valid = True
+          
+          for i, result in enumerate(user_results):
+              if not isinstance(result, dict):
+                  validation_results.append({
+                      "index": i,
+                      "valid": False,
+                      "message": f"Result {i} is not a dict: {type(result)}"
+                  })
+                  all_valid = False
+                  continue
+              
+              # Check if result has required fields
+              profile_score = result.get('profile_score')
+              score_category = result.get('score_category')
+              user_name = result.get('user_name', f'user_{i}')
+              
+              validation = {
+                  "index": i,
+                  "user_name": user_name,
+                  "profile_score": profile_score,
+                  "score_category": score_category,
+                  "valid": True,
+                  "issues": []
+              }
+              
+              # Validate profile score
+              if profile_score is None:
+                  validation["issues"].append("Missing profile_score")
+                  validation["valid"] = False
+              elif not isinstance(profile_score, (int, float)):
+                  validation["issues"].append(f"profile_score must be numeric, got {type(profile_score)}")
+                  validation["valid"] = False
+              elif not (expected_min_score <= profile_score <= expected_max_score):
+                  validation["issues"].append(f"profile_score {profile_score} not in range [{expected_min_score}, {expected_max_score}]")
+                  validation["valid"] = False
+              
+              # Validate score category
+              if score_category is None:
+                  validation["issues"].append("Missing score_category")
+                  validation["valid"] = False
+              elif score_category not in valid_categories:
+                  validation["issues"].append(f"score_category '{score_category}' not in valid categories {valid_categories}")
+                  validation["valid"] = False
+              
+              if not validation["valid"]:
+                  all_valid = False
+              
+              validation_results.append(validation)
+          
+          return {
+              "status": "success" if all_valid else "validation_failed",
+              "all_valid": all_valid,
+              "total_users": len(user_results),
+              "valid_users": sum(1 for v in validation_results if v["valid"]),
+              "validation_details": validation_results,
+              "summary": f"Processed {len(user_results)} users, {sum(1 for v in validation_results if v['valid'])} valid"
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: "Complete profile processing pipeline"
+    type: python
+    data:
+      validation_result: "{{ validate_results.data }}"
+      user_count: "{{ workload.users | length }}"
+    code: |
+      def main(validation_result, user_count):
+          print(f"Pipeline completed successfully!")
+          print(f"Users processed: {user_count}")
+          print(f"Validation status: {validation_result.get('status', 'unknown')}")
+          print(f"All valid: {validation_result.get('all_valid', False)}")
+          print(f"Summary: {validation_result.get('summary', 'No summary available')}")
+          
+          return {
+              "pipeline_status": "completed",
+              "users_processed": user_count,
+              "validation_passed": validation_result.get('all_valid', False),
+              "message": "Playbook composition test completed successfully"
+          }
