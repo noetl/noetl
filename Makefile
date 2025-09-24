@@ -56,7 +56,7 @@ help:
 	@echo "  make test-http-duckdb-postgres-full		Full integration test (reset DB, restart server, run runtime tests)"
 	@echo "  make test-playbook-composition			Run playbook composition tests"
 	@echo "  make test-playbook-composition-runtime		Run playbook composition tests with runtime execution"
-	@echo "  make test-playbook-composition-full		Full integration test (stop server, reset DB, restart server, register credentials, run runtime tests)"
+	@echo "  make test-playbook-composition-full		Full integration test (reset DB, restart server, register credentials, run runtime tests)"
 	@echo "  make test-playbook-composition-k8s		Kubernetes-friendly test (restart server, register credentials, run runtime tests, skip DB reset)"
 	@echo ""
 	@echo "Kubernetes Commands:"
@@ -201,9 +201,9 @@ test-control-flow-workbook-runtime: test-setup
 	@echo "This requires a running NoETL server. Use 'make noetl-restart' if needed."
 	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_control_flow_workbook.py
 
-test-control-flow-workbook-full: postgres-reset-schema noetl-restart
+test-control-flow-workbook-full: noetl-stop postgres-reset-schema noetl-start
 	@echo "Running full integration test for control flow workbook..."
-	@echo "This will reset database, restart server, and run runtime tests"
+	@echo "This will stop services, reset database, restart server, and run runtime tests"
 	@sleep 2  # Give server time to start
 	$(MAKE) test-control-flow-workbook-runtime
 
@@ -216,9 +216,9 @@ test-http-duckdb-postgres-runtime: test-setup
 	@echo "Use 'make noetl-restart' if needed."
 	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_scheduler_basic.py
 
-test-http-duckdb-postgres-full: postgres-reset-schema noetl-restart
+test-http-duckdb-postgres-full: noetl-stop postgres-reset-schema noetl-start
 	@echo "Running full integration test for HTTP DuckDB Postgres..."
-	@echo "This will reset database, restart server, and run runtime tests"
+	@echo "This will stop services, reset database, restart server, and run runtime tests"
 	@sleep 2  # Give server time to start
 	$(MAKE) test-http-duckdb-postgres-runtime
 
@@ -231,9 +231,9 @@ test-playbook-composition-runtime: test-setup
 	@echo "Use 'make noetl-restart' and 'make register-test-credentials' if needed."
 	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_playbook_composition.py
 
-test-playbook-composition-full: noetl-stop postgres-reset-schema noetl-start server-status
+test-playbook-composition-full: noetl-stop postgres-reset-schema noetl-start
 	@echo "Running full integration test for playbook composition..."
-	@echo "This will stop server, reset database, restart server, register credentials, and run runtime tests"
+	@echo "This will stop services, reset database, restart server, register credentials, and run runtime tests"
 	@sleep 2  # Give server time to start
 	@echo "Registering required credentials..."
 	$(MAKE) register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)

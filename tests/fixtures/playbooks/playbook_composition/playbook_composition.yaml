@@ -68,8 +68,8 @@ workflow:
           id: "{{ execution_id }}:{{ user.name }}"
           execution_id: "{{ execution_id }}"
           user_name: "{{ user.name }}"
-          profile_score: "{{ this.data.profile_score if (this is defined and this.data is defined and this.data.profile_score is defined) else 0.0 }}"
-          score_category: "{{ this.data.score_category if (this is defined and this.data is defined and this.data.score_category is defined) else 'unknown' }}"
+          profile_score: "{{ this.profile_score or 0.0 }}"
+          score_category: "{{ this.score_category or 'unknown' }}"
         storage: postgres
         auth: pg_local
         table: public.user_profile_results
