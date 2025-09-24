@@ -100,13 +100,15 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                         continue
                 if not isinstance(target_action, dict):
                     return
-                # Merge 'with' values
+                # Merge 'with' and 'data' values
                 merged_with = {}
                 try:
                     if isinstance(target_action.get('with'), dict):
                         merged_with.update(target_action.get('with'))
                     if isinstance(step_def.get('with'), dict):
                         merged_with.update(step_def.get('with'))
+                    if isinstance(step_def.get('data'), dict):
+                        merged_with.update(step_def.get('data'))
                 except Exception:
                     pass
                 # Construct action config

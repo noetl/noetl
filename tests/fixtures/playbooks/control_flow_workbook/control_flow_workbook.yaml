@@ -1,0 +1,72 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: control_flow_workbook
+  path: tests/fixtures/playbooks/control_flow_workbook   # catalog path; do not change in tests
+
+workload:
+  temperature_c: 30        # tune to test hot/cold routing
+
+# A tiny workbook with a python action that evaluates a flag.
+workbook:
+  - name: compute_flag
+    type: python
+    accepts: { temperature_c: number }
+    returns: { is_hot: boolean, message: string }
+    code: |
+      def main(temperature_c):
+          is_hot = float(temperature_c) >= 25.0
+          msg = "hot" if is_hot else "cold"
+          return {"is_hot": is_hot, "message": msg}
+
+workflow:
+  - step: start
+    desc: "Begin"
+    next:
+      - step: eval_flag
+
+  - step: eval_flag
+    desc: "Call workbook action to compute is_hot"
+    type: workbook            # must resolve to workbook entry below
+    name: compute_flag        # reference by name (resolver should match workbook[].name)
+    with:
+      temperature_c: "{{ workload.temperature_c }}"
+    next:
+      - when: "{{ result.is_hot == true }}"
+        step: hot_path
+      - when: "{{ result.is_hot == false }}"
+        step: cold_path
+
+  - step: hot_path
+    desc: "Hot branch; fan out to two steps in PARALLEL"
+    # Two next steps with no 'when' => must run in parallel
+    next:
+      - step: hot_task_a
+      - step: hot_task_b
+
+  - step: hot_task_a
+    type: python
+    code: |
+      def main():
+          return {"who": "A"}
+
+  - step: hot_task_b
+    type: python
+    code: |
+      def main():
+          return {"who": "B"}
+
+  - step: cold_path
+    desc: "Cold branch single continuation"
+    next:
+      - step: cold_task
+
+  - step: cold_task
+    type: python
+    code: |
+      def main():
+          return {"who": "C"}
+
+  - step: end
+    desc: "Finish"
