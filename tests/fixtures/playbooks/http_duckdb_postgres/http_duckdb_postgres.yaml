@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: http_duckdb_postgres
-  path: tests/http_duckdb_postgres
+  path: tests/fixtures/playbooks/http_duckdb_postgres
 
 workload:
   message: HTTP -> DuckDB -> Postgres pipeline

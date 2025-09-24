@@ -51,6 +51,9 @@ help:
 	@echo "  make test-control-flow-workbook			Run control flow workbook tests"
 	@echo "  make test-control-flow-workbook-runtime		Run control flow workbook tests with runtime execution"
 	@echo "  make test-control-flow-workbook-full		Full integration test (reset DB, restart server, run runtime tests)"
+	@echo "  make test-http-duckdb-postgres			Run HTTP DuckDB Postgres tests"
+	@echo "  make test-http-duckdb-postgres-runtime		Run HTTP DuckDB Postgres tests with runtime execution"
+	@echo "  make test-http-duckdb-postgres-full		Full integration test (reset DB, restart server, run runtime tests)"
 	@echo ""
 	@echo "Kubernetes Commands:"
 	@echo "  make k8s-kind-create          			Create kind cluster (or use existing) and set kubectl context"
@@ -134,7 +137,7 @@ restart: down up
 logs:
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) logs -f
 
-.PHONY: clean install-uv create-venv install-dev uv-lock run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-control-flow-workbook test-control-flow-workbook-runtime test-control-flow-workbook-full test-setup build-uv publish encode-playbook register-playbook execute-playbook register-examples register-test-playbooks start-workers stop-multiple clean-logs
+.PHONY: clean install-uv create-venv install-dev uv-lock run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-control-flow-workbook test-control-flow-workbook-runtime test-control-flow-workbook-full test-http-duckdb-postgres test-http-duckdb-postgres-runtime test-http-duckdb-postgres-full test-setup build-uv publish encode-playbook register-playbook execute-playbook register-examples register-test-playbooks start-workers stop-multiple clean-logs
 
 clean:
 	docker system prune -af --volumes
@@ -199,6 +202,21 @@ test-control-flow-workbook-full: postgres-reset-schema noetl-restart
 	@echo "This will reset database, restart server, and run runtime tests"
 	@sleep 2  # Give server time to start
 	$(MAKE) test-control-flow-workbook-runtime
+
+test-http-duckdb-postgres: test-setup
+	$(VENV)/bin/pytest -v tests/test_scheduler_basic.py
+
+test-http-duckdb-postgres-runtime: test-setup
+	@echo "Running HTTP DuckDB Postgres tests with runtime execution..."
+	@echo "This requires a running NoETL server and proper credentials (pg_local, gcs_hmac_local)."
+	@echo "Use 'make noetl-restart' if needed."
+	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_scheduler_basic.py
+
+test-http-duckdb-postgres-full: postgres-reset-schema noetl-restart
+	@echo "Running full integration test for HTTP DuckDB Postgres..."
+	@echo "This will reset database, restart server, and run runtime tests"
+	@sleep 2  # Give server time to start
+	$(MAKE) test-http-duckdb-postgres-runtime
 
 .PHONY: test-killer
 test-killer: test-setup

@@ -3,7 +3,7 @@ import os
 from noetl.core.common import ordered_yaml_load
 from noetl.scheduler import build_plan, CpSatScheduler
 
-EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "examples", "test", "http_duckdb_postgres.yaml")
+EXAMPLE = os.path.join(os.path.dirname(__file__), "fixtures", "playbooks", "http_duckdb_postgres", "http_duckdb_postgres.yaml")
 
 
 def test_iterator_expansion_and_barrier():
