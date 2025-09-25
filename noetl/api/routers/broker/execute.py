@@ -40,7 +40,10 @@ def execute_playbook_via_broker(
     """
     logger.debug("=== BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Function entry ===")
     logger.debug(
-        f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Parameters - playbook_path={playbook_path}, playbook_version={playbook_version}, input_payload={input_payload}, sync_to_postgres={sync_to_postgres}, merge={merge}"
+        f"EXECUTE: Received parameters - playbook_path={playbook_path}, "
+        f"playbook_version={playbook_version}, input_payload={input_payload}, "
+        f"sync_to_postgres={sync_to_postgres}, merge={merge}, "
+        f"parent_execution_id={parent_execution_id}, parent_event_id={parent_event_id}, parent_step={parent_step}"
     )
 
     try:
@@ -376,6 +379,8 @@ def execute_playbook_via_broker(
                     }
                     if parent_event_id:
                         payload['parent_event_id'] = parent_event_id
+                    if parent_execution_id:
+                        payload['parent_execution_id'] = parent_execution_id
                     _asyncio.create_task(es.emit(payload))
                 else:
                     # best-effort synchronous run
@@ -391,6 +396,8 @@ def execute_playbook_via_broker(
                     }
                     if parent_event_id:
                         payload['parent_event_id'] = parent_event_id
+                    if parent_execution_id:
+                        payload['parent_execution_id'] = parent_execution_id
                     _asyncio.run(es.emit(payload))
             except Exception:
                 # Fallback to HTTP if direct emit fails
@@ -405,7 +412,7 @@ def execute_playbook_via_broker(
                     'node_type': 'playbook',
                     'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                     'context': ctx,
-                    'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version},
+                    'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
                 }, server_url)
         except Exception as e_evt:
             logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to persist execution_start event: {e_evt}")

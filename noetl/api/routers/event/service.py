@@ -385,6 +385,21 @@ class EventService:
                                   parent_execution_id = int(parent_exec_str)
                               except (ValueError, TypeError):
                                   pass
+                      
+                      # Extract parent_execution_id from metadata or event_data
+                      parent_execution_id = None
+                      if metadata and isinstance(metadata, dict):
+                          parent_execution_id = metadata.get('parent_execution_id')
+                      if not parent_execution_id:
+                          parent_execution_id = event_data.get('parent_execution_id')
+                      if not parent_execution_id and metadata and isinstance(metadata, dict):
+                          # Convert string to int if needed for bigint
+                          parent_exec_str = metadata.get('parent_execution_id')
+                          if parent_exec_str:
+                              try:
+                                  parent_execution_id = int(parent_exec_str)
+                              except (ValueError, TypeError):
+                                  pass
 
                       if exists:
                           await cursor.execute("""

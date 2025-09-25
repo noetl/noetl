@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 from noetl.core.common import get_async_db_connection
+from noetl.core.logger import setup_logger
+
+logger = setup_logger(__name__, include_location=True)
 
 
 class EventLog:
@@ -185,6 +188,8 @@ class EventLog:
         current_item_json: Any,
         stack_trace: Any = None,
     ):
+
+        
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(

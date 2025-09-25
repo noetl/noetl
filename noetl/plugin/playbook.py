@@ -174,11 +174,13 @@ workflow:
             nested_context.update(task_with)
 
         # Get parent execution information for nested tracking
-        parent_execution_id = context.get('execution_id')
-        parent_event_id = context.get('event_id')
+        # When called from iterator, context['parent'] contains the original execution context
+        parent_context = context.get('parent', context)
+        parent_execution_id = parent_context.get('execution_id')
+        parent_event_id = parent_context.get('event_id')
         parent_step = task_name
 
-        logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Executing nested playbook - path={playbook_path}, version={playbook_version}")
+        logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Executing nested playbook - path={playbook_path}, version={playbook_version}, parent_execution_id={parent_execution_id}")
 
         # Execute the playbook (support loop expansion when provided)
         try:
@@ -190,6 +192,7 @@ workflow:
                 raise ValueError("playbook task no longer supports 'loop' blocks. Wrap the playbook in a 'type: iterator' task with 'collection' and 'element', and move this playbook under iterator.task")
 
             # No loop: single execution
+            logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Calling execute_playbook_via_broker with parent_execution_id={parent_execution_id}")
             result = execute_playbook_via_broker(
                 playbook_content=rendered_content,
                 playbook_path=playbook_path or f"nested/{task_name}",
@@ -201,6 +204,7 @@ workflow:
                 parent_event_id=parent_event_id,
                 parent_step=parent_step
             )
+            logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Broker execution completed with status={result.get('status')}, execution_id={result.get('execution_id')}")
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

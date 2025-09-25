@@ -335,6 +335,7 @@ def execute_loop_task(
             # Execute nested task
             try:
                 from noetl import plugin as _plugin
+                logger.info(f"ITERATOR: Executing nested task - type={nested_task.get('type')}, path={nested_task.get('path')}, iter_index={iter_index}")
                 nested_result = _plugin.execute_task(
                     nested_task,
                     nested_task.get('name') or nested_task.get('task') or 'nested',
@@ -342,6 +343,7 @@ def execute_loop_task(
                     jinja_env,
                     nested_with
                 )
+                logger.info(f"ITERATOR: Nested task completed - iter_index={iter_index}, result_status={nested_result.get('status')}")
             except Exception as e_nested:
                 logger.error(f"ITERATOR: Nested task failed at logical index {iter_index}: {e_nested}", exc_info=True)
                 return {
