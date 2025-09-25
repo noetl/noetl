@@ -12,8 +12,12 @@ workload:
 workbook:
   - name: calculate_experience_score
     type: python
-    accepts: { years_experience: number }
-    returns: { experience_score: number, experience_weight: number }
+    assert:
+      expects:
+        - years_experience
+      returns:
+        - experience_score
+        - experience_weight
     code: |
       def main(years_experience):
           # Score based on years of experience (0-30 points)
@@ -36,8 +40,12 @@ workbook:
 
   - name: calculate_performance_score
     type: python
-    accepts: { performance_rating: number }
-    returns: { performance_score: number, performance_weight: number }
+    assert:
+      expects:
+        - performance_rating
+      returns:
+        - performance_score
+        - performance_weight
     code: |
       def main(performance_rating):
           # Score based on performance rating (0-25 points)
@@ -52,8 +60,12 @@ workbook:
 
   - name: calculate_department_score
     type: python
-    accepts: { department: string }
-    returns: { department_score: number, department_weight: number }
+    assert:
+      expects:
+        - department
+      returns:
+        - department_score
+        - department_weight
     code: |
       def main(department):
           # Score based on department strategic importance (0-15 points)
@@ -76,8 +88,12 @@ workbook:
 
   - name: calculate_age_factor
     type: python
-    accepts: { age: number }
-    returns: { age_score: number, age_weight: number }
+    assert:
+      expects:
+        - age
+      returns:
+        - age_score
+        - age_weight
     code: |
       def main(age):
           # Score based on age (career stage factor, 0-10 points)
@@ -100,8 +116,12 @@ workbook:
 
   - name: determine_category
     type: python
-    accepts: { profile_score: number, years_experience: number }
-    returns: { score_category: string }
+    assert:
+      expects:
+        - profile_score
+        - years_experience
+      returns:
+        - score_category
     code: |
       def main(profile_score, years_experience):
           score = float(profile_score)

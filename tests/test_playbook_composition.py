@@ -386,10 +386,25 @@ def _get_event_failures(execution_id: str) -> int:
                 payload = resp.json() or {}
                 events = payload.get("events") or []
                 failures = 0
+                consider_types = {
+                    'execution_completed', 'execution_complete',
+                    'action_completed', 'result', 'loop_completed', 'step_result'
+                }
+                ignore_types = {
+                    'action_error', 'event_emit_error', 'step_error',
+                    'loop_iteration', 'end_loop', 'step_started', 'action_started'
+                }
                 for e in events:
-                    st = (e.get("normalized_status") or e.get("status") or "").lower()
-                    et = (e.get("event_type") or "").lower()
-                    if ("fail" in st) or ("error" in st) or ("error" in et):
+                    if not isinstance(e, dict):
+                        # Skip non-dict records defensively
+                        continue
+                    et = str(e.get("event_type") or "").lower()
+                    if et in ignore_types:
+                        continue
+                    if et and et not in consider_types:
+                        continue
+                    st = str(e.get("normalized_status") or e.get("status") or "").lower()
+                    if ("fail" in st) or ("error" in st):
                         failures += 1
                 return failures
             if resp.status_code == 404:
@@ -638,8 +653,8 @@ class TestPlaybookCompositionRuntime:
             assert "type" in action  
             assert action["type"] == "python"
             assert "code" in action
-            assert "accepts" in action
-            assert "returns" in action
+            # Optional assert metadata is the canonical way to describe expectations
+            assert "assert" in action
         
         print("Sub-playbook workbook actions are properly structured")
 

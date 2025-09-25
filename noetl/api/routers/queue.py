@@ -148,21 +148,9 @@ async def complete_job(job_id: int):
                         parent_execution_id = meta.get('parent_execution_id')
                         parent_step = meta.get('parent_step')
                         # Extract return_step from the queue.action when available (preferred)
-                        try:
-                            await cur.execute("SELECT action FROM noetl.queue WHERE id = %s", (job_id,))
-                            action_row = await cur.fetchone()
-                            action_json = None
-                            if action_row:
-                                action_val = action_row[0] if isinstance(action_row, tuple) else action_row.get('action')
-                                if isinstance(action_val, str) and action_val.strip():
-                                    try:
-                                        action_json = json.loads(action_val)
-                                    except Exception:
-                                        action_json = None
-                            if isinstance(action_json, dict):
-                                return_step = (action_json.get('with') or {}).get('return_step') or return_step
-                        except Exception:
-                            pass
+                        # NOTE: We no longer access a cursor here because the initial transaction scope is closed.
+                        # This value will be resolved later within a fresh DB connection below.
+                        pass
                         # Legacy fallback: some older producers embed action JSON in input_context
                         if return_step is None:
                             action_data = context_data.get('action')
@@ -185,6 +173,24 @@ async def complete_job(job_id: int):
                     from noetl.core.common import get_async_db_connection as get_db_conn
                     async with get_db_conn() as conn:
                         async with conn.cursor() as cur:
+                            # Resolve return_step from the queue.action for the completed job (best-effort)
+                            try:
+                                await cur.execute("SELECT action FROM noetl.queue WHERE id = %s", (job_id,))
+                                _act = await cur.fetchone()
+                                _act_json = None
+                                if _act:
+                                    _act_val = _act[0] if isinstance(_act, tuple) else _act.get('action')
+                                    if isinstance(_act_val, str) and _act_val.strip():
+                                        try:
+                                            _act_json = json.loads(_act_val)
+                                        except Exception:
+                                            _act_json = None
+                                if isinstance(_act_json, dict):
+                                    return_step = ((_act_json.get('with') or {}).get('return_step')
+                                                   or _act_json.get('return_step')
+                                                   or return_step)
+                            except Exception:
+                                pass
                             # Get the end step's return value, or fall back to meaningful results
                             result_row = None
                             # 0) Prefer execution_complete final result

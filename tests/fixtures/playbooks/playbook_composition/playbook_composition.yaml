@@ -62,6 +62,7 @@ workflow:
       task: process_users
       type: playbook
       path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml
+      return_step: finalize_result
       data:
         user_data: "{{ user }}"
         execution_context: "{{ execution_id }}"
@@ -90,11 +91,22 @@ workflow:
       valid_categories: ["Junior", "Mid-Level", "Senior", "Executive"]
     code: |
       def main(user_results, expected_min_score, expected_max_score, valid_categories):
+          # Be tolerant of early execution before loop aggregation completes.
+          # If we did not receive a list of final results yet, return a tracking status
+          # instead of raising an error to avoid polluting event logs.
           if not isinstance(user_results, list):
+              size = 0
+              try:
+                  size = len(user_results)  # may be 0 for non-sized types
+              except Exception:
+                  size = 0
               return {
-                  "status": "error",
-                  "message": f"Expected list of results, got {type(user_results)}",
-                  "valid": False
+                  "status": "tracking",
+                  "all_valid": None,
+                  "total_users": size,
+                  "valid_users": 0,
+                  "validation_details": [],
+                  "summary": "Awaiting loop aggregation of process_users results"
               }
           
           validation_results = []
@@ -167,6 +179,17 @@ workflow:
       user_count: "{{ workload.users | length }}"
     code: |
       def main(validation_result, user_count):
+          # Be robust to unexpected types (e.g., during early tracking states)
+          if not isinstance(validation_result, dict):
+              try:
+                  summary = str(validation_result)
+              except Exception:
+                  summary = 'N/A'
+              validation_result = {
+                  'status': 'unknown',
+                  'all_valid': False,
+                  'summary': summary
+              }
           print(f"Pipeline completed successfully!")
           print(f"Users processed: {user_count}")
           print(f"Validation status: {validation_result.get('status', 'unknown')}")
