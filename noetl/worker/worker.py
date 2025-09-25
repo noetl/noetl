@@ -329,6 +329,7 @@ class QueueWorker:
 
     async def _complete_job(self, job_id: int) -> None:
         try:
+            logger.debug(f"WORKER: Completing job {job_id}")
             async with httpx.AsyncClient(timeout=5.0) as client:
                 await client.post(f"{self.server_url}/queue/{job_id}/complete")
         except Exception:  # pragma: no cover - network best effort

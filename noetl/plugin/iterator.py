@@ -33,8 +33,25 @@ def _coerce_items(rendered_items: Any) -> List[Any]:
             obj = json.loads(s)
             if isinstance(obj, list):
                 return obj
+            # JSON parsing may succeed but produce a scalar/dict
+            if isinstance(obj, tuple):
+                return list(obj)
+            if isinstance(obj, dict):
+                return [obj]
         except Exception:
-            pass
+            # Fall back to Python literal evaluation for repr-style strings
+            try:
+                import ast
+
+                obj = ast.literal_eval(s)
+                if isinstance(obj, list):
+                    return obj
+                if isinstance(obj, tuple):
+                    return list(obj)
+                if isinstance(obj, dict):
+                    return [obj]
+            except Exception:
+                pass
         # Fallback: treat as a single item (do not iterate characters)
         return [rendered_items]
     # Fallback single item
@@ -444,6 +461,7 @@ def execute_loop_task(
             logger.debug("LOOP: step-level aggregated save failed", exc_info=True)
 
         # Canonical: expose result list as step data
+        logger.debug(f"LOOP: Completed iterator '{task_name}' with {len(final)} results (errors={len(errors)})")
         return {
             'id': task_id,
             'status': 'success',

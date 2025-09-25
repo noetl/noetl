@@ -176,8 +176,32 @@ workflow:
         # Get parent execution information for nested tracking
         # When called from iterator, context['parent'] contains the original execution context
         parent_context = context.get('parent', context)
-        parent_execution_id = parent_context.get('execution_id')
-        parent_event_id = parent_context.get('event_id')
+        parent_meta = {}
+        try:
+            if isinstance(parent_context, dict):
+                parent_meta = parent_context.get('_meta') or {}
+        except Exception:
+            parent_meta = {}
+        context_meta = {}
+        try:
+            if isinstance(context, dict):
+                context_meta = context.get('_meta') or {}
+        except Exception:
+            context_meta = {}
+
+        parent_execution_id = (
+            (parent_context.get('execution_id') if isinstance(parent_context, dict) else None)
+            or parent_meta.get('parent_execution_id')
+            or context_meta.get('parent_execution_id')
+        )
+        parent_event_id = (
+            (parent_context.get('event_id') if isinstance(parent_context, dict) else None)
+            or parent_meta.get('parent_event_id')
+            or context_meta.get('parent_event_id')
+        )
+        logger.debug(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Resolved parent identifiers - execution_id={parent_execution_id}, event_id={parent_event_id}"
+        )
         parent_step = task_name
 
         logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Executing nested playbook - path={playbook_path}, version={playbook_version}, parent_execution_id={parent_execution_id}")

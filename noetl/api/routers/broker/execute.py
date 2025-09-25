@@ -440,11 +440,25 @@ def execute_playbook_via_broker(
                 )
                 loop.create_task(evaluate_broker_for_execution(execution_id))
             except RuntimeError:
-                # No running loop in this thread; run synchronously
+                # No running loop in this thread (common on worker threads). Kick off evaluation in
+                # a background thread so we don't block the caller and strand leased queue jobs.
                 logger.debug(
-                    f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: No running event loop; using asyncio.run for execution_id={execution_id}"
+                    f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: No running event loop; dispatching background evaluation for execution_id={execution_id}"
                 )
-                _asyncio.run(evaluate_broker_for_execution(execution_id))
+
+                def _run_in_thread() -> None:
+                    try:
+                        _asyncio.run(evaluate_broker_for_execution(execution_id))
+                    except Exception:
+                        logger.debug(
+                            "BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Background evaluation failed",
+                            exc_info=True,
+                        )
+
+                import threading as _threading
+
+                _thread = _threading.Thread(target=_run_in_thread, name=f"noetl-broker-{execution_id}", daemon=True)
+                _thread.start()
 
             logger.info(
                 f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Broker evaluation initiated successfully for execution_id={execution_id}"

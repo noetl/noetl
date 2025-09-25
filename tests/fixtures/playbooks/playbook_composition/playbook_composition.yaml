@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: playbook_composition
-  path: tests/fixtures/playbooks/playbook_composition
+  path: tests/fixtures/playbooks/playbook_composition/playbook_composition
 
 workload:
   message: "Playbook composition with iterator validation"
@@ -58,8 +58,10 @@ workflow:
     element: user
     mode: sequential
     task:
+      # Provide an explicit task identifier so nested playbook propagates correct parent_step
+      task: process_users
       type: playbook
-      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml
       data:
         user_data: "{{ user }}"
         execution_context: "{{ execution_id }}"

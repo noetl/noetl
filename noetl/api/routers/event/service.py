@@ -176,7 +176,25 @@ class EventService:
                 result_dict = event_data.get("output_result")
             context = json.dumps(context_dict)
             result = json.dumps(result_dict)
-            
+
+            if not parent_event_id:
+                try:
+                    meta_sources = []
+                    if isinstance(context_dict, dict):
+                        meta_sources.append(context_dict.get('_meta'))
+                        work_ctx = context_dict.get('work')
+                        if isinstance(work_ctx, dict):
+                            meta_sources.append(work_ctx.get('_meta'))
+                        workload_ctx = context_dict.get('workload')
+                        if isinstance(workload_ctx, dict):
+                            meta_sources.append(workload_ctx.get('_meta'))
+                    for meta in meta_sources:
+                        if isinstance(meta, dict) and meta.get('parent_event_id'):
+                            parent_event_id = meta.get('parent_event_id')
+                            break
+                except Exception:
+                    parent_event_id = parent_event_id
+
             # Derive better node_name/node_type when missing using context
             try:
                 # Infer node_name from context when absent or generic
@@ -242,7 +260,11 @@ class EventService:
                                   return event_data
                           if et_l == 'loop_iteration':
                               # When current_index is present, dedupe by (execution_id, node_name, current_index)
-                              _idx_txt = str(current_index_val) if (locals().get('current_index_val') is not None) else None
+                              try:
+                                  _ci_val = event_data.get('current_index')
+                              except Exception:
+                                  _ci_val = None
+                              _idx_txt = str(_ci_val) if (_ci_val is not None) else None
                               if _idx_txt is not None:
                                   await cursor.execute(
                                       """

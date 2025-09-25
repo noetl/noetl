@@ -546,6 +546,24 @@ async def _emit_loop_completion_events(event_service, parent_execution_id: str,
     }
     await event_service.emit(loop_final_data)
     
+    # Best-effort: if a parent iterator job is still leased, mark it done now that the loop is complete
+    try:
+        async with get_async_db_connection() as _conn:
+            async with _conn.cursor() as _cur:
+                await _cur.execute(
+                    """
+                    UPDATE noetl.queue
+                    SET status='done', lease_until=NULL
+                    WHERE execution_id = %s
+                      AND node_id = %s
+                      AND status = 'leased'
+                    """,
+                    (parent_execution_id, f"{parent_execution_id}:{loop_step_name}")
+                )
+                await _conn.commit()
+    except Exception:
+        logger.debug("LOOP_COMPLETION_CHECK: Failed to mark parent iterator queue job done (best-effort)", exc_info=True)
+    
     # Also emit a 'result' marker for easy querying
     await event_service.emit({
         'execution_id': parent_execution_id,
@@ -782,19 +800,9 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 except Exception:
                     loop_cfg = None
                 if loop_cfg:
-                    try:
-                        from .broker import _handle_loop_step as _expand_loop
-                    except Exception:
-                        _expand_loop = None
-                    if _expand_loop:
-                        try:
-                            workload_ctx = {'workload': base_workload}
-                            await _expand_loop(cur, conn, parent_execution_id, next_step_name, step_def, loop_cfg, playbook_path, playbook_version, workload_ctx, next_with, trigger_event_id)
-                            await conn.commit()
-                            logger.info(f"LOOP_COMPLETION_CHECK: Expanded next loop step '{next_step_name}' for execution {parent_execution_id}")
-                            return
-                        except Exception:
-                            logger.debug("LOOP_COMPLETION_CHECK: Failed expanding loop step; falling back to single enqueue", exc_info=True)
+                    # Defer loop expansion to the normal broker path to avoid undefined variable issues here.
+                    # The standard enqueue below will handle loop steps via evaluate_broker_for_execution.
+                    pass
                 task_def = {
                     'name': next_step_name,
                     'type': step_def.get('type') or 'python',

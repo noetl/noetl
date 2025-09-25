@@ -527,6 +527,21 @@ async def complete_job(job_id: int):
                                         except Exception:
                                             logger.debug("Failed to emit loop_completed marker event", exc_info=True)
                                         logger.info(f"COMPLETION_HANDLER: Emitted final aggregated event for {parent_step} with {len(final_results)} results")
+                                        # Best-effort: mark any parent iterator job as done now that aggregation is complete
+                                        try:
+                                            await cur.execute(
+                                                """
+                                                UPDATE noetl.queue
+                                                SET status='done', lease_until=NULL
+                                                WHERE execution_id = %s
+                                                  AND node_id = %s
+                                                  AND status = 'leased'
+                                                """,
+                                                (parent_execution_id, f"{parent_execution_id}:{parent_step}")
+                                            )
+                                            await conn.commit()
+                                        except Exception:
+                                            logger.debug("COMPLETION_HANDLER: Failed to mark parent iterator job done (best-effort)", exc_info=True)
                                         # Trigger broker to advance the parent after aggregate
                                         try:
                                             from noetl.api.routers.event import evaluate_broker_for_execution
