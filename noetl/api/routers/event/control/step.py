@@ -49,7 +49,7 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
             return
 
         # Choose next transitions using 'when' evaluation - handle both single and parallel execution
-        next_choices = _choose_next_steps(cur_step, base_ctx)
+        next_choices = _choose_next_steps(cur_step, base_ctx, step_name)
         if not next_choices:
             logger.info(f"STEP_CONTROL: No next transition chosen for step {step_name}")
             # If this is the terminal 'end' step, emit execution_complete using declared result/save mapping
@@ -128,7 +128,7 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
             async with get_async_db_connection() as conn:
                 async with conn.cursor() as cur:
                     for next_step_name, next_with in next_choices:
-                        logger.info(f"STEP_CONTROL: Enqueuing next step {next_step_name} from step {step_name}")
+
                         await _enqueue_next_step(conn, cur, str(execution_id), next_step_name, next_with or {}, by_name, trig)
         except Exception:
             logger.debug("STEP_CONTROL: Failed to enqueue next steps from controller", exc_info=True)
@@ -246,13 +246,13 @@ def _truthy(val: Any) -> bool:
         return False
 
 
-def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
+def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any], step_name: str = "") -> Optional[Tuple[str, Dict[str, Any]]]:
     """Legacy function that returns a single next step (backward compatibility)."""
-    choices = _choose_next_steps(step_def, base_ctx)
+    choices = _choose_next_steps(step_def, base_ctx, step_name)
     return choices[0] if choices else None
 
 
-def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any], step_name: str) -> List[Tuple[str, Dict[str, Any]]]:
     """Choose next step transitions, supporting both single step and parallel execution.
     
     Returns a list of (step_name, payload) tuples.
@@ -266,12 +266,17 @@ def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Li
     if not nxt:
         return []
 
-    # Debug context
-    logger.info(f"STEP_CONTROL: Base context keys: {list(base_ctx.keys())}")
-    if 'eval_flag' in base_ctx:
-        logger.info(f"STEP_CONTROL: eval_flag result: {base_ctx['eval_flag']}")
-    if 'result' in base_ctx:
-        logger.info(f"STEP_CONTROL: result: {base_ctx['result']}")
+    # Create context with 'result' pointing to the current step's result
+    eval_ctx = base_ctx.copy()
+    
+    # For workbook steps, the result may be under the workbook action name rather than step name
+    if step_name in base_ctx:
+        eval_ctx['result'] = base_ctx[step_name]
+    else:
+        # Check if this is a workbook step - look for workbook action name in step_def
+        workbook_action_name = step_def.get('name') if step_def.get('type') == 'workbook' else None
+        if workbook_action_name and workbook_action_name in base_ctx:
+            eval_ctx['result'] = base_ctx[workbook_action_name]
 
     from noetl.core.dsl.render import render_template
     jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
@@ -282,11 +287,9 @@ def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Li
         if isinstance(item, dict) and 'when' in item:
             try:
                 cond = item.get('when')
-                val = render_template(jenv, cond, base_ctx, rules=None, strict_keys=False) if isinstance(cond, (str, dict, list)) else cond
+                val = render_template(jenv, cond, eval_ctx, rules=None, strict_keys=False) if isinstance(cond, (str, dict, list)) else cond
                 step_nm = item.get('step') or item.get('name')
-                logger.info(f"STEP_CONTROL: Evaluating 'when' condition '{cond}' for step '{step_nm}' -> result: {val}")
                 if _truthy(val):
-                    logger.info(f"STEP_CONTROL: Condition truthy, adding step '{step_nm}' to conditional_steps")
                     if step_nm:
                         # Support data overlay and legacy inputs (prefer data)
                         payload = None
@@ -299,15 +302,14 @@ def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Li
                         elif isinstance(item.get('with'), dict):
                             payload = item.get('with')
                         conditional_steps.append((step_nm, payload or {}))
-                else:
-                    logger.info(f"STEP_CONTROL: Condition falsy, skipping step '{step_nm}'")
+
             except Exception as e:
-                logger.info(f"STEP_CONTROL: Exception evaluating condition for step '{step_nm}': {e}")
+
                 continue
 
     # If any conditional steps matched, return all of them
     if conditional_steps:
-        logger.info(f"STEP_CONTROL: Returning conditional steps: {[step for step, _ in conditional_steps]}")
+
         return conditional_steps
 
     # If no 'when' conditions matched, collect all steps without conditions (parallel execution)
@@ -317,7 +319,7 @@ def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Li
             if 'when' not in item:
                 nm = item.get('step') or item.get('name')
                 if nm:
-                    logger.info(f"STEP_CONTROL: Adding parallel step: {nm}")
+
                     payload = None
                     if isinstance(item.get('data'), dict):
                         payload = item.get('data')
@@ -332,5 +334,5 @@ def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Li
             # string step reference
             parallel_steps.append((str(item), {}))
 
-    logger.info(f"STEP_CONTROL: Returning parallel steps: {[step for step, _ in parallel_steps]}")
+
     return parallel_steps
