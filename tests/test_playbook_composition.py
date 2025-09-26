@@ -166,23 +166,59 @@ def check_server_health() -> bool:
 
 
 def check_credentials_registered() -> dict:
-    """Check if required credentials are registered."""
+    """Check if required credentials are registered.
+    If missing, attempt to auto-register from test fixtures and re-check.
+    """
+    def _status_from_names(names):
+        return {
+            'pg_local': 'pg_local' in names,
+            'gcs_hmac_local': 'gcs_hmac_local' in names,
+            'all_present': 'pg_local' in names and 'gcs_hmac_local' in names
+        }
+
     try:
-        import requests
-        response = requests.get(f"{NOETL_BASE_URL}/api/credentials", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            # API returns credentials in 'items' array
-            credentials = data.get('items', [])
-            credential_names = [cred.get('name') for cred in credentials]
-            return {
-                'pg_local': 'pg_local' in credential_names,
-                'gcs_hmac_local': 'gcs_hmac_local' in credential_names,
-                'all_present': 'pg_local' in credential_names and 'gcs_hmac_local' in credential_names
-            }
-    except:
-        pass
-    return {'pg_local': False, 'gcs_hmac_local': False, 'all_present': False}
+        import requests, json
+        from pathlib import Path
+
+        def _fetch_names():
+            resp = requests.get(f"{NOETL_BASE_URL}/api/credentials", timeout=5)
+            if resp.status_code != 200:
+                return []
+            data = resp.json() or {}
+            items = data.get('items') or []
+            return [str(cred.get('name')) for cred in items if isinstance(cred, dict)]
+
+        names = _fetch_names()
+        status = _status_from_names(names)
+        if status['all_present']:
+            return status
+
+        # Attempt to register missing ones using fixture payloads
+        fixtures = {
+            'pg_local': Path(__file__).parent / 'fixtures' / 'credentials' / 'pg_local.json',
+            'gcs_hmac_local': Path(__file__).parent / 'fixtures' / 'credentials' / 'gcs_hmac_local.json',
+        }
+        url = f"{NOETL_BASE_URL}/api/credentials"
+
+        for cred_name, fpath in fixtures.items():
+            if status.get(cred_name):
+                continue
+            try:
+                if fpath.exists():
+                    with open(fpath, 'rb') as fh:
+                        # Use the same semantics as Makefile: raw JSON body
+                        headers = {'Content-Type': 'application/json'}
+                        requests.post(url, headers=headers, data=fh.read(), timeout=5)
+            except Exception:
+                # ignore and proceed; we'll re-check and report status
+                pass
+
+        # Re-check after registration attempts
+        names = _fetch_names()
+        return _status_from_names(names)
+
+    except Exception:
+        return {'pg_local': False, 'gcs_hmac_local': False, 'all_present': False}
 
 
 def execute_playbook_runtime(playbook_file_path: str, playbook_name: str) -> dict:
