@@ -299,6 +299,9 @@ def test_workbook_action_resolution():
     assert compute_flag_action["assert"].get("returns") == ["is_hot", "message"]
 
 
+# Module-level cache to share execution results between tests
+_execution_result_cache = {}
+
 # Runtime execution tests (optional, enabled via NOETL_RUNTIME_TESTS=true)
 @pytest.mark.skipif(not RUNTIME_ENABLED, reason="Runtime tests disabled. Set NOETL_RUNTIME_TESTS=true to enable")
 @pytest.mark.parametrize("temp,expected_hot", [(30, True), (10, False)])
@@ -354,7 +357,12 @@ def test_runtime_execution_workbook_resolution():
         pytest.skip(f"NoETL server not available at {NOETL_BASE_URL}")
     
     try:
-        execution_result = execute_playbook_runtime(str(PB_PATH), "tests/fixtures/playbooks/control_flow_workbook")
+        # Use cached result or execute once
+        cache_key = "control_flow_workbook_execution"
+        if cache_key not in _execution_result_cache:
+            _execution_result_cache[cache_key] = execute_playbook_runtime(str(PB_PATH), "tests/fixtures/playbooks/control_flow_workbook")
+        
+        execution_result = _execution_result_cache[cache_key]
         
         # Verify execution completed successfully
         status = execution_result.get("status", "").lower()
@@ -379,7 +387,12 @@ def test_runtime_parallel_execution():
     text = PB_PATH.read_text(encoding="utf-8")
     
     try:
-        execution_result = execute_playbook_runtime(str(PB_PATH), "tests/fixtures/playbooks/control_flow_workbook")
+        # Use cached result from previous test
+        cache_key = "control_flow_workbook_execution"
+        if cache_key not in _execution_result_cache:
+            _execution_result_cache[cache_key] = execute_playbook_runtime(str(PB_PATH), "tests/fixtures/playbooks/control_flow_workbook")
+        
+        execution_result = _execution_result_cache[cache_key]
         
         # Verify execution completed successfully
         status = execution_result.get("status", "").lower()
