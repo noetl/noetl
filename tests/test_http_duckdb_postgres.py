@@ -205,12 +205,20 @@ def _get_event_failures(execution_id: str) -> int:
         return 0
 
 
+# Module-level cache to share execution results between tests
+_execution_result_cache = {}
+
+
 @pytest.mark.skipif(not RUNTIME_ENABLED, reason="Runtime tests disabled. Set NOETL_RUNTIME_TESTS=true to enable")
 def test_http_duckdb_postgres_runtime_execution():
     if not check_server_health():
         pytest.skip(f"NoETL server not available at {NOETL_BASE_URL}")
 
-    result = execute_playbook_runtime(str(PB_PATH))
+    # Use cached result or execute once
+    if "execution_result" not in _execution_result_cache:
+        _execution_result_cache["execution_result"] = execute_playbook_runtime(str(PB_PATH))
+    
+    result = _execution_result_cache["execution_result"]
     assert result.get("execution_id"), "Expected execution_id from runtime execution"
 
 
@@ -219,7 +227,11 @@ def test_event_and_queue_records_exist():
     if not check_server_health():
         pytest.skip(f"NoETL server not available at {NOETL_BASE_URL}")
 
-    result = execute_playbook_runtime(str(PB_PATH))
+    # Use cached result from previous test
+    if "execution_result" not in _execution_result_cache:
+        _execution_result_cache["execution_result"] = execute_playbook_runtime(str(PB_PATH))
+    
+    result = _execution_result_cache["execution_result"]
     exec_id = result.get("execution_id")
     assert exec_id, "Expected execution_id from runtime execution"
 

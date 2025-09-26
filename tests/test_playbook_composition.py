@@ -492,6 +492,10 @@ def _get_event_failures(execution_id: str) -> int:
         return 0
 
 
+# Module-level cache to share execution results between tests
+_execution_result_cache = {}
+
+
 class TestPlaybookCompositionRuntime:
     """Runtime execution tests for playbook composition (requires running server)"""
     
@@ -519,8 +523,12 @@ class TestPlaybookCompositionRuntime:
         if not check_server_health():
             pytest.skip(f"NoETL server not available at {NOETL_BASE_URL}")
         
-        # Execute the main playbook
-        execution_result = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        # Use cached result or execute once
+        cache_key = "playbook_composition_execution"
+        if cache_key not in _execution_result_cache:
+            _execution_result_cache[cache_key] = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        
+        execution_result = _execution_result_cache[cache_key]
         
         # Verify execution completed successfully
         assert execution_result.get("status", "").lower() in ["completed", "success", "finished"]
@@ -574,8 +582,12 @@ class TestPlaybookCompositionRuntime:
         assert iterator_step["task"]["type"] == "playbook"
         assert iterator_step["task"]["path"] == "tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml"
         
-        # Execute and verify it works
-        execution_result = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        # Use cached result from previous test
+        cache_key = "playbook_composition_execution"
+        if cache_key not in _execution_result_cache:
+            _execution_result_cache[cache_key] = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        
+        execution_result = _execution_result_cache[cache_key]
         assert execution_result.get("status", "").lower() in ["completed", "success", "finished"]
         
         print("Iterator with playbook task executed successfully")
@@ -586,8 +598,12 @@ class TestPlaybookCompositionRuntime:
         if not check_server_health():
             pytest.skip(f"NoETL server not available at {NOETL_BASE_URL}")
         
-        # Execute the main playbook to get an execution_id
-        execution_result = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        # Use cached result from previous test
+        cache_key = "playbook_composition_execution"
+        if cache_key not in _execution_result_cache:
+            _execution_result_cache[cache_key] = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        
+        execution_result = _execution_result_cache[cache_key]
         exec_id = execution_result.get("execution_id")
         assert exec_id, "Expected execution_id from runtime execution"
         
@@ -619,8 +635,12 @@ class TestPlaybookCompositionRuntime:
         if not check_server_health():
             pytest.skip(f"NoETL server not available at {NOETL_BASE_URL}")
         
-        # Execute the main playbook to get an execution_id
-        execution_result = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        # Use cached result from previous test
+        cache_key = "playbook_composition_execution"
+        if cache_key not in _execution_result_cache:
+            _execution_result_cache[cache_key] = execute_playbook_runtime(MAIN_PLAYBOOK, "tests/fixtures/playbooks/playbook_composition")
+        
+        execution_result = _execution_result_cache[cache_key]
         exec_id = execution_result.get("execution_id")
         assert exec_id, "Expected execution_id from runtime execution"
         
