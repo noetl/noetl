@@ -54,12 +54,16 @@ workflow:
     code: |
       def main():
           return {"who": "A"}
+    next:
+      - step: end
 
   - step: hot_task_b
     type: python
     code: |
       def main():
           return {"who": "B"}
+    next:
+      - step: end
 
   - step: cold_path
     desc: "Cold branch single continuation"
@@ -71,6 +75,8 @@ workflow:
     code: |
       def main():
           return {"who": "C"}
+    next:
+      - step: end
 
   - step: end
     desc: "Finish"
