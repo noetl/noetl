@@ -769,6 +769,24 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
         _cntrow = await cur.fetchone()
         _already = bool(_cntrow and int(_cntrow[0]) > 0)
         
+        # Stronger idempotency: if this step has already started or completed, skip enqueueing again
+        if not _already:
+            try:
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) FROM noetl.event
+                    WHERE execution_id = %s
+                      AND node_name = %s
+                      AND event_type IN ('action_started','action_completed')
+                    """,
+                    (parent_execution_id, next_step_name)
+                )
+                _evtrow = await cur.fetchone()
+                _already = bool(_evtrow and int(_evtrow[0]) > 0)
+            except Exception:
+                # If the check fails, proceed with enqueue best-effort
+                _already = _already
+        
         if not _already:
             from noetl.api.routers.broker.endpoint import encode_task_for_queue as _encode_task
             

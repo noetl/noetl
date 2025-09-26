@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: http_duckdb_postgres
-  path: tests/fixtures/playbooks/http_duckdb_postgres
+  path: tests/fixtures/playbooks/http_duckdb_postgres   # catalog path; do not change in tests
 
 workload:
   message: HTTP -> DuckDB -> Postgres pipeline
@@ -59,6 +59,16 @@ workflow:
     endpoint: '{{ workload.base_url }}/forecast'
     headers:
       User-Agent: NoETL City HTTP -> PG Demo/1.0
+    assert:
+      expects:
+        - latitude
+        - longitude
+        - hourly
+        - forecast_days
+      returns:
+        - data.url
+        - data.elapsed
+        - data.payload
     save:
       data:
         id: '{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}'
@@ -90,6 +100,14 @@ workflow:
       type: hmac
       key: gcs_hmac_local
       scope: gs://{{ workload.gcs_bucket }}
+  assert:
+    expects:
+      - auth.pg_db
+      - auth.gcs_secret
+      - data.require_cloud_output
+    returns:
+      - weather_flat
+      - weather_agg
   commands: |
     -- Load needed extensions
     INSTALL postgres; LOAD postgres;

@@ -214,12 +214,16 @@ test-http-duckdb-postgres-runtime: test-setup
 	@echo "Running HTTP DuckDB Postgres tests with runtime execution..."
 	@echo "This requires a running NoETL server and proper credentials (pg_local, gcs_hmac_local)."
 	@echo "Use 'make noetl-restart' if needed."
-	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_scheduler_basic.py
+	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_http_duckdb_postgres.py
 
 test-http-duckdb-postgres-full: noetl-stop postgres-reset-schema noetl-start
 	@echo "Running full integration test for HTTP DuckDB Postgres..."
-	@echo "This will stop services, reset database, restart server, and run runtime tests"
+	@echo "This will stop services, reset database, restart server, register credentials, and run runtime tests"
 	@sleep 2  # Give server time to start
+	@echo "Registering required credentials..."
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/gcs_hmac_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	@echo "Running runtime tests..."
 	$(MAKE) test-http-duckdb-postgres-runtime
 
 test-playbook-composition: test-setup
