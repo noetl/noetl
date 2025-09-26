@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import json
 from jinja2 import Environment, StrictUndefined, BaseLoader
 from noetl.core.logger import setup_logger
@@ -48,9 +48,9 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
             logger.debug("STEP_CONTROL: Current step not found in by_name index; skipping")
             return
 
-        # Choose next transition using 'when' evaluation
-        next_choice = _choose_next(cur_step, base_ctx)
-        if not next_choice:
+        # Choose next transitions using 'when' evaluation - handle both single and parallel execution
+        next_choices = _choose_next_steps(cur_step, base_ctx)
+        if not next_choices:
             logger.info(f"STEP_CONTROL: No next transition chosen for step {step_name}")
             # If this is the terminal 'end' step, emit execution_complete using declared result/save mapping
             try:
@@ -118,9 +118,8 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
             except Exception:
                 logger.debug("STEP_CONTROL: Failed to emit execution_complete for end step", exc_info=True)
             return
-        next_step_name, next_with = next_choice
 
-        # Enqueue the chosen next step or finalize if non-actionable
+        # Enqueue all chosen next steps (supports both single step and parallel execution)
         try:
             from ..processing.loop_completion import _enqueue_next_step
             trig = str(event.get('trigger_event_id') or event.get('event_id') or '') or None
@@ -128,9 +127,11 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
             from noetl.core.common import get_async_db_connection
             async with get_async_db_connection() as conn:
                 async with conn.cursor() as cur:
-                    await _enqueue_next_step(conn, cur, str(execution_id), next_step_name, next_with or {}, by_name, trig)
+                    for next_step_name, next_with in next_choices:
+                        logger.info(f"STEP_CONTROL: Enqueuing next step {next_step_name} from step {step_name}")
+                        await _enqueue_next_step(conn, cur, str(execution_id), next_step_name, next_with or {}, by_name, trig)
         except Exception:
-            logger.debug("STEP_CONTROL: Failed to enqueue next step from controller", exc_info=True)
+            logger.debug("STEP_CONTROL: Failed to enqueue next steps from controller", exc_info=True)
     except Exception:
         logger.debug("STEP_CONTROL: Failed handling step event", exc_info=True)
 
@@ -246,43 +247,77 @@ def _truthy(val: Any) -> bool:
 
 
 def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Legacy function that returns a single next step (backward compatibility)."""
+    choices = _choose_next_steps(step_def, base_ctx)
+    return choices[0] if choices else None
+
+
+def _choose_next_steps(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Choose next step transitions, supporting both single step and parallel execution.
+    
+    Returns a list of (step_name, payload) tuples.
+    - If any 'when' conditions are truthy, returns ALL truthy steps
+    - If no 'when' conditions are truthy, returns ALL steps without 'when' conditions (parallel)
+    - If no valid transitions found, returns empty list
+    """
     nxt = step_def.get('next') or []
     if not isinstance(nxt, list):
         nxt = [nxt]
     if not nxt:
-        return None
+        return []
+
+    # Debug context
+    logger.info(f"STEP_CONTROL: Base context keys: {list(base_ctx.keys())}")
+    if 'eval_flag' in base_ctx:
+        logger.info(f"STEP_CONTROL: eval_flag result: {base_ctx['eval_flag']}")
+    if 'result' in base_ctx:
+        logger.info(f"STEP_CONTROL: result: {base_ctx['result']}")
 
     from noetl.core.dsl.render import render_template
     jenv = Environment(loader=BaseLoader(), undefined=StrictUndefined)
 
-    # 1) Prefer the first item with a truthy 'when' condition
+    # Collect all items with truthy 'when' conditions
+    conditional_steps = []
     for item in nxt:
         if isinstance(item, dict) and 'when' in item:
             try:
                 cond = item.get('when')
                 val = render_template(jenv, cond, base_ctx, rules=None, strict_keys=False) if isinstance(cond, (str, dict, list)) else cond
+                step_nm = item.get('step') or item.get('name')
+                logger.info(f"STEP_CONTROL: Evaluating 'when' condition '{cond}' for step '{step_nm}' -> result: {val}")
                 if _truthy(val):
-                    step_nm = item.get('step') or item.get('name')
-                    # Support data overlay and legacy inputs (prefer data)
-                    payload = None
-                    if isinstance(item.get('data'), dict):
-                        payload = item.get('data')
-                    elif isinstance(item.get('input'), dict):
-                        payload = item.get('input')
-                    elif isinstance(item.get('payload'), dict):
-                        payload = item.get('payload')
-                    elif isinstance(item.get('with'), dict):
-                        payload = item.get('with')
-                    return (step_nm, payload or {}) if step_nm else None
-            except Exception:
+                    logger.info(f"STEP_CONTROL: Condition truthy, adding step '{step_nm}' to conditional_steps")
+                    if step_nm:
+                        # Support data overlay and legacy inputs (prefer data)
+                        payload = None
+                        if isinstance(item.get('data'), dict):
+                            payload = item.get('data')
+                        elif isinstance(item.get('input'), dict):
+                            payload = item.get('input')
+                        elif isinstance(item.get('payload'), dict):
+                            payload = item.get('payload')
+                        elif isinstance(item.get('with'), dict):
+                            payload = item.get('with')
+                        conditional_steps.append((step_nm, payload or {}))
+                else:
+                    logger.info(f"STEP_CONTROL: Condition falsy, skipping step '{step_nm}'")
+            except Exception as e:
+                logger.info(f"STEP_CONTROL: Exception evaluating condition for step '{step_nm}': {e}")
                 continue
 
-    # 2) If no 'when' matched, choose the first item without a condition
+    # If any conditional steps matched, return all of them
+    if conditional_steps:
+        logger.info(f"STEP_CONTROL: Returning conditional steps: {[step for step, _ in conditional_steps]}")
+        return conditional_steps
+
+    # If no 'when' conditions matched, collect all steps without conditions (parallel execution)
+    parallel_steps = []
     for item in nxt:
         if isinstance(item, dict):
             if 'when' not in item:
                 nm = item.get('step') or item.get('name')
                 if nm:
+                    logger.info(f"STEP_CONTROL: Adding parallel step: {nm}")
                     payload = None
                     if isinstance(item.get('data'), dict):
                         payload = item.get('data')
@@ -292,9 +327,10 @@ def _choose_next(step_def: Dict[str, Any], base_ctx: Dict[str, Any]) -> Optional
                         payload = item.get('payload')
                     elif isinstance(item.get('with'), dict):
                         payload = item.get('with')
-                    return nm, (payload or {})
+                    parallel_steps.append((nm, payload or {}))
         else:
             # string step reference
-            return str(item), {}
+            parallel_steps.append((str(item), {}))
 
-    return None
+    logger.info(f"STEP_CONTROL: Returning parallel steps: {[step for step, _ in parallel_steps]}")
+    return parallel_steps

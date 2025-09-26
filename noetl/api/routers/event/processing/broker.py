@@ -576,22 +576,51 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
     Idempotent by design: dedup guards skip if step_completed already exists.
     Runs even without a trigger id so action_completed alone can progress the workflow.
     """
+    print(f"!!! ADVANCE_NON_LOOP CALLED FOR {execution_id} !!!")
+    logger.info(f"ADVANCE_NON_LOOP: Starting for execution_id={execution_id}")
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 # Fetch recently completed non-loop steps (no loop_id)
+                # Include both action_completed and step_result events to handle workbook steps
                 await cur.execute(
                     """
-                    SELECT DISTINCT node_name
+                    SELECT DISTINCT node_name, node_id, event_type
                     FROM noetl.event
                     WHERE execution_id = %s
-                      AND event_type = 'action_completed'
+                      AND event_type IN ('action_completed', 'step_result')
                       AND (loop_id IS NULL OR loop_id = '')
                 """,
                     (execution_id,)
                 )
                 rows = await cur.fetchall()
-                completed_steps = [r[0] if not isinstance(r, dict) else r.get('node_name') for r in rows]
+                completed_steps = set()
+                
+                logger.info(f"ADVANCE_NON_LOOP: Found {len(rows)} potential completed events for {execution_id}")
+                
+                for row in rows:
+                    node_name = row[0] if not isinstance(row, dict) else row.get('node_name')
+                    node_id = row[1] if not isinstance(row, dict) else row.get('node_id')
+                    event_type = row[2] if not isinstance(row, dict) else row.get('event_type')
+                    
+                    logger.info(f"ADVANCE_NON_LOOP: Processing {event_type} event for node_name={node_name}, node_id={node_id}")
+                    
+                    if event_type == 'action_completed':
+                        completed_steps.add(node_name)
+                        logger.info(f"ADVANCE_NON_LOOP: Added action_completed step: {node_name}")
+                    elif event_type == 'step_result' and node_id:
+                        # For step_result events, extract the step name from node_id
+                        # node_id format: "execution_id:step_name"
+                        try:
+                            if ':' in str(node_id):
+                                step_name = str(node_id).split(':', 1)[1]
+                                completed_steps.add(step_name)
+                                logger.info(f"ADVANCE_NON_LOOP: Added step_result step: {step_name} (from node_id: {node_id})")
+                        except Exception as e:
+                            logger.info(f"ADVANCE_NON_LOOP: Failed to extract step name from node_id {node_id}: {e}")
+                
+                completed_steps = list(completed_steps)
+                logger.info(f"ADVANCE_NON_LOOP: Final completed_steps list: {completed_steps}")
 
                 if not completed_steps:
                     return
@@ -681,7 +710,8 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                         logger.debug("ADVANCE_NON_LOOP: Failed to emit step_completed", exc_info=True)
 
                     # Let the step controller handle choosing and enqueuing the next transition
-    except Exception:
+    except Exception as e:
+        logger.error(f"ADVANCE_NON_LOOP: Unhandled exception in _advance_non_loop_steps: {e}")
         logger.debug("ADVANCE_NON_LOOP: Unhandled exception", exc_info=True)
 
 
