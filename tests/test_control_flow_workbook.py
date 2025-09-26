@@ -293,9 +293,10 @@ def test_workbook_action_resolution():
     assert "code" in compute_flag_action
     assert "def main(temperature_c):" in compute_flag_action["code"]
     
-    # Verify the action has proper accepts/returns specifications
-    assert compute_flag_action.get("accepts") == {"temperature_c": "number"}
-    assert compute_flag_action.get("returns") == {"is_hot": "boolean", "message": "string"}
+    # Verify the action has proper assert specifications (canonical)
+    assert "assert" in compute_flag_action
+    assert compute_flag_action["assert"].get("expects") == ["temperature_c"]
+    assert compute_flag_action["assert"].get("returns") == ["is_hot", "message"]
 
 
 # Runtime execution tests (optional, enabled via NOETL_RUNTIME_TESTS=true)

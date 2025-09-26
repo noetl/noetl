@@ -12,8 +12,12 @@ workload:
 workbook:
   - name: compute_flag
     type: python
-    accepts: { temperature_c: number }
-    returns: { is_hot: boolean, message: string }
+    assert:
+      expects:
+        - temperature_c
+      returns:
+        - is_hot
+        - message
     code: |
       def main(temperature_c):
           is_hot = float(temperature_c) >= 25.0
@@ -30,7 +34,7 @@ workflow:
     desc: "Call workbook action to compute is_hot"
     type: workbook            # must resolve to workbook entry below
     name: compute_flag        # reference by name (resolver should match workbook[].name)
-    with:
+    data:
       temperature_c: "{{ workload.temperature_c }}"
     next:
       - when: "{{ result.is_hot == true }}"
