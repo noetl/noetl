@@ -33,7 +33,7 @@ Validates the core execution control mechanisms of NoETL:
 
 ### Key Features Tested
 - **Conditional Routing**: `when:` clauses with Jinja template evaluation
-- **Parallel Fanout**: Multiple `next` targets without conditions
+- **Parallel Fanout**: Multiple `next` steps without conditions
 - **Workbook Actions**: `type: workbook` step resolution by action name
 - **Temperature-based Logic**: Dynamic routing based on `workload.temperature_c`
 
@@ -44,9 +44,9 @@ Validates the core execution control mechanisms of NoETL:
   type: workbook
   name: evaluate_temperature
   next:
-    - target: hot_weather_path
+    - step: hot_weather_path
       when: "{{ workload.temperature_c >= 25 }}"
-    - target: cold_weather_path  
+    - step: cold_weather_path  
       when: "{{ workload.temperature_c < 25 }}"
 
 # Parallel execution example  
@@ -54,9 +54,9 @@ Validates the core execution control mechanisms of NoETL:
   type: workbook
   name: process_data
   next:
-    - target: process_logs      # No 'when' = always execute
-    - target: process_metrics   # No 'when' = always execute
-    - target: process_alerts    # No 'when' = always execute
+    - step: process_logs        # No 'when' = always execute
+    - step: process_metrics     # No 'when' = always execute
+    - step: process_alerts      # No 'when' = always execute
 ```
 
 ### Make Targets
@@ -74,7 +74,7 @@ make test-control-flow-workbook-full
 ### Expected Results
 - **Hot Path** (temp ≥ 25°C): Executes hot weather processing steps
 - **Cold Path** (temp < 25°C): Executes cold weather processing steps
-- **Parallel Steps**: All parallel targets execute simultaneously
+- **Parallel Steps**: All parallel steps execute simultaneously
 - **Execution Complete**: Workflow reaches final state with success status
 
 ---
