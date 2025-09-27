@@ -13,6 +13,8 @@ K8S_NOETL_DIR ?= $(K8S_DIR)/noetl
 K8S_POSTGRES_DIR ?= $(K8S_DIR)/postgres
 KIND ?= kind
 KIND_CLUSTER ?= noetl
+NOETL_HOST ?= localhost
+NOETL_PORT ?= 8082
 
 
 #   export PAT=<PERSONAL_ACCESS_TOKEN>
@@ -53,7 +55,7 @@ help:
 	@echo "  make test-control-flow-workbook-full		Full integration test (reset DB, restart server, run runtime tests)"
 	@echo "  make test-http-duckdb-postgres			Run HTTP DuckDB Postgres tests"
 	@echo "  make test-http-duckdb-postgres-runtime		Run HTTP DuckDB Postgres tests with runtime execution"
-	@echo "  make test-http-duckdb-postgres-full		Full integration test (reset DB, restart server, run runtime tests)"
+	@echo "  make test-http-duckdb-postgres-full		Full integration test (reset DB, restart server, register credentials, run runtime tests)"
 	@echo "  make test-playbook-composition			Run playbook composition tests"
 	@echo "  make test-playbook-composition-runtime		Run playbook composition tests with runtime execution"
 	@echo "  make test-playbook-composition-full		Full integration test (reset DB, restart server, register credentials, run runtime tests)"
@@ -74,6 +76,10 @@ help:
 	@echo "  make k8s-postgres-port-forward-bg			Set up background port forwarding from localhost:30543 to Postgres"
 	@echo "  make k8s-postgres-port-forward-stop		 	Stop background port forwarding"
 	@echo "  make k8s-dev-setup              	 		Complete development setup: deploy Postgres + start port forwarding"
+	@echo "  make k8s-platform-deploy        			Deploy complete NoETL platform (Postgres + NoETL server)"
+	@echo "  make k8s-platform-status        			Check NoETL platform deployment status"
+	@echo "  make k8s-platform-test          			Test the platform with a simple playbook"
+	@echo "  make k8s-platform-clean         			Clean up the NoETL platform deployment"
 	@echo "  make postgres-reset-schema    			Recreates noetl schema only in running postgres database instance"
 	@echo ""
 	@echo "Local Runtime (env + logs):"
@@ -806,6 +812,111 @@ k8s-dev-setup: k8s-postgres-deploy k8s-postgres-port-forward-bg
 	@echo "  - Port forwarding is active: localhost:30543 -> Postgres:5432"
 	@echo "  - You can now run 'make start-server' to start the NoETL server"
 	@echo "  - Run 'make k8s-postgres-port-forward-stop' to stop port forwarding"
+
+# === Platform Deployment Targets ===
+.PHONY: k8s-platform-deploy
+k8s-platform-deploy:
+	@echo "Deploying complete NoETL platform..."
+	@./k8s/deploy-platform.sh
+	@echo ""
+	@echo "🎉 NoETL Platform deployed successfully!"
+	@echo "📋 Available endpoints:"
+	@echo "  - Health Check: http://localhost:30082/api/health"
+	@echo "  - API Documentation: http://localhost:30082/docs"
+	@echo "  - Main API: http://localhost:30082/"
+	@echo ""
+	@echo "🚀 Quick start:"
+	@echo "  curl http://localhost:30082/api/health"
+	@echo "  curl http://localhost:30082/api/catalog/playbooks"
+	@echo ""
+	@echo "🛠️  CLI access:"
+	@echo "  kubectl exec -it deployment/noetl -- noetl --help"
+	@echo ""
+	@echo "🗑️  To clean up:"
+	@echo "  make k8s-platform-clean"
+
+.PHONY: k8s-platform-clean  
+k8s-platform-clean:
+	@echo "Cleaning up NoETL platform deployment..."
+	@if ! $(KUBECTL) cluster-info >/dev/null 2>&1; then \
+		echo "No active Kubernetes cluster detected. Skipping cleanup."; \
+	else \
+		echo "Deleting NoETL deployment..."; \
+		$(KUBECTL) delete deployment noetl --ignore-not-found || true; \
+		$(KUBECTL) delete service noetl --ignore-not-found || true; \
+		$(KUBECTL) delete configmap noetl-config --ignore-not-found || true; \
+		$(KUBECTL) delete secret noetl-secret --ignore-not-found || true; \
+		echo "Deleting Postgres deployment..."; \
+		$(KUBECTL) -n postgres delete deployment postgres --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete service postgres --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete configmap postgres-config --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete configmap postgres-config-files --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete secret postgres-secret --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete pvc postgres-pvc --ignore-not-found || true; \
+		$(KUBECTL) delete pv postgres-pv --ignore-not-found || true; \
+		$(KUBECTL) delete namespace postgres --ignore-not-found || true; \
+		echo "Deleting Kind cluster..."; \
+		$(KIND) delete cluster --name $(KIND_CLUSTER) || true; \
+		echo "Platform cleanup completed."; \
+	fi
+
+.PHONY: k8s-platform-status
+k8s-platform-status:
+	@echo "NoETL Platform Status:"
+	@echo "======================"
+	@if ! $(KUBECTL) cluster-info >/dev/null 2>&1; then \
+		echo "❌ No active Kubernetes cluster detected."; \
+		echo "   Run 'make k8s-platform-deploy' to deploy the platform."; \
+	else \
+		echo "📊 Cluster Info:"; \
+		$(KUBECTL) cluster-info | head -2 || true; \
+		echo ""; \
+		echo "🐘 Postgres Status:"; \
+		$(KUBECTL) get pods -n postgres -l app=postgres || echo "   No Postgres pods found"; \
+		echo ""; \
+		echo "🚀 NoETL Status:"; \
+		$(KUBECTL) get pods -l app=noetl || echo "   No NoETL pods found"; \
+		echo ""; \
+		echo "🌐 Services:"; \
+		$(KUBECTL) get svc | grep -E "(noetl|TYPE)" || echo "   No NoETL services found"; \
+		echo ""; \
+		echo "🔗 Quick Access:"; \
+		if $(KUBECTL) get pods -l app=noetl | grep -q "1/1.*Running"; then \
+			echo "  ✅ Health Check: curl http://localhost:30082/api/health"; \
+			echo "  📚 API Docs: http://localhost:30082/docs"; \
+		else \
+			echo "  ⏳ NoETL is not ready yet. Check pod status above."; \
+		fi; \
+	fi
+
+.PHONY: k8s-platform-test
+k8s-platform-test:
+	@echo "Testing NoETL platform with a simple playbook..."
+	@if ! $(KUBECTL) get pods -l app=noetl | grep -q "1/1.*Running"; then \
+		echo "❌ NoETL is not running. Run 'make k8s-platform-deploy' first."; \
+		exit 1; \
+	fi
+	@echo "Creating test playbook..."
+	@mkdir -p /tmp/noetl-test
+	@echo 'name: hello-world-test' > /tmp/noetl-test/hello-world-test.yaml
+	@echo 'version: "1.0.0"' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo 'description: "Test playbook for NoETL platform"' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo 'steps:' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '  - name: test_step' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '    type: python' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '    parameters:' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '      code: |' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '        print("🎉 NoETL Platform is working!")' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '        print("✅ Python step executed successfully")' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '        return {"status": "success", "message": "Platform test completed"}' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo "Copying playbook to container..."
+	@$(KUBECTL) cp /tmp/noetl-test/hello-world-test.yaml $$($(KUBECTL) get pods -l app=noetl -o jsonpath='{.items[0].metadata.name}'):/opt/noetl/data/hello-world-test.yaml
+	@echo "Registering playbook..."
+	@$(KUBECTL) exec deployment/noetl -- noetl register /opt/noetl/data/hello-world-test.yaml --host localhost --port 8082
+	@echo "Executing playbook..."
+	@$(KUBECTL) exec deployment/noetl -- noetl run hello-world-test --host localhost --port 8082
+	@echo "✅ Platform test completed successfully!"
 
 k8s-postgres-delete:
 	@echo "Deleting ONLY Postgres manifests from namespace $(NAMESPACE)..."

@@ -152,6 +152,7 @@ if $DEPLOY_POSTGRES; then
     "${REPO_PATH}/docker/build-images.sh" --no-pip --no-local-dev
     
     echo -e "${GREEN}Deploying Postgres...${NC}"
+    kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-namespace.yaml"
     kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-pv.yaml"
     kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-configmap.yaml"
     kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-config-files.yaml"
@@ -162,10 +163,10 @@ if $DEPLOY_POSTGRES; then
     echo -e "${GREEN}Waiting for Postgres to be ready...${NC}"
     sleep 10
     echo "Checking for Postgres pods..."
-    kubectl get pods -l app=postgres
-    kubectl wait --for=condition=ready pod -l app=postgres --timeout=180s || {
+    kubectl get pods -l app=postgres -n postgres
+    kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=180s || {
         echo -e "${RED}Error: Postgres pods not ready. Checking pod status...${NC}"
-        kubectl get pods
+        kubectl get pods -n postgres
         echo -e "${YELLOW}Continuing with deployment anyway...${NC}"
     }
 else
@@ -191,7 +192,7 @@ if $DEPLOY_NOETL_PIP; then
     kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
     kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-deployment.yaml"
     kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-service.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-worker-deployments.yaml"
+    # kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-worker-deployments.yaml"  # Disabled due to worker command issues
 
     echo -e "${GREEN}Waiting for NoETL to be ready...${NC}"
     sleep 10
@@ -232,7 +233,7 @@ kubectl get services
 
 echo -e "${GREEN}Available NoETL instances:${NC}"
 if $DEPLOY_NOETL_PIP; then
-    echo -e "  - NoETL (pip): ${YELLOW}http://localhost:30082/health${NC}"
+    echo -e "  - NoETL (pip): ${YELLOW}http://localhost:30082/api/health${NC}"
 fi
 if $DEPLOY_NOETL_DEV; then
     echo -e "  - NoETL (local-dev): ${YELLOW}http://localhost:30080/api/health${NC}"
