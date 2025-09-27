@@ -4,11 +4,12 @@ Set up a local Kubernetes cluster using Kind (Kubernetes in Docker) and deploy N
 
 Note on deployment options:
 - Pip deployment (PyPI-based): use these manifests
-  - k8s/noetl/noetl-deployment.yaml (uses image noetl-pip:latest, container port 8084)
-  - k8s/noetl/noetl-service.yaml (NodePort 30084; health at http://localhost:30084/api/health)
+  - k8s/noetl/noetl-deployment.yaml (uses image noetl-pip:latest, container port 8082)
+  - k8s/noetl/noetl-service.yaml (NodePort 30082; health at http://localhost:30082/health)
+  - k8s/noetl/noetl-worker-deployments.yaml (worker pools that connect back to the server API)
 - Local development (from local path): use these manifests
   - k8s/noetl/noetl-dev-deployment.yaml (uses image noetl-local-dev:latest, container port 8080)
-  - k8s/noetl/noetl-dev-service.yaml (NodePort 30082; health at http://localhost:30082/api/health)
+  - k8s/noetl/noetl-dev-service.yaml (NodePort 30080; health at http://localhost:30080/api/health)
 
 For the up-to-date, concise guide, see k8s/docs/README.md.
 
@@ -166,13 +167,13 @@ kubectl get services
 Once the deployments are ready, you can access NoETL via the following services:
 
 - NoETL (pip):
-  - UI: http://localhost:30084
-  - API: http://localhost:30084/api
-  - Health: http://localhost:30084/api/health
-- NoETL (local-dev):
   - UI: http://localhost:30082
   - API: http://localhost:30082/api
-  - Health: http://localhost:30082/api/health
+  - Health: http://localhost:30082/health
+- NoETL (local-dev):
+  - UI: http://localhost:30080
+  - API: http://localhost:30080/api
+  - Health: http://localhost:30080/api/health
 
 ### Kubernetes Dashboard
 
@@ -202,7 +203,7 @@ For installation steps, authentication, and token retrieval, see [Kubernetes Das
 The supported development option is the local-dev deployment, which runs the noetl-local-dev:latest image and targets port 8080.
 
 - Deployment: k8s/noetl/noetl-dev-deployment.yaml
-- Service: k8s/noetl/noetl-dev-service.yaml (NodePort 30082; health at http://localhost:30082/api/health)
+- Service: k8s/noetl/noetl-dev-service.yaml (NodePort 30080; health at http://localhost:30080/api/health)
 
 To deploy via the script:
 
@@ -867,8 +868,8 @@ Ensure that:
 - The service is running
 - The service is of the correct type (NodePort, LoadBalancer, etc.)
 - The service is targeting the correct pods
-- If using Kind locally, the Kind config maps the NodePort to the host. For NoETL pip on port 30084, include in extraPortMappings:
-  - containerPort: 30084 / hostPort: 30084 / protocol: TCP, then recreate the cluster.
+- If using Kind locally, the Kind config maps the NodePort to the host. For NoETL pip on port 30082, include in extraPortMappings:
+  - containerPort: 30082 / hostPort: 30082 / protocol: TCP, then recreate the cluster.
 
 
 # Quick Health Check
@@ -885,7 +886,7 @@ chmod +x k8s/check-status.sh
 # Common options
 ./k8s/check-status.sh --namespace default           # specify namespace
 ./k8s/check-status.sh --no-wait                     # don't wait for readiness
-./k8s/check-status.sh --url http://localhost:30084/api/health  # override URL
+./k8s/check-status.sh --url http://localhost:30082/health  # override URL
 ```
 
 What it does:
@@ -895,7 +896,7 @@ What it does:
 - Curls the NoETL /api/health endpoint via the Service NodePort
 
 Expected success URL (default):
-- NoETL (pip): http://localhost:30084/api/health
+- NoETL (pip): http://localhost:30082/health
 
 If a check fails, the script exits with non-zero status and prints details to help with troubleshooting.
 

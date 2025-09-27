@@ -191,6 +191,7 @@ if $DEPLOY_NOETL_PIP; then
     kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
     kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-deployment.yaml"
     kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-service.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-worker-deployments.yaml"
 
     echo -e "${GREEN}Waiting for NoETL to be ready...${NC}"
     sleep 10
@@ -198,8 +199,15 @@ if $DEPLOY_NOETL_PIP; then
     kubectl get pods -l app=noetl
     kubectl wait --for=condition=ready pod -l app=noetl --timeout=180s || {
         echo -e "${RED}Error: NoETL pods not ready. Checking pod status...${NC}"
-        kubectl get pods
+        kubectl get pods -l app=noetl
         echo -e "${YELLOW}Continuing anyway...${NC}"
+    }
+
+    echo -e "${GREEN}Checking NoETL worker pools...${NC}"
+    kubectl get pods -l component=worker || true
+    kubectl wait --for=condition=ready pod -l component=worker --timeout=180s || {
+        echo -e "${YELLOW}Warning: Worker pods are not ready yet.${NC}"
+        kubectl get pods -l component=worker || true
     }
 else
     echo -e "${YELLOW}Skipping NoETL pip deployment as requested.${NC}"
@@ -224,10 +232,10 @@ kubectl get services
 
 echo -e "${GREEN}Available NoETL instances:${NC}"
 if $DEPLOY_NOETL_PIP; then
-    echo -e "  - NoETL (pip): ${YELLOW}http://localhost:30084/api/health${NC}"
+    echo -e "  - NoETL (pip): ${YELLOW}http://localhost:30082/health${NC}"
 fi
 if $DEPLOY_NOETL_DEV; then
-    echo -e "  - NoETL (local-dev): ${YELLOW}http://localhost:30082/api/health${NC}"
+    echo -e "  - NoETL (local-dev): ${YELLOW}http://localhost:30080/api/health${NC}"
 fi
 
 echo -e "${GREEN}To delete the cluster when you're done:${NC}"

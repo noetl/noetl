@@ -1,0 +1,170 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-worker-cpu-01
+  labels:
+    app: noetl-worker
+    component: worker
+    runtime: cpu
+    worker-pool: worker-cpu-01
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noetl-worker
+      worker-pool: worker-cpu-01
+  template:
+    metadata:
+      labels:
+        app: noetl-worker
+        component: worker
+        runtime: cpu
+        worker-pool: worker-cpu-01
+    spec:
+      containers:
+        - name: worker
+          image: noetl-pip:latest
+          imagePullPolicy: IfNotPresent
+          command: ["noetl"]
+          args: ["worker", "start"]
+          envFrom:
+            - configMapRef:
+                name: noetl-config
+            - secretRef:
+                name: noetl-secret
+          env:
+            - name: NOETL_RUN_MODE
+              value: "worker"
+            - name: NOETL_SERVER_URL
+              value: "http://noetl:8082"
+            - name: NOETL_WORKER_POOL_RUNTIME
+              value: "cpu"
+            - name: NOETL_WORKER_POOL_NAME
+              value: "worker-cpu-01"
+          volumeMounts:
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: noetl-data
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-worker-cpu-02
+  labels:
+    app: noetl-worker
+    component: worker
+    runtime: cpu
+    worker-pool: worker-cpu-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noetl-worker
+      worker-pool: worker-cpu-02
+  template:
+    metadata:
+      labels:
+        app: noetl-worker
+        component: worker
+        runtime: cpu
+        worker-pool: worker-cpu-02
+    spec:
+      containers:
+        - name: worker
+          image: noetl-pip:latest
+          imagePullPolicy: IfNotPresent
+          command: ["noetl"]
+          args: ["worker", "start"]
+          envFrom:
+            - configMapRef:
+                name: noetl-config
+            - secretRef:
+                name: noetl-secret
+          env:
+            - name: NOETL_RUN_MODE
+              value: "worker"
+            - name: NOETL_SERVER_URL
+              value: "http://noetl:8082"
+            - name: NOETL_WORKER_POOL_RUNTIME
+              value: "cpu"
+            - name: NOETL_WORKER_POOL_NAME
+              value: "worker-cpu-02"
+          volumeMounts:
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: noetl-data
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-worker-gpu-01
+  labels:
+    app: noetl-worker
+    component: worker
+    runtime: gpu
+    worker-pool: worker-gpu-01
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noetl-worker
+      worker-pool: worker-gpu-01
+  template:
+    metadata:
+      labels:
+        app: noetl-worker
+        component: worker
+        runtime: gpu
+        worker-pool: worker-gpu-01
+    spec:
+      containers:
+        - name: worker
+          image: noetl-pip:latest
+          imagePullPolicy: IfNotPresent
+          command: ["noetl"]
+          args: ["worker", "start"]
+          envFrom:
+            - configMapRef:
+                name: noetl-config
+            - secretRef:
+                name: noetl-secret
+          env:
+            - name: NOETL_RUN_MODE
+              value: "worker"
+            - name: NOETL_SERVER_URL
+              value: "http://noetl:8082"
+            - name: NOETL_WORKER_POOL_RUNTIME
+              value: "gpu"
+            - name: NOETL_WORKER_POOL_NAME
+              value: "worker-gpu-01"
+          volumeMounts:
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: noetl-data
+          emptyDir: {}

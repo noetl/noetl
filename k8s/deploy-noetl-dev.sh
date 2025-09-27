@@ -158,7 +158,7 @@ if [[ "$DEPLOYMENT_TYPE" == "dev" ]]; then
     fi
   fi
   if [[ -z "$ACCESS_URL" ]]; then
-    ACCESS_URL="http://localhost:30082/api/health"
+    ACCESS_URL="http://localhost:30080/api/health"
   fi
 else
   if kubectl get service noetl >/dev/null 2>&1; then
@@ -171,7 +171,7 @@ else
     fi
   fi
   if [[ -z "$ACCESS_URL" ]]; then
-    ACCESS_URL="http://localhost:30084/api/health"
+    ACCESS_URL="http://localhost:30082/health"
   fi
 fi
 

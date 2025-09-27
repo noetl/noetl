@@ -18,8 +18,10 @@ spec:
         - name: noetl
           image: noetl-pip:latest
           imagePullPolicy: IfNotPresent
+          command: ["noetl"]
+          args: ["server", "start", "--init-db"]
           ports:
-            - containerPort: 8084
+            - containerPort: 8082
           envFrom:
             - configMapRef:
                 name: noetl-config
@@ -38,7 +40,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8084
+              port: 8082
             initialDelaySeconds: 90
             periodSeconds: 10
             timeoutSeconds: 5
@@ -46,7 +48,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 8084
+              port: 8082
             initialDelaySeconds: 60
             periodSeconds: 5
             timeoutSeconds: 3

@@ -14,7 +14,7 @@ set -euo pipefail
 # Defaults:
 #   namespace: default (or current if kubectl is configured with one)
 #   wait: true
-#   url: http://localhost:30084/api/health (derived from NodePort if not provided)
+#   url: http://localhost:30082/health (derived from NodePort if not provided)
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -116,7 +116,7 @@ if $CHECK_NOETL; then
       if [[ -n "$NODE_PORT" ]]; then
         CUSTOM_URL="http://localhost:${NODE_PORT}/api/health"
       else
-        CUSTOM_URL="http://localhost:30084/api/health"
+        CUSTOM_URL="http://localhost:30082/health"
       fi
     fi
     echo -e "Curling NoETL health: ${CUSTOM_URL}"
