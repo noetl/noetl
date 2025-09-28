@@ -17,11 +17,13 @@ The solution involves configuring the development deployment to use a different 
    - Container Port: 8082
    - Service Port: 8082
    - NodePort: 30082
+   - Namespace: `noetl`
 
 2. **Development NoETL Deployment (local-dev image)**:
    - Container Port: 8080
    - Service Port: 8080
    - NodePort: 30080
+   - Namespace: `default`
 
 ## Configuration Files
 
@@ -31,6 +33,7 @@ The standard NoETL deployment uses the following files:
 - `noetl-deployment.yaml`: Defines the deployment with container port 8082
 - `noetl-service.yaml`: Exposes the deployment on port 8082 with NodePort 30082
 - `noetl-worker-deployments.yaml`: Defines the worker pools connecting to the server API
+- `noetl/namespaces.yaml`: Creates the `noetl` server namespace and worker pool namespaces
 
 ### Development NoETL Deployment
 

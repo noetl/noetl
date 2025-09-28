@@ -4,6 +4,7 @@ metadata:
   name: noetl
   labels:
     app: noetl
+  namespace: noetl
 spec:
   type: NodePort
   ports:

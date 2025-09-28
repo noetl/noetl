@@ -16,10 +16,17 @@ echo "Applying NoETL configurations..."
 
 # Apply standard NoETL deployment
 echo "Deploying standard NoETL..."
-kubectl apply -f noetl/noetl-configmap.yaml
-kubectl apply -f noetl/noetl-secret.yaml
-kubectl apply -f noetl/noetl-deployment.yaml
-kubectl apply -f noetl/noetl-service.yaml
+kubectl apply -f noetl/namespaces.yaml
+kubectl apply -n noetl -f noetl/noetl-configmap.yaml
+kubectl apply -n noetl -f noetl/noetl-secret.yaml
+kubectl apply -n noetl -f noetl/noetl-deployment.yaml
+kubectl apply -n noetl -f noetl/noetl-service.yaml
+
+for ns in noetl-worker-cpu-01 noetl-worker-cpu-02 noetl-worker-gpu-01; do
+    kubectl apply -n "$ns" -f noetl/noetl-configmap.yaml
+    kubectl apply -n "$ns" -f noetl/noetl-secret.yaml
+done
+
 kubectl apply -f noetl/noetl-worker-deployments.yaml
 
 # Apply development NoETL deployment
@@ -29,16 +36,19 @@ kubectl apply -f noetl/noetl-dev-service.yaml
 
 # Wait for pods to be ready
 echo "Waiting for pods to be ready..."
-kubectl wait --for=condition=ready pod -l app=noetl --timeout=120s
+kubectl wait -n noetl --for=condition=ready pod -l app=noetl --timeout=120s
 kubectl wait --for=condition=ready pod -l app=noetl-dev --timeout=120s
+for ns in noetl-worker-cpu-01 noetl-worker-cpu-02 noetl-worker-gpu-01; do
+    kubectl wait -n "$ns" --for=condition=ready pod -l component=worker --timeout=120s || true
+done
 
 # Check if both services are running
 echo "Checking services..."
-kubectl get services | grep noetl
+kubectl get services -A | grep noetl
 
 # Check if both pods are running
 echo "Checking pods..."
-kubectl get pods | grep noetl
+kubectl get pods -A | grep noetl
 
 # Check if the ports are accessible
 echo "Testing standard NoETL endpoint (port 30082)..."

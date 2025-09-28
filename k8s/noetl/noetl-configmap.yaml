@@ -14,7 +14,7 @@ data:
   NOETL_DEBUG: "true"
   NOETL_HOST: "0.0.0.0"
   NOETL_PORT: "8082"
-  NOETL_SERVER_URL: "http://noetl:8082"
+  NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
   NOETL_SERVER_NAME: "server-k8s"
   NOETL_SERVER: "uvicorn"
   NOETL_SERVER_WORKERS: "1"

@@ -25,6 +25,11 @@ make k8s-platform-clean
 - **API Documentation**: http://localhost:30082/docs
 - **Main API**: http://localhost:30082/
 
+### Namespaces
+- NoETL server resources are deployed to the `noetl` namespace.
+- Worker pools run in dedicated namespaces: `noetl-worker-cpu-01`, `noetl-worker-cpu-02`, and `noetl-worker-gpu-01`.
+- Postgres continues to run in the `postgres` namespace.
+
 ##  Deployment Options
 
 ### Current Implementation

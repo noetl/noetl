@@ -12,7 +12,8 @@ set -euo pipefail
 #   ./k8s/check-status.sh [--namespace NAMESPACE] [--no-wait] [--no-postgres] [--no-noetl] [--no-curl] [--url URL]
 #
 # Defaults:
-#   namespace: default (or current if kubectl is configured with one)
+#   namespace: noetl (override with --namespace)
+#   postgres namespace: postgres (override with --postgres-namespace)
 #   wait: true
 #   url: http://localhost:30082/health (derived from NodePort if not provided)
 
@@ -21,7 +22,8 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-NAMESPACE="default"
+NAMESPACE="noetl"
+POSTGRES_NAMESPACE="postgres"
 WAIT_FOR_READY=true
 CHECK_POSTGRES=true
 CHECK_NOETL=true
@@ -42,6 +44,8 @@ while [[ $# -gt 0 ]]; do
       DO_CURL=false; shift;;
     --url)
       CUSTOM_URL="$2"; shift 2;;
+    --postgres-namespace)
+      POSTGRES_NAMESPACE="$2"; shift 2;;
     --help|-h)
       echo "Usage: $0 [--namespace NAMESPACE] [--no-wait] [--no-postgres] [--no-noetl] [--no-curl] [--url URL]"; exit 0;;
     *)
@@ -60,16 +64,21 @@ if ! kubectl version --short >/dev/null 2>&1; then
   exit 1
 fi
 
-function ns_flag() {
+function noetl_ns_flag() {
   echo "-n ${NAMESPACE}"
+}
+
+function postgres_ns_flag() {
+  echo "-n ${POSTGRES_NAMESPACE}"
 }
 
 function wait_for() {
   local label="$1"
   local app_name="$2"
+  local ns_flag="${3:-$(noetl_ns_flag)}"
   if $WAIT_FOR_READY; then
     echo -e "${GREEN}Waiting for ${app_name} pods to be ready...${NC}"
-    kubectl wait $(ns_flag) --for=condition=ready pod -l "${label}" --timeout=180s || {
+    kubectl wait ${ns_flag} --for=condition=ready pod -l "${label}" --timeout=180s || {
       echo -e "${YELLOW}Warning: ${app_name} pods not ready within timeout.${NC}"
     }
   fi
@@ -79,14 +88,14 @@ OVERALL_OK=true
 
 if $CHECK_POSTGRES; then
   echo -e "${GREEN}== Postgres status ==${NC}"
-  kubectl get pods $(ns_flag) -l app=postgres || true
-  kubectl get svc $(ns_flag) postgres || true
-  wait_for "app=postgres" "Postgres"
+  kubectl get pods $(postgres_ns_flag) -l app=postgres || true
+  kubectl get svc $(postgres_ns_flag) postgres || true
+  wait_for "app=postgres" "Postgres" "$(postgres_ns_flag)"
 
   # Check pg_isready via exec
-  PG_POD="$(kubectl get pod $(ns_flag) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  PG_POD="$(kubectl get pod $(postgres_ns_flag) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   if [[ -n "$PG_POD" ]]; then
-    if kubectl exec $(ns_flag) "$PG_POD" -- pg_isready -U demo -d demo_noetl -p 5432 >/dev/null 2>&1; then
+    if kubectl exec $(postgres_ns_flag) "$PG_POD" -- pg_isready -U demo -d demo_noetl -p 5432 >/dev/null 2>&1; then
       echo -e "${GREEN}Postgres readiness OK (pg_isready).${NC}"
     else
       echo -e "${RED}Postgres readiness check failed (pg_isready).${NC}"
@@ -101,17 +110,17 @@ fi
 
 if $CHECK_NOETL; then
   echo -e "${GREEN}== NoETL status ==${NC}"
-  kubectl get pods $(ns_flag) -l app=noetl || true
-  kubectl get svc $(ns_flag) noetl || true
+  kubectl get pods $(noetl_ns_flag) -l app=noetl || true
+  kubectl get svc $(noetl_ns_flag) noetl || true
   wait_for "app=noetl" "NoETL"
 
   if $DO_CURL; then
     if [[ -z "$CUSTOM_URL" ]]; then
       # Derive NodePort and construct URL
-      NODE_PORT=$(kubectl get svc $(ns_flag) noetl -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null || true)
+      NODE_PORT=$(kubectl get svc $(noetl_ns_flag) noetl -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null || true)
       if [[ -z "$NODE_PORT" ]]; then
         # fallback: first port
-        NODE_PORT=$(kubectl get svc $(ns_flag) noetl -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)
+        NODE_PORT=$(kubectl get svc $(noetl_ns_flag) noetl -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)
       fi
       if [[ -n "$NODE_PORT" ]]; then
         CUSTOM_URL="http://localhost:${NODE_PORT}/api/health"

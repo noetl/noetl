@@ -16,6 +16,11 @@ DEPLOY_NOETL_PIP=true
 DEPLOY_NOETL_DEV=false
 DEPLOY_NOETL_RELOAD=false
 REPO_PATH_ARG=""
+WORKER_NAMESPACES=(
+    "noetl-worker-cpu-01"
+    "noetl-worker-cpu-02"
+    "noetl-worker-gpu-01"
+)
 
 function show_usage {
     echo "Usage: $0 [options]"
@@ -188,28 +193,39 @@ fi
 
 if $DEPLOY_NOETL_PIP; then
     echo -e "${GREEN}Deploying NoETL from pip...${NC}"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-configmap.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-deployment.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-service.yaml"
-    # kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-worker-deployments.yaml"  # Disabled due to worker command issues
+    kubectl apply -f "${SCRIPT_DIR}/noetl/namespaces.yaml"
+
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-configmap.yaml"
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-deployment.yaml"
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-service.yaml"
+
+    for ns in "${WORKER_NAMESPACES[@]}"; do
+        kubectl apply -n "$ns" -f "${SCRIPT_DIR}/noetl/noetl-configmap.yaml"
+        kubectl apply -n "$ns" -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
+    done
+
+    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-worker-deployments.yaml"
 
     echo -e "${GREEN}Waiting for NoETL to be ready...${NC}"
     sleep 10
     echo "Checking for NoETL pods..."
-    kubectl get pods -l app=noetl
-    kubectl wait --for=condition=ready pod -l app=noetl --timeout=180s || {
+    kubectl get pods -n noetl -l app=noetl
+    kubectl wait -n noetl --for=condition=ready pod -l app=noetl --timeout=180s || {
         echo -e "${RED}Error: NoETL pods not ready. Checking pod status...${NC}"
-        kubectl get pods -l app=noetl
+        kubectl get pods -n noetl -l app=noetl
         echo -e "${YELLOW}Continuing anyway...${NC}"
     }
 
     echo -e "${GREEN}Checking NoETL worker pools...${NC}"
-    kubectl get pods -l component=worker || true
-    kubectl wait --for=condition=ready pod -l component=worker --timeout=180s || {
-        echo -e "${YELLOW}Warning: Worker pods are not ready yet.${NC}"
-        kubectl get pods -l component=worker || true
-    }
+    for ns in "${WORKER_NAMESPACES[@]}"; do
+        echo "Namespace: $ns"
+        kubectl get pods -n "$ns" -l component=worker || true
+        kubectl wait -n "$ns" --for=condition=ready pod -l component=worker --timeout=180s || {
+            echo -e "${YELLOW}Warning: Worker pods are not ready yet in namespace $ns.${NC}"
+            kubectl get pods -n "$ns" -l component=worker || true
+        }
+    done
 else
     echo -e "${YELLOW}Skipping NoETL pip deployment as requested.${NC}"
 fi
@@ -228,8 +244,15 @@ fi
 
 echo -e "${GREEN}Deployment completed.${NC}"
 echo -e "${YELLOW}Cluster Status:${NC}"
-kubectl get pods
-kubectl get services
+if $DEPLOY_NOETL_PIP; then
+    kubectl get pods -n noetl || true
+    for ns in "${WORKER_NAMESPACES[@]}"; do
+        kubectl get pods -n "$ns" || true
+    done
+else
+    kubectl get pods || true
+fi
+kubectl get services -A | grep -E '(noetl|postgres)' || true
 
 echo -e "${GREEN}Available NoETL instances:${NC}"
 if $DEPLOY_NOETL_PIP; then
