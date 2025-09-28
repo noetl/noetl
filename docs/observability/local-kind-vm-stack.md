@@ -196,7 +196,7 @@ sinks:
     - Logs: “VictoriaLogs” datasource pointing to the VictoriaLogs service (in-cluster URL).
   - Re-provision datasources anytime: `make observability-provision-datasources`.
 - Dashboards (auto-provisioned):
-  - After `make observability-deploy`, the NoETL dashboards are provisioned into Grafana via ConfigMaps (sidecar) and also imported via the Grafana HTTP API as a fallback. They should appear under Dashboards → Browse → NoETL.
+  - After `make observability-deploy`, the NoETL dashboards are provisioned into Grafana via ConfigMaps (sidecar) and also imported via the Grafana HTTP API. The importer now auto-maps dashboard datasources: DS_PROMETHEUS → "VictoriaMetrics" and DS_VICTORIA_LOGS → "VictoriaLogs". They should appear under Dashboards → Browse → NoETL and start querying immediately.
   - Included dashboards:
     - Server: docs/observability/dashboards/noetl-server-dashboard.json
     - Workers: docs/observability/dashboards/noetl-workers-dashboard.json

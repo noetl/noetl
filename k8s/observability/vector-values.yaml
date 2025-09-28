@@ -28,6 +28,8 @@ customConfig:
       endpoint: http://vlogs-victoria-logs-single.observability.svc:9428
       # VictoriaLogs expects /insert/loki/api/v1/push; set path accordingly:
       path: /insert/loki/api/v1/push
+      encoding:
+        codec: json
       labels:
         job: "kubernetes"
         app: "{{`{{labels.app}}`}}"

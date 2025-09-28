@@ -169,14 +169,22 @@ import_dashboard() {
     body_json=$(sed 's/"id"[[:space:]]*:[[:space:]]*[0-9]\+/"id": null/g' "$file")
   fi
   local payload
+  # Map dashboard __inputs to our provisioned datasource names so panels query the right sources
+  read -r -d '' INPUTS_JSON <<'JSON'
+[
+  { "name": "DS_PROMETHEUS", "type": "datasource", "pluginId": "prometheus", "value": "VictoriaMetrics" },
+  { "name": "DS_VICTORIA_LOGS", "type": "datasource", "pluginId": "victorialogs-datasource", "value": "VictoriaLogs" }
+]
+JSON
+
   if [ "$FOLDER_CREATED" = true ]; then
     payload=$(cat <<EOF
-{ "dashboard": $body_json, "overwrite": true, "folderUid": "$FOLDER_UID" }
+{ "dashboard": $body_json, "overwrite": true, "folderUid": "$FOLDER_UID", "inputs": $INPUTS_JSON }
 EOF
 )
   else
     payload=$(cat <<EOF
-{ "dashboard": $body_json, "overwrite": true }
+{ "dashboard": $body_json, "overwrite": true, "inputs": $INPUTS_JSON }
 EOF
 )
   fi
