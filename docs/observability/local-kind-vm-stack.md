@@ -165,7 +165,14 @@ sinks:
 
 - Metrics datasource: add “VictoriaMetrics” (or Prometheus) pointing at vmstack’s vmsingle service
 - Logs datasource: install VictoriaLogs Grafana datasource plugin and point it to http://vlogs-victoria-logs-single.observability.svc:9428
-- Dashboards: the victoria-metrics-k8s-stack chart ships common Kubernetes + node dashboards; for logs, import the VictoriaLogs Explorer dashboard from Grafana.com
+- Dashboards:
+  - Import NoETL dashboards shipped with this repo:
+    - Server: docs/observability/dashboards/noetl-server-dashboard.json
+    - Workers: docs/observability/dashboards/noetl-workers-dashboard.json
+    On import, Grafana will prompt to map datasources — choose your VictoriaMetrics/Prometheus for metrics and VictoriaLogs for logs.
+  - You can also import the VictoriaLogs Explorer dashboard from Grafana.com for general log exploration.
+
+Log queries guide: see docs/observability/querying-noetl-logs.md for examples of filtering server vs worker logs, error rates, and top noisy pods.
 
 4) Scrape your NoETL server and worker pools
 
