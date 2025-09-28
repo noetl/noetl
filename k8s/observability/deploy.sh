@@ -52,6 +52,12 @@ fi
 info "Installing/Upgrading VictoriaMetrics k8s stack (vmstack)"
 helm upgrade --install vmstack vm/victoria-metrics-k8s-stack -n "${NAMESPACE}" \
   --set grafana.enabled=true \
+  --set grafana.sidecar.dashboards.enabled=true \
+  --set grafana.sidecar.dashboards.label=grafana_dashboard \
+  --set-string grafana.sidecar.dashboards.labelValue=1 \
+  --set grafana.sidecar.dashboards.searchNamespace=ALL \
+  --set grafana.sidecar.dashboards.folderAnnotation=grafana_folder \
+  --set-string grafana.sidecar.dashboards.defaultFolderName=NoETL \
   --set vmsingle.enabled=true \
   --set vmsingle.spec.retentionPeriod=1w \
   --set vmagent.enabled=true
@@ -70,8 +76,15 @@ else
   helm upgrade --install vector vector/vector -n "${NAMESPACE}" --set role=Agent --set service.enabled=false
 fi
 
+# Provision Grafana dashboards (NoETL server & workers) via ConfigMaps (sidecar)
+"${SCRIPT_DIR}/provision-grafana.sh" "${NAMESPACE}" || true
+
 # Automatically start port-forwarding for UIs in the background
 "${SCRIPT_DIR}/port-forward.sh" start || true
+
+# Fallback/import: also push dashboards via Grafana HTTP API (ensures they appear even if sidecar misses them)
+# This requires the port-forward to be active and Grafana Secret available; runs best-effort.
+"${SCRIPT_DIR}/import-dashboards.sh" "${NAMESPACE}" || true
 
 cat <<EOF
 

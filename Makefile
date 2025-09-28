@@ -964,9 +964,12 @@ gcp-credentials:
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"
 
-.PHONY: observability-deploy observability-port-forward-start observability-port-forward-stop observability-port-forward-status observability-grafana-credentials
+.PHONY: observability-deploy observability-redeploy observability-port-forward-start observability-port-forward-stop observability-port-forward-status observability-grafana-credentials observability-provision-dashboards observability-import-dashboards
 observability-deploy:
 	@bash k8s/observability/deploy.sh
+
+observability-redeploy:
+	@bash k8s/observability/redeploy.sh
 
 observability-port-forward-start:
 	@bash k8s/observability/port-forward.sh start
@@ -979,3 +982,9 @@ observability-port-forward-status:
 
 observability-grafana-credentials:
 	@bash k8s/observability/grafana-credentials.sh observability
+
+observability-provision-dashboards:
+	@bash k8s/observability/provision-grafana.sh observability
+
+observability-import-dashboards:
+	@bash k8s/observability/import-dashboards.sh observability --wait
