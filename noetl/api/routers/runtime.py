@@ -1,15 +1,79 @@
-from typing import Optional
+from typing import Optional, Dict, Any
 import os
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 import json
 from noetl.core.logger import setup_logger
 from noetl.core.common import get_async_db_connection, get_snowflake_id
+from noetl.core.config import get_settings
 from noetl.api.routers.broker import execute_playbook_via_broker
 from noetl.api.routers.catalog import get_playbook_entry_from_catalog
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
+
+
+async def _upsert_worker_pool(payload: Dict[str, Any], *, require_full_payload: bool) -> Optional[Dict[str, Any]]:
+    """Insert or update a worker pool runtime row."""
+    body = payload or {}
+    name = (body.get("name") or "").strip()
+    runtime = (body.get("runtime") or "").strip().lower()
+    base_url = (body.get("base_url") or "").strip()
+    status = (body.get("status") or "ready").strip().lower()
+    capacity = body.get("capacity")
+    labels = body.get("labels")
+    pid = body.get("pid")
+    hostname = body.get("hostname")
+    meta = body.get("meta") or {}
+
+    if not name or not runtime or not base_url:
+        if require_full_payload:
+            raise HTTPException(status_code=400, detail="name, runtime, and base_url are required")
+        return None
+
+    import datetime as _dt
+    try:
+        rid = get_snowflake_id()
+    except Exception:
+        rid = int(_dt.datetime.now().timestamp() * 1000)
+
+    payload_runtime = {
+        "type": runtime,
+        "pid": pid,
+        "hostname": hostname,
+        **({} if not isinstance(meta, dict) else meta),
+    }
+
+    labels_json = json.dumps(labels) if labels is not None else None
+    runtime_json = json.dumps(payload_runtime)
+
+    async with get_async_db_connection() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                VALUES (%s, %s, 'worker_pool', %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
+                ON CONFLICT (component_type, name)
+                DO UPDATE SET
+                    base_url = EXCLUDED.base_url,
+                    status = EXCLUDED.status,
+                    labels = EXCLUDED.labels,
+                    capacity = EXCLUDED.capacity,
+                    runtime = EXCLUDED.runtime,
+                    last_heartbeat = now(),
+                    updated_at = now()
+                RETURNING runtime_id
+                """,
+                (rid, name, base_url, status, labels_json, capacity, runtime_json)
+            )
+            row = await cursor.fetchone()
+            try:
+                await conn.commit()
+            except Exception:
+                pass
+
+    runtime_id = row[0] if row else rid
+    return {"runtime_id": runtime_id, "name": name, "runtime": runtime, "status": status}
 
 
 @router.post("/worker/pool/register", response_class=JSONResponse)
@@ -21,59 +85,8 @@ async def register_worker_pool(request: Request):
     """
     try:
         body = await request.json()
-        name = (body.get("name") or "").strip()
-        runtime = (body.get("runtime") or "").strip().lower()
-        base_url = (body.get("base_url") or "").strip()
-        status = (body.get("status") or "ready").strip().lower()
-        capacity = body.get("capacity")
-        labels = body.get("labels")
-        pid = body.get("pid")
-        hostname = body.get("hostname")
-        meta = body.get("meta") or {}
-        if not name or not runtime or not base_url:
-            raise HTTPException(status_code=400, detail="name, runtime, and base_url are required")
-
-        import datetime as _dt
-        try:
-            rid = get_snowflake_id()
-        except Exception:
-            rid = int(_dt.datetime.now().timestamp() * 1000)
-
-        payload_runtime = {
-            "type": runtime,
-            "pid": pid,
-            "hostname": hostname,
-            **({} if not isinstance(meta, dict) else meta),
-        }
-
-        labels_json = json.dumps(labels) if labels is not None else None
-        runtime_json = json.dumps(payload_runtime)
-
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    f"""
-                    INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
-                    VALUES (%s, %s, 'worker_pool', %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
-                    ON CONFLICT (component_type, name)
-                    DO UPDATE SET
-                        base_url = EXCLUDED.base_url,
-                        status = EXCLUDED.status,
-                        labels = EXCLUDED.labels,
-                        capacity = EXCLUDED.capacity,
-                        runtime = EXCLUDED.runtime,
-                        last_heartbeat = now(),
-                        updated_at = now()
-                    RETURNING runtime_id
-                    """,
-                    (rid, name, base_url, status, labels_json, capacity, runtime_json)
-                )
-                row = await cursor.fetchone()
-                try:
-                    await conn.commit()
-                except Exception:
-                    pass
-        return {"status": "ok", "name": name, "runtime": runtime, "runtime_id": row[0] if row else rid}
+        result = await _upsert_worker_pool(body, require_full_payload=True)
+        return {"status": "ok", "name": result["name"], "runtime": result["runtime"], "runtime_id": result["runtime_id"]}
     except HTTPException:
         raise
     except Exception as e:
@@ -253,6 +266,7 @@ async def heartbeat_worker_pool(request: Request):
         return JSONResponse(content={"status": "ok", "name": None})
 
     updated = False
+    runtime_id: Optional[int] = None
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
@@ -269,6 +283,7 @@ async def heartbeat_worker_pool(request: Request):
                     row = await cur.fetchone()
                     if row:
                         updated = True
+                        runtime_id = row[0]
                 except Exception as e:
                     logger.warning(f"Heartbeat update failed for worker pool {name}: {e}")
                 try:
@@ -279,8 +294,31 @@ async def heartbeat_worker_pool(request: Request):
         logger.debug(f"Heartbeat DB connection issue for {name}: {e}")
 
     if not updated:
-        return JSONResponse(content={"status": "unknown", "name": name})
-    return JSONResponse(content={"status": "ok", "name": name})
+        settings = get_settings()
+        auto_recreate_runtime = getattr(settings, 'auto_recreate_runtime', False)
+        heartbeat_retry_after = getattr(settings, 'heartbeat_retry_after', 3)
+        if auto_recreate_runtime:
+            registration_payload = body.get("registration") if isinstance(body, dict) else None
+            if registration_payload is None:
+                registration_payload = body
+            try:
+                recreated = await _upsert_worker_pool(registration_payload or {}, require_full_payload=False)
+            except HTTPException as exc:
+                if exc.status_code == 400:
+                    recreated = None
+                else:
+                    raise
+            if recreated:
+                logger.info(f"Worker pool {recreated['name']} auto-recreated from heartbeat")
+                return JSONResponse(content={"status": "recreated", "name": recreated["name"], "runtime": recreated["runtime"], "runtime_id": recreated["runtime_id"]})
+            else:
+                logger.debug(f"Unable to auto-recreate worker pool {name}; insufficient registration data in heartbeat payload")
+        else:
+            heartbeat_retry_after = getattr(settings, 'heartbeat_retry_after', 3)
+        headers = {"Retry-After": str(heartbeat_retry_after)}
+        raise HTTPException(status_code=404, detail={"status": "unknown", "name": name}, headers=headers)
+
+    return JSONResponse(content={"status": "ok", "name": name, "runtime_id": runtime_id})
 
 
 @router.get("/worker/pools", response_class=JSONResponse)

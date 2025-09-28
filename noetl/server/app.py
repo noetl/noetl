@@ -9,13 +9,14 @@ import tempfile
 import contextlib
 import psycopg
 import base64
+import socket
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.core.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection
+from noetl.core.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.api.routers.broker import Broker, execute_playbook_via_broker
 from noetl.api.routers import router as api_router
@@ -24,8 +25,9 @@ logger = setup_logger(__name__, include_location=True)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from noetl.core.config import get_settings
+import time
 
 router = APIRouter()
 router.include_router(api_router)
@@ -51,6 +53,11 @@ def create_app() -> FastAPI:
 
 def _create_app(enable_ui: bool = True) -> FastAPI:
     from contextlib import asynccontextmanager
+
+    # Simple in-process metrics without external deps
+    _process_start_time = time.time()
+    _request_count_key = "noetl_request_total"
+    _metrics_counters: Dict[str, int] = { _request_count_key: 0 }
 
     def register_server_directly() -> None:
         from noetl.core.common import get_db_connection, get_snowflake_id
@@ -151,9 +158,17 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         sweep_interval = float(os.environ.get("NOETL_RUNTIME_SWEEP_INTERVAL", "15"))
         offline_after = int(os.environ.get("NOETL_RUNTIME_OFFLINE_SECONDS", "60"))
         try:
-            server_name = get_settings().server_name
+            server_settings = get_settings()
+            server_name = server_settings.server_name
+            auto_recreate_runtime = getattr(server_settings, 'auto_recreate_runtime', False)
+            server_url = server_settings.server_url.rstrip('/')
         except Exception:
             server_name = os.environ.get("NOETL_SERVER_NAME", "server-local")
+            auto_recreate_runtime = False
+            server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+        if not server_url.endswith('/api'):
+            server_url = server_url + '/api'
+        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
 
         async def _runtime_sweeper():
             while not stop_event.is_set():
@@ -183,6 +198,34 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                     """,
                                     (server_name,)
                                 )
+                                if cur.rowcount == 0 and auto_recreate_runtime:
+                                    logger.info("Server runtime row missing; auto recreating")
+                                    import datetime as _dt
+                                    try:
+                                        rid = get_snowflake_id()
+                                    except Exception:
+                                        rid = int(_dt.datetime.now().timestamp() * 1000)
+
+                                    runtime_payload = json.dumps({
+                                        "type": "server",
+                                        "pid": os.getpid(),
+                                        "hostname": hostname,
+                                    })
+
+                                    await cur.execute(
+                                        """
+                                        INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                                        VALUES (%s, %s, 'server_api', %s, 'ready', NULL, NULL, %s::jsonb, now(), now(), now())
+                                        ON CONFLICT (component_type, name)
+                                        DO UPDATE SET
+                                            base_url = EXCLUDED.base_url,
+                                            status = EXCLUDED.status,
+                                            runtime = EXCLUDED.runtime,
+                                            last_heartbeat = now(),
+                                            updated_at = now()
+                                        """,
+                                        (rid, server_name, server_url, runtime_payload)
+                                    )
                             except Exception as e:
                                 logger.debug(f"Server heartbeat refresh failed: {e}")
                             try:
@@ -231,6 +274,17 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Simple request counter middleware (exclude /metrics to avoid recursion)
+    @app.middleware("http")
+    async def _count_requests(request, call_next):
+        if not request.url.path.startswith("/metrics"):
+            try:
+                _metrics_counters[_request_count_key] = _metrics_counters.get(_request_count_key, 0) + 1
+            except Exception:
+                pass
+        response = await call_next(request)
+        return response
+
     ui_build_path = settings.ui_build_path
 
     app.include_router(router, prefix="/api")
@@ -238,6 +292,41 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     @app.get("/health", include_in_schema=False)
     async def health():
         return {"status": "ok"}
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics():
+        # Build a minimal Prometheus exposition
+        # HELP/TYPE lines are optional but helpful
+        lines = []
+        lines.append("# HELP noetl_up NoETL server up status")
+        lines.append("# TYPE noetl_up gauge")
+        lines.append("noetl_up 1")
+
+        # Build info
+        try:
+            name = settings.server_name
+        except Exception:
+            name = "unknown"
+        ver = settings.app_version
+        lines.append("# HELP noetl_info Build and server info")
+        lines.append("# TYPE noetl_info gauge")
+        # Escape backslashes and quotes in labels if any
+        def _esc(s: str) -> str:
+            return str(s).replace("\\", "\\\\").replace("\"", "\\\"")
+        lines.append(f"noetl_info{{version=\"{_esc(ver)}\",name=\"{_esc(name)}\"}} 1")
+
+        # Process start time
+        lines.append("# HELP noetl_process_start_time_seconds Start time of the NoETL process since unix epoch in seconds")
+        lines.append("# TYPE noetl_process_start_time_seconds gauge")
+        lines.append(f"noetl_process_start_time_seconds {_process_start_time}")
+
+        # Request counter
+        lines.append("# HELP noetl_request_total Total HTTP requests served")
+        lines.append("# TYPE noetl_request_total counter")
+        lines.append(f"noetl_request_total {_metrics_counters.get(_request_count_key, 0)}")
+
+        body = "\n".join(lines) + "\n"
+        return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     if enable_ui and ui_build_path.exists():
         @app.get("/favicon.ico", include_in_schema=False)

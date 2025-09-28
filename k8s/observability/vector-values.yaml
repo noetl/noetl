@@ -1,0 +1,36 @@
+role: "Agent"
+
+# Disable Service for Agent role; DaemonSet doesn't expose ports by default
+service:
+  enabled: false
+
+customConfig:
+  data_dir: /vector-data-dir
+  sources:
+    k8s_logs:
+      type: kubernetes_logs
+
+  transforms:
+    enrich:
+      type: remap
+      inputs: [k8s_logs]
+      source: |
+        .log = .message
+        .labels.app = .kubernetes.pod_labels.app
+        .labels.namespace = .kubernetes.namespace_name
+        .labels.pod = .kubernetes.pod_name
+        .labels.container = .kubernetes.container_name
+
+  sinks:
+    vlogs:
+      type: loki
+      inputs: [enrich]
+      endpoint: http://vlogs-victoria-logs-single.observability.svc:9428
+      # VictoriaLogs expects /insert/loki/api/v1/push; set path accordingly:
+      path: /insert/loki/api/v1/push
+      labels:
+        job: "kubernetes"
+        app: "{{`{{labels.app}}`}}"
+        namespace: "{{`{{labels.namespace}}`}}"
+        pod: "{{`{{labels.pod}}`}}"
+        container: "{{`{{labels.container}}`}}"
