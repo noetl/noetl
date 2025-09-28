@@ -58,6 +58,9 @@ helm upgrade --install vmstack vm/victoria-metrics-k8s-stack -n "${NAMESPACE}" \
   --set grafana.sidecar.dashboards.searchNamespace=ALL \
   --set grafana.sidecar.dashboards.folderAnnotation=grafana_folder \
   --set-string grafana.sidecar.dashboards.defaultFolderName=NoETL \
+  --set grafana.sidecar.datasources.enabled=true \
+  --set grafana.sidecar.datasources.label=grafana_datasource \
+  --set grafana.sidecar.datasources.searchNamespace=ALL \
   --set vmsingle.enabled=true \
   --set vmsingle.spec.retentionPeriod=1w \
   --set vmagent.enabled=true
@@ -78,6 +81,9 @@ fi
 
 # Provision Grafana dashboards (NoETL server & workers) via ConfigMaps (sidecar)
 "${SCRIPT_DIR}/provision-grafana.sh" "${NAMESPACE}" || true
+
+# Provision Grafana datasources (VictoriaMetrics + VictoriaLogs) via ConfigMap (sidecar)
+"${SCRIPT_DIR}/provision-datasources.sh" "${NAMESPACE}" || true
 
 # Automatically start port-forwarding for UIs in the background
 "${SCRIPT_DIR}/port-forward.sh" start || true

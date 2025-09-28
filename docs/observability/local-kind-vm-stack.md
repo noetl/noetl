@@ -17,6 +17,7 @@ This will:
 - Add/Update Helm repos and create the 'observability' namespace if needed
 - Install VictoriaMetrics k8s stack (Grafana + vmagent + vmsingle), VictoriaLogs, and Vector Agent
 - Use k8s/observability/vector-values.yaml if present to configure Vector → VictoriaLogs
+- Auto-provision Grafana datasources (VictoriaMetrics + VictoriaLogs) via ConfigMap (sidecar)
 - Automatically start port-forwarding for Grafana (3000), VictoriaLogs (9428), and VictoriaMetrics UI (8428) in the background
 - Print how to manage the port-forwards (start/stop/status)
 
@@ -189,17 +190,21 @@ sinks:
 
 3) Grafana UI: dashboards & datasources
 
-- Datasources:
-  - Metrics: add “VictoriaMetrics” (or Prometheus) pointing at vmstack’s vmsingle service
-  - Logs: install VictoriaLogs Grafana datasource plugin and point it to http://vlogs-victoria-logs-single.observability.svc:9428
+- Datasources (auto-provisioned):
+  - The deploy script provisions two datasources via Grafana’s sidecar:
+    - Metrics: Prometheus datasource named “VictoriaMetrics” pointing to vmstack vmsingle (in-cluster URL).
+    - Logs: “VictoriaLogs” datasource pointing to the VictoriaLogs service (in-cluster URL).
+  - Re-provision datasources anytime: `make observability-provision-datasources`.
 - Dashboards (auto-provisioned):
   - After `make observability-deploy`, the NoETL dashboards are provisioned into Grafana via ConfigMaps (sidecar) and also imported via the Grafana HTTP API as a fallback. They should appear under Dashboards → Browse → NoETL.
   - Included dashboards:
     - Server: docs/observability/dashboards/noetl-server-dashboard.json
     - Workers: docs/observability/dashboards/noetl-workers-dashboard.json
-  - If datasources aren’t preconfigured, panels may show a “datasource missing” warning. Edit the dashboard and map panels to your VictoriaMetrics (metrics) and VictoriaLogs (logs) datasources.
-  - Re-provision (sidecar) anytime: `make observability-provision-dashboards`.
-  - Re-import (API) anytime: `make observability-import-dashboards` (waits for Grafana to be ready by default; override wait with flags in k8s/observability/import-dashboards.sh such as `--timeout=120`).
+  - If panels still show “no data”:
+    - Metrics: ensure your NoETL server is being scraped (it must expose /metrics and be discovered by vmagent; use PodMonitor/ServiceMonitor or annotations). If running outside the cluster, the VM stack won’t auto-scrape it.
+    - Logs: ensure your NoETL pods carry app labels expected by the dashboards: `app=noetl` (server) and `app=noetl-worker` (workers). The Vector config maps Kubernetes pod_labels.app into the `app` label in logs.
+  - Re-provision dashboards anytime: `make observability-provision-dashboards`.
+  - Re-import via API anytime: `make observability-import-dashboards` (waits for Grafana to be ready by default; override wait with flags in k8s/observability/import-dashboards.sh such as `--timeout=120`).
   - You can also import the VictoriaLogs Explorer dashboard from Grafana.com for general log exploration.
 
 Log queries guide: see docs/observability/querying-noetl-logs.md for examples of filtering server vs worker logs, error rates, and top noisy pods.
