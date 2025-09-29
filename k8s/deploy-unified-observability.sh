@@ -67,6 +67,8 @@ vmsingle:
       resources:
         requests:
           storage: 5Gi
+    image:
+      pullPolicy: IfNotPresent
 
 vmagent:
   enabled: true
@@ -75,6 +77,8 @@ vmagent:
     scrapeInterval: "30s"
     externalLabels:
       cluster: "noetl-platform"
+    image:
+      pullPolicy: IfNotPresent
 
 vmalert:
   enabled: true
