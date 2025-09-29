@@ -50,20 +50,48 @@ fi
 
 # VictoriaMetrics stack (Grafana + vmagent + vmsingle)
 info "Installing/Upgrading VictoriaMetrics k8s stack (vmstack)"
-helm upgrade --install vmstack vm/victoria-metrics-k8s-stack -n "${NAMESPACE}" \
-  --set grafana.enabled=true \
-  --set grafana.sidecar.dashboards.enabled=true \
-  --set grafana.sidecar.dashboards.label=grafana_dashboard \
-  --set-string grafana.sidecar.dashboards.labelValue=1 \
-  --set grafana.sidecar.dashboards.searchNamespace=ALL \
-  --set grafana.sidecar.dashboards.folderAnnotation=grafana_folder \
-  --set-string grafana.sidecar.dashboards.defaultFolderName=NoETL \
-  --set grafana.sidecar.datasources.enabled=true \
-  --set grafana.sidecar.datasources.label=grafana_datasource \
-  --set grafana.sidecar.datasources.searchNamespace=ALL \
-  --set vmsingle.enabled=true \
-  --set vmsingle.spec.retentionPeriod=1w \
-  --set vmagent.enabled=true
+VMSTACK_VALUES="${SCRIPT_DIR}/vmstack-values.yaml"
+if [ -f "${VMSTACK_VALUES}" ]; then
+  info "Using custom vmstack values (${VMSTACK_VALUES})"
+  helm upgrade --install vmstack vm/victoria-metrics-k8s-stack -n "${NAMESPACE}" \
+    -f "${VMSTACK_VALUES}" \
+    --set grafana.enabled=true \
+    --set grafana.sidecar.dashboards.enabled=true \
+    --set grafana.sidecar.dashboards.label=grafana_dashboard \
+    --set-string grafana.sidecar.dashboards.labelValue=1 \
+    --set grafana.sidecar.dashboards.searchNamespace=ALL \
+    --set grafana.sidecar.dashboards.folderAnnotation=grafana_folder \
+    --set-string grafana.sidecar.dashboards.defaultFolderName=NoETL \
+    --set grafana.sidecar.datasources.enabled=true \
+    --set grafana.sidecar.datasources.label=grafana_datasource \
+    --set grafana.sidecar.datasources.searchNamespace=ALL \
+    --set vmsingle.enabled=true \
+    --set vmsingle.spec.retentionPeriod=1w \
+    --set vmagent.enabled=true
+else
+  helm upgrade --install vmstack vm/victoria-metrics-k8s-stack -n "${NAMESPACE}" \
+    --set grafana.enabled=true \
+    --set grafana.sidecar.dashboards.enabled=true \
+    --set grafana.sidecar.dashboards.label=grafana_dashboard \
+    --set-string grafana.sidecar.dashboards.labelValue=1 \
+    --set grafana.sidecar.dashboards.searchNamespace=ALL \
+    --set grafana.sidecar.dashboards.folderAnnotation=grafana_folder \
+    --set-string grafana.sidecar.dashboards.defaultFolderName=NoETL \
+    --set grafana.sidecar.datasources.enabled=true \
+    --set grafana.sidecar.datasources.label=grafana_datasource \
+    --set grafana.sidecar.datasources.searchNamespace=ALL \
+    --set vmsingle.enabled=true \
+    --set vmsingle.spec.retentionPeriod=1w \
+    --set vmagent.enabled=true
+fi
+
+# Wait for operator webhook to become ready before applying CRDs referencing it
+info "Waiting for VictoriaMetrics operator deployment to become ready"
+if ! kubectl rollout status deployment/vmstack-victoria-metrics-operator -n "${NAMESPACE}" --timeout=180s >/dev/null 2>&1; then
+  warn "VictoriaMetrics operator deployment not ready after timeout; continuing but webhook operations may fail"
+else
+  sleep 3
+fi
 
 # VictoriaLogs single node
 info "Installing/Upgrading VictoriaLogs (vlogs)"
@@ -77,6 +105,29 @@ if [ -f "${VECTOR_VALUES}" ]; then
 else
   warn "${VECTOR_VALUES} not found; installing Vector with default Agent role"
   helm upgrade --install vector vector/vector -n "${NAMESPACE}" --set role=Agent --set service.enabled=false
+fi
+
+# Apply VMPodScrape so vmagent scrapes the NoETL server metrics
+VMPODSCRAPE_MANIFEST="${SCRIPT_DIR}/vmpodscrape-noetl.yaml"
+if [ -f "${VMPODSCRAPE_MANIFEST}" ]; then
+  info "Ensuring VictoriaMetrics CRD for VMPodScrape is available"
+  if ! kubectl get crd vmpodscrapes.operator.victoriametrics.com >/dev/null 2>&1; then
+    info "Waiting for vmpodscrapes.operator.victoriametrics.com CRD to be created..."
+    for attempt in $(seq 1 30); do
+      if kubectl get crd vmpodscrapes.operator.victoriametrics.com >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+    done
+  fi
+  if kubectl get crd vmpodscrapes.operator.victoriametrics.com >/dev/null 2>&1; then
+    info "Applying VMPodScrape manifest ${VMPODSCRAPE_MANIFEST}"
+    kubectl apply -f "${VMPODSCRAPE_MANIFEST}"
+  else
+    warn "vmpodscrapes.operator.victoriametrics.com CRD not available; skipping VMPodScrape application"
+  fi
+else
+  warn "${VMPODSCRAPE_MANIFEST} not found; skipping VMPodScrape application"
 fi
 
 # Provision Grafana dashboards (NoETL server & workers) via ConfigMaps (sidecar)

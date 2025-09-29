@@ -1,0 +1,17 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: noetl-server
+  namespace: observability
+spec:
+  namespaceSelector:
+    matchNames:
+      - noetl
+  selector:
+    matchLabels:
+      app: noetl
+  podMetricsEndpoints:
+    - path: /metrics
+      interval: 15s
+      scheme: http
+      targetPort: 8082

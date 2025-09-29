@@ -17,6 +17,7 @@ This will:
 - Add/Update Helm repos and create the 'observability' namespace if needed
 - Install VictoriaMetrics k8s stack (Grafana + vmagent + vmsingle), VictoriaLogs, and Vector Agent
 - Use k8s/observability/vector-values.yaml if present to configure Vector → VictoriaLogs
+- Use k8s/observability/vmstack-values.yaml to customize vmagent (disabled control-plane scrapes, retained helpers)
 - Auto-provision Grafana datasources (VictoriaMetrics + VictoriaLogs) via ConfigMap (sidecar)
 - Automatically start port-forwarding for Grafana (3000), VictoriaLogs (9428), and VictoriaMetrics UI (8428) in the background
 - Print how to manage the port-forwards (start/stop/status)
@@ -92,6 +93,8 @@ helm install vmstack vm/victoria-metrics-k8s-stack -n observability \
   --set vmagent.enabled=true
 # (The chart bundles Grafana and auto-scrapes core k8s. It’s a Prometheus-compatible stack.)
 
+The Makefile-driven deployment automatically includes `k8s/observability/vmstack-values.yaml`, which disables the noisy control-plane scrape jobs and tunes vmagent defaults. Adjust that file if you need to re-enable those targets or add more scrape configs.
+
 # Logs: VictoriaLogs (single node)
 helm install vlogs vm/victoria-logs-single -n observability
 # (Single binary, listens on :9428 for ingest, query, and its built-in UI.)
@@ -119,60 +122,32 @@ Grafana: add the VictoriaMetrics and VictoriaLogs datasource plugins if they’r
 
 2) Vector → VictoriaLogs (shipping K8s container logs)
 
-Use Vector’s kubernetes_logs source and send to VictoriaLogs.
+Use Vector’s kubernetes_logs source and send to VictoriaLogs. The repository’s
+Makefile ships with the JSON streaming configuration (Option B) baked into
+`k8s/observability/vector-values.yaml`, so `make observability-deploy`
+automatically deploys Vector with that sink. If you prefer the Loki push API you
+can swap the sink block to Option A before re-running the Helm upgrade.
 
-Option A — Loki wire-format (usually the easiest)
-
-Create k8s/observability/vector-values.yaml with:
+Option A — Loki wire-format (optional)
 
 ```yaml
-role: "Agent"
-
-# Disable Service for Agent role; DaemonSet doesn't expose ports by default
-service:
-  enabled: false
-
-customConfig:
-  data_dir: /vector-data-dir
-  sources:
-    k8s_logs:
-      type: kubernetes_logs
-
-  transforms:
-    enrich:
-      type: remap
-      inputs: [k8s_logs]
-      source: |
-        .log = .message
-        .labels.app = .kubernetes.pod_labels.app
-        .labels.namespace = .kubernetes.namespace_name
-        .labels.pod = .kubernetes.pod_name
-        .labels.container = .kubernetes.container_name
-
-  sinks:
-    vlogs:
-      type: loki
-      inputs: [enrich]
-      endpoint: http://vlogs-victoria-logs-single.observability.svc:9428
-      # VictoriaLogs expects /insert/loki/api/v1/push; set path accordingly:
-      path: /insert/loki/api/v1/push
-      labels:
-        job: "kubernetes"
-        app: "{{`{{labels.app}}`}}"
-        namespace: "{{`{{labels.namespace}}`}}"
-        pod: "{{`{{labels.pod}}`}}"
-        container: "{{`{{labels.container}}`}}"
+sinks:
+  vlogs:
+    type: loki
+    inputs: [enrich]
+    endpoint: http://vlogs-victoria-logs-single.observability.svc.cluster.local:9428
+    path: /insert/loki/api/v1/push
+    encoding:
+      codec: json
+    labels:
+      job: "kubernetes"
+      app: "{{`{{labels.app}}`}}"
+      namespace: "{{`{{labels.namespace}}`}}"
+      pod: "{{`{{labels.pod}}`}}"
+      container: "{{`{{labels.container}}`}}"
 ```
 
-Note: The Loki label templates (e.g., {{labels.namespace}}) are escaped using {{`{{...}}`}} so Helm doesn’t evaluate them. Keep this syntax when using the Helm chart.
-
-Apply the values:
-
-```bash
-helm upgrade --install vector vector/vector -n observability -f k8s/observability/vector-values.yaml
-```
-
-Option B — JSON stream API (ndjson)
+Option B — JSON stream API (default)
 
 ```yaml
 sinks:
@@ -180,12 +155,18 @@ sinks:
     type: http
     inputs: [enrich]
     method: post
-    uri: "http://vlogs-victoria-logs-single.observability.svc:9428/insert/jsonline?_stream_fields=labels.namespace,labels.pod,labels.container&_msg_field=log&_time_field=timestamp"
+    uri: "http://vlogs-victoria-logs-single-server-0.vlogs-victoria-logs-single-server.observability.svc.cluster.local:9428/insert/jsonline?_stream_fields=labels.namespace,labels.pod,labels.container&_msg_field=log&_time_field=timestamp"
     encoding:
       codec: json
     framing:
       method: newline_delimited
     compression: gzip
+```
+
+Apply (or reapply) the Vector configuration anytime with:
+
+```bash
+helm upgrade --install vector vector/vector -n observability -f k8s/observability/vector-values.yaml
 ```
 
 3) Grafana UI: dashboards & datasources
@@ -218,6 +199,9 @@ For worker pools, add similar endpoints or rely on app-level metrics. Then eithe
 - Add a ServiceMonitor/PodMonitor.
 
 Example PodMonitor (minimal) is provided at k8s/observability/podmonitor-noetl-workers.yaml.
+The Makefile deploy script also applies k8s/observability/vmpodscrape-noetl.yaml so
+vmagent immediately scrapes the NoETL API `/metrics` endpoint in the `noetl`
+namespace. Adjust the manifest if you change namespaces or labels.
 
 Tip: add labels in your app logs (e.g., component=server|worker, pool_id, execution_id) so Vector → VictoriaLogs gives you filtered views per pool/execution.
 

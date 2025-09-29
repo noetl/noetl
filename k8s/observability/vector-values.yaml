@@ -1,6 +1,5 @@
 role: "Agent"
 
-# Disable Service for Agent role; DaemonSet doesn't expose ports by default
 service:
   enabled: false
 
@@ -15,6 +14,7 @@ customConfig:
       type: remap
       inputs: [k8s_logs]
       source: |
+        .timestamp = to_unix_timestamp(.timestamp) ?? now()
         .log = .message
         .labels.app = .kubernetes.pod_labels.app
         .labels.namespace = .kubernetes.namespace_name
@@ -22,17 +22,13 @@ customConfig:
         .labels.container = .kubernetes.container_name
 
   sinks:
-    vlogs:
-      type: loki
+    vlogs_json:
+      type: http
       inputs: [enrich]
-      endpoint: http://vlogs-victoria-logs-single.observability.svc:9428
-      # VictoriaLogs expects /insert/loki/api/v1/push; set path accordingly:
-      path: /insert/loki/api/v1/push
+      method: post
+      uri: "http://vlogs-victoria-logs-single-server-0.vlogs-victoria-logs-single-server.observability.svc.cluster.local:9428/insert/jsonline?_stream_fields=labels.namespace,labels.pod,labels.container&_msg_field=log&_time_field=timestamp"
       encoding:
         codec: json
-      labels:
-        job: "kubernetes"
-        app: "{{`{{labels.app}}`}}"
-        namespace: "{{`{{labels.namespace}}`}}"
-        pod: "{{`{{labels.pod}}`}}"
-        container: "{{`{{labels.container}}`}}"
+      framing:
+        method: newline_delimited
+      compression: gzip
