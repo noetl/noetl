@@ -186,6 +186,14 @@ if $DEPLOY_OBSERVABILITY; then
     
     # Deploy observability to the unified namespace instead of separate observability namespace
     "${SCRIPT_DIR}/deploy-unified-observability.sh" "${UNIFIED_NAMESPACE}"
+    
+    # Deploy PostgreSQL monitoring (VMServiceScrape) after observability stack
+    if $DEPLOY_POSTGRES; then
+        echo -e "${GREEN}Deploying PostgreSQL monitoring configuration...${NC}"
+        kubectl apply -f "${SCRIPT_DIR}/postgres/monitoring/"
+        kubectl apply -f "${SCRIPT_DIR}/observability/postgres-dashboard-configmap.yaml" || echo -e "${YELLOW}Warning: PostgreSQL dashboard not found${NC}"
+        kubectl apply -f "${SCRIPT_DIR}/observability/noetl-server-dashboard-configmap.yaml" || echo -e "${YELLOW}Warning: NoETL server dashboard not found${NC}"
+    fi
 else
     echo -e "${YELLOW}Skipping observability deployment as requested.${NC}"
 fi

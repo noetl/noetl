@@ -288,7 +288,7 @@ start_port_forward() {
 case "\$1" in
     start)
         echo "Starting port-forwards for unified observability..."
-        start_port_forward "vmstack-grafana" 3000 3000 "grafana"
+        start_port_forward "vmstack-grafana" 3000 80 "grafana"
         start_port_forward "vlogs-victoria-logs-single-server" 9428 9428 "vlogs"
         start_port_forward "vmsingle-vmstack-victoria-metrics-k8s-stack" 8428 8428 "vmsingle"
         echo "Port-forwards started. Services available at:"
@@ -336,6 +336,7 @@ chmod +x "/tmp/port-forward-unified.sh"
 
 # Copy port-forward script to observability directory
 cp "/tmp/port-forward-unified.sh" "${OBSERVABILITY_DIR}/port-forward-unified.sh"
+chmod +x "${OBSERVABILITY_DIR}/port-forward-unified.sh"
 
 # Clean up temporary files
 rm -f "${UNIFIED_VMSTACK_VALUES}" "${UNIFIED_VECTOR_VALUES}"
