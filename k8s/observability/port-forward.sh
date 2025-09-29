@@ -12,7 +12,7 @@ set -euo pipefail
 #   k8s/observability/port-forward.sh stop    # stop background port-forwards
 #   k8s/observability/port-forward.sh status  # show status
 
-NAMESPACE="observability"
+NAMESPACE="noetl-platform"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PF_DIR="${BASE_DIR}/.pf"
 LOG_GRAFANA="${BASE_DIR}/port-forward-grafana.log"

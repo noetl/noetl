@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Provision Grafana dashboards into the victoria-metrics-k8s-stack Grafana via ConfigMaps
-# - Expects namespace 'observability' (or pass as first arg)
+# - Expects namespace 'noetl-platform' (or pass as first arg)
 # - Uses Grafana sidecar which watches for ConfigMaps labeled grafana_dashboard=1
 # - Places dashboards under folder "NoETL" using annotation grafana_folder
 #
@@ -10,7 +10,7 @@ set -euo pipefail
 #   k8s/observability/provision-grafana.sh [NAMESPACE]
 #
 
-NAMESPACE="${1:-observability}"
+NAMESPACE="${1:-noetl-platform}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -32,7 +32,7 @@ fi
 # Verify namespace exists
 if ! kubectl get ns "$NAMESPACE" >/dev/null 2>&1; then
   err "Namespace '$NAMESPACE' not found."
-  echo "Create it or run 'make observability-deploy' first."
+  echo "Create it or run 'make unified-deploy' first."
   exit 3
 fi
 
@@ -70,4 +70,4 @@ apply_cm noetl-dashboard-server "$SERVER_JSON"
 apply_cm noetl-dashboard-workers "$WORKERS_JSON"
 
 info "Dashboards provisioned. If Grafana is running, the sidecar should import them within ~30s."
-info "Open Grafana: http://localhost:3000 (see credentials via 'make observability-grafana-credentials')"
+info "Open Grafana: http://localhost:3000 (see credentials via 'make grafana-credentials')"

@@ -8,14 +8,14 @@ set -euo pipefail
 #
 # Usage:
 #   k8s/observability/import-dashboards.sh [NAMESPACE] [--wait] [--timeout=SECONDS]
-#   (default namespace: observability)
+#   (default namespace: noetl-platform)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 GRAFANA_URL="http://localhost:3000"
 
 # Defaults
-NAMESPACE="observability"
+NAMESPACE="noetl-platform"
 WAIT_MODE=false
 TIMEOUT_SECS=180
 
@@ -89,7 +89,7 @@ if [ "$CREDS_OK" != true ]; then
   else
     warn "Grafana credentials not available yet in namespace '${NAMESPACE}'."
     warn "Grafana may still be starting or the Secret 'vmstack-grafana' hasn't been created."
-    warn "You can try again shortly or run: make observability-grafana-credentials"
+    warn "You can try again shortly or run: make grafana-credentials"
     warn "Tip: To wait until Grafana is ready, run: make observability-import-dashboards (uses --wait)"
     warn "Skipping dashboard import for now (will not fail the build)."
     exit 0

@@ -22,7 +22,7 @@ error() { echo "[ERROR] $*" 1>&2; }
 if ! need_cmd kubectl; then
   error "kubectl is not installed or not in PATH. Skipping deployment."
   echo "\nInstall kubectl: https://kubernetes.io/docs/tasks/tools/"
-  echo "Then re-run: make observability-deploy"
+  echo "Then re-run: make unified-deploy"
   exit 0
 fi
 if ! need_cmd helm; then
@@ -31,7 +31,7 @@ if ! need_cmd helm; then
   echo "  - macOS (Homebrew):   brew install helm"
   echo "  - Linux (script):     curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
   echo "  - Docs:               https://helm.sh/docs/intro/install/"
-  echo "\nThen re-run: make observability-deploy"
+  echo "\nThen re-run: make unified-deploy"
   exit 0
 fi
 
@@ -153,7 +153,7 @@ Port-forwarding for UIs has been started in the background. Open:
   - VictoriaMetrics UI: http://localhost:8428/vmui/
 
 Get Grafana credentials:
-  - Makefile target:    make observability-grafana-credentials
+  - Makefile target:    make grafana-credentials
   - Script:             ${SCRIPT_DIR}/grafana-credentials.sh observability
 
 Manage port-forwarding:

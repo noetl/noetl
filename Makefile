@@ -80,6 +80,7 @@ help:
 	@echo "  make k8s-platform-status        			Check NoETL platform deployment status"
 	@echo "  make k8s-platform-test          			Test the platform with a simple playbook"
 	@echo "  make k8s-platform-clean         			Clean up the NoETL platform deployment"
+	@echo "  make redeploy-noetl             			Redeploy NoETL with metrics (preserves observability services)"
 	@echo "  make postgres-reset-schema    			Recreates noetl schema only in running postgres database instance"
 	@echo ""
 	@echo "Local Runtime (env + logs):"
@@ -837,6 +838,19 @@ k8s-platform-deploy:
 	@echo "  - Health Check: http://localhost:30082/api/health"
 	@echo "  - API Documentation: http://localhost:30082/docs"
 	@echo "  - Main API: http://localhost:30082/"
+	@echo ""
+
+.PHONY: redeploy-noetl
+redeploy-noetl:
+	@echo "Redeploying NoETL with metrics functionality..."
+	@echo "This will preserve observability services and reset schema safely."
+	@./k8s/redeploy-noetl.sh
+	@echo ""
+	@echo "🎉 NoETL redeployed successfully with metrics!"
+	@echo "📊 New metrics endpoints:"
+	@echo "  - Prometheus metrics: http://localhost:30082/api/metrics/prometheus"
+	@echo "  - Metrics query API: http://localhost:30082/api/metrics/query"
+	@echo "  - Self-report: http://localhost:30082/api/metrics/self-report"
 	@echo ""
 	@echo "🚀 Quick start:"
 	@echo "  curl http://localhost:30082/api/health"

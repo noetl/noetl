@@ -23,7 +23,7 @@ fi
 # Check namespace exists
 if ! kubectl get ns "$NAMESPACE" >/dev/null 2>&1; then
   err "Namespace '$NAMESPACE' not found."
-  echo "Hint: If you used make observability-deploy, the namespace should be 'observability'."
+  echo "Hint: If you used make unified-deploy, the namespace should be 'noetl-platform'."
   exit 3
 fi
 

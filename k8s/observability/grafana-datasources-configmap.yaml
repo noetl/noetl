@@ -13,7 +13,7 @@ data:
         type: prometheus
         url: http://vmsingle-vmstack-victoria-metrics-k8s-stack.noetl-platform.svc.cluster.local:8428
         access: proxy
-        isDefault: true
+        isDefault: false
         jsonData:
           timeInterval: "30s"
           queryTimeout: "60s"
@@ -25,3 +25,19 @@ data:
         isDefault: false
         jsonData:
           maxLines: 1000
+      - name: NoETL PostgreSQL
+        type: postgres
+        url: postgres.postgres.svc.cluster.local:5432
+        database: demo_noetl
+        user: demo
+        access: proxy
+        isDefault: true
+        jsonData:
+          sslmode: "disable"
+          maxOpenConns: 10
+          maxIdleConns: 2
+          connMaxLifetime: 300
+          postgresVersion: 1700
+          timescaledb: false
+        secureJsonData:
+          password: demo

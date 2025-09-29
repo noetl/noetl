@@ -26,7 +26,7 @@ customConfig:
       type: http
       inputs: [enrich]
       method: post
-      uri: "http://vlogs-victoria-logs-single-server-0.vlogs-victoria-logs-single-server.observability.svc.cluster.local:9428/insert/jsonline?_stream_fields=labels.namespace,labels.pod,labels.container&_msg_field=log&_time_field=timestamp"
+      uri: "http://vlogs-victoria-logs-single-server-0.vlogs-victoria-logs-single-server.noetl-platform.svc.cluster.local:9428/insert/jsonline?_stream_fields=labels.namespace,labels.pod,labels.container&_msg_field=log&_time_field=timestamp"
       encoding:
         codec: json
       framing:

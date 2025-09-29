@@ -154,6 +154,177 @@ CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
 CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
 CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
 
+-- Metric (singular, following NoETL table naming convention)
+-- Partitioned by date for efficient TTL management via partition dropping
+CREATE TABLE IF NOT EXISTS noetl.metric (
+    metric_id BIGSERIAL,
+    runtime_id BIGINT NOT NULL REFERENCES noetl.runtime(runtime_id) ON DELETE CASCADE,
+    metric_name TEXT NOT NULL,
+    metric_type TEXT NOT NULL CHECK (metric_type IN ('counter', 'gauge', 'histogram', 'summary')),
+    metric_value DOUBLE PRECISION NOT NULL,
+    labels JSONB,
+    help_text TEXT,
+    unit TEXT,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- TTL: automatically delete metrics older than 1 day
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '1 day'),
+    PRIMARY KEY (metric_id, created_at)
+) PARTITION BY RANGE (created_at);
+ALTER TABLE noetl.metric OWNER TO noetl;
+
+-- Create indexes on the parent table (will be inherited by partitions)
+CREATE INDEX IF NOT EXISTS idx_metric_runtime_id ON noetl.metric (runtime_id);
+CREATE INDEX IF NOT EXISTS idx_metric_name ON noetl.metric (metric_name);
+CREATE INDEX IF NOT EXISTS idx_metric_timestamp ON noetl.metric (timestamp);
+CREATE INDEX IF NOT EXISTS idx_metric_runtime_name ON noetl.metric (runtime_id, metric_name);
+CREATE INDEX IF NOT EXISTS idx_metric_labels ON noetl.metric USING GIN (labels);
+
+-- Function to create daily partitions for metrics
+CREATE OR REPLACE FUNCTION noetl.create_metric_partition(partition_date DATE)
+RETURNS TEXT AS $$
+DECLARE
+    partition_name TEXT;
+    start_date DATE;
+    end_date DATE;
+BEGIN
+    partition_name := 'metric_' || to_char(partition_date, 'YYYY_MM_DD');
+    start_date := partition_date;
+    end_date := partition_date + INTERVAL '1 day';
+    
+    -- Create partition if it doesn't exist
+    EXECUTE format('CREATE TABLE IF NOT EXISTS noetl.%I PARTITION OF noetl.metric
+                    FOR VALUES FROM (%L) TO (%L)',
+                   partition_name, start_date, end_date);
+    
+    -- Set ownership
+    EXECUTE format('ALTER TABLE noetl.%I OWNER TO noetl', partition_name);
+    
+    RETURN partition_name;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to create partitions for the next N days
+CREATE OR REPLACE FUNCTION noetl.create_metric_partitions_ahead(days_ahead INTEGER DEFAULT 7)
+RETURNS TEXT[] AS $$
+DECLARE
+    partition_names TEXT[] := '{}';
+    current_date_iter DATE;
+    partition_name TEXT;
+BEGIN
+    -- Create partitions for today and the next N days
+    FOR i IN 0..days_ahead LOOP
+        current_date_iter := CURRENT_DATE + (i || ' days')::INTERVAL;
+        partition_name := noetl.create_metric_partition(current_date_iter);
+        partition_names := partition_names || partition_name;
+    END LOOP;
+    
+    RETURN partition_names;
+END;
+$$ LANGUAGE plpgsql;
+
+-- TTL cleanup function for metrics (drops expired partitions)
+CREATE OR REPLACE FUNCTION noetl.cleanup_expired_metrics()
+RETURNS TEXT[] AS $$
+DECLARE
+    dropped_partitions TEXT[] := '{}';
+    partition_record RECORD;
+    cutoff_date DATE;
+BEGIN
+    -- Calculate cutoff date (1 day ago)
+    cutoff_date := CURRENT_DATE - INTERVAL '1 day';
+    
+    -- Find and drop expired partitions
+    FOR partition_record IN
+        SELECT schemaname, tablename 
+        FROM pg_tables 
+        WHERE schemaname = 'noetl' 
+          AND tablename LIKE 'metric_%'
+          AND tablename ~ '^metric_\d{4}_\d{2}_\d{2}$'
+    LOOP
+        -- Extract date from partition name (format: metric_YYYY_MM_DD)
+        DECLARE
+            partition_date_str TEXT;
+            partition_date DATE;
+        BEGIN
+            partition_date_str := substring(partition_record.tablename from 8);
+            partition_date_str := replace(partition_date_str, '_', '-');
+            partition_date := partition_date_str::DATE;
+            
+            -- Drop if older than cutoff
+            IF partition_date < cutoff_date THEN
+                EXECUTE format('DROP TABLE IF EXISTS noetl.%I', partition_record.tablename);
+                dropped_partitions := dropped_partitions || partition_record.tablename;
+            END IF;
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Skip invalid partition names
+                CONTINUE;
+        END;
+    END LOOP;
+    
+    RETURN dropped_partitions;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to set custom TTL for specific metrics (updates expires_at)
+CREATE OR REPLACE FUNCTION noetl.set_metric_ttl(
+    p_metric_name TEXT,
+    p_ttl_interval INTERVAL DEFAULT INTERVAL '1 day'
+)
+RETURNS INTEGER AS $$
+DECLARE
+    updated_count INTEGER;
+BEGIN
+    UPDATE noetl.metric 
+    SET expires_at = now() + p_ttl_interval 
+    WHERE metric_name = p_metric_name 
+      AND expires_at > now();  -- Only update non-expired metrics
+    
+    GET DIAGNOSTICS updated_count = ROW_COUNT;
+    RETURN updated_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to extend TTL for all metrics of a specific component (updates expires_at)
+CREATE OR REPLACE FUNCTION noetl.extend_component_metrics_ttl(
+    p_component_name TEXT,
+    p_ttl_interval INTERVAL DEFAULT INTERVAL '1 day'
+)
+RETURNS INTEGER AS $$
+DECLARE
+    updated_count INTEGER;
+BEGIN
+    UPDATE noetl.metric 
+    SET expires_at = now() + p_ttl_interval 
+    WHERE runtime_id IN (
+        SELECT runtime_id FROM noetl.runtime WHERE name = p_component_name
+    )
+    AND expires_at > now();  -- Only update non-expired metrics
+    
+    GET DIAGNOSTICS updated_count = ROW_COUNT;
+    RETURN updated_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to initialize metric partitions (call this after schema creation)
+CREATE OR REPLACE FUNCTION noetl.initialize_metric_partitions()
+RETURNS TEXT[] AS $$
+DECLARE
+    partition_names TEXT[];
+    yesterday_partition TEXT;
+BEGIN
+    -- Create partitions for today and next 7 days
+    SELECT noetl.create_metric_partitions_ahead(8) INTO partition_names;
+    
+    -- Also create yesterday's partition to handle any late-arriving data
+    SELECT noetl.create_metric_partition((CURRENT_DATE - INTERVAL '1 day')::DATE) INTO yesterday_partition;
+    partition_names := partition_names || yesterday_partition;
+    
+    RETURN partition_names;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Queue
 CREATE TABLE IF NOT EXISTS noetl.queue (
     id BIGSERIAL PRIMARY KEY,

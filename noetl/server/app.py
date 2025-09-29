@@ -10,6 +10,8 @@ import contextlib
 import psycopg
 import base64
 import socket
+import time
+import datetime
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import asyncio
@@ -170,29 +172,114 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             server_url = server_url + '/api'
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
 
+        async def _report_server_metrics(component_name: str):
+            """Report server metrics periodically."""
+            try:
+                import httpx
+                from ..api.routers.metrics import collect_system_metrics
+                
+                # Collect system metrics
+                metrics_data = collect_system_metrics()
+                
+                # Add server-specific metrics
+                try:
+                    # Number of connected workers
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                SELECT COUNT(*) FROM runtime 
+                                WHERE component_type IN ('worker_pool', 'queue_worker') 
+                                AND status = 'ready'
+                                """
+                            )
+                            row = await cur.fetchone()
+                            worker_count = row[0] if row else 0
+                            
+                            await cur.execute(
+                                """
+                                SELECT COUNT(*) FROM queue 
+                                WHERE status = 'pending'
+                                """
+                            )
+                            row = await cur.fetchone()
+                            queue_size = row[0] if row else 0
+                    
+                    metrics_data.extend([
+                        {
+                            "metric_name": "noetl_server_active_workers",
+                            "metric_type": "gauge",
+                            "metric_value": worker_count,
+                            "help_text": "Number of active workers",
+                            "unit": "workers"
+                        },
+                        {
+                            "metric_name": "noetl_server_queue_size", 
+                            "metric_type": "gauge",
+                            "metric_value": queue_size,
+                            "help_text": "Current queue size",
+                            "unit": "jobs"
+                        }
+                    ])
+                except Exception as e:
+                    logger.debug(f"Failed to collect server-specific metrics: {e}")
+                
+                # Report via self-report endpoint
+                payload = {
+                    "component_name": component_name,
+                    "component_type": "server_api",
+                    "metrics": [
+                        {
+                            "metric_name": m.metric_name if hasattr(m, 'metric_name') else m.get("metric_name", ""),
+                            "metric_type": m.metric_type if hasattr(m, 'metric_type') else m.get("metric_type", "gauge"),
+                            "metric_value": m.metric_value if hasattr(m, 'metric_value') else m.get("metric_value", 0),
+                            "timestamp": datetime.datetime.now().isoformat(),
+                            "labels": {
+                                "component": component_name,
+                                "hostname": hostname,
+                                "instance": component_name
+                            },
+                            "help_text": m.help_text if hasattr(m, 'help_text') else m.get("help_text", ""),
+                            "unit": m.unit if hasattr(m, 'unit') else m.get("unit", "")
+                        } for m in metrics_data
+                    ]
+                }
+                
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(f"{server_url}/metrics/report", json=payload)
+                    if resp.status_code != 200:
+                        logger.debug(f"Server metrics report failed {resp.status_code}: {resp.text}")
+                        
+            except Exception as e:
+                logger.debug(f"Failed to report server metrics: {e}")
+
         async def _runtime_sweeper():
+            last_metrics_time = 0.0
+            metrics_interval = float(os.environ.get("NOETL_SERVER_METRICS_INTERVAL", "60"))
+            
             while not stop_event.is_set():
                 try:
+                    current_time = time.time()
+                    
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
                             # Mark stale (non-offline) runtimes offline
                             try:
                                 await cur.execute(
                                     """
-                                    UPDATE runtime
-                                    SET status = 'offline', updated_at = now()
-                                    WHERE status != 'offline'
-                                      AND now() - last_heartbeat > (%s || ' seconds')::interval
+                                    UPDATE runtime SET status = 'offline', updated_at = now()
+                                    WHERE status != 'offline' AND last_heartbeat < (now() - interval '%s seconds')
                                     """,
-                                    (str(offline_after),)
+                                    (offline_after,)
                                 )
                             except Exception as e:
-                                logger.debug(f"Runtime sweeper update offline error: {e}")
-                            # Heartbeat this server instance so it isn't marked offline
+                                logger.debug(f"Runtime offline sweep failed: {e}")
+
+                            # Server heartbeat
                             try:
                                 await cur.execute(
                                     """
-                                    UPDATE runtime
+                                    UPDATE runtime 
                                     SET last_heartbeat = now(), updated_at = now(), status = 'ready'
                                     WHERE component_type = 'server_api' AND name = %s
                                     """,
@@ -232,6 +319,15 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                 await conn.commit()
                             except Exception:
                                 pass
+                    
+                    # Report server metrics periodically
+                    if current_time - last_metrics_time >= metrics_interval:
+                        try:
+                            await _report_server_metrics(server_name)
+                            last_metrics_time = current_time
+                        except Exception as e:
+                            logger.debug(f"Server metrics reporting failed: {e}")
+                            
                 except Exception as outer_e:
                     logger.debug(f"Runtime sweeper loop error: {outer_e}")
                 await asyncio.sleep(sweep_interval)

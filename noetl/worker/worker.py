@@ -755,6 +755,79 @@ class QueueWorker:
             await self._fail_job(job["id"])
 
     # ------------------------------------------------------------------
+    async def _report_simple_worker_metrics(self) -> None:
+        """Report simple worker metrics for standalone QueueWorker instances."""
+        try:
+            import psutil
+            
+            # Basic system metrics for standalone worker
+            metrics_data = []
+            
+            try:
+                # CPU and memory
+                cpu_percent = psutil.cpu_percent(interval=0.1)
+                memory = psutil.virtual_memory()
+                process = psutil.Process()
+                
+                metrics_data.extend([
+                    {
+                        "metric_name": "noetl_system_cpu_usage_percent",
+                        "metric_type": "gauge",
+                        "metric_value": cpu_percent,
+                        "help_text": "CPU usage percentage",
+                        "unit": "percent"
+                    },
+                    {
+                        "metric_name": "noetl_system_memory_usage_percent",
+                        "metric_type": "gauge",
+                        "metric_value": memory.percent,
+                        "help_text": "Memory usage percentage",
+                        "unit": "percent"
+                    },
+                    {
+                        "metric_name": "noetl_worker_status",
+                        "metric_type": "gauge",
+                        "metric_value": 1,  # 1 = active
+                        "help_text": "Worker status (1=active, 0=inactive)",
+                        "unit": "status"
+                    }
+                ])
+            except Exception as e:
+                logger.debug(f"Error collecting worker metrics: {e}")
+            
+            # Get component name from environment or use worker_id
+            component_name = os.environ.get('NOETL_WORKER_POOL_NAME') or f'worker-{self.worker_id}'
+            
+            # Report to server
+            payload = {
+                "component_name": component_name,
+                "component_type": "queue_worker",
+                "metrics": [
+                    {
+                        "metric_name": m.get("metric_name", ""),
+                        "metric_type": m.get("metric_type", "gauge"),
+                        "metric_value": m.get("metric_value", 0),
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "labels": {
+                            "component": component_name,
+                            "worker_id": self.worker_id,
+                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                        },
+                        "help_text": m.get("help_text", ""),
+                        "unit": m.get("unit", "")
+                    } for m in metrics_data
+                ]
+            }
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"{self.server_url}/metrics/report", json=payload)
+                if resp.status_code != 200:
+                    logger.debug(f"Worker metrics report failed {resp.status_code}: {resp.text}")
+                    
+        except Exception as e:
+            logger.debug(f"Failed to report worker metrics: {e}")
+
+    # ------------------------------------------------------------------
     async def run_forever(
             self, interval: float = 1.0, stop_event: Optional[asyncio.Event] = None
     ) -> None:
@@ -770,10 +843,25 @@ class QueueWorker:
             pools where individual workers need to be stopped or replaced
             dynamically.
         """
+        # Metrics reporting interval (default 60 seconds)
+        metrics_interval = float(os.environ.get("NOETL_WORKER_METRICS_INTERVAL", "60"))
+        last_metrics_time = 0.0
+        
         try:
             while True:
                 if stop_event and stop_event.is_set():
                     break
+                    
+                current_time = time.time()
+                
+                # Report metrics periodically
+                if current_time - last_metrics_time >= metrics_interval:
+                    try:
+                        await self._report_simple_worker_metrics()
+                        last_metrics_time = current_time
+                    except Exception:
+                        logger.debug("Worker metrics reporting failed", exc_info=True)
+                
                 job = await self._lease_job()
                 if job:
                     await self._execute_job(job)
@@ -806,6 +894,7 @@ class ScalableQueueWorkerPool:
         self.check_interval = check_interval
         self.worker_poll_interval = worker_poll_interval
         self.max_processes = max_processes or self.max_workers
+        self.worker_id = os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
         self._thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
         self._process_pool = ProcessPoolExecutor(max_workers=self.max_processes)
         self._tasks: List[Tuple[asyncio.Task, asyncio.Event]] = []
@@ -837,6 +926,120 @@ class ScalableQueueWorkerPool:
             worker.run_forever(self.worker_poll_interval, stop_evt)
         )
         self._tasks.append((task, stop_evt))
+
+    async def _report_worker_metrics(self, component_name: str) -> None:
+        """Report worker metrics to the server."""
+        try:
+            # Import here to avoid circular imports
+            import psutil
+            
+            # Collect system metrics locally (based on metrics.py)
+            metrics_data = []
+            
+            try:
+                # CPU usage
+                cpu_percent = psutil.cpu_percent(interval=0.1)
+                metrics_data.append({
+                    "metric_name": "noetl_system_cpu_usage_percent",
+                    "metric_type": "gauge",
+                    "metric_value": cpu_percent,
+                    "help_text": "CPU usage percentage",
+                    "unit": "percent"
+                })
+                
+                # Memory usage
+                memory = psutil.virtual_memory()
+                metrics_data.append({
+                    "metric_name": "noetl_system_memory_usage_bytes",
+                    "metric_type": "gauge",
+                    "metric_value": memory.used,
+                    "help_text": "Memory usage in bytes",
+                    "unit": "bytes"
+                })
+                
+                metrics_data.append({
+                    "metric_name": "noetl_system_memory_usage_percent",
+                    "metric_type": "gauge",
+                    "metric_value": memory.percent,
+                    "help_text": "Memory usage percentage",
+                    "unit": "percent"
+                })
+                
+                # Process info
+                process = psutil.Process()
+                metrics_data.append({
+                    "metric_name": "noetl_process_cpu_percent",
+                    "metric_type": "gauge",
+                    "metric_value": process.cpu_percent(),
+                    "help_text": "Process CPU usage percentage",
+                    "unit": "percent"
+                })
+                
+                memory_info = process.memory_info()
+                metrics_data.append({
+                    "metric_name": "noetl_process_memory_rss_bytes",
+                    "metric_type": "gauge",
+                    "metric_value": memory_info.rss,
+                    "help_text": "Process RSS memory in bytes",
+                    "unit": "bytes"
+                })
+                
+            except Exception as e:
+                logger.debug(f"Error collecting system metrics: {e}")
+            
+            # Add worker-specific metrics
+            metrics_data.extend([
+                {
+                    "metric_name": "noetl_worker_active_tasks",
+                    "metric_type": "gauge", 
+                    "metric_value": len(self._tasks),
+                    "help_text": "Number of active worker tasks",
+                    "unit": "tasks"
+                },
+                {
+                    "metric_name": "noetl_worker_max_workers",
+                    "metric_type": "gauge",
+                    "metric_value": self.max_workers,
+                    "help_text": "Maximum configured workers",
+                    "unit": "workers"
+                },
+                {
+                    "metric_name": "noetl_worker_queue_size",
+                    "metric_type": "gauge", 
+                    "metric_value": await self._queue_size(),
+                    "help_text": "Current queue size",
+                    "unit": "jobs"
+                }
+            ])
+            
+            # Report to server
+            payload = {
+                "component_name": component_name,
+                "component_type": "worker_pool",
+                "metrics": [
+                    {
+                        "metric_name": m.get("metric_name", ""),
+                        "metric_type": m.get("metric_type", "gauge"),
+                        "metric_value": m.get("metric_value", 0),
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "labels": {
+                            "component": component_name,
+                            "worker_id": self.worker_id,
+                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                        },
+                        "help_text": m.get("help_text", ""),
+                        "unit": m.get("unit", "")
+                    } for m in metrics_data
+                ]
+            }
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"{self.server_url}/metrics/report", json=payload)
+                if resp.status_code != 200:
+                    logger.debug(f"Metrics report failed {resp.status_code}: {resp.text}")
+                    
+        except Exception as e:
+            logger.debug(f"Failed to report worker metrics: {e}")
 
     async def _scale_workers(self) -> None:
         desired = min(self.max_workers, max(1, await self._queue_size()))
@@ -872,8 +1075,12 @@ class ScalableQueueWorkerPool:
                         resp = await client.post(url, json=payload)
                         if resp.status_code != 200:
                             logger.debug(f"Worker heartbeat non-200 {resp.status_code}: {resp.text}")
+                    
+                    # Report metrics with heartbeat
+                    await self._report_worker_metrics(name)
+                    
                 except Exception:
-                    logger.debug("Worker heartbeat failed", exc_info=True)
+                    logger.debug("Worker heartbeat/metrics failed", exc_info=True)
                 await asyncio.sleep(heartbeat_interval)
 
         hb_task = asyncio.create_task(_heartbeat_loop())

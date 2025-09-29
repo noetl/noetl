@@ -25,7 +25,7 @@ fi
 
 # Ensure namespace exists
 if ! kubectl get ns "$NAMESPACE" >/dev/null 2>&1; then
-  err "Namespace '$NAMESPACE' not found. Run 'make observability-deploy' first."
+  err "Namespace '$NAMESPACE' not found. Run 'make unified-deploy' first."
   exit 3
 fi
 

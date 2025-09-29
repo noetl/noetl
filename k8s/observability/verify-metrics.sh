@@ -32,8 +32,8 @@ fi
 
 # Check VMPodScrape resources
 echo "Checking VMPodScrape resources:"
-kubectl get vmpodscrape -n observability
+kubectl get vmpodscrape -n noetl-platform
 
 # Check VMAgent targets
 echo "Checking VMAgent targets (if available):"
-kubectl logs -n observability -l app.kubernetes.io/name=vmagent --tail=50 | grep -i "target\|scrape\|error" || echo "No VMAgent logs found"
+kubectl logs -n noetl-platform -l app.kubernetes.io/name=vmagent --tail=50 | grep -i "target\|scrape\|error" || echo "No VMAgent logs found"
