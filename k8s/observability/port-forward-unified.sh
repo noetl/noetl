@@ -49,8 +49,8 @@ case "$1" in
         for pid_file in /tmp/pf-*.pid; do
             if [ -f "$pid_file" ]; then
                 pid=$(cat "$pid_file")
-                name=$(basename "$pid_file" .pid | sed 's/pf-//')
                 if kill -0 "$pid" 2>/dev/null; then
+                    name=$(basename "$pid_file" .pid | sed 's/pf-//')
                     echo "  ${name}: RUNNING (PID: $pid)"
                 else
                     echo "  ${name}: STOPPED"
