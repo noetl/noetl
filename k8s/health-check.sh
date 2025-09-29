@@ -185,8 +185,8 @@ ${GREEN}Debugging:${NC}
   kubectl exec -it -n ${NAMESPACE} <pod-name> -- bash # Shell into pod
 
 ${GREEN}Port Forwarding:${NC}
-  kubectl port-forward -n ${NAMESPACE} service/noetl-server 30082:8080
-  kubectl port-forward -n ${NAMESPACE} service/vmstack-grafana 3000:3000
+  kubectl port-forward -n ${NAMESPACE} service/noetl-server 30082:8082
+  kubectl port-forward -n ${NAMESPACE} service/vmstack-grafana 3000:80
 
 ${GREEN}Credentials:${NC}
   make unified-grafana-credentials                   # Get Grafana admin password

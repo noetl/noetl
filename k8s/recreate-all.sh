@@ -167,9 +167,9 @@ test_connectivity() {
     
     # Test NoETL server health
     info "Testing NoETL server health..."
-    timeout 30s bash -c 'until curl -s http://localhost:30082/health > /dev/null; do echo "Waiting for NoETL server..."; sleep 2; done' || {
+    (for i in {1..15}; do curl -s http://localhost:30082/health > /dev/null && break || (echo "Waiting for NoETL server..."; sleep 2); done) || {
         warn "NoETL server health check failed - checking if port-forward is needed"
-        kubectl port-forward -n "${NAMESPACE}" service/noetl-server 30082:8080 &
+        kubectl port-forward -n "${NAMESPACE}" service/noetl-server 30082:8082 &
         PF_PID=$!
         sleep 5
         curl -s http://localhost:30082/health || warn "NoETL server still not responding"
@@ -178,7 +178,7 @@ test_connectivity() {
     
     # Test Grafana
     info "Testing Grafana connectivity..."
-    timeout 10s bash -c 'until curl -s http://localhost:3000 > /dev/null; do echo "Waiting for Grafana..."; sleep 2; done' || {
+    (for i in {1..5}; do curl -s http://localhost:3000 > /dev/null && break || (echo "Waiting for Grafana..."; sleep 2); done) || {
         warn "Grafana not accessible - port-forward should be running automatically"
     }
     
