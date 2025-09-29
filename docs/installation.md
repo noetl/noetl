@@ -41,7 +41,56 @@ source .venv/bin/activate
 pip install noetl
 ```
 
-### 2. Local Development Installation
+### 2. Kubernetes Unified Platform (Recommended for Development)
+
+For a complete development environment with integrated observability:
+
+**Prerequisites:**
+- Docker
+- Kind (Kubernetes in Docker)
+- kubectl
+- Helm
+
+**Quick Setup:**
+```bash
+# Clone repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Deploy complete platform
+make unified-deploy
+
+# OR: Complete recreation from scratch
+make unified-recreate-all
+
+# Check health
+make unified-health-check
+```
+
+**Services Available:**
+- NoETL Server: http://localhost:30082
+- Grafana: http://localhost:3000 (admin/admin)
+- VictoriaMetrics: http://localhost:8428/vmui/
+- VictoriaLogs: http://localhost:9428
+
+**Management:**
+```bash
+# Port forwarding
+make unified-port-forward-start
+make unified-port-forward-status
+make unified-port-forward-stop
+
+# Get credentials
+make unified-grafana-credentials
+
+# View all commands
+make help
+
+# Clean up
+kind delete cluster --name noetl-cluster
+```
+
+### 3. Local Development Installation
 
 For development or contributing to NoETL:
 
@@ -71,7 +120,39 @@ For development or contributing to NoETL:
    make install
    ```
 
-### 3. Docker Installation
+### 3. Kubernetes Unified Deployment (Recommended for Development)
+
+For a complete development environment with server, workers, and observability:
+
+**Prerequisites:**
+- Docker
+- Kind (Kubernetes in Docker)
+- kubectl
+- Helm (for observability stack)
+
+**Quick Start:**
+```bash
+# Clone the repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Deploy unified platform
+./k8s/deploy-unified-platform.sh
+```
+
+**This provides:**
+- NoETL server at http://localhost:30082
+- Grafana dashboard at http://localhost:3000 (admin/admin)
+- VictoriaMetrics at http://localhost:8428/vmui/
+- All components in unified `noetl-platform` namespace
+- Automatic monitoring and logging
+
+**Clean up:**
+```bash
+kind delete cluster --name noetl-cluster
+```
+
+### 4. Docker Installation
 
 NoETL can be run using Docker:
 

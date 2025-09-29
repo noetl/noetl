@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: victoriametrics-pv
+  labels:
+    app: victoriametrics
+    component: storage
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: ""
+  hostPath:
+    path: /tmp/victoriametrics-data
+    type: DirectoryOrCreate

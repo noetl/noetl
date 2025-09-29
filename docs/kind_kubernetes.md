@@ -328,3 +328,123 @@ kubectl delete deployment nginx
    kubectl delete all --all  # Delete all resources in current namespace
    kind delete cluster       # Delete entire cluster
 ```
+
+## NoETL Unified Platform Deployment
+
+NoETL provides a unified deployment script that sets up a complete development environment with server, workers, and observability in a single Kind cluster.
+
+### Quick Start
+
+```bash
+# Clone NoETL repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Deploy unified platform (recommended)
+make unified-deploy
+
+# OR: Complete recreation from scratch  
+make unified-recreate-all
+
+# OR: Direct script usage
+./k8s/deploy-unified-platform.sh
+```
+
+### What Gets Deployed
+
+**Unified Architecture:**
+- **Namespace**: `noetl-platform` (all NoETL components)
+- **Namespace**: `postgres` (database)
+
+**Components:**
+- NoETL server (http://localhost:30082)
+- 3 Worker pools (cpu-01, cpu-02, gpu-01)
+- PostgreSQL database with schema
+- Grafana dashboard (http://localhost:3000, admin/admin)
+- VictoriaMetrics (http://localhost:8428/vmui/)
+- VictoriaLogs (http://localhost:9428)
+- Vector for log/metrics collection
+
+### Benefits of Unified Deployment
+
+1. **Simplified Management**: All components in one namespace
+2. **Better Service Discovery**: Direct pod-to-pod communication
+3. **Unified Observability**: Everything monitored together
+4. **Resource Efficiency**: Reduced namespace overhead
+
+### Deployment Options
+
+**Makefile Commands (Recommended):**
+```bash
+# Complete unified deployment
+make unified-deploy
+
+# Complete recreation from scratch  
+make unified-recreate-all
+
+# Health checking
+make unified-health-check
+
+# Port forwarding management
+make unified-port-forward-start
+make unified-port-forward-status
+make unified-port-forward-stop
+
+# Get credentials
+make unified-grafana-credentials
+
+# View all commands
+make help
+```
+
+**Direct Script Usage:**
+```bash
+# Basic unified deployment
+./k8s/deploy-unified-platform.sh
+
+# Complete recreation
+./k8s/recreate-all.sh
+
+# Health check
+./k8s/health-check.sh
+
+# Skip certain components
+./k8s/deploy-unified-platform.sh --no-observability
+./k8s/deploy-unified-platform.sh --no-postgres
+
+# Use existing cluster
+./k8s/deploy-unified-platform.sh --no-cluster
+
+# Custom namespace
+./k8s/deploy-unified-platform.sh --namespace my-platform
+```
+
+### Monitoring and Debugging
+
+```bash
+# Check all pods
+kubectl get pods -n noetl-platform
+
+# Check services
+kubectl get services -n noetl-platform
+
+# View NoETL server logs
+kubectl logs -n noetl-platform -l app=noetl
+
+# View worker logs
+kubectl logs -n noetl-platform -l component=worker
+
+# Port-forward to Grafana
+kubectl port-forward -n noetl-platform service/vmstack-grafana 3000:80
+```
+
+### Cleanup
+
+```bash
+# Delete entire cluster
+kind delete cluster --name noetl-cluster
+
+# Or just delete NoETL components
+kubectl delete namespace noetl-platform
+kubectl delete namespace postgres
+```

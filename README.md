@@ -50,6 +50,67 @@ For development or specific versions:
   - Postgres database (mandatory, for the event-sourcing persistent storage and NoETL system metadata)
   - Docker (optional, for containerized development and deployment)
 
+### Kubernetes Development Environment (Recommended)
+
+For a complete development environment with server, workers, and observability:
+
+```bash
+# Clone repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Deploy unified platform (requires Docker, Kind, kubectl, Helm)
+make unified-deploy
+
+# Or complete recreation from scratch
+make unified-recreate-all
+
+# Check health status
+make unified-health-check
+
+# Manage port forwarding
+make unified-port-forward-start
+make unified-port-forward-status
+make unified-port-forward-stop
+```
+
+**Services available:**
+- **NoETL Server**: http://localhost:30082 (API & UI)
+- **Grafana Dashboard**: http://localhost:3000 (admin/admin)
+- **VictoriaMetrics**: http://localhost:8428/vmui/
+- **VictoriaLogs**: http://localhost:9428
+
+**Management Commands:**
+```bash
+# Get Grafana credentials
+make unified-grafana-credentials
+
+# View all available commands
+make help
+
+# Clean up when done
+kind delete cluster --name noetl-cluster
+```
+
+See [k8s/README.md](k8s/README.md) for detailed deployment documentation.
+
+## Quick Reference
+
+### Unified Kubernetes Platform
+```bash
+make unified-deploy          # Deploy complete platform
+make unified-health-check    # Check platform health
+make unified-recreate-all    # Rebuild everything from scratch
+```
+
+### Makefile Commands
+```bash
+make help                    # Show all available commands
+make unified-*              # Unified deployment commands
+make test                   # Run test suite
+make install-dev            # Development setup
+```
+
 ## Basic Usage
 
 After installing NoETL:
@@ -176,14 +237,6 @@ NoETL provides three distinct approaches for handling credentials and secrets in
 - **`auth:`** single credential reference resolved by the Server at runtime
 - **`credentials:`** multiple credential bindings with developer-chosen aliases (for steps needing several creds at once)  
 - **`secret:`** resolve values from an external secret manager at render/exec time (used inside templates like `{{ secret.NAME }}`)
-
-### “Why this needs to be”
-- No ambiguity: each keyword has a distinct role.
-- Separation of concerns:
-  - auth → lookup credential record (single)
-  - credentials → bind multiple credentials via aliases
-  - secret → resolve external secret value at runtime
-- Native SQL: DuckDB aliases and secret names are unchanged and under your control.
 
 ### Quick Examples
 

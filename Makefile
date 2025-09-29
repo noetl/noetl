@@ -103,6 +103,19 @@ help:
 	@echo "  make register-test-playbooks HOST=localhost PORT=8082		Register test fixture playbooks"
 	@echo "  make register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=localhost PORT=8082	Register one credential payload"
 	@echo "  make register-test-credentials HOST=localhost PORT=8082			Upload all test fixture credentials"
+	@echo ""
+	@echo "Observability Commands:"
+	@echo "  make unified-deploy                        		Deploy unified NoETL platform with observability (recommended)"
+	@echo "  make unified-recreate-all                  		Complete recreation: cleanup + rebuild + redeploy everything"
+	@echo "  make unified-health-check                  		Check health of unified deployment components"
+	@echo "  make unified-grafana-credentials           		Get Grafana credentials for unified deployment"
+	@echo "  make unified-port-forward-start           		Start port-forwards for unified deployment"
+	@echo "  make unified-port-forward-stop            		Stop port-forwards for unified deployment"  
+	@echo "  make unified-port-forward-status          		Check port-forward status for unified deployment"
+	@echo "  make observability-grafana-credentials    		Get Grafana credentials (auto-detects unified or legacy)"
+	@echo "  make observability-deploy                 		Deploy observability stack (legacy separate namespace)"
+	@echo "  make observability-port-forward-start     		Start port-forwards (legacy)"
+	@echo "  make observability-port-forward-stop      		Stop port-forwards (legacy)"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -964,7 +977,7 @@ gcp-credentials:
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"
 
-.PHONY: observability-deploy observability-redeploy observability-port-forward-start observability-port-forward-stop observability-port-forward-status observability-grafana-credentials observability-provision-dashboards observability-import-dashboards observability-provision-datasources
+.PHONY: observability-deploy observability-redeploy observability-port-forward-start observability-port-forward-stop observability-port-forward-status observability-grafana-credentials observability-provision-dashboards observability-import-dashboards observability-provision-datasources unified-deploy unified-recreate-all unified-health-check unified-grafana-credentials unified-port-forward-start unified-port-forward-stop unified-port-forward-status
 observability-deploy:
 	@bash k8s/observability/deploy.sh
 
@@ -981,7 +994,17 @@ observability-port-forward-status:
 	@bash k8s/observability/port-forward.sh status
 
 observability-grafana-credentials:
-	@bash k8s/observability/grafana-credentials.sh observability
+	@if kubectl get ns noetl-platform >/dev/null 2>&1; then \
+		echo "[INFO] Found unified deployment, using noetl-platform namespace"; \
+		bash k8s/observability/grafana-credentials.sh noetl-platform; \
+	elif kubectl get ns observability >/dev/null 2>&1; then \
+		echo "[INFO] Found legacy deployment, using observability namespace"; \
+		bash k8s/observability/grafana-credentials.sh observability; \
+	else \
+		echo "[ERROR] Neither noetl-platform nor observability namespace found."; \
+		echo "Hint: Deploy with './k8s/deploy-unified-platform.sh' or 'make observability-deploy'"; \
+		exit 1; \
+	fi
 
 observability-provision-dashboards:
 	@bash k8s/observability/provision-grafana.sh observability
@@ -991,3 +1014,33 @@ observability-provision-datasources:
 
 observability-import-dashboards:
 	@bash k8s/observability/import-dashboards.sh observability --wait
+
+# Unified deployment targets (recommended)
+unified-deploy:
+	@echo "[INFO] Deploying unified NoETL platform with observability"
+	@bash k8s/deploy-unified-platform.sh
+
+unified-grafana-credentials:
+	@echo "[INFO] Getting Grafana credentials for unified deployment"
+	@bash k8s/observability/grafana-credentials.sh noetl-platform
+
+unified-port-forward-start:
+	@echo "[INFO] Starting port-forwards for unified deployment"
+	@bash k8s/observability/port-forward-unified.sh start
+
+unified-port-forward-stop:
+	@echo "[INFO] Stopping port-forwards for unified deployment"
+	@bash k8s/observability/port-forward-unified.sh stop
+
+unified-port-forward-status:
+	@echo "[INFO] Checking port-forward status for unified deployment"
+	@bash k8s/observability/port-forward-unified.sh status
+
+unified-recreate-all:
+	@echo "[INFO] Complete recreation: cleanup + rebuild + redeploy everything"
+	@echo "[INFO] This will delete all clusters, rebuild Docker images, and redeploy from scratch"
+	@echo "y" | bash k8s/recreate-all.sh
+
+unified-health-check:
+	@echo "[INFO] Running health check for unified deployment"
+	@bash k8s/health-check.sh

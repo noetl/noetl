@@ -4,37 +4,119 @@ Deploy the complete NoETL platform (Postgres + NoETL server) to a local Kubernet
 
 ##  Quick Start
 
-The easiest way to deploy NoETL is using the Makefile targets:
+### Unified Deployment (Recommended)
+
+The unified deployment puts all NoETL components in a single namespace with integrated observability:
 
 ```bash
-# Deploy the complete platform
+# Deploy the unified platform (recommended)
+make unified-deploy
+
+# OR: Complete recreation from scratch
+make unified-recreate-all
+
+# Check platform health
+make unified-health-check
+
+# Check status
+kubectl get pods -n noetl-platform
+
+# Clean up when done
+kind delete cluster --name noetl-cluster
+```
+
+**Alternative (Direct Script):**
+```bash
+# Deploy directly via script
+./k8s/deploy-unified-platform.sh
+
+# Complete recreation via script  
+./k8s/recreate-all.sh
+```
+
+### Legacy Deployment (Using Makefile)
+
+```bash
+# Deploy the complete platform (legacy separate namespaces)
 make k8s-platform-deploy
 
 # Check status
 make k8s-platform-status
-
-# Test with a simple playbook
-make k8s-platform-test
 
 # Clean up when done
 make k8s-platform-clean
 ```
 
 **That's it!** The platform will be available at:
-- **Health Check**: http://localhost:30082/api/health
+- **NoETL Server**: http://localhost:30082/api/health
+- **Grafana Dashboard**: http://localhost:3000 (admin/admin)
+- **VictoriaMetrics**: http://localhost:8428/vmui/
+- **VictoriaLogs**: http://localhost:9428
 - **API Documentation**: http://localhost:30082/docs
-- **Main API**: http://localhost:30082/
 
-### Namespaces
-- NoETL server resources are deployed to the `noetl` namespace.
-- Worker pools run in dedicated namespaces: `noetl-worker-cpu-01`, `noetl-worker-cpu-02`, and `noetl-worker-gpu-01`.
-- Postgres continues to run in the `postgres` namespace.
+### Available Makefile Commands
+
+**Unified Platform Management:**
+```bash
+# Deployment
+make unified-deploy                 # Deploy unified NoETL platform
+make unified-recreate-all          # Complete recreation from scratch
+
+# Health & Status  
+make unified-health-check          # Check platform health
+make help                          # Show all commands
+
+# Port Forwarding
+make unified-port-forward-start    # Start port forwards
+make unified-port-forward-stop     # Stop port forwards
+make unified-port-forward-status   # Check port forward status
+
+# Credentials
+make unified-grafana-credentials   # Get Grafana admin password
+```
+
+**Development Commands:**
+```bash
+# Build & Test
+make build                         # Build Docker images
+make test                          # Run test suite
+make install-dev                   # Development setup
+
+# Legacy K8s Commands (separate namespaces)
+make k8s-platform-deploy           # Legacy deployment
+make k8s-reset                     # Reset Kind cluster
+```
+
+### Architecture
+
+**Unified Deployment** (Recommended):
+- **All NoETL Components**: `noetl-platform` namespace
+  - NoETL server
+  - All worker pools (cpu-01, cpu-02, gpu-01) 
+  - Observability stack (Grafana, VictoriaMetrics, VictoriaLogs, Vector)
+- **PostgreSQL**: `postgres` namespace
+
+**Legacy Deployment**:
+- NoETL server: `noetl` namespace
+- Worker pools: separate namespaces (`noetl-worker-cpu-01`, `noetl-worker-cpu-02`, `noetl-worker-gpu-01`)
+- Observability: `observability` namespace  
+- Postgres: `postgres` namespace
 
 ##  Deployment Options
 
-### Current Implementation
+### Unified Deployment (Recommended)
+- **Architecture**: All NoETL components in single `noetl-platform` namespace
 - **Image**: `noetl-local-dev:latest` (built from local source)
-- **Health Endpoint**: `/api/health` (not `/health`)
+- **Health Endpoint**: `/api/health`
+- **Container Port**: 8082 with NodePort 30082
+- **Database**: Postgres in dedicated `postgres` namespace
+- **Observability**: Integrated Grafana, VictoriaMetrics, VictoriaLogs
+- **Benefits**: Simplified management, unified monitoring, better service discovery
+
+### Legacy Implementation
+- **Architecture**: Separate namespaces for each component
+- **Image**: `noetl-local-dev:latest` (built from local source)
+- **Health Endpoint**: `/api/health`
 - **Container Port**: 8082 with NodePort 30082
 - **Database**: Postgres in dedicated `postgres` namespace
 - **Server**: Direct uvicorn execution (not subprocess wrapper)
@@ -81,9 +163,28 @@ Move-Item .\kind-windows-amd64.exe c:\some-dir-in-your-PATH\kind.exe
 
 ##  Deployment Methods
 
-### Method 1: Makefile Targets (Recommended)
+### Method 1: Unified Deployment (Recommended)
 
-The simplest approach using our pre-configured Makefile targets:
+Deploy all components in a single unified namespace with integrated observability:
+
+```bash
+# Deploy everything in one command
+./k8s/deploy-unified-platform.sh
+
+# This will:
+# - Create Kind cluster (noetl-cluster)
+# - Build and load Docker images (postgres-noetl, noetl-local-dev)
+# - Deploy Postgres in 'postgres' namespace
+# - Deploy NoETL server and workers in 'noetl-platform' namespace
+# - Deploy observability stack (Grafana, VictoriaMetrics, VictoriaLogs)
+# - Initialize database schema
+# - Configure health checks and services
+# - Set up monitoring and dashboards
+```
+
+### Method 2: Legacy Makefile Targets
+
+The legacy approach using separate namespaces:
 
 ```bash
 # Deploy everything in one command
@@ -93,14 +194,15 @@ make k8s-platform-deploy
 # - Create Kind cluster (noetl-cluster) 
 # - Build Docker images (postgres-noetl, noetl-local-dev)
 # - Deploy Postgres in 'postgres' namespace
-# - Deploy NoETL server in 'default' namespace  
+# - Deploy NoETL server in 'noetl' namespace
+# - Deploy workers in separate namespaces
 # - Initialize database schema
 # - Configure health checks and services
 ```
 
-### Method 2: Deployment Script
+### Method 3: Legacy Deployment Script
 
-Direct script execution with options:
+Direct script execution with options for legacy separate namespace deployment:
 
 ```bash
 # Basic deployment
@@ -112,22 +214,68 @@ Direct script execution with options:
 ./k8s/deploy-platform.sh --help         # Show all options
 ```
 
+### Unified Deployment Options
+
+The unified deployment script supports various options:
+
+```bash
+# Basic unified deployment
+./k8s/deploy-unified-platform.sh
+
+# Skip certain components
+./k8s/deploy-unified-platform.sh --no-cluster        # Use existing cluster
+./k8s/deploy-unified-platform.sh --no-postgres       # Skip Postgres deployment
+./k8s/deploy-unified-platform.sh --no-observability  # Skip observability stack
+
+# Custom configuration
+./k8s/deploy-unified-platform.sh --namespace my-platform  # Custom namespace
+./k8s/deploy-unified-platform.sh --deploy-noetl-dev       # Development mode
+
+# Help
+./k8s/deploy-unified-platform.sh --help                   # Show all options
+```
+
 ##  What Gets Deployed
 
-### Postgres Database
-- **Namespace**: `postgres` 
+### Unified Deployment Components
+
+#### PostgreSQL Database
+- **Namespace**: `postgres`
 - **Image**: `postgres-noetl:latest` (built from `docker/postgres/`)
 - **Storage**: Persistent volume at `/mnt/data` in Kind node
 - **Database**: `demo_noetl` with `noetl` schema
 - **Users**: `demo` (admin), `noetl` (application user)
 
-### NoETL Server  
-- **Namespace**: `default`
+#### NoETL Platform (Unified Namespace: `noetl-platform`)
+- **NoETL Server**: 
+  - **Image**: `noetl-local-dev:latest` (built from local source)
+  - **Port**: 8082 (exposed as NodePort 30082)
+  - **Health**: `/api/health` endpoint
+- **Worker Pools**: 
+  - **CPU Workers**: `noetl-worker-cpu-01`, `noetl-worker-cpu-02`
+  - **GPU Worker**: `noetl-worker-gpu-01`
+  - **Metrics**: Exposed on port 8080
+- **Observability Stack**:
+  - **Grafana**: Dashboard at http://localhost:3000
+  - **VictoriaMetrics**: Metrics storage and querying
+  - **VictoriaLogs**: Log aggregation and search
+  - **Vector**: Log and metrics collection
+
+### Legacy Deployment Components
+
+#### NoETL Server (Legacy)
+- **Namespace**: `noetl`
 - **Image**: `noetl-local-dev:latest` (built from local source)
 - **Port**: 8082 (exposed as NodePort 30082)
 - **Health**: `/api/health` endpoint
-- **Database**: Auto-initializes schema on startup
-- **Execution**: Direct uvicorn (not subprocess wrapper)
+
+#### Worker Pools (Legacy)
+- **Separate Namespaces**: `noetl-worker-cpu-01`, `noetl-worker-cpu-02`, `noetl-worker-gpu-01`
+- **Image**: `noetl-local-dev:latest`
+
+#### Observability (Legacy)
+- **Namespace**: `observability`
+- **Components**: Separate Grafana, VictoriaMetrics, VictoriaLogs deployment
 
 ### Fixes Applied
 During development, we resolved several key issues:
