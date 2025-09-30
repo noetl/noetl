@@ -448,6 +448,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     else:
         @app.get("/", include_in_schema=False)
         async def root_no_ui():
+            logger.error(f"ERROR: UI not available you need to build it first (see docs) and put dist to {ui_build_path}")
             return {"message": "NoETL API is running, but UI is not available"}
 
     return app

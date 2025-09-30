@@ -23,7 +23,7 @@ RUN uv venv && \
     uv sync --frozen --no-dev --no-install-project
 
 COPY noetl ./noetl
-COPY --from=ui-builder /ui/ui-src/dist ./noetl/ui/build
+COPY --from=ui-builder /ui/ui-src/dist ./noetl/core/ui/build
 
 COPY LICENSE README.md ./
 
