@@ -3,3 +3,6 @@ psql -U noetl -d demo_noetl -c "SELECT * FROM noetl.catalog;"
 
 # from host
 psql -h localhost -p 54321 -U noetl -d demo_noetl -c "SELECT * FROM noetl.catalog;"
+
+# from psql-client pod
+psql -h postgres.postgres.svc.cluster.local -p 5432 -U noetl -d demo_noetl -c "SELECT * FROM noetl.catalog;"

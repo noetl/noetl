@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: noetl
+  namespace: noetl
   labels:
     app: noetl
 spec:
@@ -26,9 +27,10 @@ spec:
             - secretRef:
                 name: noetl-secret
           volumeMounts:
-            - name: noetl
-              mountPath: /opt/noetl
-          # command: ["python"]
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+            - name: noetl-logs
+              mountPath: /opt/noetl/logs
           command: ["/opt/noetl/.venv/bin/python3"]
           args: ["-m", "uvicorn", "noetl.server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8082", "--log-level", "info"]
           resources:
@@ -55,5 +57,7 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
       volumes:
-        - name: noetl
+        - name: noetl-data
+          emptyDir: {}
+        - name: noetl-logs
           emptyDir: {}

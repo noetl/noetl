@@ -2,12 +2,12 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: noetl-worker-cpu-01
+  namespace: noetl
   labels:
     app: noetl-worker
     component: worker
     runtime: cpu
     worker-pool: worker-cpu-01
-  namespace: noetl
 spec:
   replicas: 1
   selector:
@@ -31,9 +31,6 @@ spec:
             - -c
             - >-
               until curl -sf http://noetl.noetl.svc.cluster.local:8082/api/health; do
-
-
-
 
 
                 echo "Waiting for NoETL API...";

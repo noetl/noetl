@@ -102,11 +102,11 @@ tasks:
       - kubectl config use-context kind-noetl
       - kubectl apply -f ci/manifests/noetl/namespace.yaml
       - sleep 2
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/srv-deployment.yaml
-      # - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/wrk-deployment.yaml
+      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
+      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
       - kubectl apply -f ci/manifests/noetl/
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/srv-deployment.yaml
-      # - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/wrk-deployment.yaml
+      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
+      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
 
   remove-noetl:
     desc: Remove noetl from the noetl kind cluster
