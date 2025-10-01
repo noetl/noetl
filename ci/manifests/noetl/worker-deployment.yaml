@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: noetl-worker-cpu-01
+  name: noetl-worker
   namespace: noetl
   labels:
     app: noetl-worker
@@ -29,13 +29,7 @@ spec:
           command:
             - sh
             - -c
-            - >-
-              until curl -sf http://noetl.noetl.svc.cluster.local:8082/api/health; do
-
-
-                echo "Waiting for NoETL API...";
-                sleep 3;
-              done
+            - "until curl -sf http://noetl.noetl.svc.cluster.local:8082/api/health; do echo 'Waiting for NoETL API...'; sleep 3; done"
       containers:
         - name: worker
           image: image_name:image_tag

@@ -58,6 +58,8 @@ spec:
             failureThreshold: 3
       volumes:
         - name: noetl-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: noetl-data
         - name: noetl-logs
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: noetl-logs
