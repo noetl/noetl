@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased] - Unified Kubernetes Deployment
+
+### Added
+- **Unified Kubernetes Deployment**: New deployment architecture that consolidates all NoETL components (server, workers, observability) into a single namespace
+- **Integrated Observability**: Built-in Grafana, VictoriaMetrics, VictoriaLogs, and Vector monitoring stack
+- **Simplified Management**: All components deployed and managed together
+- **Build and Load Scripts**: Automated Docker image building and loading for Kind clusters
+- **Port-Forward Management**: Automated port-forwarding setup for observability UIs
+
+### Scripts Added
+- `k8s/deploy-unified-platform.sh` - Main unified deployment script
+- `k8s/generate-unified-noetl-deployment.sh` - Generates unified Kubernetes manifests
+- `k8s/deploy-unified-observability.sh` - Deploys observability stack to unified namespace
+- `k8s/build-and-load-images.sh` - Builds and loads Docker images into Kind cluster
+- `k8s/cleanup-old-deployments.sh` - Cleans up legacy separate deployments
+
+### Documentation Added
+- `docs/unified_deployment.md` - Comprehensive unified deployment guide
+- `k8s/UNIFIED_DEPLOYMENT.md` - Quick reference for unified deployment
+- Updated `docs/installation.md` with Kubernetes installation option
+- Updated `docs/kind_kubernetes.md` with unified deployment examples
+- Updated `k8s/README.md` with unified vs legacy deployment comparison
+
+### Benefits
+- **Simplified Architecture**: Single namespace (`noetl-platform`) instead of 5 separate namespaces
+- **Better Performance**: Direct service-to-service communication without cross-namespace networking
+- **Unified Monitoring**: All components automatically monitored in one dashboard
+- **Easier Troubleshooting**: Everything in one location
+- **Resource Efficiency**: Reduced Kubernetes overhead
+
+### Migration
+- Use `./k8s/cleanup-old-deployments.sh` to migrate from legacy separate namespace deployment
+- Maintains API compatibility with existing clients
+- PostgreSQL remains in separate `postgres` namespace for data persistence
+
 ## [0.1.26] (2025-07-17)
 
 Changes Made:

@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from jinja2 import Environment, StrictUndefined, BaseLoader
 
 from noetl.core.logger import setup_logger
-from noetl.worker.plugin import execute_task, execute_task_resolved, report_event
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -330,6 +329,7 @@ class QueueWorker:
 
     async def _complete_job(self, job_id: int) -> None:
         try:
+            logger.debug(f"WORKER: Completing job {job_id}")
             async with httpx.AsyncClient(timeout=5.0) as client:
                 await client.post(f"{self.server_url}/queue/{job_id}/complete")
         except Exception:  # pragma: no cover - network best effort
@@ -449,7 +449,7 @@ class QueueWorker:
                 act_type = ''
             if act_type == 'result_aggregation':
                 # Process loop result aggregation job via worker-side coroutine
-                from noetl.worker.plugin.result import process_loop_aggregation_job
+                from noetl.plugin.result import process_loop_aggregation_job
                 import asyncio as _a
                 try:
                     _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
@@ -529,36 +529,38 @@ class QueueWorker:
                 start_event.update(loop_meta)
             if parent_event_id:
                 start_event["parent_event_id"] = parent_event_id
+            
+            from noetl.plugin import report_event
             report_event(start_event, self.server_url)
 
             try:
-                # Unify step payloads: prefer 'input', then 'payload', then legacy 'with'
+                # Normalize payloads: canonical 'data' with legacy aliases
+                task_data = {}
                 if isinstance(action_cfg, dict):
-                    # Merge with priority input > payload > with
-                    merged = {}
+                    # Start from explicit data first
+                    if isinstance(action_cfg.get('data'), dict):
+                        task_data.update(action_cfg.get('data'))
+                    # Merge legacy aliases with precedence: input > payload > with
                     try:
                         w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
                         if w:
-                            merged.update(w)
+                            task_data = {**w, **task_data}
                     except Exception:
                         pass
                     try:
                         p = action_cfg.get('payload') if isinstance(action_cfg.get('payload'), dict) else None
                         if p:
-                            merged.update(p)
+                            task_data = {**p, **task_data}
                     except Exception:
                         pass
                     try:
                         i = action_cfg.get('input') if isinstance(action_cfg.get('input'), dict) else None
                         if i:
-                            merged.update(i)
+                            task_data = {**i, **task_data}
                     except Exception:
                         pass
-                    task_with = merged
-                else:
-                    task_with = {}
-                if not isinstance(task_with, dict):
-                    task_with = {}
+                if not isinstance(task_data, dict):
+                    task_data = {}
                 try:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
                 except Exception:
@@ -566,7 +568,8 @@ class QueueWorker:
                 # Expose unified payload under exec_ctx['input'] for template convenience
                 try:
                     if isinstance(exec_ctx, dict):
-                        exec_ctx['input'] = task_with
+                        exec_ctx['input'] = dict(task_data)
+                        exec_ctx['data'] = dict(task_data)
                 except Exception:
                     pass
                 try:
@@ -591,7 +594,9 @@ class QueueWorker:
                         }
                 except Exception:
                     pass
-                result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_with)
+                
+                from noetl.plugin import execute_task
+                result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_data)
 
                 # Inline save: if the action config declares a `save` block, perform the save on worker
                 inline_save = None
@@ -604,19 +609,23 @@ class QueueWorker:
                         # Provide current result to rendering context as `this` for convenience
                         try:
                             exec_ctx_with_result = dict(exec_ctx)
+                            # Provide current step output as 'result' for inline save templates
+                            _current = result.get('data') if isinstance(result, dict) and result.get('data') is not None else result
+                            exec_ctx_with_result['result'] = _current
+                            # Back-compat aliases
                             exec_ctx_with_result['this'] = result
-                            # Convenience alias: expose current action's payload as `data`
-                            # so templates can use {{ data.* }} in inline save blocks.
-                            if isinstance(result, dict):
-                                _payload = result.get('data')
-                                # Do not overwrite an existing 'data' key in context
-                                if 'data' not in exec_ctx_with_result:
-                                    exec_ctx_with_result['data'] = _payload
-                        except Exception:
+                            if 'data' not in exec_ctx_with_result:
+                                exec_ctx_with_result['data'] = _current
+                            logger.debug(f"WORKER: Added result context variables - result keys: {list(_current.keys()) if isinstance(_current, dict) else type(_current)}, this keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+                        except Exception as ctx_err:
+                            logger.warning(f"WORKER: Failed to add result context variables, falling back to original context: {ctx_err}")
                             exec_ctx_with_result = exec_ctx
-                        from .plugin.save import execute_save_task as _do_save
+                        from ..plugin.save import execute_save_task as _do_save
                         save_payload = {'save': inline_save}
-                        save_out = _do_save(save_payload, exec_ctx_with_result, self._jinja, task_with)
+                        logger.debug(f"WORKER: About to call save plugin with context keys: {list(exec_ctx_with_result.keys()) if isinstance(exec_ctx_with_result, dict) else type(exec_ctx_with_result)}")
+                        if isinstance(exec_ctx_with_result, dict) and 'result' in exec_ctx_with_result:
+                            logger.debug(f"WORKER: Context has 'result' of type: {type(exec_ctx_with_result['result'])}")
+                        save_out = _do_save(save_payload, exec_ctx_with_result, self._jinja, task_data)
                         # Attach save outcome to result envelope under meta.save or data.save
                         if isinstance(result, dict):
                             if 'meta' in result and isinstance(result['meta'], dict):
@@ -655,6 +664,8 @@ class QueueWorker:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    
+                    from noetl.plugin import report_event
                     report_event(error_event, self.server_url)
                     emitted_error = True
                     raise RuntimeError(err_msg or "Task returned error status")
@@ -673,6 +684,8 @@ class QueueWorker:
                         complete_event.update(loop_meta)
                     if parent_event_id:
                         complete_event["parent_event_id"] = parent_event_id
+                    
+                    from noetl.plugin import report_event
                     report_event(complete_event, self.server_url)
 
                     # Emit a companion step_result event for easier querying of results per step
@@ -694,6 +707,8 @@ class QueueWorker:
                             step_result_event.update(loop_meta)
                         if parent_event_id:
                             step_result_event["parent_event_id"] = parent_event_id
+                        
+                        from noetl.plugin import report_event
                         report_event(step_result_event, self.server_url)
                     except Exception:
                         logger.debug("WORKER: Failed to emit step_result companion event", exc_info=True)
@@ -721,6 +736,8 @@ class QueueWorker:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    
+                    from noetl.plugin import report_event
                     report_event(error_event, self.server_url)
                 raise  # Re-raise to let the worker handle job failure
         else:
@@ -738,6 +755,79 @@ class QueueWorker:
             await self._fail_job(job["id"])
 
     # ------------------------------------------------------------------
+    async def _report_simple_worker_metrics(self) -> None:
+        """Report simple worker metrics for standalone QueueWorker instances."""
+        try:
+            import psutil
+            
+            # Basic system metrics for standalone worker
+            metrics_data = []
+            
+            try:
+                # CPU and memory
+                cpu_percent = psutil.cpu_percent(interval=0.1)
+                memory = psutil.virtual_memory()
+                process = psutil.Process()
+                
+                metrics_data.extend([
+                    {
+                        "metric_name": "noetl_system_cpu_usage_percent",
+                        "metric_type": "gauge",
+                        "metric_value": cpu_percent,
+                        "help_text": "CPU usage percentage",
+                        "unit": "percent"
+                    },
+                    {
+                        "metric_name": "noetl_system_memory_usage_percent",
+                        "metric_type": "gauge",
+                        "metric_value": memory.percent,
+                        "help_text": "Memory usage percentage",
+                        "unit": "percent"
+                    },
+                    {
+                        "metric_name": "noetl_worker_status",
+                        "metric_type": "gauge",
+                        "metric_value": 1,  # 1 = active
+                        "help_text": "Worker status (1=active, 0=inactive)",
+                        "unit": "status"
+                    }
+                ])
+            except Exception as e:
+                logger.debug(f"Error collecting worker metrics: {e}")
+            
+            # Get component name from environment or use worker_id
+            component_name = os.environ.get('NOETL_WORKER_POOL_NAME') or f'worker-{self.worker_id}'
+            
+            # Report to server
+            payload = {
+                "component_name": component_name,
+                "component_type": "queue_worker",
+                "metrics": [
+                    {
+                        "metric_name": m.get("metric_name", ""),
+                        "metric_type": m.get("metric_type", "gauge"),
+                        "metric_value": m.get("metric_value", 0),
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "labels": {
+                            "component": component_name,
+                            "worker_id": self.worker_id,
+                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                        },
+                        "help_text": m.get("help_text", ""),
+                        "unit": m.get("unit", "")
+                    } for m in metrics_data
+                ]
+            }
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"{self.server_url}/metrics/report", json=payload)
+                if resp.status_code != 200:
+                    logger.debug(f"Worker metrics report failed {resp.status_code}: {resp.text}")
+                    
+        except Exception as e:
+            logger.debug(f"Failed to report worker metrics: {e}")
+
+    # ------------------------------------------------------------------
     async def run_forever(
             self, interval: float = 1.0, stop_event: Optional[asyncio.Event] = None
     ) -> None:
@@ -753,10 +843,25 @@ class QueueWorker:
             pools where individual workers need to be stopped or replaced
             dynamically.
         """
+        # Metrics reporting interval (default 60 seconds)
+        metrics_interval = float(os.environ.get("NOETL_WORKER_METRICS_INTERVAL", "60"))
+        last_metrics_time = 0.0
+        
         try:
             while True:
                 if stop_event and stop_event.is_set():
                     break
+                    
+                current_time = time.time()
+                
+                # Report metrics periodically
+                if current_time - last_metrics_time >= metrics_interval:
+                    try:
+                        await self._report_simple_worker_metrics()
+                        last_metrics_time = current_time
+                    except Exception:
+                        logger.debug("Worker metrics reporting failed", exc_info=True)
+                
                 job = await self._lease_job()
                 if job:
                     await self._execute_job(job)
@@ -789,6 +894,7 @@ class ScalableQueueWorkerPool:
         self.check_interval = check_interval
         self.worker_poll_interval = worker_poll_interval
         self.max_processes = max_processes or self.max_workers
+        self.worker_id = os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
         self._thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
         self._process_pool = ProcessPoolExecutor(max_workers=self.max_processes)
         self._tasks: List[Tuple[asyncio.Task, asyncio.Event]] = []
@@ -820,6 +926,120 @@ class ScalableQueueWorkerPool:
             worker.run_forever(self.worker_poll_interval, stop_evt)
         )
         self._tasks.append((task, stop_evt))
+
+    async def _report_worker_metrics(self, component_name: str) -> None:
+        """Report worker metrics to the server."""
+        try:
+            # Import here to avoid circular imports
+            import psutil
+            
+            # Collect system metrics locally (based on metrics.py)
+            metrics_data = []
+            
+            try:
+                # CPU usage
+                cpu_percent = psutil.cpu_percent(interval=0.1)
+                metrics_data.append({
+                    "metric_name": "noetl_system_cpu_usage_percent",
+                    "metric_type": "gauge",
+                    "metric_value": cpu_percent,
+                    "help_text": "CPU usage percentage",
+                    "unit": "percent"
+                })
+                
+                # Memory usage
+                memory = psutil.virtual_memory()
+                metrics_data.append({
+                    "metric_name": "noetl_system_memory_usage_bytes",
+                    "metric_type": "gauge",
+                    "metric_value": memory.used,
+                    "help_text": "Memory usage in bytes",
+                    "unit": "bytes"
+                })
+                
+                metrics_data.append({
+                    "metric_name": "noetl_system_memory_usage_percent",
+                    "metric_type": "gauge",
+                    "metric_value": memory.percent,
+                    "help_text": "Memory usage percentage",
+                    "unit": "percent"
+                })
+                
+                # Process info
+                process = psutil.Process()
+                metrics_data.append({
+                    "metric_name": "noetl_process_cpu_percent",
+                    "metric_type": "gauge",
+                    "metric_value": process.cpu_percent(),
+                    "help_text": "Process CPU usage percentage",
+                    "unit": "percent"
+                })
+                
+                memory_info = process.memory_info()
+                metrics_data.append({
+                    "metric_name": "noetl_process_memory_rss_bytes",
+                    "metric_type": "gauge",
+                    "metric_value": memory_info.rss,
+                    "help_text": "Process RSS memory in bytes",
+                    "unit": "bytes"
+                })
+                
+            except Exception as e:
+                logger.debug(f"Error collecting system metrics: {e}")
+            
+            # Add worker-specific metrics
+            metrics_data.extend([
+                {
+                    "metric_name": "noetl_worker_active_tasks",
+                    "metric_type": "gauge", 
+                    "metric_value": len(self._tasks),
+                    "help_text": "Number of active worker tasks",
+                    "unit": "tasks"
+                },
+                {
+                    "metric_name": "noetl_worker_max_workers",
+                    "metric_type": "gauge",
+                    "metric_value": self.max_workers,
+                    "help_text": "Maximum configured workers",
+                    "unit": "workers"
+                },
+                {
+                    "metric_name": "noetl_worker_queue_size",
+                    "metric_type": "gauge", 
+                    "metric_value": await self._queue_size(),
+                    "help_text": "Current queue size",
+                    "unit": "jobs"
+                }
+            ])
+            
+            # Report to server
+            payload = {
+                "component_name": component_name,
+                "component_type": "worker_pool",
+                "metrics": [
+                    {
+                        "metric_name": m.get("metric_name", ""),
+                        "metric_type": m.get("metric_type", "gauge"),
+                        "metric_value": m.get("metric_value", 0),
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "labels": {
+                            "component": component_name,
+                            "worker_id": self.worker_id,
+                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                        },
+                        "help_text": m.get("help_text", ""),
+                        "unit": m.get("unit", "")
+                    } for m in metrics_data
+                ]
+            }
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"{self.server_url}/metrics/report", json=payload)
+                if resp.status_code != 200:
+                    logger.debug(f"Metrics report failed {resp.status_code}: {resp.text}")
+                    
+        except Exception as e:
+            logger.debug(f"Failed to report worker metrics: {e}")
 
     async def _scale_workers(self) -> None:
         desired = min(self.max_workers, max(1, await self._queue_size()))
@@ -855,8 +1075,12 @@ class ScalableQueueWorkerPool:
                         resp = await client.post(url, json=payload)
                         if resp.status_code != 200:
                             logger.debug(f"Worker heartbeat non-200 {resp.status_code}: {resp.text}")
+                    
+                    # Report metrics with heartbeat
+                    await self._report_worker_metrics(name)
+                    
                 except Exception:
-                    logger.debug("Worker heartbeat failed", exc_info=True)
+                    logger.debug("Worker heartbeat/metrics failed", exc_info=True)
                 await asyncio.sleep(heartbeat_interval)
 
         hb_task = asyncio.create_task(_heartbeat_loop())

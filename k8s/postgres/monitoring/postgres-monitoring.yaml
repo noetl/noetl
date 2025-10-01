@@ -1,0 +1,18 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
+metadata:
+  name: postgres-exporter
+  namespace: noetl-platform
+  labels:
+    app: postgres-exporter
+spec:
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+  namespaceSelector:
+    matchNames:
+    - postgres
+  selector:
+    matchLabels:
+      app: postgres-exporter

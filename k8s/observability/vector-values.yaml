@@ -1,0 +1,34 @@
+role: "Agent"
+
+service:
+  enabled: false
+
+customConfig:
+  data_dir: /vector-data-dir
+  sources:
+    k8s_logs:
+      type: kubernetes_logs
+
+  transforms:
+    enrich:
+      type: remap
+      inputs: [k8s_logs]
+      source: |
+        .timestamp = to_unix_timestamp(.timestamp) ?? now()
+        .log = .message
+        .labels.app = .kubernetes.pod_labels.app
+        .labels.namespace = .kubernetes.namespace_name
+        .labels.pod = .kubernetes.pod_name
+        .labels.container = .kubernetes.container_name
+
+  sinks:
+    vlogs_json:
+      type: http
+      inputs: [enrich]
+      method: post
+      uri: "http://vlogs-victoria-logs-single-server-0.vlogs-victoria-logs-single-server.noetl-platform.svc.cluster.local:9428/insert/jsonline?_stream_fields=labels.namespace,labels.pod,labels.container&_msg_field=log&_time_field=timestamp"
+      encoding:
+        codec: json
+      framing:
+        method: newline_delimited
+      compression: gzip

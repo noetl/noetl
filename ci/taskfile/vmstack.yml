@@ -1,0 +1,83 @@
+version: '3.45'
+
+env:
+  REGISTRY: "local"
+  IMAGE_NAME: "noetl"
+
+tasks:
+  add-metrics-server-helm-repo:
+    desc: Add Metircs Server helm repository
+    cmds:
+      - helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+      - helm repo update
+
+  deploy-metrics-server:
+    desc: Deploy Metrics Server
+    aliases: [dm]
+    cmds:
+      - kubectl config use-context kind-noetl 
+      - |
+        helm upgrade --install metrics-server metrics-server/metrics-server \
+          --values ci/vmstack/mericsserver-values.yaml --version 3.13.0 \
+          --namespace metrics-server --create-namespace \
+          --wait --wait-for-jobs
+
+  remove-metrics-server:
+    desc: Remove Metrics Server
+    aliases: [rm]
+    cmds:
+      - kubectl config use-context kind-noetl 
+      - helm uninstall metrics-server -n metrics-server
+
+  add-victoriametrics-helm-repo:
+    desc: Add Victoria Metrics helm repository
+    cmds:
+      - helm repo add vm https://victoriametrics.github.io/helm-charts/
+      - helm repo update
+
+  deploy-vmstack-operator:
+    desc: Deploy Victoria Metrics operator
+    aliases: [do]
+    cmds:
+      - kubectl config use-context kind-noetl 
+      - |
+        helm upgrade --install vmoperator vm/victoria-metrics-operator \
+          --values ci/vmstack/vmoperator-values.yaml --version 0.54.0 \
+          --namespace vmoperator --create-namespace \
+          --wait --wait-for-jobs
+
+  remove-vmstack-operator:
+    desc: Remove Victoria Metrics operator
+    aliases: [ro]
+    cmds:
+      - kubectl config use-context kind-noetl 
+      - helm uninstall vmoperator -n vmoperator
+
+  deploy-vmstack:
+    desc:  Deploy Victoria Metrics stack
+    aliases: [dv]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - |
+        helm upgrade --install vmstack vm/victoria-metrics-k8s-stack \
+          --values ci/vmstack/vmstack-values.yaml --version 0.60.1 \
+          --namespace vmstack --create-namespace \
+          --wait --wait-for-jobs
+
+  remove-vmstack:
+    desc:  Remove Victoria Metrics stack
+    aliases: [rv]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - helm uninstall vmstack -n vmstack
+
+# === Combined Tasks ===
+  deploy-monitoring:
+    desc: Deploy Metrics Server, Victoria Metrics operator and stack
+    aliases: [dmon]
+    cmds:
+      - task: add-metrics-server-helm-repo
+      - task: add-victoriametrics-helm-repo
+      - task: deploy-metrics-server
+      - task: deploy-vmstack-operator
+      - task: deploy-vmstack

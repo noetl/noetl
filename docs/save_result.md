@@ -40,11 +40,10 @@ Schema (declarative mode):
 save:
   when: <expr>                 # optional condition; default true
   on: success|error|always     # default success
-  storage:
-    kind: event_log|postgres|duckdb|bigquery|snowflake|s3|gcs|file|kv|vector|graph
-    auth: <name>               # optional; resolves through credential store (alias: credentialRef deprecated)
-    spec:                      # storage-specific parameters (dsn/table/bucket/path/index/namespace/etc.)
-      ...
+  storage: event_log|postgres|duckdb|bigquery|snowflake|s3|gcs|file|kv|vector|graph  # flattened enum
+  auth: <name>                 # optional; resolves through credential store (alias: credentialRef deprecated)
+  spec:                        # storage-specific parameters (dsn/table/bucket/path/index/namespace/etc.)
+    ...
   format: json|csv|parquet     # optional for file/object stores
   mode: append|overwrite|update|upsert  # when supported (DB/object/kv/vector)
   key: [field1, field2]        # for upsert when supported
@@ -58,11 +57,10 @@ Schema (statement mode):
 save:
   when: <expr>
   on: success|error|always
-  storage:
-    kind: postgres|duckdb|bigquery|snowflake|graph
-    auth: <name>               # alias: credentialRef (deprecated)
-    spec:
-      dialect: sql|cypher|gremlin|sparql   # graph/triple stores
+  storage: postgres|duckdb|bigquery|snowflake|graph    # flattened enum
+  auth: <name>               # alias: credentialRef (deprecated)
+  spec:
+    dialect: sql|cypher|gremlin|sparql   # graph/triple stores
   statement: |
     INSERT INTO hello_world(execution_id, payload)
     VALUES (:execution_id, :payload)
@@ -74,7 +72,7 @@ save:
 ```
 
 Guidelines:
-- If `storage.kind` is omitted, we default to `event_log` and only record in `event_log.result`.
+- If `storage` is omitted, we default to `event_log` and only record in `event_log.result`.
 - `data:` can be a mapping or a single template scalar/object.
 - For DB stores, prefer `mode: upsert` with `key:` when applicable; otherwise `append`.
 - Statement mode supports parameterized operations; prefer `params:` over inlining values to avoid quoting mistakes.
@@ -85,10 +83,9 @@ Guidelines:
 - step: end
   desc: End simple test
   save:
-    storage:
-      kind: postgres
-      auth: pg_main              # points to a credential record by alias
-      spec: { table: hello_world }
+    storage: postgres
+    auth: pg_main              # points to a credential record by alias
+    table: hello_world
     mode: upsert
     key: [execution_id]
     data:
@@ -114,9 +111,8 @@ auth: pg_main
 
 # Save block
 save:
-  storage:
-    kind: s3
-    auth: s3_backup
+  storage: s3
+  auth: s3_backup
 ```
 
 Resolution order:
@@ -130,7 +126,7 @@ The engine fetches the credential secret material (DSN/token/keys) securely and 
 
 Loop steps emit one result per item and may produce an aggregated result for the step. References:
 
-- Per-item context: templates receive `_loop.current_index` and `_loop.current_item`.
+- Per-item context: templates receive `<loop_step>.result_index` and `_loop.current_item`.
 - Aggregated result: `{{ loop_step.result }}` (array or object), and often `{{ loop_step.data }}` when using the envelope.
 
 Persisting loop results:
@@ -187,10 +183,9 @@ workflow:
   - step: end
     desc: End simple test
     save:
-      storage:
-        kind: postgres
-        credentialRef: pg_main
-        spec: { table: hello_world }
+      storage: postgres
+      credentialRef: pg_main
+      table: hello_world
       mode: upsert
       key: [execution_id]
       data:
@@ -204,10 +199,9 @@ workflow:
 
 ```
 save:
-  storage:
-    kind: kv
-    auth: redis_main
-    spec: { driver: redis, namespace: noetl }
+  storage: kv
+  auth: redis_main
+  spec: { driver: redis, namespace: noetl }
   mode: upsert
   data:
     key: "exec:{{ execution_id }}:message"
@@ -219,10 +213,9 @@ save:
 
 ```
 save:
-  storage:
-    kind: vector
-    auth: pg_main
-    spec: { driver: pgvector, table: embeddings, id_column: id, vector_column: embedding, meta_column: meta }
+  storage: vector
+  auth: pg_main
+  spec: { driver: pgvector, table: embeddings, id_column: id, vector_column: embedding, meta_column: meta }
   mode: upsert
   data:
     id: "{{ execution_id }}"
@@ -236,10 +229,9 @@ save:
 
 ```
 save:
-  storage:
-    kind: graph
-    auth: neo4j_main
-    spec: { dialect: cypher }
+  storage: graph
+  auth: neo4j_main
+  spec: { dialect: cypher }
   statement: |
     MERGE (e:Execution {id: $execution_id})
     MERGE (s:Step {name: $step_name})
@@ -255,9 +247,8 @@ save:
 
 ```
 save:
-  storage:
-    kind: postgres
-    auth: pg_main
+  storage: postgres
+  auth: pg_main
   statement: |
     INSERT INTO hello_world(execution_id, payload)
     VALUES (:execution_id, :payload)
@@ -273,4 +264,4 @@ save:
 - `save:` is an additive persistence directive (to database/object/file) evaluated after the step completes.
 - In loops, the same `save:` schema applies; the engine will render per-item or aggregated contexts accordingly.
 - Credential resolution should happen server‑side; workers receive only what is needed for execution.
-- For statement mode, the engine should default to parameterized execution (`params:`) and support dialect routing (SQL/Cypher/Gremlin/Sparql) according to `storage.kind/spec`.
+- For statement mode, the engine should default to parameterized execution (`params:`) and support dialect routing (SQL/Cypher/Gremlin/Sparql) according to `storage` value and `spec`.

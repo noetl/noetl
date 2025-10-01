@@ -162,6 +162,8 @@ class Settings(BaseModel):
     server_runtime: str = Field(..., alias="NOETL_SERVER")            # "uvicorn" | "gunicorn" | "auto"
     server_workers: int = Field(..., alias="NOETL_SERVER_WORKERS")    # >= 1
     server_reload: bool = Field(..., alias="NOETL_SERVER_RELOAD")     # true/false
+    auto_recreate_runtime: bool = Field(False, alias="NOETL_AUTO_RECREATE_RUNTIME")
+    heartbeat_retry_after: int = Field(3, alias="NOETL_HEARTBEAT_RETRY_AFTER")
 
     @field_validator('postgres_user', 'postgres_password', 'postgres_db', 'postgres_host',
                      'postgres_port', 'noetl_user', 'noetl_password', 'noetl_schema', 'host', 'server_runtime', 'server_url', 'server_name', mode='before')
@@ -170,7 +172,7 @@ class Settings(BaseModel):
             raise ValueError("Value cannot be empty or whitespace only")
         return v.strip()
 
-    @field_validator('enable_ui', 'debug', 'noetl_drop_schema', 'server_reload', mode='before')
+    @field_validator('enable_ui', 'debug', 'noetl_drop_schema', 'server_reload', 'auto_recreate_runtime', mode='before')
     def coerce_bool(cls, v):
         if isinstance(v, bool):
             return v
@@ -301,7 +303,9 @@ def get_settings(reload: bool = False) -> Settings:
                 NOETL_SERVER_RELOAD=get_bool(os.environ['NOETL_SERVER_RELOAD']),
                 # Drop schema flag
                 NOETL_DROP_SCHEMA=get_bool(os.environ['NOETL_DROP_SCHEMA']),
-                NOETL_SCHEMA_VALIDATE=get_bool(os.environ['NOETL_SCHEMA_VALIDATE'])
+                NOETL_SCHEMA_VALIDATE=get_bool(os.environ['NOETL_SCHEMA_VALIDATE']),
+                NOETL_AUTO_RECREATE_RUNTIME=get_bool(os.environ.get('NOETL_AUTO_RECREATE_RUNTIME', 'false')),
+                NOETL_HEARTBEAT_RETRY_AFTER=int(os.environ.get('NOETL_HEARTBEAT_RETRY_AFTER', '3'))
             )
         except Exception as e:
             print(f"FATAL: Failed to initialize settings: {e}", file=sys.stderr)

@@ -2,8 +2,8 @@
 
 This document explains how the NoETL server and worker instances collaborate to execute playbooks, and describes the end-to-end chain of processing for playbooks in the noetl package. It also highlights the main code locations that implement each responsibility so you can navigate the repository effectively.
 
-- Server implementation: noetl/server.py and noetl/api/*
-- Orchestration engine (server-side progression and local broker): noetl/api/event and noetl/api/broker
+- Server implementation: noetl/server.py and noetl/server/api/*
+- Orchestration engine (server-side progression and local broker): noetl/server/api/event and noetl/server/api/broker
 - Worker implementation: noetl/worker.py
 - Task/action executors: noetl/job/*
 - Rendering and templating: noetl/render.py
@@ -14,20 +14,20 @@ This document explains how the NoETL server and worker instances collaborate to 
 
 - API Server (FastAPI): Hosts REST APIs for catalog, events, queue, context rendering, and health. The server records runtime status in the database and coordinates playbook execution by evaluating steps and enqueuing work for distributed workers.
   - File: noetl/server.py
-  - Routers: noetl/api/__init__.py aggregates individual routers such as queue, event, catalog, runtime/system, etc.
+  - Routers: noetl/server/api/__init__.py aggregates individual routers such as queue, event, catalog, runtime/system, etc.
 - Catalog: Stores playbooks (content, metadata, versions) in the database and provides retrieval endpoints.
-  - File: noetl/api/catalog.py (CatalogService)
+  - File: noetl/server/api/catalog.py (CatalogService)
 - Event Log: Persists execution events (start, step start/complete, action started/completed, errors). Used by the server to reconstruct state and decide next steps.
-  - Module: noetl/api/event (EventService and persistence logic); see event_log table usage in SQL queries.
+  - Module: noetl/server/api/event (EventService and persistence logic); see event_log table usage in SQL queries.
 - Queue: A lightweight job queue implemented via a Postgres table (noetl.queue) and REST endpoints. Workers lease jobs from this queue.
-  - File: noetl/api/queue.py
+  - File: noetl/server/api/queue.py
 - Worker: A polling worker that leases jobs, executes the described task/action, and reports results back to the server.
   - File: noetl/worker.py
 - Broker Engine:
   - Server-side broker evaluator: Decides which steps are actionable next and enqueues them.
-    - Module: noetl/api/event/processing.py (evaluate_broker_for_execution)
+    - Module: noetl/server/api/event/processing.py (evaluate_broker_for_execution)
   - Local broker runner: Enables local/on-demand playbook execution and implements step execution primitives (loops, pass/skip, transitions).
-    - Module: noetl/api/broker (class Broker in core.py)
+    - Module: noetl/server/api/broker (class Broker in core.py)
 - Action/Task Executors: Implement concrete action types (http, python, duckdb, postgres, secrets).
   - Files: noetl/job/__init__.py (dispatcher), and noetl/job/http.py, python.py, duckdb.py, postgres.py, secrets.py
 
@@ -38,7 +38,7 @@ The following sequence describes typical execution when running with the server 
 
 1) Playbook Registration (optional but typical)
 - A YAML playbook is registered into the catalog with path and version.
-- API: POST via Catalog endpoints; code: CatalogService.register_resource in noetl/api/catalog.py.
+- API: POST via Catalog endpoints; code: CatalogService.register_resource in noetl/server/api/catalog.py.
 
 2) Playbook Execution is Initiated
 - A client (CLI/UI) triggers an execution for a playbook path/version.
@@ -46,7 +46,7 @@ The following sequence describes typical execution when running with the server 
 
 3) Server Builds Context and Decides Next Step(s)
 - The server-side broker evaluator reconstructs the execution state from event_log and playbook content, then determines the next actionable step(s):
-  - Code: noetl/api/event/processing.py → evaluate_broker_for_execution
+  - Code: noetl/server/api/event/processing.py → evaluate_broker_for_execution
   - It reads the first event to extract playbook_path, version, and initial payload/workload.
   - It parses the YAML content from the catalog and identifies steps/workbook definitions.
   - It applies server-side rendering (via noetl/render.py) for conditions (when/pass), step parameters, and decides which step(s) should run next.
@@ -55,7 +55,7 @@ The following sequence describes typical execution when running with the server 
 4) Server Enqueues Jobs for Workers
 - For each actionable step that requires a task/action execution, the server enqueues a job in noetl.queue with fields:
   - execution_id, node_id, action (task definition), input_context (the server-rendered context for that node).
-- API: POST /api/queue/enqueue; code: noetl/api/queue.py → enqueue_job
+- API: POST /api/queue/enqueue; code: noetl/server/api/queue.py → enqueue_job
 
 5) Workers Poll for Jobs and Execute Actions
 - Workers register their pool info (best-effort) and continuously poll the server to lease jobs:
@@ -65,14 +65,14 @@ The following sequence describes typical execution when running with the server 
   - Code: noetl/worker.py → QueueWorker._lease_job/_complete_job/_fail_job
 - For each leased job, the worker:
   - Calls the server to render the context and task config deterministically: POST /api/context/render
-    - Code: noetl/api/event/context.py → render_context
+    - Code: noetl/server/api/event/context.py → render_context
   - Executes the task locally using the action dispatch in noetl/job/__init__.py → execute_task
   - Emits action_started, action_completed (or action_error) events back to the server: noetl/job/action.py:report_event (invoked by worker); stored in event_log via event API.
   - Marks the job complete or failed via queue endpoints.
 
 6) Server Reacts to Completion and Advances the Workflow
 - On job completion, the queue API best-effort schedules evaluate_broker_for_execution(execution_id) to compute the next step(s) based on accumulated results in event_log.
-  - Code: noetl/api/queue.py → complete_job triggers evaluate_broker_for_execution
+  - Code: noetl/server/api/queue.py → complete_job triggers evaluate_broker_for_execution
 - The cycle (3–6) repeats until there are no more actionable steps, at which point the workflow reaches end.
 
 
@@ -88,8 +88,8 @@ The following sequence describes typical execution when running with the server 
 
 - Server-side templating: For deterministic orchestration, the server renders conditions and many step parameters using Jinja (noetl/render.py). Workers also fetch a server-rendered view of the input_context and task config (POST /api/context/render) to minimize divergence.
 - Pass flag and when expressions: Evaluated by the broker/evaluator to decide whether to skip steps or which branches to follow.
-  - Local broker path: noetl/api/broker → execute_step, get_next_steps
-  - Server-side evaluator path: noetl/api/event/processing.py → evaluate_broker_for_execution
+  - Local broker path: noetl/server/api/broker → execute_step, get_next_steps
+  - Server-side evaluator path: noetl/server/api/event/processing.py → evaluate_broker_for_execution
 
 
 ## Broker: Local Step Orchestration Primitives
@@ -102,7 +102,7 @@ When running locally (without server/queue), the Broker implements the same step
 - get_next_steps: Applies when conditions to choose the next steps; supports then/else lists and with overrides.
 - run(): Drives execution from start to end using the agent interface (find_step, save_step_result, update_context, etc.).
 
-Files: noetl/api/broker (core methods: execute_step, execute_loop_step, end_loop_step, get_next_steps, run)
+Files: noetl/server/api/broker (core methods: execute_step, execute_loop_step, end_loop_step, get_next_steps, run)
 
 
 ## Worker: Action Execution
@@ -141,11 +141,11 @@ Textual sequence for one actionable step:
 ## Relating to the Code
 
 - Server runtime registration: noetl/server.py → register_server_directly (lifespan)
-- Broker evaluator (server-side): noetl/api/event/processing.py → evaluate_broker_for_execution
-- Queue endpoints: noetl/api/queue.py (enqueue, lease, complete, fail)
+- Broker evaluator (server-side): noetl/server/api/event/processing.py → evaluate_broker_for_execution
+- Queue endpoints: noetl/server/api/queue.py (enqueue, lease, complete, fail)
 - Worker leasing and execution: noetl/worker.py (QueueWorker and ScalableQueueWorkerPool)
-- Local broker execution (for agent-style runs): noetl/api/broker
-- Templating: noetl/render.py (render_template), API /api/context/render in noetl/api/event/context.py
+- Local broker execution (for agent-style runs): noetl/server/api/broker
+- Templating: noetl/render.py (render_template), API /api/context/render in noetl/server/api/event/context.py
 - Task dispatch: noetl/job/__init__.py → execute_task, calling concrete executors under noetl/job/
 
 

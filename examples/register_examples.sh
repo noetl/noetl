@@ -3,49 +3,36 @@
 PORT=${1:-8080}
 HOST=${2:-localhost}
 
-echo "Loading playbooks on $HOST port $PORT"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+EXAMPLES_ROOT="$REPO_ROOT/examples"
 NOETL_CLI="$REPO_ROOT/.venv/bin/noetl"
 if [ ! -x "$NOETL_CLI" ]; then
   NOETL_CLI="noetl"
 fi
 
-PLAYBOOKS=(
-  "examples/weather/weather_example.yaml"
-  "examples/batch/multi_playbook_example.yaml"
-  "examples/google_secret_manager/secrets_test.yaml"
-  "examples/google_secret_manager/gcs_secrets_example.yaml"
-  "examples/weather/weather_loop_example.yaml"
-  "examples/weather/city_process.yaml"
-  "examples/postgres/postgres_test.yaml"
-  "examples/duckdb/load_dict_test.yaml"
-  "examples/duckdb/gs_duckdb_postgres_example.yaml"
-  "examples/amadeus/amadeus_api_playbook.yaml"
-  "examples/wikipedia/wikipedia_duckdb_postgres_example.yaml"
-  "examples/github/github_metrics_example.yaml"
-  "examples/test/simple_test.yaml"
-  "examples/test/loop_http_test.yaml"
-  "examples/test/loop_http_test_sequential.yaml"
-  "examples/test/postgres_save_simple.yaml"
-  "examples/test/postgres_save_simple2.yaml"
-  "examples/test/http_duckdb_postgres.yaml"
-  "examples/test/city_http_to_pg.yaml"
-  "examples/test/loop_controller_http_save.yaml"
-  "examples/test/loop_controller_numbers.yaml"
-)
+echo "Loading example playbooks on $HOST port $PORT"
 
-for playbooks in "${PLAYBOOKS[@]}"; do
-  echo "Loading $playbooks"
+cd "$REPO_ROOT" || exit 1
 
-  if "$NOETL_CLI" register "$playbooks" --port "$PORT" --host "$HOST"; then
-    echo "✓ loaded $playbooks"
+FOUND=false
+while IFS= read -r -d '' playbook; do
+  FOUND=true
+  rel_path="${playbook#$REPO_ROOT/}"
+  echo "Loading $rel_path"
+
+  if "$NOETL_CLI" register "$rel_path" --port "$PORT" --host "$HOST"; then
+    echo "✓ loaded $rel_path"
   else
-    echo "✗ Failed $playbooks"
+    echo "✗ Failed $rel_path"
   fi
 
   echo "------------------------"
-done
+done < <(find "$EXAMPLES_ROOT" -type f \( -name '*.yaml' -o -name '*.yml' \) ! -path '*/test/*' -print0)
 
-echo "Playbooks loaded."
+if [ "$FOUND" = false ]; then
+  echo "No example playbooks found under $EXAMPLES_ROOT" >&2
+  exit 1
+fi
+
+echo "Example playbooks loaded."

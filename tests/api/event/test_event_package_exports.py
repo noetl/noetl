@@ -1,5 +1,5 @@
-def test_event_package_exports():
-    from noetl.api import event as event_api
+def test_event_package_has_required_exports():
+    from noetl.api.routers import event as event_api
 
     # router exists
     assert hasattr(event_api, "router"), "event_api.router missing"

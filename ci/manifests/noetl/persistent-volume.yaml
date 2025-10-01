@@ -1,0 +1,58 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: noetl-data
+  namespace: noetl
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 1Gi
+  hostPath:
+    path: /mnt/data/noetl-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: noetl-data
+  namespace: noetl
+spec:
+  volumeName: noetl-data
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: noetl-logs
+  namespace: noetl
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 1Gi
+  hostPath:
+    path: /mnt/data/noetl-logs
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: noetl-logs
+  namespace: noetl
+spec:
+  volumeName: noetl-logs
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

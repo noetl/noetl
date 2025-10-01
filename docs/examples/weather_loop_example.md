@@ -296,7 +296,7 @@ The playbook shows how to collect results from loop iterations:
   desc: "End of the district loop"
   end_loop: district_loop
   result:
-    district_loop_output: "{{ output }}"
+    district_loop_output: "{{ result }}"
 ```
 
 ### 5. Database Integration

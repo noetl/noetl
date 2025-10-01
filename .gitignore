@@ -38,3 +38,12 @@ env/
 /.vscode/
 /status.json.clean
 /status.json
+/tests/fixtures/credentials/gcs_hmac_local.json
+
+# --- Docker ---
+# Ignore local build tag
+.noetl_last_build_tag.txt
+
+# --- Kind ---
+# Ignore folder with postgres data
+ci/kind/cache

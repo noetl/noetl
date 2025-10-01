@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 
 def test_broker_routes_registered():
-    from noetl.server.api.broker import router as broker_router
+    from noetl.api.routers.broker import router as broker_router
     app = FastAPI()
     app.include_router(broker_router, prefix="/api")
 

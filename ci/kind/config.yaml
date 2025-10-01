@@ -1,0 +1,34 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: noetl
+nodes:
+  - role: control-plane
+    extraPortMappings:
+        # NOETL
+      - containerPort: 30082 
+        hostPort: 8082
+        listenAddress: "127.0.0.1" # optional: set the bind address on the host. 0.0.0.0 is the current default
+        protocol: TCP # optional: set the protocol to one of TCP, UDP, SCTP. TCP is the default
+
+        # Postgers
+      - containerPort: 30321
+        hostPort: 54321
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # Grafana
+      - containerPort: 30300
+        hostPort: 3000
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+    # ci/kind/cache added to .gitignore
+    extraMounts:
+      - hostPath: ci/kind/cache/pg-data
+        containerPath: /mnt/data/pg-data
+
+      - hostPath: ci/kind/cache/noetl-data
+        containerPath: /mnt/data/noetl-data
+
+      - hostPath: ci/kind/cache/noetl-logs
+        containerPath: /mnt/data/noetl-logs

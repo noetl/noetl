@@ -124,18 +124,28 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                             return self
                         elif name == 'is_defined':
                             return True
-                        elif name.startswith('command_') and name in self._data:
+                        elif name.startswith('command_') and isinstance(self._data, dict) and name in self._data:
                             return self._data[name]
-                        elif name in self._data:
+                        elif isinstance(self._data, dict) and name in self._data:
                             return self._data[name]
                         raise AttributeError(f"'{type(self._data).__name__}' object has no attribute '{name}'")
 
+                    def __getitem__(self, key):
+                        try:
+                            return self._data[key]
+                        except Exception as e:
+                            raise KeyError(key) from e
+
+                reserved = {'work', 'workload', 'context', 'env', 'job', 'input', 'data', 'results'}
                 for key, value in render_ctx.items():
-                    if isinstance(value, dict) and (
-                        ('data' not in value and any(k.startswith('command_') for k in value.keys())) or
-                        ('result' not in value and any(k.startswith('command_') for k in value.keys()))
-                    ):
+                    if key in reserved:
+                        continue
+                    if isinstance(value, dict):
+                        # Always allow '.result' addressing for dict-like step results
                         custom_context[key] = TaskResultProxy(value)
+                    elif isinstance(value, list):
+                        # Provide a minimal wrapper so {{ step.result | length }} works for list-like results
+                        custom_context[key] = {'result': value}
 
                 if 'result' in render_ctx and isinstance(render_ctx['result'], dict):
                     custom_context['result'] = TaskResultProxy(render_ctx['result'])

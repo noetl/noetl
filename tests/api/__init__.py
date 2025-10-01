@@ -1,4 +1,4 @@
 """
-API tests package mirroring noetl/api structure.
+API tests package mirroring noetl/server/api structure.
 """
 

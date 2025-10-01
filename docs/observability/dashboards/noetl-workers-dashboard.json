@@ -1,0 +1,233 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_VICTORIA_LOGS",
+      "label": "VictoriaLogs",
+      "description": "Select the VictoriaLogs datasource",
+      "type": "datasource",
+      "pluginId": "victorialogs-datasource",
+      "pluginName": "VictoriaLogs"
+    },
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "VictoriaMetrics/Prometheus (optional)",
+      "description": "Select the VictoriaMetrics (Prometheus-compatible) datasource if you want mixed metrics/logs panels",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_NOETL_POSTGRES",
+      "label": "NoETL PostgreSQL", 
+      "description": "Select the NoETL PostgreSQL datasource for worker metrics",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0" },
+    { "type": "panel", "id": "logs", "name": "Logs", "version": "9.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "9.0.0" },
+    { "type": "panel", "id": "barchart", "name": "Bar chart", "version": "9.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "9.0.0" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "9.0.0" },
+    { "type": "datasource", "id": "victorialogs-datasource", "name": "VictoriaLogs", "version": "1.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0" }
+  ],
+  "title": "NoETL Worker Pools",
+  "uid": "noetl-workers",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 2,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active Workers",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) as count FROM noetl.runtime WHERE component_type LIKE '%worker%' AND status = 'ready'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Total Worker Capacity", 
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(SUM(capacity), 0) as total_capacity FROM noetl.runtime WHERE component_type LIKE '%worker%' AND status = 'ready'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Pending Jobs",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) as count FROM noetl.queue WHERE status = 'pending'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "stat", 
+      "title": "Running Jobs",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) as count FROM noetl.queue WHERE status = 'in_progress'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Worker CPU Usage Over Time", 
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT $__time(m.timestamp), r.name as worker, m.metric_value as cpu_percent FROM noetl.metric m JOIN noetl.runtime r ON m.runtime_id = r.runtime_id WHERE m.metric_name = 'noetl_system_cpu_usage_percent' AND r.component_type LIKE '%worker%' AND $__timeFilter(m.timestamp) ORDER BY m.timestamp",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Worker Memory Usage Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT $__time(m.timestamp), r.name as worker, m.metric_value as memory_percent FROM noetl.metric m JOIN noetl.runtime r ON m.runtime_id = r.runtime_id WHERE m.metric_name = 'noetl_system_memory_usage_percent' AND r.component_type LIKE '%worker%' AND $__timeFilter(m.timestamp) ORDER BY m.timestamp",
+          "format": "time_series", 
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "type": "table",
+      "title": "Worker Status Details",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT name, component_type, status, capacity, base_url, last_heartbeat, capabilities->>'resources' as resources FROM noetl.runtime WHERE component_type LIKE '%worker%' ORDER BY last_heartbeat DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "displayMode": "table",
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "options": { "ready": { "color": "green", "index": 0 } }, "type": "value" },
+                  { "options": { "busy": { "color": "yellow", "index": 1 } }, "type": "value" },
+                  { "options": { "offline": { "color": "red", "index": 2 } }, "type": "value" }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Workers Log Stream",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 20 },
+      "datasource": {"type": "victorialogs-datasource", "uid": "PD775F2863313E6C7"},
+      "options": { "showLabels": true, "showTime": true, "wrapLogMessage": true },
+      "targets": [ { "expr": "{app=\\\"noetl-worker\\\"}", "refId": "A" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error lines per minute",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": {"type": "victorialogs-datasource", "uid": "PD775F2863313E6C7"},
+      "targets": [
+        {
+          "datasource": {"type": "victorialogs-datasource", "uid": "PD775F2863313E6C7"},
+          "expr": "sum by (pod) (count_over_time({app=\\\"noetl-worker\\\"} |= \"ERROR\" [1m]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Log volume (lines/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": {"type": "victorialogs-datasource", "uid": "PD775F2863313E6C7"},
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(count_over_time({app=\\\"noetl-worker\\\"}[5m])) )",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Top pods by log lines (5m)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
+      "datasource": {"type": "victorialogs-datasource", "uid": "PD775F2863313E6C7"},
+      "targets": [
+        {
+          "expr": "topk(5, sum by (pod) (count_over_time({app=\\\"noetl-worker\\\"}[5m])))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "WARN/ERROR only",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 48 },
+      "datasource": {"type": "victorialogs-datasource", "uid": "PD775F2863313E6C7"},
+      "targets": [ { "expr": "{app=\\\"noetl-worker\\\"} |= \"WARN\" or {app=\\\"noetl-worker\\\"} |= \"ERROR\"", "refId": "A" } ],
+      "options": { "showLabels": true, "wrapLogMessage": true }
+    }
+  ],
+  "templating": { "list": [] },
+  "annotations": { "list": [] }
+}

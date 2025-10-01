@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 
 def test_worker_pool_register_requires_fields():
-    from noetl.server.api import runtime
+    from noetl.api.routers import runtime
     app = FastAPI()
     app.include_router(runtime.router, prefix="/api")
     client = TestClient(app)

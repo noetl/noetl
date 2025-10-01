@@ -1,17 +1,16 @@
 name: Release
-
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
     paths:
-      - "**/*.py"
-      - ".github/workflows/release.yml"
-
+      - '**/*.py'
+      - .github/workflows/release.yml
 permissions:
   id-token: write
   contents: read
-
 jobs:
   release:
     name: Release
@@ -22,7 +21,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-
       - name: Release
         uses: cycjimmy/semantic-release-action@v3
         with:

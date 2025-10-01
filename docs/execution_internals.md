@@ -31,7 +31,7 @@ Client Request → Server → Broker Evaluation → Queue Jobs → Workers → E
 ### 1. Execution Initiation
 
 **Entry Point**: `/api/executions/execute`
-**File**: `noetl/api/execution.py`
+**File**: `noetl/server/api/execution.py`
 
 When a client submits a playbook for execution:
 
@@ -68,7 +68,7 @@ When a client submits a playbook for execution:
 
 ### 2. Broker Evaluation Process
 
-**File**: `noetl/api/event/processing.py` - `evaluate_broker_for_execution()`
+**File**: `noetl/server/api/event/processing.py` - `evaluate_broker_for_execution()`
 
 The broker is the core orchestration engine that:
 
@@ -124,7 +124,7 @@ while idx < len(steps):
 
 ### 3. Job Queuing Process
 
-**File**: `noetl/api/event/processing.py` - `evaluate_broker_for_execution()`
+**File**: `noetl/server/api/event/processing.py` - `evaluate_broker_for_execution()`
 
 When the broker finds an actionable step:
 
@@ -192,7 +192,7 @@ async def _lease_job(self, lease_seconds: int = 60) -> Optional[Dict[str, Any]]:
         )
 ```
 
-**Server-side Leasing Logic** (`noetl/api/queue.py`):
+**Server-side Leasing Logic** (`noetl/server/api/queue.py`):
 ```sql
 WITH cte AS (
   SELECT id FROM noetl.queue
@@ -313,7 +313,7 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> None:
 
 ### 7. Event Processing
 
-**File**: `noetl/api/event/service.py` - `EventService.emit()`
+**File**: `noetl/server/api/event/service.py` - `EventService.emit()`
 
 The server processes incoming events:
 
@@ -365,7 +365,7 @@ if event_type.lower() in {"execution_start", "action_completed", "action_error",
 
 ### 8. Job Completion
 
-**File**: `noetl/api/queue.py` - `complete_job()`
+**File**: `noetl/server/api/queue.py` - `complete_job()`
 
 Workers mark jobs as complete:
 

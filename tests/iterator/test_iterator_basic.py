@@ -2,7 +2,7 @@ import pytest
 
 from jinja2 import Environment
 
-from noetl.worker.plugin import execute_task
+from noetl.plugin import execute_task
 
 
 def make_python_task(func_body: str):
@@ -26,11 +26,10 @@ def test_iterator_sequential_basic():
     }
     res = execute_task(task, 'iter', ctx, jenv, {})
     assert res['status'] == 'success'
-    data = res['data']
-    assert data['count'] == 3
-    assert len(data['items']) == 3
-    assert data['items'][0]['square'] == 1
-    assert data['items'][2]['square'] == 9
+    items = res['data']
+    assert len(items) == 3
+    assert items[0]['square'] == 1
+    assert items[2]['square'] == 9
 
 
 def test_iterator_async_order_preserved():
@@ -47,7 +46,7 @@ def test_iterator_async_order_preserved():
     }
     res = execute_task(task, 'iter', ctx, jenv, {})
     assert res['status'] == 'success'
-    items = res['data']['items']
+    items = res['data']
     # order preserved as input logical order (3,1,2)
     assert [x['value'] for x in items] == [3, 1, 2]
 
@@ -66,7 +65,7 @@ def test_iterator_where_limit_sort():
     }
     res = execute_task(task, 'iter', ctx, jenv, {})
     assert res['status'] == 'success'
-    xs = [x['x'] for x in res['data']['items']]
+    xs = [x['x'] for x in res['data']]
     assert xs == [1, 2]
 
 
@@ -83,6 +82,30 @@ def test_iterator_chunking():
     }
     res = execute_task(task, 'iter', ctx, jenv, {})
     assert res['status'] == 'success'
-    sums = [x['batch_sum'] for x in res['data']['items']]
+    sums = [x['batch_sum'] for x in res['data']]
     assert sums == [3, 7, 5]
 
+
+def test_iterator_collection_from_task_payload():
+    jenv = Environment()
+    cities = [
+        {'name': 'London', 'lat': 51.51, 'lon': -0.13},
+        {'name': 'Paris', 'lat': 48.85, 'lon': 2.35},
+        {'name': 'Berlin', 'lat': 52.52, 'lon': 13.41},
+    ]
+    ctx = {
+        'workload': {},
+        'execution_id': 'test-exec',
+        'data': {'cities': cities},
+    }
+    task = {
+        'type': 'iterator',
+        'element': 'city',
+        'task': make_python_task("return {'name': value['name'], 'lat': value['lat']}")
+    }
+
+    res = execute_task(task, 'iter', ctx, jenv, {'cities': cities})
+    assert res['status'] == 'success'
+    payload = res['data']
+    assert [row['name'] for row in payload] == ['London', 'Paris', 'Berlin']
+    assert payload[0]['lat'] == pytest.approx(51.51)

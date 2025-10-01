@@ -1,5 +1,5 @@
 def test_encode_task_for_queue_encodes_and_strips_originals():
-    from noetl.server.api.broker import encode_task_for_queue
+    from noetl.api.routers.broker import encode_task_for_queue
 
     task = {
         "code": "print('hi')\nprint('bye')",

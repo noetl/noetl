@@ -50,6 +50,67 @@ For development or specific versions:
   - Postgres database (mandatory, for the event-sourcing persistent storage and NoETL system metadata)
   - Docker (optional, for containerized development and deployment)
 
+### Kubernetes Development Environment (Recommended)
+
+For a complete development environment with server, workers, and observability:
+
+```bash
+# Clone repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Deploy unified platform (requires Docker, Kind, kubectl, Helm)
+make unified-deploy
+
+# Or complete recreation from scratch
+make unified-recreate-all
+
+# Check health status
+make unified-health-check
+
+# Manage port forwarding
+make unified-port-forward-start
+make unified-port-forward-status
+make unified-port-forward-stop
+```
+
+**Services available:**
+- **NoETL Server**: http://localhost:30082 (API & UI)
+- **Grafana Dashboard**: http://localhost:3000 (admin/admin)
+- **VictoriaMetrics**: http://localhost:8428/vmui/
+- **VictoriaLogs**: http://localhost:9428
+
+**Management Commands:**
+```bash
+# Get Grafana credentials
+make unified-grafana-credentials
+
+# View all available commands
+make help
+
+# Clean up when done
+kind delete cluster --name noetl-cluster
+```
+
+See [k8s/README.md](k8s/README.md) for detailed deployment documentation.
+
+## Quick Reference
+
+### Unified Kubernetes Platform
+```bash
+make unified-deploy          # Deploy complete platform
+make unified-health-check    # Check platform health
+make unified-recreate-all    # Rebuild everything from scratch
+```
+
+### Makefile Commands
+```bash
+make help                    # Show all available commands
+make unified-*              # Unified deployment commands
+make test                   # Run test suite
+make install-dev            # Development setup
+```
+
 ## Basic Usage
 
 After installing NoETL:
@@ -177,21 +238,16 @@ NoETL provides three distinct approaches for handling credentials and secrets in
 - **`credentials:`** multiple credential bindings with developer-chosen aliases (for steps needing several creds at once)  
 - **`secret:`** resolve values from an external secret manager at render/exec time (used inside templates like `{{ secret.NAME }}`)
 
-### “Why this needs to be”
-- No ambiguity: each keyword has a distinct role.
-- Separation of concerns:
-  - auth → lookup credential record (single)
-  - credentials → bind multiple credentials via aliases
-  - secret → resolve external secret value at runtime
-- Native SQL: DuckDB aliases and secret names are unchanged and under your control.
-
 ### Quick Examples
 
 **Single Credential (Postgres):**
 ```yaml
 - step: create_table
   type: postgres
-  auth: pg_local
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
   command: CREATE TABLE users (id SERIAL, name TEXT);
 ```
 
@@ -229,9 +285,41 @@ NoETL provides three distinct approaches for handling credentials and secrets in
   - `secret` → resolve external secret value at runtime
 - **Native SQL**: DuckDB aliases and secret names are unchanged and under your control
 
-For detailed documentation, see [Credential Management Guide](docs/concepts/credentials.md).ion](https://img.shields.io/pypi/pyversions/noetl.svg)](https://pypi.org/project/noetl/)
-[![License](https://img.shields.io/pypi/l/noetl.svg)](https://github.com/noetl/noetl/blob/main/LICENSE)
+For detailed documentation, see [Credential Management Guide](docs/concepts/credentials.md).
 
+### Unified Authentication System (v1.0+)
+
+NoETL v1.0+ introduces a unified authentication system that consolidates authentication patterns under a single `auth` attribute:
+
+```yaml
+# New unified syntax
+- step: postgres_task
+  type: postgres
+  auth:
+    type: postgres
+    credential: pg_local
+  
+- step: http_task
+  type: http
+  auth:
+    type: bearer
+    env: API_TOKEN
+    
+- step: duckdb_task
+  type: duckdb
+  auth:
+    db: {type: postgres, credential: pg_main}
+    storage: {type: gcs, credential: gcs_hmac}
+```
+
+**Key Features:**
+- Single `auth` syntax across all plugins
+- Multiple sources: credential store, environment variables, secret managers, inline
+- Plugin-specific validation (single vs multi-auth)
+- Automatic security redaction in logs
+- Full backwards compatibility with deprecation warnings
+
+For complete migration guide, see [Unified Auth Migration Guide](docs/migration/auth-unified.md).
 
 ## Workflow DSL Structure
 
@@ -310,7 +398,10 @@ For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/b
 ```yaml
 - step: ensure_pg_table
   type: postgres
-  auth: pg_local
+  auth:
+    pg:
+      type: postgres
+      key: pg_local
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_http_raw (
       id TEXT PRIMARY KEY,
@@ -384,7 +475,7 @@ NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for det
 - `make install-dev`
 - `docker compose up database -d`
 - `./start_server.sh`
-- `./bin/register_examples.sh`
+- `make register-examples`
 - check __API_BASE_URL__ in vite.config.js for actual noetl base url
 - `cd ui-src`
 - `npm run dev`

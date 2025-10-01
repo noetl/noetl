@@ -1,4 +1,4 @@
-from noetl.cli.noetl_ctl import cli_app
+from noetl.cli.ctl import cli_app
 
 
 def main():

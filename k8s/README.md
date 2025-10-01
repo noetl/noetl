@@ -1,44 +1,150 @@
-# NoETL Kubernetes Deployment with Kind
+# NoETL Kubernetes Deployment
 
-Set up a local Kubernetes cluster using Kind (Kubernetes in Docker) and deploy NoETL and Postgres to it.
+Deploy the complete NoETL platform (Postgres + NoETL server) to a local Kubernetes cluster using Kind (Kubernetes in Docker).
 
-Note on deployment options:
-- Pip deployment (PyPI-based): use these manifests
-  - k8s/noetl/noetl-deployment.yaml (uses image noetl-pip:latest, container port 8084)
-  - k8s/noetl/noetl-service.yaml (NodePort 30084; health at http://localhost:30084/api/health)
-- Local development (from local path): use these manifests
-  - k8s/noetl/noetl-dev-deployment.yaml (uses image noetl-local-dev:latest, container port 8080)
-  - k8s/noetl/noetl-dev-service.yaml (NodePort 30082; health at http://localhost:30082/api/health)
+##  Quick Start
 
-For the up-to-date, concise guide, see k8s/docs/README.md.
+### Unified Deployment (Recommended)
 
-## Prerequisites
+The unified deployment puts all NoETL components in a single namespace with integrated observability:
 
-- Docker installed and running
-- kubectl installed
-- Internet connection to pull container images
-
-## Installing Kind
-
-Kind="Kubernetes IN Docker", is a tool for running local Kubernetes clusters using Docker container nodes.
-
-### macOS
-
-Using Homebrew:
 ```bash
-brew install kind
+# Deploy the unified platform (recommended)
+make unified-deploy
+
+# OR: Complete recreation from scratch
+make unified-recreate-all
+
+# Check platform health
+make unified-health-check
+
+# Check status
+kubectl get pods -n noetl-platform
+
+# Clean up when done
+kind delete cluster --name noetl-cluster
 ```
 
-Using binary download:
+**Alternative (Direct Script):**
 ```bash
+# Deploy directly via script
+./k8s/deploy-unified-platform.sh
+
+# Complete recreation via script  
+./k8s/recreate-all.sh
+```
+
+### Legacy Deployment (Using Makefile)
+
+```bash
+# Deploy the complete platform (legacy separate namespaces)
+make k8s-platform-deploy
+
+# Check status
+make k8s-platform-status
+
+# Clean up when done
+make k8s-platform-clean
+```
+
+**That's it!** The platform will be available at:
+- **NoETL Server**: http://localhost:30082/api/health
+- **Grafana Dashboard**: http://localhost:3000 (admin/admin)
+- **VictoriaMetrics**: http://localhost:8428/vmui/
+- **VictoriaLogs**: http://localhost:9428
+- **API Documentation**: http://localhost:30082/docs
+
+### Available Makefile Commands
+
+**Unified Platform Management:**
+```bash
+# Deployment
+make unified-deploy                 # Deploy unified NoETL platform
+make unified-recreate-all          # Complete recreation from scratch
+
+# Health & Status  
+make unified-health-check          # Check platform health
+make help                          # Show all commands
+
+# Port Forwarding
+make unified-port-forward-start    # Start port forwards
+make unified-port-forward-stop     # Stop port forwards
+make unified-port-forward-status   # Check port forward status
+
+# Credentials
+make unified-grafana-credentials   # Get Grafana admin password
+```
+
+**Development Commands:**
+```bash
+# Build & Test
+make build                         # Build Docker images
+make test                          # Run test suite
+make install-dev                   # Development setup
+
+# Legacy K8s Commands (separate namespaces)
+make k8s-platform-deploy           # Legacy deployment
+make k8s-reset                     # Reset Kind cluster
+```
+
+### Architecture
+
+**Unified Deployment** (Recommended):
+- **All NoETL Components**: `noetl-platform` namespace
+  - NoETL server
+  - All worker pools (cpu-01, cpu-02, gpu-01) 
+  - Observability stack (Grafana, VictoriaMetrics, VictoriaLogs, Vector)
+- **PostgreSQL**: `postgres` namespace
+
+**Legacy Deployment**:
+- NoETL server: `noetl` namespace
+- Worker pools: separate namespaces (`noetl-worker-cpu-01`, `noetl-worker-cpu-02`, `noetl-worker-gpu-01`)
+- Observability: `observability` namespace  
+- Postgres: `postgres` namespace
+
+##  Deployment Options
+
+### Unified Deployment (Recommended)
+- **Architecture**: All NoETL components in single `noetl-platform` namespace
+- **Image**: `noetl-local-dev:latest` (built from local source)
+- **Health Endpoint**: `/api/health`
+- **Container Port**: 8082 with NodePort 30082
+- **Database**: Postgres in dedicated `postgres` namespace
+- **Observability**: Integrated Grafana, VictoriaMetrics, VictoriaLogs
+- **Benefits**: Simplified management, unified monitoring, better service discovery
+
+### Legacy Implementation
+- **Architecture**: Separate namespaces for each component
+- **Image**: `noetl-local-dev:latest` (built from local source)
+- **Health Endpoint**: `/api/health`
+- **Container Port**: 8082 with NodePort 30082
+- **Database**: Postgres in dedicated `postgres` namespace
+- **Server**: Direct uvicorn execution (not subprocess wrapper)
+
+##  Prerequisites
+
+- **Docker** installed and running
+- **kubectl** installed
+- **Kind** installed (see installation instructions below)
+- **Make** installed (for using Makefile targets)
+- Internet connection to pull base container images
+
+##  Installing Kind
+
+Kind (Kubernetes IN Docker) runs local Kubernetes clusters using Docker containers as nodes.
+
+### macOS
+```bash
+# Using Homebrew (recommended)
+brew install kind
+
+# Or using binary
 curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-darwin-amd64
 chmod +x ./kind
 sudo mv ./kind /usr/local/bin/kind
 ```
 
 ### Linux
-
-Using binary download:
 ```bash
 curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
 chmod +x ./kind
@@ -46,180 +152,285 @@ sudo mv ./kind /usr/local/bin/kind
 ```
 
 ### Windows
-
-Using Chocolatey:
 ```powershell
+# Using Chocolatey
 choco install kind
-```
 
-Using binary download:
-```powershell
+# Or using binary
 curl.exe -Lo kind-windows-amd64.exe https://kind.sigs.k8s.io/dl/v0.20.0/kind-windows-amd64
 Move-Item .\kind-windows-amd64.exe c:\some-dir-in-your-PATH\kind.exe
 ```
 
-## Creating a Local Kubernetes Cluster
+##  Deployment Methods
 
-1. Create a Kind configuration file:
+### Method 1: Unified Deployment (Recommended)
+
+Deploy all components in a single unified namespace with integrated observability:
 
 ```bash
+# Deploy everything in one command
+./k8s/deploy-unified-platform.sh
+
+# This will:
+# - Create Kind cluster (noetl-cluster)
+# - Build and load Docker images (postgres-noetl, noetl-local-dev)
+# - Deploy Postgres in 'postgres' namespace
+# - Deploy NoETL server and workers in 'noetl-platform' namespace
+# - Deploy observability stack (Grafana, VictoriaMetrics, VictoriaLogs)
+# - Initialize database schema
+# - Configure health checks and services
+# - Set up monitoring and dashboards
+```
+
+### Method 2: Legacy Makefile Targets
+
+The legacy approach using separate namespaces:
+
+```bash
+# Deploy everything in one command
+make k8s-platform-deploy
+
+# This will:
+# - Create Kind cluster (noetl-cluster) 
+# - Build Docker images (postgres-noetl, noetl-local-dev)
+# - Deploy Postgres in 'postgres' namespace
+# - Deploy NoETL server in 'noetl' namespace
+# - Deploy workers in separate namespaces
+# - Initialize database schema
+# - Configure health checks and services
+```
+
+### Method 3: Legacy Deployment Script
+
+Direct script execution with options for legacy separate namespace deployment:
+
+```bash
+# Basic deployment
+./k8s/deploy-platform.sh
+
+# With options
+./k8s/deploy-platform.sh --no-cluster    # Skip cluster creation
+./k8s/deploy-platform.sh --no-postgres   # Skip Postgres deployment
+./k8s/deploy-platform.sh --help         # Show all options
+```
+
+### Unified Deployment Options
+
+The unified deployment script supports various options:
+
+```bash
+# Basic unified deployment
+./k8s/deploy-unified-platform.sh
+
+# Skip certain components
+./k8s/deploy-unified-platform.sh --no-cluster        # Use existing cluster
+./k8s/deploy-unified-platform.sh --no-postgres       # Skip Postgres deployment
+./k8s/deploy-unified-platform.sh --no-observability  # Skip observability stack
+
+# Custom configuration
+./k8s/deploy-unified-platform.sh --namespace my-platform  # Custom namespace
+./k8s/deploy-unified-platform.sh --deploy-noetl-dev       # Development mode
+
+# Help
+./k8s/deploy-unified-platform.sh --help                   # Show all options
+```
+
+##  What Gets Deployed
+
+### Unified Deployment Components
+
+#### PostgreSQL Database
+- **Namespace**: `postgres`
+- **Image**: `postgres-noetl:latest` (built from `docker/postgres/`)
+- **Storage**: Persistent volume at `/mnt/data` in Kind node
+- **Database**: `demo_noetl` with `noetl` schema
+- **Users**: `demo` (admin), `noetl` (application user)
+
+#### NoETL Platform (Unified Namespace: `noetl-platform`)
+- **NoETL Server**: 
+  - **Image**: `noetl-local-dev:latest` (built from local source)
+  - **Port**: 8082 (exposed as NodePort 30082)
+  - **Health**: `/api/health` endpoint
+- **Worker Pools**: 
+  - **CPU Workers**: `noetl-worker-cpu-01`, `noetl-worker-cpu-02`
+  - **GPU Worker**: `noetl-worker-gpu-01`
+  - **Metrics**: Exposed on port 8080
+- **Observability Stack**:
+  - **Grafana**: Dashboard at http://localhost:3000
+  - **VictoriaMetrics**: Metrics storage and querying
+  - **VictoriaLogs**: Log aggregation and search
+  - **Vector**: Log and metrics collection
+
+### Legacy Deployment Components
+
+#### NoETL Server (Legacy)
+- **Namespace**: `noetl`
+- **Image**: `noetl-local-dev:latest` (built from local source)
+- **Port**: 8082 (exposed as NodePort 30082)
+- **Health**: `/api/health` endpoint
+
+#### Worker Pools (Legacy)
+- **Separate Namespaces**: `noetl-worker-cpu-01`, `noetl-worker-cpu-02`, `noetl-worker-gpu-01`
+- **Image**: `noetl-local-dev:latest`
+
+#### Observability (Legacy)
+- **Namespace**: `observability`
+- **Components**: Separate Grafana, VictoriaMetrics, VictoriaLogs deployment
+
+### Fixes Applied
+During development, we resolved several key issues:
+-  **Namespace Creation**: Added `postgres-namespace.yaml` 
+-  **Health Endpoint**: Fixed from `/health` to `/api/health`
+-  **Database Schema**: Fixed UUID vs BIGINT type issues
+-  **Process Management**: Fixed container exit issues 
+-  **Volume Mounts**: Added logs directory support
+-  **Docker Images**: Use local-dev vs pip image compatibility
+
+### Method 3: Manual Deployment
+
+For advanced users who want full control:
+
+```bash
+# 1. Create Kind cluster with port mappings
 cat > kind-config.yaml << EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
   extraPortMappings:
-  - containerPort: 30080
-    hostPort: 30080
+  - containerPort: 30082
+    hostPort: 30082
     protocol: TCP
 EOF
-```
 
-2. Create the cluster:
-
-```bash
 kind create cluster --name noetl-cluster --config kind-config.yaml
-```
 
-3. Verify the cluster is running:
+# 2. Build and load images
+./docker/build-images.sh
+kind load docker-image postgres-noetl:latest --name noetl-cluster
+kind load docker-image noetl-local-dev:latest --name noetl-cluster
 
-```bash
-kubectl cluster-info --context kind-noetl-cluster
-```
+# 3. Create persistent volume directory
+docker exec noetl-cluster-control-plane mkdir -p /mnt/data
 
-## Deploying NoETL and Postgres
-
-### Option 1: Using the All-in-One Deployment Script
-
-The easiest way to deploy the complete NoETL platform is to use the provided `deploy-platform.sh` script:
-
-```bash
-# Make the script executable
-chmod +x k8s/deploy-platform.sh
-
-# Run the script with default options (sets up cluster, deploys Postgres and NoETL from pip)
-./k8s/deploy-platform.sh
-```
-
-The script supports various deployment options:
-
-```bash
-# Deploy everything supported (cluster, Postgres, NoETL from pip by default, plus local-dev)
-./k8s/deploy-platform.sh --deploy-noetl-dev
-
-# Skip cluster setup (if you already have a cluster)
-./k8s/deploy-platform.sh --no-cluster
-
-# Deploy only NoETL from local-dev (GitHub/local path)
-./k8s/deploy-platform.sh --no-cluster --no-postgres --no-noetl-pip --deploy-noetl-dev
-
-# Specify a custom repository path for local-dev
-./k8s/deploy-platform.sh --repo-path /path/to/your/noetl/repo --deploy-noetl-dev
-```
-
-Note on images:
-- The deploy-platform.sh script automatically builds required Docker images (Postgres, noetl-pip, and noetl-local-dev) using docker/build-images.sh and, when running against a Kind cluster, loads them into the cluster with k8s/load-images.sh. You do not need to run docker/build-images.sh manually before running the script (including when using --deploy-noetl-dev).
-- If you want to skip the all-in-one helper and do things manually, see Option 2 below.
-
-For more options, run:
-```bash
-./k8s/deploy-platform.sh --help
-```
-
-### Option 2: Manual Deployment
-
-If you prefer to deploy components manually:
-
-1. Create the necessary directories for persistent volumes:
-
-```bash
-docker exec -it noetl-cluster-control-plane mkdir -p /mnt/data
-```
-
-2. Apply the Kubernetes manifests:
-
-```bash
-kubectl apply -f k8s/postgres/postgres-pv.yaml
+# 4. Deploy Postgres
+kubectl apply -f k8s/postgres/postgres-namespace.yaml
+kubectl apply -f k8s/postgres/postgres-pv.yaml  
 kubectl apply -f k8s/postgres/postgres-configmap.yaml
 kubectl apply -f k8s/postgres/postgres-config-files.yaml
 kubectl apply -f k8s/postgres/postgres-secret.yaml
 kubectl apply -f k8s/postgres/postgres-deployment.yaml
 kubectl apply -f k8s/postgres/postgres-service.yaml
 
-kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
+# 5. Wait for Postgres to be ready
+kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=180s
 
+# 6. Deploy NoETL
 kubectl apply -f k8s/noetl/noetl-configmap.yaml
-kubectl apply -f k8s/noetl/noetl-secret.yaml
+kubectl apply -f k8s/noetl/noetl-secret.yaml  
 kubectl apply -f k8s/noetl/noetl-deployment.yaml
 kubectl apply -f k8s/noetl/noetl-service.yaml
+
+# 7. Wait for NoETL to be ready
+kubectl wait --for=condition=ready pod -l app=noetl --timeout=180s
 ```
 
-3. Verify the deployments:
+## 🌐 Accessing NoETL
+
+Once deployed, NoETL is available at:
+
+| Endpoint | URL | Description |
+|----------|-----|-------------|
+| **Health Check** | http://localhost:30082/api/health | Service health status |
+| **API Documentation** | http://localhost:30082/docs | Interactive Swagger UI |
+| **Main API** | http://localhost:30082/ | Root API endpoint |
+| **OpenAPI Spec** | http://localhost:30082/openapi.json | API specification |
+
+### Quick Verification
 
 ```bash
-kubectl get pods
-kubectl get services
+# Health check
+curl http://localhost:30082/api/health
+
+# List registered playbooks  
+curl http://localhost:30082/api/catalog/playbooks
+
+# Check deployment status
+make k8s-platform-status
 ```
 
-## Accessing the Application
+##  Using NoETL
 
-Once the deployments are ready, you can access NoETL via the following services:
+### Makefile Commands
 
-- NoETL (pip):
-  - UI: http://localhost:30084
-  - API: http://localhost:30084/api
-  - Health: http://localhost:30084/api/health
-- NoETL (local-dev):
-  - UI: http://localhost:30082
-  - API: http://localhost:30082/api
-  - Health: http://localhost:30082/api/health
+| Command | Description |
+|---------|-------------|
+| `make k8s-platform-deploy` | Deploy complete platform |
+| `make k8s-platform-status` | Check deployment status |
+| `make k8s-platform-test` | Test with sample playbook |
+| `make k8s-platform-clean` | Clean up everything |
 
-### Kubernetes Dashboard
+### CLI Access
 
-The Kubernetes Dashboard is a web-based UI for managing your Kubernetes cluster.
-
-Important: It is not installed by default by our scripts or manifests. If you see a 404 like services "kubernetes-dashboard" not found, you need to install the Dashboard first.
-
-Quick install (see docs for details and latest version):
-```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
-```
-
-After installing, start the proxy and open the UI:
-1. Start the Kubernetes proxy:
-   ```bash
-   kubectl proxy
-   ```
-2. Access the Dashboard at:
-   ```
-   http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
-   ```
-
-For installation steps, authentication, and token retrieval, see [Kubernetes Dashboard Documentation](docs/kubernetes_dashboard.md).
-
-### Local Development
-
-The supported development option is the local-dev deployment, which runs the noetl-local-dev:latest image and targets port 8080.
-
-- Deployment: k8s/noetl/noetl-dev-deployment.yaml
-- Service: k8s/noetl/noetl-dev-service.yaml (NodePort 30082; health at http://localhost:30082/api/health)
-
-To deploy via the script:
+Access NoETL CLI inside the running container:
 
 ```bash
-./k8s/deploy-platform.sh --deploy-noetl-dev
+# Get help 
+kubectl exec -it deployment/noetl -- noetl --help
+
+# Register a playbook
+kubectl exec -it deployment/noetl -- noetl register /path/to/playbook.yaml --host localhost --port 8082
+
+# Run a playbook
+kubectl exec -it deployment/noetl -- noetl run playbook-name --host localhost --port 8082
+
+# List catalog
+kubectl exec -it deployment/noetl -- noetl catalog list --host localhost --port 8082
 ```
 
-To deploy manually:
+### REST API Examples
 
 ```bash
-kubectl apply -f k8s/noetl/noetl-configmap.yaml
-kubectl apply -f k8s/noetl/noetl-secret.yaml
-kubectl apply -f k8s/noetl/noetl-dev-deployment.yaml
-kubectl apply -f k8s/noetl/noetl-dev-service.yaml
+# List all playbooks
+curl http://localhost:30082/api/catalog/playbooks | jq .
+
+# Execute a playbook  
+curl -X POST http://localhost:30082/api/executions/run \
+  -H "Content-Type: application/json" \
+  -d '{"playbook_id": "my-playbook"}'
+
+# Check execution status
+curl http://localhost:30082/api/executions/{execution_id} | jq .
 ```
 
-Note: The previous reload-based development flow is deprecated and no longer supported.
+### Sample Playbook
+
+The platform test creates this example:
+
+```yaml
+name: hello-world-test
+version: "1.0.0"
+description: "Test playbook for NoETL platform"
+
+steps:
+  - name: test_step
+    type: python
+    parameters:
+      code: |
+        print(" NoETL Platform is working!")
+        print(" Python step executed successfully") 
+        return {"status": "success", "message": "Platform test completed"}
+```
+
+### Current Configuration
+
+The NoETL deployment uses the `noetl-local-dev:latest` image built from local source code and runs on port 8082.
+
+- **Deployment**: k8s/noetl/noetl-deployment.yaml  
+- **Service**: k8s/noetl/noetl-service.yaml (NodePort 30082)
+- **Health Endpoint**: http://localhost:30082/api/health
+
+This is automatically configured by the `make k8s-platform-deploy` command or `./k8s/deploy-platform.sh` script.
 
 ### Accessing Postgres
 
@@ -243,35 +454,89 @@ psql -h localhost -p 5432 -U demo -d demo_noetl
 
 For more detailed instructions and alternative methods, see [Accessing Postgres in Kubernetes](docs/postgres_access.md).
 
-## Troubleshooting
+##  Troubleshooting
 
-### Resource Requirements
+### Common Issues and Solutions
 
-NoETL components, especially the development versions, require sufficient resources to function properly. If pods are failing with OOM errors (exit code 137), you may need to increase the memory limits.
+| Issue | Symptoms | Solution |
+|-------|----------|----------|
+| **Pods not ready** | `0/1 Running` status | Check logs: `kubectl logs -l app=noetl` |
+| **Health check fails** | CrashLoopBackOff | Verify endpoint: `curl localhost:30082/api/health` |
+| **Database connection** | Connection errors in logs | Check Postgres: `kubectl get pods -n postgres` |
+| **Permission denied** | Schema initialization fails | Clean schema: `make k8s-platform-clean` then redeploy |
+| **Port conflicts** | Connection refused | Check Kind port mappings and ensure 30082 is free |
 
-For detailed information about resource requirements and troubleshooting, see [Resource Requirements Documentation](docs/resource_requirements.md).
+### Debugging Steps
 
-### Checking Logs
+1. **Check overall status**:
+   ```bash
+   make k8s-platform-status
+   ```
 
-To check logs for the NoETL application:
+2. **Inspect pod details**:
+   ```bash
+   kubectl describe pod -l app=noetl
+   kubectl describe pod -l app=postgres -n postgres
+   ```
 
+3. **View logs**:
+   ```bash
+   # NoETL logs (follow)
+   kubectl logs -l app=noetl -f
+   
+   # Postgres logs
+   kubectl logs -l app=postgres -n postgres -f
+   
+   # Previous container logs (if crashed)
+   kubectl logs -l app=noetl --previous
+   ```
+
+4. **Test database connectivity**:
+   ```bash
+   # Connect to Postgres directly
+   kubectl exec -it deployment/postgres -n postgres -- psql -U demo -d demo_noetl -c "SELECT version();"
+   
+   # Test from NoETL container
+   kubectl exec -it deployment/noetl -- /opt/noetl/.venv/bin/python -c "
+   import psycopg2
+   conn = psycopg2.connect(
+       host='postgres.postgres.svc.cluster.local',
+       port=5432,
+       user='noetl',
+       password='noetl', 
+       database='demo_noetl'
+   )
+   print('Database connection successful!')
+   conn.close()
+   "
+   ```
+
+5. **Resource usage**:
+   ```bash
+   kubectl top pods
+   kubectl top nodes
+   ```
+
+### Recovery Procedures
+
+#### Complete Reset
 ```bash
-kubectl logs -l app=noetl
+make k8s-platform-clean
+make k8s-platform-deploy
 ```
 
-To check logs for Postgres:
-
+#### Database Only Reset  
 ```bash
-kubectl logs -l app=postgres
+kubectl delete deployment postgres -n postgres
+kubectl delete pvc postgres-pvc -n postgres
+kubectl delete pv postgres-pv
+./k8s/deploy-platform.sh --no-cluster --no-noetl-pip
 ```
 
-### Restarting Deployments
-
-If you need to restart a deployment:
-
+#### NoETL Only Reset
 ```bash
-kubectl rollout restart deployment/noetl
-kubectl rollout restart deployment/postgres
+kubectl delete deployment noetl
+kubectl apply -f k8s/noetl/noetl-deployment.yaml
 ```
 
 ### Deleting the Cluster
@@ -776,99 +1041,80 @@ kubectl apply -f noetl/noetl-dev-deployment.yaml
 kubectl apply -f noetl/noetl-service.yaml
 ```
 
-### Package Installation
+## 🏗️ Architecture Overview
 
-1. Build the NoETL package:
+### Current Implementation
 
-```bash
-cd /path/to/noetl
-python -m build
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Kind Cluster                             │
+│  ┌─────────────────┐    ┌─────────────────────────────────┐  │
+│  │ Postgres NS     │    │ Default NS                      │  │
+│  │                 │    │                                 │  │
+│  │ ┌─────────────┐ │    │ ┌─────────────────────────────┐ │  │
+│  │ │ Postgres    │ │    │ │ NoETL Server                │ │  │
+│  │ │ Pod         │ │    │ │ - Image: noetl-local-dev    │ │  │
+│  │ │             │ │    │ │ - Port: 8082                │ │  │
+│  │ │ - DB: demo  │ │    │ │ - Health: /api/health       │ │  │  
+│  │ │ - Schema:   │◄─────┤ │ - Direct uvicorn            │ │  │
+│  │ │   noetl     │ │    │ │ - Auto DB init              │ │  │
+│  │ └─────────────┘ │    │ └─────────────────────────────┘ │  │
+│  └─────────────────┘    └─────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+         │                           │
+         │                           │ NodePort 30082
+         │                           ▼
+         │                  ┌─────────────────┐
+         │                  │ localhost:30082 │
+         │                  │ - /api/health   │
+         │                  │ - /docs         │
+         │                  │ - /api/*        │
+         │                  └─────────────────┘
+         │
+    ┌────▼────────────────────────────────────────────────────┐
+    │ Volume Mounts:                                          │
+    │ - /opt/noetl/data (playbooks, data)                    │
+    │ - /opt/noetl/logs (application logs)                   │
+    │ - /mnt/data (postgres persistent storage)              │
+    └─────────────────────────────────────────────────────────┘
 ```
 
-2. Edit `noetl-package-deployment.yaml` to set the correct path to the package directory
-3. Apply the deployment:
+### Key Design Decisions
 
+- **Namespace Separation**: Postgres in `postgres` namespace for isolation
+- **Local Development**: Uses `noetl-local-dev` image built from source  
+- **Direct Execution**: Runs uvicorn directly, not through subprocess wrapper
+- **Health Checks**: Uses correct `/api/health` endpoint
+- **Auto-initialization**: Database schema created automatically on startup
+- **Persistent Storage**: Postgres data persisted in Kind node filesystem
+
+## 📚 Additional Resources
+
+### Documentation
+- [API Documentation](http://localhost:30082/docs) - Available after deployment
+- [OpenAPI Specification](http://localhost:30082/openapi.json) - Machine-readable API spec
+
+### Makefile Commands Summary
 ```bash
-kubectl apply -f noetl/noetl-configmap.yaml
-kubectl apply -f noetl/noetl-secret.yaml
-kubectl apply -f noetl/noetl-package-deployment.yaml
-kubectl apply -f noetl/noetl-service.yaml
+make k8s-platform-deploy  # Deploy complete platform
+make k8s-platform-status  # Check status
+make k8s-platform-test    # Test with sample playbook  
+make k8s-platform-clean   # Clean up everything
+make help                 # Show all available commands
 ```
 
-### Version-Specific
+### Quick Reference
+- **Health Check**: `curl http://localhost:30082/api/health`
+- **List Playbooks**: `curl http://localhost:30082/api/catalog/playbooks`
+- **View Logs**: `kubectl logs -l app=noetl -f`
+- **CLI Access**: `kubectl exec -it deployment/noetl -- noetl --help`
+- **Cleanup**: `make k8s-platform-clean` or `kind delete cluster --name noetl-cluster`
 
-1. Edit `noetl-version-deployment.yaml` to set the desired version
-2. Apply the deployment:
+---
 
-```bash
-kubectl apply -f noetl/noetl-configmap.yaml
-kubectl apply -f noetl/noetl-secret.yaml
-kubectl apply -f noetl/noetl-version-deployment.yaml
-kubectl apply -f noetl/noetl-service.yaml
-```
+🎉 **Your NoETL platform is ready for action!** 
 
-## How It Works
-
-### Development Mode
-
-The development mode deployment mounts the local NoETL repository into the container and installs it in editable mode using `pip install -e`. This allows you to make changes to the code and see them reflected in the running application without rebuilding the container.
-
-Key components:
-- Volume mount for the repository: `mountPath: /opt/noetl/repo`
-- Installation command: `pip install --user -e /opt/noetl/repo`
-
-### Package Installation
-
-The package installation deployment mounts a directory containing NoETL package files (tar.gz or wheel) and installs the package using pip. This is useful for testing built packages before publishing them.
-
-Key components:
-- Volume mount for the package directory: `mountPath: /opt/noetl/package`
-- Installation command: `pip install --user /opt/noetl/package/noetl-*.tar.gz`
-
-### Version-Specific
-
-The version-specific deployment installs a specific version of NoETL from PyPI. This is useful for testing specific versions without building packages locally.
-
-Key components:
-- Environment variable for version: `NOETL_VERSION`
-- Installation command: `pip install --user noetl==${NOETL_VERSION}`
-
-## Troubleshooting
-
-### Pod Fails to Start
-
-If the pod fails to start, check the logs:
-
-```bash
-kubectl logs -l app=noetl-dev
-```
-
-Common issues:
-- Repository path not accessible
-- Package file not found
-- Version not available on PyPI
-
-### Permission Issues
-
-If you encounter permission issues, ensure that:
-- The repository directory is readable by the container
-- The package directory is readable by the container
-- The user in the container has permission to install packages
-
-### Service Not Accessible
-
-If the service is not accessible, check the service status:
-
-```bash
-kubectl get service noetl
-```
-
-Ensure that:
-- The service is running
-- The service is of the correct type (NodePort, LoadBalancer, etc.)
-- The service is targeting the correct pods
-- If using Kind locally, the Kind config maps the NodePort to the host. For NoETL pip on port 30084, include in extraPortMappings:
-  - containerPort: 30084 / hostPort: 30084 / protocol: TCP, then recreate the cluster.
+For questions or issues, check the troubleshooting section above or examine the pod logs for detailed error information.
 
 
 # Quick Health Check
@@ -885,40 +1131,37 @@ chmod +x k8s/check-status.sh
 # Common options
 ./k8s/check-status.sh --namespace default           # specify namespace
 ./k8s/check-status.sh --no-wait                     # don't wait for readiness
-./k8s/check-status.sh --url http://localhost:30084/api/health  # override URL
+./k8s/check-status.sh --url http://localhost:30082/health  # override URL
 ```
 
 What it does:
 - Shows pods and services for Postgres and NoETL
 - Optionally waits for pods to become Ready
 - Checks Postgres readiness using pg_isready inside the pod
-- Curls the NoETL /api/health endpoint via the Service NodePort
+- Tests the NoETL `/api/health` endpoint via NodePort
 
-Expected success URL (default):
-- NoETL (pip): http://localhost:30084/api/health
+---
 
-If a check fails, the script exits with non-zero status and prints details to help with troubleshooting.
+##  File Structure Reference
 
+### Current Active Files
+- **`deploy-platform.sh`** - Main deployment script
+- **`postgres-namespace.yaml`** - Postgres namespace (ADDED)
+- **`noetl-deployment.yaml`** - Uses `noetl-local-dev` image, direct uvicorn
+- **`noetl-configmap.yaml`** - Environment configuration  
+- **`noetl-secret.yaml`** - Sensitive configuration
+- **`noetl-service.yaml`** - NodePort 30082 service
 
+### Fixes Applied
+-  **Namespace Creation**: Added `postgres-namespace.yaml`
+-  **Health Endpoint**: Updated from `/health` to `/api/health` 
+-  **Process Management**: Changed to direct uvicorn execution
+-  **Volume Mounts**: Added logs directory support
+-  **Database Schema**: Fixed type compatibility issues
+-  **Image Selection**: Using `noetl-local-dev` vs `noetl-pip`
 
-## Deprecated and Safe-to-Remove Files (Reload flow)
-
-Only two Kubernetes deployment options are supported now: pip (noetl-pip) and local-dev (noetl-local-dev). The previous reload-based development flow is deprecated and no longer used by any script or doc path. You can safely remove the following files from k8s/:
-
-- k8s/deploy-noetl-reload.sh
-- k8s/noetl/noetl-reload-deployment.yaml
-- k8s/noetl/noetl-reload-service.yaml
-- k8s/noetl/Dockerfile.reload
-- k8s/tests/test-reload-setup.sh
-- k8s/docs/noetl_reload_feature.md
-- k8s/docs/noetl_reload_flag_fix_summary.md
-- k8s/docs/noetl_reload_path_fix.md
-- k8s/docs/kind_hostpath_mounting.md
-- k8s/docs/kind_hostpath_fix_summary.md
-- k8s/kind-config-with-mounts.yaml
-- k8s/noetl/kind-config-mounts.yaml
-
-Notes:
-- These Kind config files with extraMounts were only useful for the deprecated reload flow (mounting the repo into the Kind node). They are not used by the supported pip/local-dev workflows. If you ever need a custom Kind config, generate it on the fly as needed (deploy-platform.sh does this), or use setup-kind-cluster.sh which writes a temporary config.
-- The basic Kind config files still include port mappings like 30080–30084; this is harmless. Keep them if you want flexibility, or simplify later.
-- If you rely on any custom workflow that used the reload path, prefer the local-dev deployment instead (k8s/noetl/noetl-dev-*.yaml).
+### Makefile Integration
+- **`k8s-platform-deploy`** - Complete platform deployment
+- **`k8s-platform-status`** - Status monitoring with health checks  
+- **`k8s-platform-test`** - End-to-end testing with sample playbook
+- **`k8s-platform-clean`** - Comprehensive cleanup

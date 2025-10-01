@@ -13,6 +13,8 @@ K8S_NOETL_DIR ?= $(K8S_DIR)/noetl
 K8S_POSTGRES_DIR ?= $(K8S_DIR)/postgres
 KIND ?= kind
 KIND_CLUSTER ?= noetl
+NOETL_HOST ?= localhost
+NOETL_PORT ?= 8082
 
 
 #   export PAT=<PERSONAL_ACCESS_TOKEN>
@@ -48,6 +50,16 @@ help:
 	@echo "  make test-keyval     					Run key-value tests"
 	@echo "  make test-payload    					Run payload tests"
 	@echo "  make test-playbook   					Run playbook tests"
+	@echo "  make test-control-flow-workbook			Run control flow workbook tests"
+	@echo "  make test-control-flow-workbook-runtime		Run control flow workbook tests with runtime execution"
+	@echo "  make test-control-flow-workbook-full		Full integration test (reset DB, restart server, run runtime tests)"
+	@echo "  make test-http-duckdb-postgres			Run HTTP DuckDB Postgres tests"
+	@echo "  make test-http-duckdb-postgres-runtime		Run HTTP DuckDB Postgres tests with runtime execution"
+	@echo "  make test-http-duckdb-postgres-full		Full integration test (reset DB, restart server, register credentials, run runtime tests)"
+	@echo "  make test-playbook-composition			Run playbook composition tests"
+	@echo "  make test-playbook-composition-runtime		Run playbook composition tests with runtime execution"
+	@echo "  make test-playbook-composition-full		Full integration test (reset DB, restart server, register credentials, run runtime tests)"
+	@echo "  make test-playbook-composition-k8s		Kubernetes-friendly test (restart server, register credentials, run runtime tests, skip DB reset)"
 	@echo ""
 	@echo "Kubernetes Commands:"
 	@echo "  make k8s-kind-create          			Create kind cluster (or use existing) and set kubectl context"
@@ -64,6 +76,11 @@ help:
 	@echo "  make k8s-postgres-port-forward-bg			Set up background port forwarding from localhost:30543 to Postgres"
 	@echo "  make k8s-postgres-port-forward-stop		 	Stop background port forwarding"
 	@echo "  make k8s-dev-setup              	 		Complete development setup: deploy Postgres + start port forwarding"
+	@echo "  make k8s-platform-deploy        			Deploy complete NoETL platform (Postgres + NoETL server)"
+	@echo "  make k8s-platform-status        			Check NoETL platform deployment status"
+	@echo "  make k8s-platform-test          			Test the platform with a simple playbook"
+	@echo "  make k8s-platform-clean         			Clean up the NoETL platform deployment"
+	@echo "  make redeploy-noetl             			Redeploy NoETL with metrics (preserves observability services)"
 	@echo "  make postgres-reset-schema    			Recreates noetl schema only in running postgres database instance"
 	@echo ""
 	@echo "Local Runtime (env + logs):"
@@ -83,8 +100,23 @@ help:
 	@echo "  make noetl-execute-watch ID=222437726840946688 HOST=localhost PORT=8082			Watch status with live updates"
 	@echo "  make noetl-execute-status ID=222437726840946688 > logs/status.json					Get status for specific ID"
 	@echo "  make noetl-validate-status FILE=logs/status.json							Validate and clean up a status.json file"
-	@echo "  make register-credential FILE=examples/test/credentials/pg_local.json HOST=localhost PORT=8082	Register one credential payload"
-	@echo "  make register-test-credentials HOST=localhost PORT=8082			Upload all example test credentials"
+	@echo "  make register-examples HOST=localhost PORT=8082			Register example catalog playbooks"
+	@echo "  make register-test-playbooks HOST=localhost PORT=8082		Register test fixture playbooks"
+	@echo "  make register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=localhost PORT=8082	Register one credential payload"
+	@echo "  make register-test-credentials HOST=localhost PORT=8082			Upload all test fixture credentials"
+	@echo ""
+	@echo "Observability Commands:"
+	@echo "  make unified-deploy                        		Deploy unified NoETL platform with observability (recommended)"
+	@echo "  make unified-recreate-all                  		Complete recreation: cleanup + rebuild + redeploy everything"
+	@echo "  make unified-health-check                  		Check health of unified deployment components"
+	@echo "  make unified-grafana-credentials           		Get Grafana credentials for unified deployment"
+	@echo "  make unified-port-forward-start           		Start port-forwards for unified deployment"
+	@echo "  make unified-port-forward-stop            		Stop port-forwards for unified deployment"  
+	@echo "  make unified-port-forward-status          		Check port-forward status for unified deployment"
+	@echo "  make observability-grafana-credentials    		Get Grafana credentials (auto-detects unified or legacy)"
+	@echo "  make observability-deploy                 		Deploy observability stack (legacy separate namespace)"
+	@echo "  make observability-port-forward-start     		Start port-forwards (legacy)"
+	@echo "  make observability-port-forward-stop      		Stop port-forwards (legacy)"
 
 docker-login:
 	echo $(PAT) | docker login ghcr.io -u $(GIT_USER) --password-stdin
@@ -129,7 +161,7 @@ restart: down up
 logs:
 	docker compose -f $(COMPOSE_FILE) -p $(PROJECT_NAME) logs -f
 
-.PHONY: clean install-uv create-venv install-dev uv-lock run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-setup build-uv publish encode-playbook register-playbook execute-playbook register-examples start-workers stop-multiple clean-logs
+.PHONY: clean install-uv create-venv install-dev uv-lock run test test-server-api test-server-api-unit test-parquet-export test-keyval test-payload test-playbook test-control-flow-workbook test-control-flow-workbook-runtime test-control-flow-workbook-full test-http-duckdb-postgres test-http-duckdb-postgres-runtime test-http-duckdb-postgres-full test-playbook-composition test-playbook-composition-runtime test-playbook-composition-full test-playbook-composition-k8s test-setup build-uv publish encode-playbook register-playbook execute-playbook register-examples register-test-playbooks start-workers stop-multiple clean-logs
 
 clean:
 	docker system prune -af --volumes
@@ -180,6 +212,68 @@ test-payload: test-setup
 
 test-playbook: test-setup
 	$(VENV)/bin/pytest -v tests/test_playbook.py
+
+test-control-flow-workbook: test-setup
+	$(VENV)/bin/pytest -v tests/test_control_flow_workbook.py
+
+test-control-flow-workbook-runtime: test-setup
+	@echo "Running control flow workbook tests with runtime execution..."
+	@echo "This requires a running NoETL server. Use 'make noetl-restart' if needed."
+	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_control_flow_workbook.py
+
+test-control-flow-workbook-full: noetl-stop postgres-reset-schema noetl-start
+	@echo "Running full integration test for control flow workbook..."
+	@echo "This will stop services, reset database, restart server, and run runtime tests"
+	@sleep 2  # Give server time to start
+	$(MAKE) test-control-flow-workbook-runtime
+
+test-http-duckdb-postgres: test-setup
+	$(VENV)/bin/pytest -v tests/test_scheduler_basic.py
+
+test-http-duckdb-postgres-runtime: test-setup
+	@echo "Running HTTP DuckDB Postgres tests with runtime execution..."
+	@echo "This requires a running NoETL server and proper credentials (pg_local, gcs_hmac_local)."
+	@echo "Use 'make noetl-restart' if needed."
+	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_http_duckdb_postgres.py
+
+test-http-duckdb-postgres-full: noetl-stop postgres-reset-schema noetl-start
+	@echo "Running full integration test for HTTP DuckDB Postgres..."
+	@echo "This will stop services, reset database, restart server, register credentials, and run runtime tests"
+	@sleep 2  # Give server time to start
+	@echo "Registering required credentials..."
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/gcs_hmac_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	@echo "Running runtime tests..."
+	$(MAKE) test-http-duckdb-postgres-runtime
+
+test-playbook-composition: test-setup
+	$(VENV)/bin/pytest -v tests/test_playbook_composition.py
+
+test-playbook-composition-runtime: test-setup
+	@echo "Running playbook composition tests with runtime execution..."
+	@echo "This requires a running NoETL server and registered credentials (pg_local, gcs_hmac_local)."
+	@echo "Use 'make noetl-restart' and 'make register-test-credentials' if needed."
+	NOETL_RUNTIME_TESTS=true $(VENV)/bin/pytest -v tests/test_playbook_composition.py
+
+test-playbook-composition-full: noetl-stop postgres-reset-schema noetl-start
+	@echo "Running full integration test for playbook composition..."
+	@echo "This will stop services, reset database, restart server, register credentials, and run runtime tests"
+	@sleep 2  # Give server time to start
+	@echo "Registering required credentials..."
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/gcs_hmac_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	@echo "Running runtime tests..."
+	$(MAKE) test-playbook-composition-runtime
+
+test-playbook-composition-k8s: noetl-restart
+	@echo "Running Kubernetes-friendly integration test for playbook composition..."
+	@echo "This will restart server, register credentials, and run runtime tests (skipping DB reset)"
+	@sleep 2  # Give server time to start
+	@echo "Registering required credentials..."
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/pg_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	$(MAKE) register-credential FILE=tests/fixtures/credentials/gcs_hmac_local.json HOST=$(NOETL_HOST) PORT=$(NOETL_PORT)
+	@echo "Running runtime tests..."
+	$(MAKE) test-playbook-composition-runtime
 
 .PHONY: test-killer
 test-killer: test-setup
@@ -300,7 +394,10 @@ clean-logs:
 	@rm -rf logs/*
 
 register-examples:
-	examples/register_examples.sh 8082
+	examples/register_examples.sh $(PORT) $(HOST)
+
+register-test-playbooks:
+	tests/fixtures/register_test_playbooks.sh $(PORT) $(HOST)
 
 start-workers:
 	scripts/start_workers.sh
@@ -440,26 +537,32 @@ noetl-validate-status:
 export-event-log:
 	@mkdir -p logs
 	@set -a; [ -f .env ] && . .env; set +a; \
-	if [ -z "$(ID)" ]; then echo "Usage: make export-event-log ID=<execution_id>"; exit 1; fi; \
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
+	if [ -z "$(ID)" ]; then \
+	  echo "ID not provided; selecting latest execution_id..."; \
+	  export ID=$$(psql -Atc "SELECT execution_id FROM noetl.event WHERE event_type IN ('execution_start','execution_started') ORDER BY timestamp DESC LIMIT 1"); \
+	fi; \
 	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, meta, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, trace_component, stack_trace FROM noetl.event WHERE execution_id = $(ID) ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
 	ln -sf event.json logs/event_log.json; \
 	[ -s logs/event.json ] && (jq . logs/event.json >/dev/null 2>&1 && jq . logs/event.json > logs/event.json.tmp && mv logs/event.json.tmp logs/event.json || true) || true; \
-	echo "Wrote logs/event.json (symlinked to event_log.json)"
+	echo "Wrote logs/event.json (symlinked to event_log.json) for execution $(ID)"
 
 export-queue:
 	@mkdir -p logs
 	@set -a; [ -f .env ] && . .env; set +a; \
-	if [ -z "$(ID)" ]; then echo "Usage: make export-queue ID=<execution_id>"; exit 1; fi; \
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
-	# Include queue rows for the parent execution and any child executions started with metadata.parent_execution_id = $(ID)
+	if [ -z "$(ID)" ]; then \
+	  echo "ID not provided; selecting latest execution_id..."; \
+	  export ID=$$(psql -Atc "SELECT execution_id FROM noetl.event WHERE event_type IN ('execution_start','execution_started') ORDER BY timestamp DESC LIMIT 1"); \
+	fi; \
+	# Include queue rows for the parent execution and any child executions started with meta.parent_execution_id = $(ID)
 	psql -v ON_ERROR_STOP=1 -Atc "WITH all_execs AS ( \
 	  SELECT $(ID)::bigint AS execution_id \
 	  UNION \
 	  SELECT DISTINCT execution_id \
 	  FROM noetl.event \
 	  WHERE event_type = 'execution_start' \
-	    AND metadata::text LIKE '%"parent_execution_id": "$(ID)"%' \
+	    AND meta::text LIKE '%"parent_execution_id": "$(ID)"%' \
 	), q AS ( \
 	  SELECT id, created_at, available_at, lease_until, last_heartbeat, status, execution_id, node_id, action, context, priority, attempts, max_attempts, worker_id \
 	  FROM noetl.queue \
@@ -467,7 +570,7 @@ export-queue:
 	  ORDER BY id \
 	) SELECT coalesce(json_agg(row_to_json(q)),'[]'::json) FROM q;" > logs/queue.json; \
 	[ -s logs/queue.json ] && (jq . logs/queue.json >/dev/null 2>&1 && jq . logs/queue.json > logs/queue.json.tmp && mv logs/queue.json.tmp logs/queue.json || true) || true; \
-	echo "Wrote logs/queue.json"
+	echo "Wrote logs/queue.json for execution $(ID)"
 
 export-runtime:
 	@mkdir -p logs
@@ -478,6 +581,14 @@ export-runtime:
 	echo "Wrote logs/runtime.json"
 
 export-execution-logs: export-event-log export-queue export-runtime
+
+# Convenience: export logs for the most recent execution when ID is not provided
+.PHONY: export-latest
+export-latest:
+	@$(MAKE) -s export-event-log
+	@$(MAKE) -s export-queue
+	@$(MAKE) -s export-runtime
+	@echo "Exported latest execution logs to logs/event.json and logs/queue.json"
 
 export-transition:
 	@mkdir -p logs
@@ -508,7 +619,7 @@ export-workbook:
 
 register-credential:
 	@if [ -z "$(FILE)" ]; then \
-	  echo "Usage: make register-credential FILE=examples/test/credentials/pg_local.json [HOST=localhost] [PORT=8082]"; \
+	  echo "Usage: make register-credential FILE=tests/fixtures/credentials/pg_local.json [HOST=localhost] [PORT=8082]"; \
 	  exit 1; \
 	fi; \
 	url="http://$(HOST):$(PORT)/api/credentials"; \
@@ -522,7 +633,7 @@ register-credential:
 register-test-credentials:
 	@set -e; \
 	shopt -s nullglob; \
-	for f in examples/test/credentials/*.json; do \
+	for f in tests/fixtures/credentials/*.json; do \
 	  echo "Registering credential payload: $$f"; \
 	  $(MAKE) -s register-credential FILE="$$f" HOST=$(HOST) PORT=$(PORT); \
 	done; \
@@ -533,7 +644,7 @@ export-all-event-log:
 	@mkdir -p logs
 	@set -a; [ -f .env ] && . .env; set +a; \
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
-	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, metadata, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, stack_trace FROM noetl.event ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
+	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, meta, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, stack_trace FROM noetl.event ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
 	ln -sf event.json logs/event_log.json; \
 	[ -s logs/event.json ] && (jq . logs/event.json >/dev/null 2>&1 && jq . logs/event.json > logs/event.json.tmp && mv logs/event.json.tmp logs/event.json || true) || true; \
 	echo "Wrote logs/event.json (symlinked to event_log.json)"
@@ -716,6 +827,124 @@ k8s-dev-setup: k8s-postgres-deploy k8s-postgres-port-forward-bg
 	@echo "  - You can now run 'make start-server' to start the NoETL server"
 	@echo "  - Run 'make k8s-postgres-port-forward-stop' to stop port forwarding"
 
+# === Platform Deployment Targets ===
+.PHONY: k8s-platform-deploy
+k8s-platform-deploy:
+	@echo "Deploying complete NoETL platform..."
+	@./k8s/deploy-platform.sh
+	@echo ""
+	@echo "🎉 NoETL Platform deployed successfully!"
+	@echo "📋 Available endpoints:"
+	@echo "  - Health Check: http://localhost:30082/api/health"
+	@echo "  - API Documentation: http://localhost:30082/docs"
+	@echo "  - Main API: http://localhost:30082/"
+	@echo ""
+
+.PHONY: redeploy-noetl
+redeploy-noetl:
+	@echo "Redeploying NoETL with metrics functionality..."
+	@echo "This will preserve observability services and reset schema safely."
+	@./k8s/redeploy-noetl.sh
+	@echo ""
+	@echo "🎉 NoETL redeployed successfully with metrics!"
+	@echo "📊 New metrics endpoints:"
+	@echo "  - Prometheus metrics: http://localhost:30082/api/metrics/prometheus"
+	@echo "  - Metrics query API: http://localhost:30082/api/metrics/query"
+	@echo "  - Self-report: http://localhost:30082/api/metrics/self-report"
+	@echo ""
+	@echo "🚀 Quick start:"
+	@echo "  curl http://localhost:30082/api/health"
+	@echo "  curl http://localhost:30082/api/catalog/playbooks"
+	@echo ""
+	@echo "🛠️  CLI access:"
+	@echo "  kubectl exec -it deployment/noetl -- noetl --help"
+	@echo ""
+	@echo "🗑️  To clean up:"
+	@echo "  make k8s-platform-clean"
+
+.PHONY: k8s-platform-clean  
+k8s-platform-clean:
+	@echo "Cleaning up NoETL platform deployment..."
+	@if ! $(KUBECTL) cluster-info >/dev/null 2>&1; then \
+		echo "No active Kubernetes cluster detected. Skipping cleanup."; \
+	else \
+		echo "Deleting NoETL deployment..."; \
+		$(KUBECTL) delete deployment noetl --ignore-not-found || true; \
+		$(KUBECTL) delete service noetl --ignore-not-found || true; \
+		$(KUBECTL) delete configmap noetl-config --ignore-not-found || true; \
+		$(KUBECTL) delete secret noetl-secret --ignore-not-found || true; \
+		echo "Deleting Postgres deployment..."; \
+		$(KUBECTL) -n postgres delete deployment postgres --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete service postgres --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete configmap postgres-config --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete configmap postgres-config-files --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete secret postgres-secret --ignore-not-found || true; \
+		$(KUBECTL) -n postgres delete pvc postgres-pvc --ignore-not-found || true; \
+		$(KUBECTL) delete pv postgres-pv --ignore-not-found || true; \
+		$(KUBECTL) delete namespace postgres --ignore-not-found || true; \
+		echo "Deleting Kind cluster..."; \
+		$(KIND) delete cluster --name $(KIND_CLUSTER) || true; \
+		echo "Platform cleanup completed."; \
+	fi
+
+.PHONY: k8s-platform-status
+k8s-platform-status:
+	@echo "NoETL Platform Status:"
+	@echo "======================"
+	@if ! $(KUBECTL) cluster-info >/dev/null 2>&1; then \
+		echo "❌ No active Kubernetes cluster detected."; \
+		echo "   Run 'make k8s-platform-deploy' to deploy the platform."; \
+	else \
+		echo "📊 Cluster Info:"; \
+		$(KUBECTL) cluster-info | head -2 || true; \
+		echo ""; \
+		echo "🐘 Postgres Status:"; \
+		$(KUBECTL) get pods -n postgres -l app=postgres || echo "   No Postgres pods found"; \
+		echo ""; \
+		echo "🚀 NoETL Status:"; \
+		$(KUBECTL) get pods -l app=noetl || echo "   No NoETL pods found"; \
+		echo ""; \
+		echo "🌐 Services:"; \
+		$(KUBECTL) get svc | grep -E "(noetl|TYPE)" || echo "   No NoETL services found"; \
+		echo ""; \
+		echo "🔗 Quick Access:"; \
+		if $(KUBECTL) get pods -l app=noetl | grep -q "1/1.*Running"; then \
+			echo "  ✅ Health Check: curl http://localhost:30082/api/health"; \
+			echo "  📚 API Docs: http://localhost:30082/docs"; \
+		else \
+			echo "  ⏳ NoETL is not ready yet. Check pod status above."; \
+		fi; \
+	fi
+
+.PHONY: k8s-platform-test
+k8s-platform-test:
+	@echo "Testing NoETL platform with a simple playbook..."
+	@if ! $(KUBECTL) get pods -l app=noetl | grep -q "1/1.*Running"; then \
+		echo "❌ NoETL is not running. Run 'make k8s-platform-deploy' first."; \
+		exit 1; \
+	fi
+	@echo "Creating test playbook..."
+	@mkdir -p /tmp/noetl-test
+	@echo 'name: hello-world-test' > /tmp/noetl-test/hello-world-test.yaml
+	@echo 'version: "1.0.0"' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo 'description: "Test playbook for NoETL platform"' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo 'steps:' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '  - name: test_step' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '    type: python' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '    parameters:' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '      code: |' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '        print("🎉 NoETL Platform is working!")' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '        print("✅ Python step executed successfully")' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo '        return {"status": "success", "message": "Platform test completed"}' >> /tmp/noetl-test/hello-world-test.yaml
+	@echo "Copying playbook to container..."
+	@$(KUBECTL) cp /tmp/noetl-test/hello-world-test.yaml $$($(KUBECTL) get pods -l app=noetl -o jsonpath='{.items[0].metadata.name}'):/opt/noetl/data/hello-world-test.yaml
+	@echo "Registering playbook..."
+	@$(KUBECTL) exec deployment/noetl -- noetl register /opt/noetl/data/hello-world-test.yaml --host localhost --port 8082
+	@echo "Executing playbook..."
+	@$(KUBECTL) exec deployment/noetl -- noetl run hello-world-test --host localhost --port 8082
+	@echo "✅ Platform test completed successfully!"
+
 k8s-postgres-delete:
 	@echo "Deleting ONLY Postgres manifests from namespace $(NAMESPACE)..."
 	@if ! $(KUBECTL) cluster-info >/dev/null 2>&1; then \
@@ -761,3 +990,71 @@ gcp-credentials:
 	@rmdir ./secrets/application_default_credentials.json
 	@cp $$HOME/.config/gcloud/application_default_credentials.json ./secrets/application_default_credentials.json
 	@echo "Credentials copied to ./secrets/application_default_credentials.json"
+
+.PHONY: observability-deploy observability-redeploy observability-port-forward-start observability-port-forward-stop observability-port-forward-status observability-grafana-credentials observability-provision-dashboards observability-import-dashboards observability-provision-datasources unified-deploy unified-recreate-all unified-health-check unified-grafana-credentials unified-port-forward-start unified-port-forward-stop unified-port-forward-status
+observability-deploy:
+	@bash k8s/observability/deploy.sh
+
+observability-redeploy:
+	@bash k8s/observability/redeploy.sh
+
+observability-port-forward-start:
+	@bash k8s/observability/port-forward.sh start
+
+observability-port-forward-stop:
+	@bash k8s/observability/port-forward.sh stop
+
+observability-port-forward-status:
+	@bash k8s/observability/port-forward.sh status
+
+observability-grafana-credentials:
+	@if kubectl get ns noetl-platform >/dev/null 2>&1; then \
+		echo "[INFO] Found unified deployment, using noetl-platform namespace"; \
+		bash k8s/observability/grafana-credentials.sh noetl-platform; \
+	elif kubectl get ns observability >/dev/null 2>&1; then \
+		echo "[INFO] Found legacy deployment, using observability namespace"; \
+		bash k8s/observability/grafana-credentials.sh observability; \
+	else \
+		echo "[ERROR] Neither noetl-platform nor observability namespace found."; \
+		echo "Hint: Deploy with './k8s/deploy-unified-platform.sh' or 'make observability-deploy'"; \
+		exit 1; \
+	fi
+
+observability-provision-dashboards:
+	@bash k8s/observability/provision-grafana.sh observability
+
+observability-provision-datasources:
+	@bash k8s/observability/provision-datasources.sh observability
+
+observability-import-dashboards:
+	@bash k8s/observability/import-dashboards.sh observability --wait
+
+# Unified deployment targets (recommended)
+unified-deploy:
+	@echo "[INFO] Deploying unified NoETL platform with observability"
+	@bash k8s/deploy-unified-platform.sh
+
+unified-grafana-credentials:
+	@echo "[INFO] Getting Grafana credentials for unified deployment"
+	@bash k8s/observability/grafana-credentials.sh noetl-platform
+
+unified-port-forward-start:
+	@echo "[INFO] Starting port-forwards for unified deployment"
+	@bash k8s/observability/port-forward-unified.sh start
+
+unified-port-forward-stop:
+	@echo "[INFO] Stopping port-forwards for unified deployment"
+	@bash k8s/observability/port-forward-unified.sh stop
+
+unified-port-forward-status:
+	@echo "[INFO] Checking port-forward status for unified deployment"
+	@bash k8s/observability/port-forward-unified.sh status
+
+unified-recreate-all:
+	@echo "[INFO] Complete recreation: cleanup + rebuild + redeploy everything"
+	@echo "[INFO] This will delete all clusters, rebuild Docker images, and redeploy from scratch"
+	@echo "y" | bash k8s/recreate-all.sh
+
+unified-health-check:
+	@echo "[INFO] Running health check for unified deployment"
+	@bash k8s/health-check.sh

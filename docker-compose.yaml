@@ -20,9 +20,9 @@ services:
       NOETL_SCHEMA: ${NOETL_SCHEMA}
     command: "postgres -c port=5432 -c config_file=/etc/postgresql/postgresql.conf"
     volumes:
-      - ./database/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./database/postgres/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
-      - ./database/postgres/schema_ddl.sql:/schema_ddl.sql
+      - ./scripts/database/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./scripts/database/postgres/init_database.sh:/docker-entrypoint-initdb.d/init_database.sh
+      - ./noetl/database/ddl/postgres/schema_ddl.sql:/schema_ddl.sql
     ports:
       - "5434:5432"
     healthcheck:

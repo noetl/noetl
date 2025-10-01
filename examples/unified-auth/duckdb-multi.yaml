@@ -1,0 +1,89 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: unified_auth_duckdb_multi
+  path: examples/unified-auth/duckdb-multi
+
+workload:
+  message: "Demonstrate DuckDB multi-auth with multiple services"
+  cities:
+    - name: "London"
+      lat: 51.51
+      lon: -0.13
+    - name: "Paris"  
+      lat: 48.85
+      lon: 2.35
+    - name: "Tokyo"
+      lat: 35.68
+      lon: 139.69
+
+workflow:
+  - step: start
+    desc: "Start DuckDB multi-auth demo"
+    next:
+      - step: setup_postgres_table
+
+  - step: setup_postgres_table
+    desc: "Setup Postgres table for data source"
+    type: postgres
+    auth:
+      type: postgres
+      credential: pg_local
+    command_b64: |
+      Q1JFQVRFIFRBQkxFIElGIE5PVCBFWElTVFMgcHVibGljLmNpdGllc19zb3VyY2UgKAogIGlkIFNFUklBTCBQUklNQVJZIEtFWSwKICBuYW1lIFRFWFQgTk9UIE5VTEwsCiAgbGF0aXR1ZGUgRE9VQkxFIFBSRUNJU0lPTiwKICBsb25naXR1ZGUgRE9VQkxFIFBSRUNJU0lPTiwKICBjcmVhdGVkX2F0IFRJTUVTVEFNUFRUIERERU5BVUxUIE5PVygpCik7CgpUUlVOQ0FURSBQVUJMSUMTY2l0aWVzX3NvdXJjZTsKCklOU0VSVCBJTlRPIHB1YmxpYy5jaXRpZXNfc291cmNlIChuYW1lLCBsYXRpdHVkZSwgbG9uZ2l0dWRlKSBWQUxVRVMKKCdMb25kb24nLCA1MS41MSwgLTAuMTMpLAooJ1BhcmlzJywgNDguODUsIDIuMzUpLAooJ1Rva3lvJywgMzUuNjgsIDEzOS42OSk7
+    next:
+      - step: multi_service_etl
+
+  - step: multi_service_etl
+    desc: "DuckDB ETL with multiple authentication sources"
+    type: duckdb
+    auth:
+      # Postgres source database
+      source_db:
+        type: postgres
+        credential: pg_local
+      
+      # GCS storage for intermediate results
+      cloud_storage:
+        type: gcs
+        credential: gcs_hmac_local
+        
+      # Optional: S3 backup storage (if available)
+      # backup_storage:
+      #   type: s3
+      #   env: AWS_CREDENTIALS
+      
+    command_b64: |
+      LS0gRHVja0RCIEVUTCB3aXRoIG11bHRpcGxlIGF1dGggc291cmNlcwpDUkVBVEUgVEFCTEUgY2l0aWVzX3dpdGhfbWV0YWRhdGEgQVMgCkZST00gcG9zdGdyZXNfc2Nhbignc291cmNlX2RiJywgJ3B1YmxpYycsICdjaXRpZXNfc291cmNlJykKU0VMRUNUCiAgbmFtZSwKICBsYXRpdHVkZSwKICBsb25naXR1ZGUsCiAgQ0FTRSAKICAgIFdIRU4gbGF0aXR1ZGUgPiA1MCBUSEVOICJFVS9Ob3J0aCIKICAgIFdIRU4gbGF0aXR1ZGUgPiAzMCBUSEVOICJFdXJvcGUvQXNpYSIKICAgIEVMU0UgIk90aGVyIgogIEVORCBBUyByZWdpb24sCiAgU1FSVChQT1cocmFkaWFucyhsYXRpdHVkZSksIDIpICsgUE9XKHJhZGlhbnMobG9uZ2l0dWRlKSwgMikpICogNjM3MSBBUyBkaXN0YW5jZV9mcm9tX29yaWdpbl9rbQo7CgotLSBTYXZlIHJlc3VsdHMgdG8gR0NTCkNPUFkgY2l0aWVzX3dpdGhfbWV0YWRhdGEgVE8gJ2dzOi8vbm9ldGwtZGVtby0xOTcwMDEwMS91bmlmaWVkLWF1dGgvY2l0aWVzX3Byb2Nlc3NlZC5wYXJxdWV0JzsKCi0tIENyZWF0ZSBzdW1tYXJ5IHN0YXRpc3RpY3MKVEFCTEUKS0VZOlZBTFVFCgpDUkVBVEUgVEVNUCBUQUJMRSBzdW1tYXJ5X3N0YXRzIEFTIApTRUxFQ1QKICAnY3JlYXRlZF9hdCcgQVMga2V5LAogIE5PVygpOjpWQVJDSEFSIEFTIHZhbHVlClVOSU9OIEFMTAoKU0VMRUNUCiAgJ3RvdGFsX2NpdGllcycgQVMga2V5LAogIENPVU5UKCopOjpWQVJDSEFSIEFTIHZhbHVlCkZST00gY2l0aWVzX3dpdGhfbWV0YWRhdGEKClVOSU9OIEFMTAoKU0VMRUNUCiAgJ2F2Z19kaXN0YW5jZV9rbScgQVMga2V5LAogIEFWRyhkaXN0YW5jZV9mcm9tX29yaWdpbl9rbSk6OlZBUkNIQVIgQVMgdmFsdWUKRlJPTSBjaXRpZXNfd2l0aF9tZXRhZGF0YQoKVU5JT04gQUxMCgpTRUxFQ1QKICAncmVnaW9uX2Rpc3RyaWJ1dGlvbicgQVMga2V5LAogIENPTkNBVF9XUygnLCAnLCBhcnJheV9hZ2cocmVnaW9uKSkgQVMgdmFsdWUKRlJPTSBjaXRpZXNfd2l0aF9tZXRhZGF0YTsKCi0tIFNhdmUgc3VtbWFyeSB0byBHQ1MgClNBVkUgc3VtbWFyeV9zdGF0cyBUTyAnZ3M6Ly9ub2V0bC1kZW1vLTE5NzAwMTAxL3VuaWZpZWQtYXV0aC9zdW1tYXJ5X3N0YXRzLmpzb24nIChGT1JNQVQgSlNPTiwgQVJSQVkgZmFsc2UpOw==
+    next:
+      - step: verify_results
+
+  - step: verify_results
+    desc: "Verify results were written to both Postgres and GCS"
+    type: postgres
+    auth:
+      type: postgres
+      credential: pg_local
+    command_b64: |
+      LS0gVmVyaWZ5IGRhdGEgd3JpdGUgc3VjY2VzcwpTRUxFQ1QgCiAgJ1VuaWZpZWQgQXV0aCBEZW1vIENvbXBsZXRlJyBBUyBzdGF0dXMsCiAgJ0NoZWNrIEdDUyBidWNrZXQgZm9yIGNpdGllc19wcm9jZXNzZWQucGFycXVldCBhbmQgc3VtbWFyeV9zdGF0cy5qc29uJyBBUyBtZXNzYWdlOw==
+    next:
+      - step: end
+
+  - step: end
+    desc: "End DuckDB multi-auth demo"
+
+# Base64 Decoded Commands:
+# setup_postgres_table: Creates and populates cities_source table
+# multi_service_etl: Complex DuckDB query using multiple auth sources
+# verify_results: Confirms successful completion
+
+# Required credentials:
+# - pg_local: PostgreSQL connection details
+# - gcs_hmac_local: GCS HMAC credentials for cloud storage
+#
+# This example demonstrates:
+# 1. Multiple auth aliases (source_db, cloud_storage)
+# 2. Cross-service data movement (Postgres → DuckDB → GCS)
+# 3. Complex ETL with authentication to multiple systems
+# 4. Unified auth syntax across all plugins

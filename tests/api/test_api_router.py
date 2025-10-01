@@ -5,7 +5,13 @@ from fastapi.testclient import TestClient
 
 def test_top_level_api_router_health():
     # Import here to ensure package-level router imports cleanly
-    from noetl.api import router as api_router
+    import pytest
+from fastapi import FastAPI
+from starlette.testclient import TestClient
+
+
+def test_all_api_routes_loaded():
+    from noetl.api.routers import router as api_router
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")

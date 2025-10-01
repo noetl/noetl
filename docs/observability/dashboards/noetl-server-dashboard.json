@@ -1,0 +1,201 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "VictoriaMetrics/Prometheus",
+      "description": "Select the VictoriaMetrics (Prometheus-compatible) datasource",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_VICTORIA_LOGS",
+      "label": "VictoriaLogs",
+      "description": "Select the VictoriaLogs datasource",
+      "type": "datasource",
+      "pluginId": "victorialogs-datasource",
+      "pluginName": "VictoriaLogs"
+    },
+    {
+      "name": "DS_NOETL_POSTGRES",
+      "label": "NoETL PostgreSQL",
+      "description": "Select the NoETL PostgreSQL datasource for metrics",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "9.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "9.0.0" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "9.0.0" },
+    { "type": "panel", "id": "logs", "name": "Logs", "version": "9.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "datasource", "id": "victorialogs-datasource", "name": "VictoriaLogs", "version": "1.0.0" },
+    { "type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0" }
+  ],
+  "title": "NoETL Server Overview",
+  "uid": "noetl-server-overview",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 2,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "NoETL Server Up",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": {"type": "prometheus", "uid": "P4169E866C3094E38"},
+      "targets": [
+        { "expr": "noetl_up", "legendFormat": "up" }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "horizontal" },
+      "fieldConfig": { "defaults": { "mappings": [], "thresholds": { "mode": "absolute", "steps": [ {"color": "red", "value": null}, {"color": "green", "value": 1} ] } }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Active Components",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        { 
+          "rawSql": "SELECT COUNT(*) as count FROM noetl.runtime WHERE status = 'ready' AND last_heartbeat > now() - interval '5 minutes'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP Requests per second",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": {"type": "prometheus", "uid": "P4169E866C3094E38"},
+      "targets": [
+        { "expr": "rate(noetl_request_total[5m])", "legendFormat": "rps" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "req/s" }, "overrides": [] },
+      "options": { "legend": { "showLegend": true } }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU Usage by Component",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT $__time(m.timestamp), r.name as component, m.metric_value as cpu_percent FROM noetl.metric m JOIN noetl.runtime r ON m.runtime_id = r.runtime_id WHERE m.metric_name = 'noetl_system_cpu_usage_percent' AND $__timeFilter(m.timestamp) ORDER BY m.timestamp",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory Usage by Component",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT $__time(m.timestamp), r.name as component, m.metric_value as memory_percent FROM noetl.metric m JOIN noetl.runtime r ON m.runtime_id = r.runtime_id WHERE m.metric_name = 'noetl_system_memory_usage_percent' AND $__timeFilter(m.timestamp) ORDER BY m.timestamp",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "type": "table",
+      "title": "Active Workers",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT name, component_type, status, capacity, last_heartbeat FROM noetl.runtime WHERE component_type LIKE '%worker%' ORDER BY last_heartbeat DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "displayMode": "table",
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "options": { "ready": { "color": "green", "index": 0 } }, "type": "value" },
+                  { "options": { "busy": { "color": "yellow", "index": 1 } }, "type": "value" },
+                  { "options": { "offline": { "color": "red", "index": 2 } }, "type": "value" }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue Depth Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT $__time(m.timestamp), m.metric_value as queue_size FROM noetl.metric m JOIN noetl.runtime r ON m.runtime_id = r.runtime_id WHERE m.metric_name = 'noetl_queue_size' AND r.component_type = 'server_api' AND $__timeFilter(m.timestamp) ORDER BY m.timestamp",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "table",
+      "title": "Latest Metrics Summary",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "PF4D082BB8112050F"},
+      "targets": [
+        {
+          "rawSql": "SELECT r.name as component, m.metric_name, m.metric_value, m.unit, m.timestamp FROM noetl.metric m JOIN noetl.runtime r ON m.runtime_id = r.runtime_id WHERE m.timestamp > now() - interval '5 minutes' ORDER BY m.timestamp DESC LIMIT 50",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "Recent Server Logs",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 30 },
+      "datasource": {"type": "victorialogs-datasource", "uid": "PD775F2863313E6C7"},
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "expr": "{app=\"noetl\"}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] }
+}

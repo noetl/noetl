@@ -7,9 +7,9 @@ import os
 import asyncio
 from typing import Any, Dict
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
-from noetl.server.api.catalog import get_catalog_service
+from noetl.api.routers.catalog import get_catalog_service
 from noetl.core.logger import setup_logger
-from noetl.server.api.event.event_log import EventLog
+from noetl.api.routers.event.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -834,7 +834,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                             except Exception:
                                 _agg_already = False
                             if not _agg_already:
-                                from noetl.server.api.broker.endpoint import encode_task_for_queue as _encode_task
+                                from noetl.api.routers.broker.endpoint import encode_task_for_queue as _encode_task
                                 # Collect iteration event IDs for context
                                 iter_event_ids = []
                                 try:
@@ -965,7 +965,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                     _cntrow = await cur.fetchone()
                                     _already = bool(_cntrow and int(_cntrow[0]) > 0)
                                     if not _already:
-                                        from noetl.server.api.broker.endpoint import encode_task_for_queue as _encode_task
+                                        from noetl.api.routers.broker.endpoint import encode_task_for_queue as _encode_task
                                         # Build task definition for next step
                                         task_def = {}
                                         try:
@@ -1100,7 +1100,7 @@ async def evaluate_broker_for_execution(
             import json as _json
             import yaml as _yaml
             from noetl.core.common import snowflake_id_to_int as _sf_to_int
-            from noetl.server.api.broker import encode_task_for_queue as _encode_task
+            from noetl.api.routers.broker import encode_task_for_queue as _encode_task
             logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Imports successful for {execution_id}")
 
             async with get_async_db_connection() as _conn:

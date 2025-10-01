@@ -113,6 +113,46 @@
   },
 
   "$defs": {
+    "saveBlock": {
+      "type": "object",
+      "properties": {
+        "when": { "type": "string" },
+        "on": {
+          "type": "string",
+          "enum": ["success", "error", "always"]
+        },
+        "storage": {
+          "type": "string",
+          "enum": ["postgres", "duckdb", "http", "event", "event_log"]
+        },
+        "auth": { "$ref": "#/$defs/authConfig" },
+        "statement": { "type": "string" },
+        "params": { "type": "object" },
+        "data": { "type": "object" },
+        "mode": {
+          "type": "string",
+          "enum": ["append", "overwrite", "update", "upsert"]
+        },
+        "key": {
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "table": { "type": "string" },
+        "format": {
+          "type": "string",
+          "enum": ["json", "csv", "parquet"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "authConfig": {
+      "anyOf": [
+        { "type": "string" },
+        { "type": "object" }
+      ]
+    },
     "task": {
       "type": "object",
       "required": ["type", "desc"],
@@ -131,7 +171,7 @@
         "params": {
           "type": "object",
           "additionalProperties": true
-        },
+        }
         
       },
       "dependencies": {
