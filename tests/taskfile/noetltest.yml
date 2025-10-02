@@ -41,3 +41,65 @@ tasks:
       - kubectl exec deployment/postgres -n postgres -- pg_isready -h localhost -p 5432 -U demo
       - echo "\n=== Checking services ==="
       - kubectl get svc -A | grep -E "noetl|postgres"
+
+  register-test-credentials:
+    desc: Register test credentials (pg_k8s and gcs_hmac_local) to cluster
+    aliases: [rtc]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - echo "=== Registering pg_k8s credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_k8s.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_k8s.json
+        fi
+      - echo "\n=== Registering gcs_hmac_local credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json
+        fi
+      - echo "\n=== Test credentials registered successfully ==="
+
+  test-register-http-duckdb-postgres:
+    desc: Register HTTP DuckDB Postgres playbook to cluster
+    aliases: [trhdp]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml --host localhost --port 8082
+
+  test-execute-http-duckdb-postgres:
+    desc: Execute HTTP DuckDB Postgres test on cluster
+    aliases: [tehdp]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/http_duckdb_postgres" --host localhost --port 8082 --json
+
+  test-http-duckdb-postgres-full:
+    desc: Full test - register credentials, register playbook, and execute HTTP DuckDB Postgres test
+    aliases: [thdpf]
+    cmds:
+      - task: register-test-credentials
+      - sleep 2
+      - task: test-register-http-duckdb-postgres
+      - sleep 2
+      - task: test-execute-http-duckdb-postgres
