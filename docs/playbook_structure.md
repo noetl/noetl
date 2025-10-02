@@ -16,7 +16,7 @@ Here's the basic structure of a NoETL playbook:
 
 ```yaml
 # Metadata
-version: "0.1.0"
+version: "1.0.0"
 path: "workflows/example/playbooks"
 description: "Example playbooks"
 
@@ -56,7 +56,7 @@ The metadata section contains information about the playbook itself:
 Example:
 
 ```yaml
-version: "0.1.0"
+version: "1.0.0"
 path: "workflows/example/playbooks"
 description: "Example playbooks of basic functionality"
 author: "John Doe"

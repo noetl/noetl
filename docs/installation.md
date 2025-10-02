@@ -22,7 +22,7 @@ pip install noetl
 For a specific version:
 
 ```bash
-pip install noetl==0.1.18
+pip install noetl==1.0.0
 ```
 
 It's recommended to install NoETL in a virtual environment:

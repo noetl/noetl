@@ -11,7 +11,7 @@ All NoETL settings are defined in the `Settings` class in `noetl/config.py`. The
 | Setting | Environment Variable | Default | Description |
 |---------|---------------------|---------|-------------|
 | `app_name` | `NOETL_APP_NAME` | `"NoETL"` | Application name |
-| `app_version` | `NOETL_APP_VERSION` | `"0.1.36"` | Application version |
+| `app_version` | `NOETL_APP_VERSION` | `"1.0.0"` | Application version |
 | `debug` | `NOETL_DEBUG` | `False` | Enable debug mode |
 | `host` | `NOETL_HOST` | `"0.0.0.0"` | Server host |
 | `port` | `NOETL_PORT` | `8080` | Server port |

@@ -30,9 +30,10 @@ A comprehensive integration test demonstrating:
 
 ## Testing
 
-### Static Tests (Default)
+### Static Tests
+For static parsing and validation without runtime execution, use pytest:
 ```bash
-make test-http-duckdb-postgres
+pytest tests/ -k http_duckdb_postgres
 ```
 Tests playbook parsing, planning, and structural validation without runtime execution.
 

@@ -113,7 +113,7 @@ Examples:
 noetl playbooks --execute --path "workflows/weather/example"
 
 # Execute with a specific version
-noetl playbooks --execute --path "workflows/weather/example" --version "0.1.0"
+noetl playbooks --execute --path "workflows/weather/example" --version "1.0.0"
 
 # Execute with payload
 noetl playbooks --execute --path "workflows/weather/example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}'

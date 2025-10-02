@@ -9,7 +9,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 name: name_of_playbook
 path: path/to/catalog
-version: "0.1.0"
+version: "1.0.0"
 description: description of playbook
 
 # Main blocks

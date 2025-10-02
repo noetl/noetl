@@ -40,7 +40,7 @@ For development or specific versions:
   ```
 - Install a specific version
   ```bash
-  pip install noetl==0.1.24
+  pip install noetl==1.0.0
   ```
 
 ### Prerequisites
@@ -170,13 +170,13 @@ noetl catalog list playbook
 
 - Execute a registered playbook
 ```bash
-noetl execute my_playbook --version 0.1.0
+noetl execute my_playbook --version 1.0.0
 ```
 
 - Register and execute with the catalog command
 ```bash
 noetl catalog register ./path/to/playbook.yaml
-noetl catalog execute my_playbook --version 0.1.0
+noetl catalog execute my_playbook --version 1.0.0
 ```
 
 ### 3. Docker Deployment

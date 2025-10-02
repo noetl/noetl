@@ -1,5 +1,5 @@
 GHCR_USERNAME=noetl
-VERSION="0.1.17"
+VERSION="1.0.0"
 K8S_DIR=k8s
 COMPOSE_FILE = docker-compose.yaml
 PROJECT_NAME = noetl

@@ -18,7 +18,7 @@ Use `{{ secret.* }}` references in headers, params, or payloads to resolve value
   endpoint: "https://api.example.com/data"
   headers:
     Authorization: "Bearer {{ secret.api_service_token }}"
-    User-Agent: "NoETL/0.2.0"
+    User-Agent: "NoETL/1.0.0"
 ```
 
 ### Basic Authentication
