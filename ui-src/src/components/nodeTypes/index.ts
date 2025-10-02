@@ -9,7 +9,7 @@ import PythonNode from '../nodes/python/python';
 import HttpNode from '../nodes/http/http';
 import DuckDbNode from '../nodes/duckdb/duckdb';
 import PostgresNode from '../nodes/postgres/postgres';
-import SecretsNode from '../nodes/secrets/secrets';
+// import SecretsNode from '../nodes/secrets/secrets';
 import PlaybooksNode from '../nodes/playbooks/playbooks';
 import LoopNode from '../nodes/loop/loop';
 
@@ -21,7 +21,7 @@ export const nodeTypes = {
     http: HttpNode,
     duckdb: DuckDbNode,
     postgres: PostgresNode,
-    secrets: SecretsNode,
+    // secrets: SecretsNode,
     playbooks: PlaybooksNode,
     loop: LoopNode,
 };
