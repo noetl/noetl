@@ -8,6 +8,9 @@ includes:
   vmstack:
     taskfile: ci/taskfile/vmstack.yml
     flatten: true
+  tests:
+    taskfile: tests/taskfile/noetltest.yml
+    flatten: true
 
 tasks:
   default:
@@ -155,3 +158,4 @@ tasks:
       - task: deploy-monitoring
       - task: deploy-postgres
       - task: deploy-noetl
+

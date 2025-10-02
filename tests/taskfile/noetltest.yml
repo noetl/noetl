@@ -1,0 +1,43 @@
+version: '3.45'
+
+tasks:
+  # === Test Tasks ===
+  test-register-control-flow-workbook:
+    desc: Register control flow workbook playbook to cluster
+    aliases: [trcfw]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 30082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host localhost --port 8082
+
+  test-execute-control-flow-workbook:
+    desc: Execute control flow workbook test on cluster
+    aliases: [tecfw]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 30082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/control_flow_workbook" --host localhost --port 8082 --json
+
+  test-control-flow-workbook-full:
+    desc: Full test - register and execute control flow workbook on cluster
+    aliases: [tcfwf]
+    cmds:
+      - task: test-register-control-flow-workbook
+      - sleep 2
+      - task: test-execute-control-flow-workbook
+
+  test-cluster-health:
+    desc: Check cluster health and endpoints
+    aliases: [tch]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - echo "=== Checking NoETL server health ==="
+      - curl -f http://localhost:8082/api/health || echo "NoETL server not ready"
+      - echo "\n=== Checking PostgreSQL connection ==="
+      - kubectl exec deployment/postgres -n postgres -- pg_isready -h localhost -p 5432 -U demo
+      - echo "\n=== Checking services ==="
+      - kubectl get svc -A | grep -E "noetl|postgres"
