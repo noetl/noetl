@@ -55,6 +55,8 @@ NoETL supports two sets of database configuration variables. The application wil
 | `PYTHONPATH` | Python module search path | `/opt/noetl` |
 | `JUPYTER_TOKEN` | Token for Jupyter notebook authentication | `noetl` |
 | `VITE_API_BASE_URL` | Base URL for API calls from the UI | `/api` |
+| `NOETL_RUNTIME_SWEEP_INTERVAL` | Seconds between runtime sweeper iterations | `15` |
+| `NOETL_RUNTIME_OFFLINE_SECONDS` | Seconds after last heartbeat to mark runtime offline | `60` |
 
 ## Usage in Kubernetes
 

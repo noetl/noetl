@@ -113,7 +113,7 @@ Examples:
 noetl playbooks --execute --path "workflows/weather/example"
 
 # Execute with a specific version
-noetl playbooks --execute --path "workflows/weather/example" --version "0.1.0"
+noetl playbooks --execute --path "workflows/weather/example" --version "1.0.0"
 
 # Execute with payload
 noetl playbooks --execute --path "workflows/weather/example" --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}'
@@ -165,6 +165,52 @@ The event ID is returned when executing a playbook asynchronously. You can view 
 ```
 http://localhost:8082/events/query?event_id=<event_id>
 ```
+
+## Worker Management
+
+NoETL supports running multiple worker processes for distributed execution of playbooks. Workers run as background processes and can be managed using the `noetl worker` commands.
+
+### Starting Workers
+
+```bash
+# Start a worker with default settings
+noetl worker start
+
+# Start a worker with custom environment
+NOETL_WORKER_POOL_NAME=worker-cpu-01 NOETL_WORKER_POOL_RUNTIME=cpu noetl worker start
+```
+
+### Stopping Workers
+
+```bash
+# Interactive stop (shows menu if multiple workers running)
+noetl worker stop
+
+# Stop specific worker by name
+noetl worker stop --name worker-cpu-01
+
+# Force stop without confirmation
+noetl worker stop --name worker-gpu-01 --force
+```
+
+### Worker Options
+
+- `--name, -n`: Specify worker name for targeted operations
+- `--force, -f`: Force stop without confirmation
+
+### Using Make Commands
+
+The Makefile provides convenient commands for worker management:
+
+```bash
+# Start worker (uses .env.worker or .env)
+make worker-start
+
+# Stop worker(s)
+make worker-stop
+```
+
+For detailed information about running multiple workers, see [Multiple Workers Guide](multiple_workers.md).
 
 ## Next Steps
 

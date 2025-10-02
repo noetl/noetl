@@ -138,7 +138,7 @@ curl -X POST "http://localhost:8082/playbook/execute" \
   -H "Content-Type: application/json" \
   -d '{
     "path": "workflows/example/playbooks",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "input_payload": {
       "param1": "value1",
       "param2": "value2"

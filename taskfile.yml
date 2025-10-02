@@ -1,0 +1,161 @@
+version: '3.45'
+
+env:
+  REGISTRY: "local"
+  IMAGE_NAME: "noetl"
+
+includes:
+  vmstack:
+    taskfile: ci/taskfile/vmstack.yml
+    flatten: true
+  tests:
+    taskfile: tests/taskfile/noetltest.yml
+    flatten: true
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+# === Kind Kubernetes Cluster ===
+  kind-create-cluster:
+    desc: Create noetl kind cluster
+    aliases: [kcc]
+    cmds:
+      - kind create cluster --config=ci/kind/config.yaml
+
+  kind-delete-cluster:
+    desc: Delete noetl kind cluster
+    aliases: [kdc]
+    cmds:
+      - kind delete cluster --name=noetl
+
+  kind-get-clustes:
+    desc: Show all kind clusters
+    aliases: [kgc]
+    cmds:
+      - kind get clusters
+
+  kubectl-set-context-kind:
+    desc: Set kubectl context to kind-noetl cluster
+    aliases: [ksck]
+    cmds:
+      - kubectl config use-context kind-noetl
+
+# === Postgres ===
+  deploy-postgres:
+    desc: Deploy postgres to the noetl kind cluster
+    aliases: [dp]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl apply -f ci/manifests/postgres/namespace.yaml
+      - sleep 2
+      - kubectl apply -f ci/manifests/postgres/
+
+  remove-postgres:
+    desc: Remove postgres from the noetl kind cluster
+    aliases: [rp]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl delete -f ci/manifests/postgres/
+
+# === NOETL ===
+  docker-build-noetl:
+    desc: Build the noetl container with dynamic tag
+    aliases: [dbn]
+    vars:
+      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
+    env:
+      IMAGE_TAG:
+        sh: date +%Y-%m-%d-%H-%M
+    # The platform is not specified intentionally. The image platform should match the kind platform.
+    cmds:
+      - |
+        echo $IMAGE_TAG > .noetl_last_build_tag.txt
+        docker build --progress plain {{ .CACHE }} -t $REGISTRY/$IMAGE_NAME:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
+
+  load-noetl-image:
+    desc: Load noetl image to the noetl kind cluster
+    aliases: [lni]
+    env:
+      IMAGE_TAG:
+        sh: cat .noetl_last_build_tag.txt
+    cmds:
+      - kind load docker-image $REGISTRY/$IMAGE_NAME:$IMAGE_TAG --name noetl
+
+  show-kind-images:
+    desc: Show images inside of the noetl kind cluster
+    aliases: [ski]
+    cmds:
+      - docker exec -it noetl-control-plane crictl images
+
+  deploy-noetl:
+    desc: Deploy noetl to the noetl kind cluster
+    aliases: [dn]
+    env:
+      IMAGE_TAG:
+        sh: cat .noetl_last_build_tag.txt
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl apply -f ci/manifests/noetl/namespace.yaml
+      - sleep 2
+      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
+      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
+      - kubectl apply -f ci/manifests/noetl/
+      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
+      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+
+  remove-noetl:
+    desc: Remove noetl from the noetl kind cluster
+    aliases: [rn]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl delete -f ci/manifests/noetl/
+
+  clear-docker-images:
+    desc: Clear all {{ .REGISTRY }}/{{ .IMAGE_NAME }} docker images
+    aliases: [cdi]
+    cmds:
+      - docker images "{{ .REGISTRY }}/{{ .IMAGE_NAME }}" --format "{{`{{.ID}}`}}" | xargs -r docker rmi -f
+
+# === Clean up local file cache ===
+
+  clear-postgres-data:
+    desc: Clear postgres ci/kind/cache/pg-data folder on the host
+    aliases: [cpd]
+    cmds:
+      - rm -rf ci/kind/cache/pg-data/*
+
+  clear-noetl-data:
+    desc: Clear noetl ci/kind/cache/noetl-data folder on the host
+    aliases: [cnd]
+    cmds:
+      - rm -rf ci/kind/cache/noetl-data/*
+
+  clear-noetl-logs:
+    desc: Clear noetl ci/kind/cache/noetl-logs folder on the host
+    aliases: [cnl]
+    cmds:
+      - rm -rf ci/kind/cache/noetl-logs/*
+
+  clear-all-cache:
+    desc: Clear local file cache ci/kind/cache/ sub-folders on the host
+    aliases: [clear]
+    cmds:
+      - rm -rf ci/kind/cache/pg-data/*
+      - rm -rf ci/kind/cache/noetl-data/*
+      - rm -rf ci/kind/cache/noetl-logs/*
+
+# === Combined Tasks ===
+  bring-all:
+    desc: Build noetl; Create noetl cluster with all deployments
+    aliases: [ba]
+    cmds:
+      - task: docker-build-noetl
+      - task: kind-create-cluster
+      - task: load-noetl-image
+      - task: deploy-monitoring
+      - task: deploy-postgres
+      - task: deploy-noetl
+

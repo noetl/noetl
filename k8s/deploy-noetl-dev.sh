@@ -88,10 +88,10 @@ elif [[ "$DEPLOYMENT_TYPE" == "package" ]]; then
 elif [[ "$DEPLOYMENT_TYPE" == "version" ]]; then
   echo -e "${GREEN}Creating version-specific deployment with version: $VERSION${NC}"
   if [[ "$VERSION" == "latest" ]]; then
-    sed "s|value: \"0.1.24\"|value: \"latest\"|g" \
+    sed "s|value: \"1.0.0\"|value: \"latest\"|g" \
       "${SCRIPT_DIR}/noetl/noetl-version-deployment.yaml" > /tmp/noetl-deployment.yaml
   else
-    sed "s|value: \"0.1.24\"|value: \"$VERSION\"|g" \
+    sed "s|value: \"1.0.0\"|value: \"$VERSION\"|g" \
       "${SCRIPT_DIR}/noetl/noetl-version-deployment.yaml" > /tmp/noetl-deployment.yaml
   fi
 else
@@ -158,7 +158,7 @@ if [[ "$DEPLOYMENT_TYPE" == "dev" ]]; then
     fi
   fi
   if [[ -z "$ACCESS_URL" ]]; then
-    ACCESS_URL="http://localhost:30082/api/health"
+    ACCESS_URL="http://localhost:30080/api/health"
   fi
 else
   if kubectl get service noetl >/dev/null 2>&1; then
@@ -171,7 +171,7 @@ else
     fi
   fi
   if [[ -z "$ACCESS_URL" ]]; then
-    ACCESS_URL="http://localhost:30084/api/health"
+    ACCESS_URL="http://localhost:30082/health"
   fi
 fi
 

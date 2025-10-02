@@ -11,14 +11,64 @@ This guide provides information about setting up a development environment for N
 
 ## Setting Up a Development Environment
 
-### 1. Clone the Repository
+### Option 1: Unified Kubernetes Platform (Recommended)
+
+For a complete development environment with integrated observability:
+
+**Prerequisites:**
+- Docker
+- Kind (Kubernetes in Docker) 
+- kubectl
+- Helm
+
+```bash
+# Clone repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Deploy complete platform
+make unified-deploy
+
+# OR: Complete recreation from scratch
+make unified-recreate-all
+
+# Check platform health
+make unified-health-check
+
+# View all available commands
+make help
+```
+
+**Services Available:**
+- NoETL Server: http://localhost:30082 (API & UI)
+- Grafana: http://localhost:3000 (admin/admin)
+- VictoriaMetrics: http://localhost:8428/vmui/
+- VictoriaLogs: http://localhost:9428
+
+**Management Commands:**
+```bash
+# Port forwarding
+make unified-port-forward-start
+make unified-port-forward-status
+make unified-port-forward-stop
+
+# Get credentials
+make unified-grafana-credentials
+
+# Clean up
+kind delete cluster --name noetl-cluster
+```
+
+### Option 2: Local Python Development
+
+#### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/noetl/noetl.git
 cd noetl
 ```
 
-### 2. Create a Virtual Environment
+#### 2. Create a Virtual Environment
 
 #### Using Make
 
@@ -52,7 +102,7 @@ pip install uv
 uv pip install -e ".[dev]"
 ```
 
-### 3. Install Dependencies
+#### 3. Install Dependencies
 
 ```bash
 # Using Make
@@ -82,14 +132,38 @@ noetl/
 │   ├── utils/            # Utility functions
 │   └── workflow/         # Workflow engine
 ├── playbook/             # Example playbooks
-├── scripts/              # Development and build scripts
+├── tools/                # Developer tools and scripts (build, versioning); PyPI helpers under tools/pypi
 ├── tests/                # Tests
 └── ui/                   # Web UI
 ```
 
 ## Development Workflow
 
-### Running Tests
+### Unified Platform Development (Recommended)
+
+```bash
+# Deploy/redeploy the complete platform
+make unified-deploy
+
+# Complete recreation for clean state
+make unified-recreate-all
+
+# Check platform health after changes
+make unified-health-check
+
+# View logs
+kubectl logs -f -n noetl-platform -l app=noetl,component=server
+kubectl logs -f -n noetl-platform -l app=noetl-worker,component=worker
+
+# Access services
+# NoETL API: http://localhost:30082/api/health
+# Grafana: http://localhost:3000 (admin/admin)
+# Metrics: http://localhost:8428/vmui/
+```
+
+### Local Python Development
+
+#### Running Tests
 
 ```bash
 # Run all tests
@@ -100,9 +174,12 @@ pytest --cov=noetl
 
 # Run specific tests
 pytest tests/test_agent.py
+
+# Using Make
+make test
 ```
 
-### Running the Server
+#### Running the Server Locally
 
 ```bash
 # Run the server in development mode
@@ -184,13 +261,13 @@ NoETL provides scripts for publishing to PyPI:
 
 ```bash
 # Publish to TestPyPI
-./scripts/pypi_publish.sh --test <version>
+./tools/pypi/pypi_publish.sh --test <version>
 
 # Publish to PyPI
-./scripts/pypi_publish.sh <version>
+./tools/pypi/pypi_publish.sh <version>
 
 # Interactive publishing wizard
-./scripts/interactive_publish.sh
+./tools/pypi/interactive_publish.sh
 ```
 
 For more detailed instructions, see the [PyPI Publishing Guide](pypi_manual.md).

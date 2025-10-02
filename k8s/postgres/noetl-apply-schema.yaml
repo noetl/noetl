@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: noetl-apply-schema
+  namespace: postgres
+  labels:
+    app: noetl-apply-schema
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: noetl-apply-schema
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: apply-schema
+        image: noetl-local-dev:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Waiting for postgres to be ready..."
+          until pg_isready -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+          echo "Applying schema..."
+          noetl database apply-schema --yes
+        env:
+        - name: POSTGRES_HOST
+          value: postgres.postgres.svc.cluster.local
+        - name: POSTGRES_PORT
+          value: '5432'
+        envFrom:
+        - configMapRef:
+            name: postgres-config
+        - secretRef:
+            name: postgres-secret

@@ -42,11 +42,12 @@ The playbook uses the following environment variables with default fallbacks:
 - **Condition**: Checks if workload.state is "ready"
 - **Next**: city_loop (if ready) or end (if not ready)
 
-### 2. City Loop Step
+### 2. City Iterator Step
 - **Description**: Iterate over cities
-- **Loop Configuration**:
-  - Collection: workload.cities
-  - Iterator: city
+- **Iterator**:
+  - type: iterator
+  - collection: workload.cities
+  - element: city
 - **Next**: fetch_and_evaluate (for each city)
 
 ### 3. Fetch and Evaluate Step
@@ -69,12 +70,13 @@ The playbook uses the following environment variables with default fallbacks:
   - city: Current city name
 - **Next**: district_loop
 
-### 5. District Loop Step
+### 5. District Iterator Step
 - **Description**: Iterate over districts of the city
-- **Loop Configuration**:
-  - Collection: districts
-  - Iterator: district
-  - Filter: Excludes districts named "Mordor"
+- **Iterator**:
+  - type: iterator
+  - collection: districts
+  - element: district
+  - filter: Excludes districts named "Mordor"
 - **Next**: process_district (for each district)
 
 ### 6. Process District Step
@@ -255,26 +257,30 @@ noetl playbooks --execute --path "workflows/examples/weather_example" --payload 
 
 ## Advanced Features Demonstrated
 
-### 1. Loop Iteration
-The playbook demonstrates how to iterate over collections using the `loop` construct:
+### 1. Iterator
+The playbook demonstrates how to iterate over collections using the `iterator` task:
 ```yaml
 - step: city_loop
   desc: "Iterate over cities"
-  loop:
-    in: "{{ workload.cities }}"
-    iterator: city
-    filter: "{{}}"
+  type: iterator
+  collection: "{{ workload.cities }}"
+  element: city
+  task:
+    type: workbook
+    name: process_city_weather
 ```
 
-### 2. Nested Loops
-The playbook shows how to implement nested loops for hierarchical data processing:
+### 2. Nested Iterators
+The playbook shows how to implement nested iteration for hierarchical data processing:
 ```yaml
 - step: district_loop
   desc: "Iterate over districts of the city"
-  loop:
-    in: "{{ districts }}"
-    iterator: district
-    filter: "{{ district.name != 'Mordor' }}"
+  type: iterator
+  collection: "{{ districts }}"
+  element: district
+  task:
+    type: workbook
+    name: process_district
 ```
 
 ### 3. Loop Filtering
@@ -290,7 +296,7 @@ The playbook shows how to collect results from loop iterations:
   desc: "End of the district loop"
   end_loop: district_loop
   result:
-    district_loop_output: "{{ output }}"
+    district_loop_output: "{{ result }}"
 ```
 
 ### 5. Database Integration

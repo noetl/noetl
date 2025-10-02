@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noetl.io/schemas/noetl.iterator.schema.json",
+  "title": "NoETL Iterator Step",
+  "type": "object",
+  "required": ["type", "collection", "element"],
+  "properties": {
+    "type": { "const": "iterator" },
+    "collection": {
+      "description": "Items to iterate; must render to an array or be an array literal",
+      "oneOf": [
+        { "type": "array" },
+        { "type": "string" }
+      ]
+    },
+    "element": { "type": "string", "minLength": 1 },
+    "mode": { "type": "string", "enum": ["sequential", "async"] },
+    "concurrency": { "type": "integer", "minimum": 1 },
+    "enumerate": { "type": "boolean" },
+    "where": { "type": ["string", "boolean"] },
+    "limit": { "type": "integer", "minimum": 0 },
+    "chunk": { "type": "integer", "minimum": 1 },
+    "order_by": { "type": "string" },
+    "task": { "type": "object" },
+    "run": { "type": "array" }
+  },
+  "oneOf": [
+    { "required": ["task"], "not": { "required": ["run"] } },
+    { "required": ["run"],  "not": { "required": ["task"] } }
+  ]
+}
+

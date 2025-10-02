@@ -16,7 +16,7 @@ Here's the basic structure of a NoETL playbook:
 
 ```yaml
 # Metadata
-version: "0.1.0"
+version: "1.0.0"
 path: "workflows/example/playbooks"
 description: "Example playbooks"
 
@@ -56,7 +56,7 @@ The metadata section contains information about the playbook itself:
 Example:
 
 ```yaml
-version: "0.1.0"
+version: "1.0.0"
 path: "workflows/example/playbooks"
 description: "Example playbooks of basic functionality"
 author: "John Doe"
@@ -142,6 +142,20 @@ Example:
     - else:
         - step: handle_error
 ```
+
+Tip (exact-match OR): to match any of several exact values (complete match), prefer list membership:
+
+```yaml
+- step: choose_file_branch
+  next:
+    - when: "{{ workload.filename in ['error_log.json', 'event_log.json', 'queue.json'] }}"
+      then:
+        - step: handle_known_file
+    - else:
+        - step: handle_other_file
+```
+
+See also: [Query Conditions: Exact/Complete Match with OR](query_conditions.md)
 
 
 

@@ -76,7 +76,7 @@ workflow:
   - step: create_postgres_table
     desc: "Create table in Postgres"
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -101,7 +101,7 @@ workflow:
   - step: insert_into_postgres
     desc: "Insert data into PostgreSQL table"
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"
@@ -122,7 +122,7 @@ workflow:
   - step: select_from_postgres
     desc: "Select data from PostgreSQL table"
     type: postgres
-    with:
+    input:
       db_host: "{{ workload.pg_host }}"
       db_port: "{{ workload.pg_port }}"
       db_user: "{{ workload.pg_user }}"

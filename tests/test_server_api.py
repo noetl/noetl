@@ -546,7 +546,7 @@ steps:
         """Test listing catalog entries"""
         mock_entries = [
             ('playbook1', 'playbooks', '0.1.0', '{}', '2023-01-01'),
-            ('playbook2', 'playbooks', '0.2.0', '{}', '2023-01-02'),
+            ('playbook2', 'playbooks', '1.0.0', '{}', '2023-01-02'),
         ]
         self.cursor_mock.fetchall.return_value = mock_entries
 

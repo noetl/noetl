@@ -9,10 +9,12 @@ Supported images and two deployment options:
 Key files and scripts:
 - docker/build-images.sh: builds both images with flags: --no-pip, --no-local-dev, --no-postgres, --tag, --registry, --push
 - k8s/load-images.sh: loads images into a Kind cluster, flags: --no-pip, --no-local-dev, --no-postgres, --cluster-name
-- k8s/noetl/noetl-deployment.yaml: deployment that uses the noetl-pip image, port 8084, NodePort 30084
+- k8s/noetl/namespaces.yaml: creates the namespaces used by the NoETL platform (`noetl` for the API, `noetl-worker-*` per worker pool)
+- k8s/noetl/noetl-deployment.yaml: deployment that uses the noetl-pip image, port 8082 (exposed via NodePort 30082)
 - k8s/noetl/noetl-service.yaml: service for the pip deployment
+- k8s/noetl/noetl-worker-deployments.yaml: worker pool deployments (CPU and GPU) that connect to the server API
 - k8s/noetl/noetl-dev-deployment.yaml: deployment that uses the noetl-local-dev image on port 8080
-- k8s/noetl/noetl-dev-service.yaml: service for the local-dev deployment (NodePort 30082)
+- k8s/noetl/noetl-dev-service.yaml: service for the local-dev deployment (NodePort 30080)
 - k8s/deploy-platform.sh: optional helper to provision a Kind cluster, build and load images, and apply manifests
 
 Quick start (Kind):
@@ -25,10 +27,16 @@ Quick start (Kind):
 
 3) Apply one of the deployments
    # pip-version (PyPI)
-   kubectl apply -f k8s/noetl/noetl-configmap.yaml
-   kubectl apply -f k8s/noetl/noetl-secret.yaml
-   kubectl apply -f k8s/noetl/noetl-deployment.yaml
-   kubectl apply -f k8s/noetl/noetl-service.yaml
+   kubectl apply -f k8s/noetl/namespaces.yaml
+   kubectl apply -n noetl -f k8s/noetl/noetl-configmap.yaml
+   kubectl apply -n noetl -f k8s/noetl/noetl-secret.yaml
+   kubectl apply -n noetl -f k8s/noetl/noetl-deployment.yaml
+   kubectl apply -n noetl -f k8s/noetl/noetl-service.yaml
+   for ns in noetl-worker-cpu-01 noetl-worker-cpu-02 noetl-worker-gpu-01; do
+     kubectl apply -n "$ns" -f k8s/noetl/noetl-configmap.yaml
+     kubectl apply -n "$ns" -f k8s/noetl/noetl-secret.yaml
+   done
+   kubectl apply -f k8s/noetl/noetl-worker-deployments.yaml
 
    # OR local-dev (from local path)
    kubectl apply -f k8s/noetl/noetl-configmap.yaml
@@ -37,12 +45,13 @@ Quick start (Kind):
    kubectl apply -f k8s/noetl/noetl-dev-service.yaml
 
 4) Check status
-   kubectl get pods
-   kubectl get svc
+   kubectl get pods -n noetl
+   for ns in noetl-worker-cpu-01 noetl-worker-cpu-02 noetl-worker-gpu-01; do kubectl get pods -n "$ns"; done
+   kubectl get svc -A | grep noetl
 
 Endpoints:
-- pip-version: http://localhost:30084/api/health
-- local-dev: http://localhost:30082/api/health
+- pip-version: http://localhost:30082/health
+- local-dev: http://localhost:30080/api/health
 
 
 

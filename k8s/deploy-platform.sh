@@ -16,6 +16,11 @@ DEPLOY_NOETL_PIP=true
 DEPLOY_NOETL_DEV=false
 DEPLOY_NOETL_RELOAD=false
 REPO_PATH_ARG=""
+WORKER_NAMESPACES=(
+    "noetl-worker-cpu-01"
+    "noetl-worker-cpu-02"
+    "noetl-worker-gpu-01"
+)
 
 function show_usage {
     echo "Usage: $0 [options]"
@@ -152,6 +157,7 @@ if $DEPLOY_POSTGRES; then
     "${REPO_PATH}/docker/build-images.sh" --no-pip --no-local-dev
     
     echo -e "${GREEN}Deploying Postgres...${NC}"
+    kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-namespace.yaml"
     kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-pv.yaml"
     kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-configmap.yaml"
     kubectl apply -f "${SCRIPT_DIR}/postgres/postgres-config-files.yaml"
@@ -162,10 +168,10 @@ if $DEPLOY_POSTGRES; then
     echo -e "${GREEN}Waiting for Postgres to be ready...${NC}"
     sleep 10
     echo "Checking for Postgres pods..."
-    kubectl get pods -l app=postgres
-    kubectl wait --for=condition=ready pod -l app=postgres --timeout=180s || {
+    kubectl get pods -l app=postgres -n postgres
+    kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=180s || {
         echo -e "${RED}Error: Postgres pods not ready. Checking pod status...${NC}"
-        kubectl get pods
+        kubectl get pods -n postgres
         echo -e "${YELLOW}Continuing with deployment anyway...${NC}"
     }
 else
@@ -187,20 +193,39 @@ fi
 
 if $DEPLOY_NOETL_PIP; then
     echo -e "${GREEN}Deploying NoETL from pip...${NC}"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-configmap.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-deployment.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-service.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/noetl/namespaces.yaml"
+
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-configmap.yaml"
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-deployment.yaml"
+    kubectl apply -n noetl -f "${SCRIPT_DIR}/noetl/noetl-service.yaml"
+
+    for ns in "${WORKER_NAMESPACES[@]}"; do
+        kubectl apply -n "$ns" -f "${SCRIPT_DIR}/noetl/noetl-configmap.yaml"
+        kubectl apply -n "$ns" -f "${SCRIPT_DIR}/noetl/noetl-secret.yaml"
+    done
+
+    kubectl apply -f "${SCRIPT_DIR}/noetl/noetl-worker-deployments.yaml"
 
     echo -e "${GREEN}Waiting for NoETL to be ready...${NC}"
     sleep 10
     echo "Checking for NoETL pods..."
-    kubectl get pods -l app=noetl
-    kubectl wait --for=condition=ready pod -l app=noetl --timeout=180s || {
+    kubectl get pods -n noetl -l app=noetl
+    kubectl wait -n noetl --for=condition=ready pod -l app=noetl --timeout=180s || {
         echo -e "${RED}Error: NoETL pods not ready. Checking pod status...${NC}"
-        kubectl get pods
+        kubectl get pods -n noetl -l app=noetl
         echo -e "${YELLOW}Continuing anyway...${NC}"
     }
+
+    echo -e "${GREEN}Checking NoETL worker pools...${NC}"
+    for ns in "${WORKER_NAMESPACES[@]}"; do
+        echo "Namespace: $ns"
+        kubectl get pods -n "$ns" -l component=worker || true
+        kubectl wait -n "$ns" --for=condition=ready pod -l component=worker --timeout=180s || {
+            echo -e "${YELLOW}Warning: Worker pods are not ready yet in namespace $ns.${NC}"
+            kubectl get pods -n "$ns" -l component=worker || true
+        }
+    done
 else
     echo -e "${YELLOW}Skipping NoETL pip deployment as requested.${NC}"
 fi
@@ -219,15 +244,22 @@ fi
 
 echo -e "${GREEN}Deployment completed.${NC}"
 echo -e "${YELLOW}Cluster Status:${NC}"
-kubectl get pods
-kubectl get services
+if $DEPLOY_NOETL_PIP; then
+    kubectl get pods -n noetl || true
+    for ns in "${WORKER_NAMESPACES[@]}"; do
+        kubectl get pods -n "$ns" || true
+    done
+else
+    kubectl get pods || true
+fi
+kubectl get services -A | grep -E '(noetl|postgres)' || true
 
 echo -e "${GREEN}Available NoETL instances:${NC}"
 if $DEPLOY_NOETL_PIP; then
-    echo -e "  - NoETL (pip): ${YELLOW}http://localhost:30084/api/health${NC}"
+    echo -e "  - NoETL (pip): ${YELLOW}http://localhost:30082/api/health${NC}"
 fi
 if $DEPLOY_NOETL_DEV; then
-    echo -e "  - NoETL (local-dev): ${YELLOW}http://localhost:30082/api/health${NC}"
+    echo -e "  - NoETL (local-dev): ${YELLOW}http://localhost:30080/api/health${NC}"
 fi
 
 echo -e "${GREEN}To delete the cluster when you're done:${NC}"

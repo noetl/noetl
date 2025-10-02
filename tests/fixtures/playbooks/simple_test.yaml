@@ -1,0 +1,37 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: simple_test
+  path: tests/simple_test
+
+workload:
+  message: "Hello World"
+
+workflow:
+  - step: start
+    desc: "Start simple test"
+    next:
+      - step: test_step
+        data:
+          message: "{{ workload.message }}"
+
+  - step: test_step
+    desc: "Simple test step"
+    type: python
+    code: |
+      def main(message):
+          print(f"TEST_STEP: {message}")
+          # Required envelope: {status, data, meta?}
+          return {"status": "success", "data": {"message": message}}
+    next:
+      - step: end
+
+  - step: end
+    desc: "End simple test"
+    type: save
+    storage: event_log
+    data:
+      status: "success"
+      data:
+        message: "{{ test_step.result.data.message }}"
