@@ -30,30 +30,55 @@ A comprehensive integration test demonstrating:
 
 ## Testing
 
-### Static Tests (Default)
+### Static Tests
+For static parsing and validation without runtime execution, use pytest:
 ```bash
-make test-http-duckdb-postgres
+pytest tests/ -k http_duckdb_postgres
 ```
 Tests playbook parsing, planning, and structural validation without runtime execution.
 
-### Runtime Tests (Optional)
-Requires:
-- PostgreSQL connection (`pg_local` credential)
-- GCS access (`gcs_hmac_local` credential)  
+### Runtime Tests with Kubernetes Cluster
+
+#### Prerequisites
+- Kubernetes cluster deployed with NoETL (use `task bring-all` to deploy full stack)
+- NoETL API accessible on `localhost:8082`
+- PostgreSQL accessible on `localhost:54321`
 - Internet connectivity for weather API
 
+#### Test Commands
 ```bash
-# With running server and credentials configured
-make test-http-duckdb-postgres-runtime
+# Register required credentials
+task register-test-credentials
 
-# Full integration (reset DB, restart server, run tests)
-make test-http-duckdb-postgres-full
+# Register HTTP DuckDB Postgres playbook
+task test-register-http-duckdb-postgres
+
+# Execute HTTP DuckDB Postgres test
+task test-execute-http-duckdb-postgres
+
+# Full integration test (credentials + register + execute)
+task test-http-duckdb-postgres-full
+```
+
+#### Alias Commands (shorter)
+```bash
+# Register credentials
+task rtc
+
+# Register playbook
+task trhdp
+
+# Execute playbook
+task tehdp
+
+# Full test workflow
+task thdpf
 ```
 
 ## Configuration
 
 The playbook expects these authentication credentials:
-- `pg_local`: PostgreSQL database connection
+- `pg_k8s`: PostgreSQL database connection (for cluster-based testing)
 - `gcs_hmac_local`: GCS HMAC credentials for bucket access
 
 Workload parameters:

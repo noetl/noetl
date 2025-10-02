@@ -71,7 +71,7 @@ curl -X POST "http://localhost:8082/playbook/execute" \
   -H "Content-Type: application/json" \
   -d '{
     "path": "workflows/example/playbooks",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "input_payload": {
       "param1": "value1",
       "param2": "value2"
@@ -91,7 +91,7 @@ curl -X POST "http://localhost:8082/playbook/execute-async" \
   -H "Content-Type: application/json" \
   -d '{
     "path": "workflows/example/playbooks",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "input_payload": {
       "param1": "value1",
       "param2": "value2"
@@ -131,7 +131,7 @@ Execute a playbook synchronously.
 ```json
 {
   "path": "workflows/example/playbooks",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "input_payload": {
     "param1": "value1",
     "param2": "value2"
@@ -171,7 +171,7 @@ Execute a playbook asynchronously.
 ```json
 {
   "path": "workflows/example/playbooks",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "input_payload": {
     "param1": "value1",
     "param2": "value2"
@@ -218,7 +218,7 @@ Register a playbook in the catalog.
 {
   "status": "success",
   "path": "workflows/example/playbooks",
-  "version": "0.1.0"
+  "version": "1.0.0"
 }
 ```
 
@@ -234,12 +234,12 @@ View the catalog of registered playbooks.
   "entries": [
     {
       "resource_path": "workflows/example/playbook1",
-      "resource_version": "0.1.0",
+      "resource_version": "1.0.0",
       "resource_name": "Example Playbook 1"
     },
     {
       "resource_path": "workflows/example/playbook2",
-      "resource_version": "0.2.0",
+      "resource_version": "1.0.0",
       "resource_name": "Example Playbook 2"
     }
   ]

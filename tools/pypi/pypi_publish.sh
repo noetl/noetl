@@ -1,11 +1,11 @@
 #!/bin/bash
 # Publish NoETL package to PyPI with UV dependency management support
 # Test on TestPyPI
-# ./tools/pypi/pypi_publish.sh --test 0.1.25
+# ./tools/pypi/pypi_publish.sh --test 1.0.0
 # # Publish to PyPI
-# ./tools/pypi/pypi_publish.sh 0.1.25
+# ./tools/pypi/pypi_publish.sh 1.0.0
 # Dry run
-# ./tools/pypi/pypi_publish.sh --dry-run 0.1.15
+# ./tools/pypi/pypi_publish.sh --dry-run 1.0.0
 
 set -e
 
@@ -35,10 +35,10 @@ OPTIONS:
     -h, --help          Show this help message
 
 EXAMPLES:
-    $0 0.1.19                   # Publish version 0.1.19 to PyPI
-    $0 --test 0.1.19            # Publish to TestPyPI first (requires TestPyPI setup)
-    $0 --skip-build 0.1.19      # Publish without rebuilding
-    $0 --dry-run 0.1.19         # Show what would be published
+    $0 1.0.0                   # Publish version 1.0.0 to PyPI
+    $0 --test 1.0.0            # Publish to TestPyPI first (requires TestPyPI setup)
+    $0 --skip-build 1.0.0      # Publish without rebuilding
+    $0 --dry-run 1.0.0         # Show what would be published
 
 ENVIRONMENT VARIABLES:
     PYPI_TOKEN          PyPI API token (optional, uses ~/.pypirc if not set)

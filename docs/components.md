@@ -1,5 +1,13 @@
 # NoETL Platform Components
+# NoETL Platform Components
 
+This document describes all components in the NoETL platform, their dependencies, and how they interact with each other.
+
+## Architecture Overview
+
+The NoETL platform consists of multiple interconnected components that work together to provide a complete data processing and observability solution in Kubernetes.
+
+## Platform Architecture Diagram
 This document describes all components in the NoETL platform, their responsibilities, and their dependencies on each other. 
 ## All Components
 

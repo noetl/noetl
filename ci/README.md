@@ -1,18 +1,25 @@
+# NoETL Environment
+
 [Taskfile](documents/taskfile.md) is used as task runner/build tool.  
 The following tools are available for in-cluster troubleshooting: [Tshoot](manifests/tshoot/README.md)
+
+## Available Components
 
 After deployment, the following components are available on the host system:
 - Noetl API server: http://localhost:8082/api/
 - Grafana: http://localhost:3000
-  - with login: **admin**; password: **admin**
-- Postgers: **localhost:54321**
-  - with login: **noetl**; password: **noetl**
+  - with login: `admin`; password: `admin`
+- Postgres: **`localhost:54321`**
+  - database: `demo_noetl`
+  - user: `noetl`
+  - password: `noetl`
+  - JDBC URL: `jdbc:postgresql://localhost:54321/demo_noetl`
 
 ---
 #### Requirements:
 - docker  
 - kind
-- kubeclt
+- kubectl
 - yq
 
 Install **kind**, **kubectl**, **yq** on MacOS:
@@ -21,9 +28,6 @@ brew install kind
 brew install kubectl
 brew install yq
 ```  
-
-<br>
-<br>  
 
 ## Spin up kind cluster
 
@@ -36,8 +40,25 @@ task kind-create-cluster
 ```
 task deploy-postgres
 ``` 
-This command deploys Postgres 17.4 to the **noetl** cluster. The `pgdata` folder of the Postgres pod will be mounted to the `ci/kind/data` (excluded with **.gitignore**) folder on the host system . This ensures that Postgres data is preserved even if all Docker volumes are pruned.  
-The Postgres port will be exposed as `54321` on the host system. With this configuration, Postgres running in the **noetl** kind cluster will be available to applications on the host machine at `localhost:54321` with login `noetl` and password `noetl`
+This command deploys Postgres 17.4 to the **noetl** cluster. 
+
+The `pgdata` folder of the Postgres pod will be mounted to the `ci/kind/data` (excluded with `.gitignore`) folder on the host system. That way Postgres data is preserved even if all Docker volumes are pruned.  
+The Postgres port will be exposed as `54321` on the host system. With this configuration, Postgres running in the **noetl** kind cluster will be available to applications on the host machine at `localhost:54321` with login `noetl` and password `noetl`. JDBC URL example: `jdbc:postgresql://localhost:54321/demo_noetl`
+
+Note about ports you may see in kubectl vs. on the host:
+- Inside the Kubernetes cluster, the service `postgres-ext` is a NodePort listening on `30321` (what can be seen in `kubectl get svc`).
+- Kind maps that NodePort `30321` to host port `54321` via `extraPortMappings` in `ci/kind/config.yaml`:
+  - containerPort: `30321` -> hostPort: `54321`
+- As a result, you can connect to Postgres from:
+  - In-cluster: NodePort is 30321 (and the ClusterIP service port is 5432).
+  - From the host: connect to `localhost:54321` (e.g., `jdbc:postgresql://localhost:54321/demo_noetl`).
+
+#### The mapping chain:
+- Machine host (localhost:54321)   
+    ↓ (Docker port mapping)  
+- Kind Container (30321)   
+    ↓ (Kubernetes NodePort service)  
+- PostgreSQL Pod (5432)  (ClusterIP service)   
 
 ### 3. Build noetl
 ```
@@ -116,9 +137,6 @@ The following command performs all the above steps in a single run.
 task deploy-monitoring
 ```
 
-<br>
-<br>
-
 ---  
 
 Other available commands can be listed by running the `task` command without arguments:
@@ -133,7 +151,7 @@ For example, the following command performs these steps:
   - Metrics Server
   - Victoria Metrics operator
   - Victoria Metrics stack
-- Deploys Postgers
+- Deploys Postgres
 - Deploys the noetl API server and worker
 ```
 task bring-all

@@ -87,7 +87,7 @@ Key features:
 ### Version-Specific
 
 ```bash
-./deploy-noetl-dev.sh --type version --version 0.1.24
+./deploy-noetl-dev.sh --type version --version 1.0.0
 ```
 
 ## Benefits

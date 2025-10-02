@@ -15,9 +15,7 @@ NoETL playbooks are YAML files that define workflows for data processing and aut
 
 ```yaml
 # Metadata
-apiVersion: noetl.io/v1
-kind: Playbook
-name: example
+version: "1.0.0"
 path: "workflows/example/playbooks"
 description: "Example playbooks"
 
@@ -75,9 +73,13 @@ Below are examples for each widget.
 
 ### start
 ```yaml
-- step: start
-  type: start
-  next: compute
+version: "1.0.0"
+path: "workflows/example/playbooks"
+description: "Example playbooks of basic functionality"
+author: "John Doe"
+tags:
+  - "example"
+  - "basic"
 ```
 
 ### end

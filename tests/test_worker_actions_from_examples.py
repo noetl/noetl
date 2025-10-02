@@ -16,7 +16,7 @@ from unittest.mock import patch
 import yaml
 from jinja2 import Environment, BaseLoader
 
-from noetl.job import execute_task
+from noetl.plugin import execute_task
 
 
 def _jinja_env():
@@ -28,14 +28,14 @@ def _jinja_env():
 def test_python_action_from_weather_example():
     data = yaml.safe_load(open("examples/weather/weather_example.yaml"))
     step = next(s for s in data["workflow"] if s["step"] == "report_warm")
+    task_with = {"city": {"name": "TestCity"}, "temperature": 30}
     task_config = {
         "type": "python",
         "code": step["code"],
-        "with": {"city": {"name": "TestCity"}, "temperature": 30},
     }
     context = {}
     env = _jinja_env()
-    result = execute_task(task_config, "report_warm", context, env)
+    result = execute_task(task_config, "report_warm", context, env, task_with)
     assert result["status"] == "success"
     assert result["data"]["city"] == "TestCity"
 
@@ -96,7 +96,10 @@ class _DummyConn:
 def test_duckdb_action_from_github_example():
     data = yaml.safe_load(open("examples/github/github_metrics_example.yaml"))
     step = next(s for s in data["workflow"] if s["step"] == "extract_repo_metrics")
-    task_config = {"type": "duckdb", "command": step["command"], "with": {"db_type": "sqlite", "db_path": ":memory:"}}
+    import base64
+
+    task_with = {"db_type": "sqlite", "db_path": ":memory:"}
+    task_config = {"type": "duckdb", "command_b64": base64.b64encode(step["command"].encode()).decode()}
     context = {
         "repo_name": "demo",
         "repo_full_name": "demo/full",
@@ -109,6 +112,6 @@ def test_duckdb_action_from_github_example():
     }
     env = _jinja_env()
     os.environ["NOETL_DATA_DIR"] = tempfile.mkdtemp()
-    with patch("noetl.job.duckdb.duckdb.connect", return_value=_DummyConn()):
-        result = execute_task(task_config, "extract_repo_metrics", context, env)
+    with patch("noetl.plugin.duckdb.connections.duckdb.connect", return_value=_DummyConn()):
+        result = execute_task(task_config, "extract_repo_metrics", context, env, task_with)
     assert result["status"] == "success"

@@ -1,5 +1,5 @@
 """
-Tests for noetl.job.http module with real-world weather API parameters.
+Tests for noetl.plugin.http module with real-world weather API parameters.
 """
 
 import pytest
@@ -8,7 +8,7 @@ import os
 from unittest.mock import Mock, patch, MagicMock
 from jinja2 import Environment, BaseLoader
 
-from noetl.job.http import execute_http_task
+from noetl.plugin.http import execute_http_task
 
 
 class TestHttpJob:
@@ -24,12 +24,12 @@ class TestHttpJob:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://httpbin.org/get',
-            'params': {'test': 'value'}
+            'data': {'query': {'test': 'value'}}
         }
         context = {}
         task_with = {}
 
-        with patch('noetl.job.http.httpx.Client') as mock_client:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -53,11 +53,13 @@ class TestHttpJob:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://api.open-meteo.com/v1/forecast',
-            'params': {
-                'latitude': '{{ debug_data.lat }}',
-                'longitude': '{{ debug_data.lon }}',
-                'hourly': 'temperature_2m',
-                'forecast_days': 1
+            'data': {
+                'query': {
+                    'latitude': '{{ debug_data.lat }}',
+                    'longitude': '{{ debug_data.lon }}',
+                    'hourly': 'temperature_2m',
+                    'forecast_days': 1
+                }
             }
         }
         
@@ -71,7 +73,7 @@ class TestHttpJob:
         }
         task_with = {'debug_data': context['debug_data']}
 
-        with patch('noetl.job.http.httpx.Client') as mock_client:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -111,17 +113,19 @@ class TestHttpJob:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://api.open-meteo.com/v1/forecast',
-            'params': {
-                'latitude': '{{ missing_data.lat }}',  # This should cause template error
-                'longitude': '{{ missing_data.lon }}',
-                'hourly': 'temperature_2m'
+            'data': {
+                'query': {
+                    'latitude': '{{ missing_data.lat }}',  # This should cause template error
+                    'longitude': '{{ missing_data.lon }}',
+                    'hourly': 'temperature_2m'
+                }
             }
         }
         
         context = {}  # Empty context - templates won't render
         task_with = {}
 
-        with patch('noetl.job.http.httpx.Client') as mock_client:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client:
             # The HTTP module should handle template rendering errors gracefully
             # and pass the unrendered templates to the HTTP client
             mock_response = Mock()
@@ -161,11 +165,13 @@ class TestHttpJob:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://api.open-meteo.com/v1/forecast',
-            'params': {
-                'latitude': '{{ debug_data.lat }}',
-                'longitude': '{{ debug_data.lon }}',
-                'hourly': 'temperature_2m',
-                'forecast_days': 1
+            'data': {
+                'query': {
+                    'latitude': '{{ debug_data.lat }}',
+                    'longitude': '{{ debug_data.lon }}',
+                    'hourly': 'temperature_2m',
+                    'forecast_days': 1
+                }
             }
         }
 
@@ -173,7 +179,7 @@ class TestHttpJob:
             context = {'debug_data': city}
             task_with = {'debug_data': city}
 
-            with patch('noetl.job.http.httpx.Client') as mock_client:
+            with patch('noetl.plugin.http.httpx.Client') as mock_client:
                 mock_response = Mock()
                 mock_response.status_code = 200
                 mock_response.is_success = True
@@ -206,7 +212,7 @@ class TestHttpJob:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://test.local/api',
-            'params': {'test': 'value'}
+            'data': {'query': {'test': 'value'}}
         }
         context = {}
         task_with = {}
@@ -225,7 +231,7 @@ class TestHttpJob:
             'method': 'POST',
             'endpoint': 'https://httpbin.org/post',
             'headers': {'Content-Type': 'application/json'},
-            'payload': {'city': '{{ city_name }}', 'data': '{{ city_data }}'}
+            'data': {'body': {'city': '{{ city_name }}', 'data': '{{ city_data }}'}}
         }
         context = {
             'city_name': 'Berlin',
@@ -233,7 +239,7 @@ class TestHttpJob:
         }
         task_with = context
 
-        with patch('noetl.job.http.httpx.Client') as mock_client:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -259,12 +265,12 @@ class TestHttpJob:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://api.open-meteo.com/v1/forecast',
-            'params': {'latitude': 'invalid', 'longitude': 'invalid'}
+            'data': {'query': {'latitude': 'invalid', 'longitude': 'invalid'}}
         }
         context = {}
         task_with = {}
 
-        with patch('noetl.job.http.httpx.Client') as mock_client:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 400
             mock_response.is_success = False
@@ -293,7 +299,7 @@ class TestHttpJob:
         context = {}
         task_with = {}
 
-        with patch('noetl.job.http.httpx.Client') as mock_client:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -333,7 +339,7 @@ class TestHttpJob:
         context = {}
         task_with = {}
 
-        with patch('noetl.job.http.httpx.Client') as mock_client_class:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client_class:
             # Verify timeout is passed to client
             result = execute_http_task(task_config, context, self.jinja_env, task_with)
             mock_client_class.assert_called_once_with(timeout=5)
@@ -354,7 +360,7 @@ class TestHttpJob:
         }
         task_with = context
 
-        with patch('noetl.job.http.httpx.Client') as mock_client:
+        with patch('noetl.plugin.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True

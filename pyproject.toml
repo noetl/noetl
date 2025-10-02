@@ -1,6 +1,6 @@
 [project]
 name = "noetl"
-version = "0.2.0"
+version = "1.0.0"
 description = "A framework to build and run data pipelines and workflows."
 authors = [
     { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" }
@@ -88,3 +88,9 @@ include = ["noetl*"]
 
 [tool.setuptools.package-data]
 "noetl" = ["ui/**/*", "database/ddl/**/*"]
+
+[dependency-groups]
+dev = [
+    "build>=1.2.2.post1",
+    "twine>=6.1.0",
+]

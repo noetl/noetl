@@ -1019,7 +1019,7 @@ A deployment script `deploy-noetl-dev.sh` is provided to simplify the deployment
 
 ```bash
 # Deploy a specific version from PyPI
-./deploy-noetl-dev.sh --type version --version 0.1.24
+./deploy-noetl-dev.sh --type version --version 1.0.0
 
 # Deploy the latest version from PyPI
 ./deploy-noetl-dev.sh --type version

@@ -36,7 +36,7 @@ Connecting with dbname=mydb user=myuser host=db.example.com port=5432 password=s
 ### HTTP Requests
 ```
 # What gets logged:
-Making HTTP request to https://api.example.com/data with headers: User-Agent=NoETL/0.2.0, Authorization=[REDACTED]
+Making HTTP request to https://api.example.com/data with headers: User-Agent=NoETL/1.0.0, Authorization=[REDACTED]
 
 # What is NOT logged:
 Making HTTP request to https://api.example.com/data with headers: Authorization=Bearer sk-1234567890abcdef

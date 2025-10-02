@@ -6,7 +6,7 @@ import pytest
 import os
 from jinja2 import Environment, BaseLoader
 
-from noetl.job.http import execute_http_task
+from noetl.plugin.http import execute_http_task
 
 
 @pytest.mark.integration
@@ -26,11 +26,13 @@ class TestHttpIntegration:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://api.open-meteo.com/v1/forecast',
-            'params': {
-                'latitude': '{{ debug_data.lat }}',
-                'longitude': '{{ debug_data.lon }}',
-                'hourly': 'temperature_2m',
-                'forecast_days': 1
+            'data': {
+                'query': {
+                    'latitude': '{{ debug_data.lat }}',
+                    'longitude': '{{ debug_data.lon }}',
+                    'hourly': 'temperature_2m',
+                    'forecast_days': 1
+                }
             },
             'timeout': 10
         }
@@ -81,10 +83,12 @@ class TestHttpIntegration:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://api.open-meteo.com/v1/forecast',
-            'params': {
-                'latitude': 'invalid',
-                'longitude': 'invalid',
-                'hourly': 'temperature_2m'
+            'data': {
+                'query': {
+                    'latitude': 'invalid',
+                    'longitude': 'invalid',
+                    'hourly': 'temperature_2m'
+                }
             },
             'timeout': 10
         }
@@ -113,11 +117,13 @@ class TestHttpIntegration:
         task_config = {
             'method': 'GET',
             'endpoint': 'https://api.open-meteo.com/v1/forecast',
-            'params': {
-                'latitude': '{{ debug_data.lat }}',
-                'longitude': '{{ debug_data.lon }}',
-                'hourly': 'temperature_2m',
-                'forecast_days': 1
+            'data': {
+                'query': {
+                    'latitude': '{{ debug_data.lat }}',
+                    'longitude': '{{ debug_data.lon }}',
+                    'hourly': 'temperature_2m',
+                    'forecast_days': 1
+                }
             },
             'timeout': 10
         }

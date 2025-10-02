@@ -104,33 +104,52 @@ make test-playbook-composition
 ```
 Tests playbook parsing, planning, and structural validation without runtime execution.
 
-### Runtime Tests (Optional)
-Requires:
-- Running NoETL server (`make noetl-restart`)
-- PostgreSQL connection (`pg_local` credential)
-- GCS access (`gcs_hmac_local` credential)  
+### Runtime Tests with Kubernetes Cluster
 
-**Setup credentials before running runtime tests:**
+#### Prerequisites
+- Kubernetes cluster deployed with NoETL (use `task bring-all` to deploy full stack)
+- NoETL API accessible on `localhost:8082`
+- PostgreSQL accessible on `localhost:54321`
+
+#### Test Commands
 ```bash
-# Option 1: Register specific credentials needed for this test
-make register-credential FILE=tests/fixtures/credentials/pg_local.json
-make register-credential FILE=tests/fixtures/credentials/gcs_hmac_local.json
+# Register required credentials
+task register-test-credentials
 
-# Option 2: Register all test credentials at once
-make register-test-credentials
+# Register playbook composition test
+task test-register-playbook-composition
 
-# Verify credentials are registered
-curl -s http://localhost:8082/api/credentials | jq '.items[].name'
+# Execute playbook composition test
+task test-execute-playbook-composition
+
+# Full integration test (credentials + register + execute)
+task test-playbook-composition-full
 ```
 
-**Run runtime tests:**
+#### Alias Commands (shorter)
 ```bash
-# With running server and credentials configured
-make test-playbook-composition-runtime
+# Register credentials
+task rtc
 
-# Full integration (reset DB, restart server, register credentials, run tests)
-make test-playbook-composition-full
+# Register playbook
+task trpc
+
+# Execute playbook
+task tepc
+
+# Full test workflow
+task tpcf
 ```
+
+## Configuration
+
+The playbook expects these authentication credentials:
+- `pg_k8s`: PostgreSQL database connection (for cluster-based testing)
+- `gcs_hmac_local`: GCS HMAC credentials (not used in this test, but required for registration)
+
+Workload parameters:
+- `users`: List of users with profile data (name, age, department, years_experience, performance_rating)
+- Sub-playbook receives: `user_data` (individual user) and `execution_context` (execution ID)
 
 ## Expected Results
 

@@ -1,27 +1,24 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from noetl.api.routers.event.context import router as context_router
 
-def test_context_render_requires_fields():
-    import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-@pytest.mark.asyncio
-async def test_context_validation():
-    from noetl.api.routers.event.context import router as context_router
-
+def _create_client():
     app = FastAPI()
     app.include_router(context_router, prefix="/api")
-    client = TestClient(app)
+    return TestClient(app)
 
-    # Missing execution_id
-    r = client.post("/api/context/render", json={"template": {"x": "y"}})
-    assert r.status_code == 400
-    assert "execution_id" in r.json().get("detail", "")
 
-    # Missing template
-    r = client.post("/api/context/render", json={"execution_id": "123"})
-    assert r.status_code == 400
-    assert "template" in r.json().get("detail", "")
+def test_context_render_requires_execution_id():
+    client = _create_client()
+    response = client.post("/api/context/render", json={"template": {"x": "y"}})
+    assert response.status_code == 400
+    assert "execution_id" in response.json().get("detail", "")
 
+
+def test_context_render_requires_template():
+    client = _create_client()
+    response = client.post("/api/context/render", json={"execution_id": "123"})
+    assert response.status_code == 400
+    assert "template" in response.json().get("detail", "")

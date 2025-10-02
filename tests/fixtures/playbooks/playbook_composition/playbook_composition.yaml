@@ -38,7 +38,7 @@ workflow:
   - step: setup_storage
     desc: "Ensure results table exists"
     type: postgres
-    auth: pg_local
+    auth: pg_k8s
     command: |
       CREATE TABLE IF NOT EXISTS public.user_profile_results (
         id TEXT PRIMARY KEY,
@@ -74,7 +74,7 @@ workflow:
           profile_score: "{{ this.profile_score or 0.0 }}"
           score_category: "{{ this.score_category or 'unknown' }}"
         storage: postgres
-        auth: pg_local
+        auth: pg_k8s
         table: public.user_profile_results
         mode: upsert
         key: id

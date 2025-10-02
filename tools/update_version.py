@@ -8,7 +8,7 @@ Usage:
 Examples:
   python tools/update_version.py patch
   python tools/update_version.py minor
-  python tools/update_version.py 0.1.20
+  python tools/update_version.py 1.0.0
 
 This script updates the [project].version field in pyproject.toml.
 """
