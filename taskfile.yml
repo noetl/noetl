@@ -5,6 +5,9 @@ env:
   IMAGE_NAME: "noetl"
 
 includes:
+  tshoot:
+    taskfile:   ci/taskfile/tshoot.yml
+    flatten: true
   vmstack:
     taskfile: ci/taskfile/vmstack.yml
     flatten: true
@@ -152,10 +155,10 @@ tasks:
     desc: Build noetl; Create noetl cluster with all deployments
     aliases: [ba]
     cmds:
+      - task: check-ports
       - task: docker-build-noetl
       - task: kind-create-cluster
       - task: load-noetl-image
       - task: deploy-monitoring
       - task: deploy-postgres
       - task: deploy-noetl
-

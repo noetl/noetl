@@ -30,13 +30,13 @@ tasks:
       - helm uninstall metrics-server -n metrics-server
 
   add-victoriametrics-helm-repo:
-    desc: Add Victoria Metrics helm repository
+    desc: Add VictoriaMetrics helm repository
     cmds:
       - helm repo add vm https://victoriametrics.github.io/helm-charts/
       - helm repo update
 
   deploy-vmstack-operator:
-    desc: Deploy Victoria Metrics operator
+    desc: Deploy VictoriaMetrics operator
     aliases: [do]
     cmds:
       - kubectl config use-context kind-noetl 
@@ -47,15 +47,15 @@ tasks:
           --wait --wait-for-jobs
 
   remove-vmstack-operator:
-    desc: Remove Victoria Metrics operator
+    desc: Remove VictoriaMetrics operator
     aliases: [ro]
     cmds:
       - kubectl config use-context kind-noetl 
       - helm uninstall vmoperator -n vmoperator
 
   deploy-vmstack:
-    desc:  Deploy Victoria Metrics stack
-    aliases: [dv]
+    desc:  Deploy VictoriaMetrics stack
+    aliases: [ds]
     cmds:
       - kubectl config use-context kind-noetl
       - |
@@ -65,11 +65,53 @@ tasks:
           --wait --wait-for-jobs
 
   remove-vmstack:
-    desc:  Remove Victoria Metrics stack
-    aliases: [rv]
+    desc:  Remove VictoriaMetrics stack
+    aliases: [rs]
     cmds:
       - kubectl config use-context kind-noetl
       - helm uninstall vmstack -n vmstack
+
+  deploy-vmlogs:
+    desc: Deploy VictoriaLogs
+    aliases: [dl]
+    cmds:
+      - kubectl config use-context kind-noetl 
+      - |
+        helm upgrade --install vmlogs vm/victoria-logs-single \
+          --values ci/vmstack/vmlogs-values.yaml --version 0.11.11 \
+          --namespace vmlogs --create-namespace \
+          --wait --wait-for-jobs
+
+  remove-vmlogs:
+    desc:  Remove VictoriaLogs
+    aliases: [rl]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - helm uninstall vmlogs -n vmlogs
+
+  add-vector-helm-repo:
+    desc: Add Vector helm repository
+    cmds:
+      - helm repo add vector https://helm.vector.dev
+      - helm repo update
+
+  deploy-vector:
+    desc: Deploy Victor
+    aliases: [dv]
+    cmds:
+      - kubectl config use-context kind-noetl 
+      - |
+        helm upgrade --install vector vector/vector \
+          --values ci/vmstack/vector-values.yaml --version 0.46.0 \
+          --namespace vector --create-namespace \
+          --wait --wait-for-jobs
+
+  remove--vector:
+    desc:  Remove Vector
+    aliases: [rv]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - helm uninstall vector -n vector
 
 # === Combined Tasks ===
   deploy-monitoring:
@@ -81,3 +123,5 @@ tasks:
       - task: deploy-metrics-server
       - task: deploy-vmstack-operator
       - task: deploy-vmstack
+      - task: deploy-vmlogs
+      - task: deploy-vector

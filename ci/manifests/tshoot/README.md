@@ -66,7 +66,11 @@ With **K9s**, select the pod and press `s` to open a shell.
 curl http://noetl.noetl.svc.cluster.local:8082/api/health
 ```
 
----
+## Check listening port on MacOS
+```
+sudo lsof -nP -iTCP -sTCP:LISTEN
+```
+
 
 ## Tips
 #### Install **K9s**, **psql** on macOS:

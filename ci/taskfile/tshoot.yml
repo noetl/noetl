@@ -1,0 +1,28 @@
+version: '3.45'
+
+tasks:
+  check-ports:
+    desc: "Check if required ports are free (54321, 3000, 9428, 8082)"
+    aliases: [p]
+    silent: true
+    cmds:
+      - |
+        #!/usr/bin/env bash
+        set -e
+
+        ports=(54321 3000 9428 8082)
+        echo "Root password may be requested for: sudo lsof -nP -iTCP -sTCP:LISTEN"
+        echo ""
+        output=$(sudo lsof -nP -iTCP -sTCP:LISTEN)
+
+        error=0
+        for port in "${ports[@]}"; do
+            if echo "$output" | grep -q ":$port "; then
+                echo "❌ ERROR: Port $port is already LISTENING (busy)"
+                error=1
+            else
+                echo "✅ Port $port is free"
+            fi
+        done
+
+        exit $error

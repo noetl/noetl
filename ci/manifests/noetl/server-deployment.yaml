@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: noetl
+  name: noetl-server
   namespace: noetl
   labels:
-    app: noetl
+    app: noetl-server
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: noetl
+      app: noetl-server
   template:
     metadata:
       labels:
-        app: noetl
+        app: noetl-server
     spec:
       containers:
-        - name: noetl
+        - name: noetl-server
           # image name and tag must be patched dynamically
           image: image_name:image_tag
           ports:
