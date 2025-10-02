@@ -10,7 +10,7 @@ tasks:
       NOETL_PORT: 30082
     cmds:
       - kubectl config use-context kind-noetl
-      - .venv/bin/noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host localhost --port 8082
+      - .venv/bin/noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
 
   test-execute-control-flow-workbook:
     desc: Execute control flow workbook test on cluster
@@ -20,7 +20,7 @@ tasks:
       NOETL_PORT: 30082
     cmds:
       - kubectl config use-context kind-noetl
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/control_flow_workbook" --host localhost --port 8082 --json
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/control_flow_workbook" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
 
   test-control-flow-workbook-full:
     desc: Full test - register and execute control flow workbook on cluster
@@ -103,3 +103,33 @@ tasks:
       - task: test-register-http-duckdb-postgres
       - sleep 2
       - task: test-execute-http-duckdb-postgres
+
+  test-register-playbook-composition:
+    desc: Register playbook composition test to cluster
+    aliases: [trpc]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/playbook_composition/playbook_composition.yaml --host localhost --port 8082
+
+  test-execute-playbook-composition:
+    desc: Execute playbook composition test on cluster
+    aliases: [tepc]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/playbook_composition/playbook_composition" --host localhost --port 8082 --json
+
+  test-playbook-composition-full:
+    desc: Full test - register credentials, register playbook, and execute playbook composition test
+    aliases: [tpcf]
+    cmds:
+      - task: register-test-credentials
+      - sleep 2
+      - task: test-register-playbook-composition
+      - sleep 2
+      - task: test-execute-playbook-composition
