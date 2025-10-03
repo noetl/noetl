@@ -1,3 +1,24 @@
+# Using HTTP in NoETL (Widget-based and Tasks)
+
+Note: The new widget-based DSL lets you call HTTP directly from a step without defining a workbook task. Example:
+
+```yaml
+- step: call_api
+  type: http
+  method: GET
+  endpoint: "https://httpbin.org/get"
+  headers:
+    Authorization: "Bearer {{ env.API_TOKEN }}"
+  params:
+    id: "{{ workload.id }}"
+  as: response
+  next: end
+```
+
+The rest of this document describes HTTP as a workbook task (supported for backward compatibility).
+
+---
+
 # Using HTTP Tasks with Headers in NoETL
 
 This document explains how to use the HTTP task type with headers in NoETL to make API calls directly without using Python code.

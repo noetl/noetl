@@ -8,18 +8,10 @@ import {
   Route,
   useNavigate,
   useLocation,
-  Navigate,
 } from "react-router-dom";
-import { Layout, Menu, Typography, ConfigProvider, Result, Button } from "antd";
-import {
-  HomeOutlined,
-  BookOutlined,
-  EditOutlined,
-  HistoryOutlined,
-} from "@ant-design/icons";
+import { Layout, Menu, Typography, ConfigProvider, Result, Button, App as AntdApp } from "antd";
 
 // Import components
-import Dashboard from "./components/Dashboard";
 import Catalog from "./components/Catalog";
 import Editor from "./components/Editor";
 import Execution from "./components/Execution";
@@ -54,20 +46,10 @@ const NotFound: React.FC = () => {
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [selectedKey, setSelectedKey] = useState(() => {
-    if (location.pathname.startsWith("/catalog")) return "catalog";
-    if (location.pathname.startsWith("/editor")) return "editor";
-    if (location.pathname.startsWith("/execution")) return "execution";
-    return "dashboard";
-  });
 
   useEffect(() => {
-    if (location.pathname.startsWith("/catalog")) setSelectedKey("catalog");
-    else if (location.pathname.startsWith("/editor")) setSelectedKey("editor");
-    else if (location.pathname.startsWith("/execution"))
-      setSelectedKey("execution");
-    else setSelectedKey("dashboard");
-  }, [location.pathname]);
+    // navigate("/catalog");
+  }, []);
 
   return (
     <ConfigProvider
@@ -80,72 +62,68 @@ const App: React.FC = () => {
         },
       }}
     >
-      <Layout style={{ minHeight: "100vh", background: "#f5f5f5" }}>
-        <Header className="app-header">
-          <div className="header-inner">
-            <div className="logo">NoETL Dashboard</div>
-            <Menu
-              theme="light"
-              mode="horizontal"
-              selectedKeys={[selectedKey]}
-              className="centered-menu"
-              items={[
-                {
-                  key: "dashboard",
-                  label: "Dashboard",
-                  onClick: () => navigate("/"),
-                },
-                {
-                  key: "catalog",
-                  label: "Catalog",
-                  onClick: () => navigate("/catalog"),
-                },
-                {
-                  key: "editor",
-                  label: "Editor",
-                  onClick: () => navigate("/editor"),
-                },
-                {
-                  key: "execution",
-                  label: "Execution",
-                  onClick: () => navigate("/execution"),
-                },
-              ]}
-            />
-          </div>
-        </Header>
-        <Content style={{ padding: "24px", margin: "0 24px" }}>
-          <div
+      <AntdApp>
+        <Layout className="app" style={{ minHeight: "100vh", background: "#f5f5f5" }}>
+          <Header className="app-header">
+            <div className="header-inner">
+              <div className="logo">NoETL Dashboard</div>
+              <Menu
+                theme="light"
+                mode="horizontal"
+                selectedKeys={[location.pathname]}
+                className="centered-menu"
+                items={[
+                  {
+                    key: "/catalog",
+                    label: "Catalog",
+                    onClick: () => navigate("/catalog"),
+                  },
+                  {
+                    key: "/editor",
+                    label: "Editor",
+                    onClick: () => navigate("/editor"),
+                  },
+                  {
+                    key: "/execution",
+                    label: "Execution",
+                    onClick: () => navigate("/execution"),
+                  },
+                ]}
+              />
+            </div>
+          </Header>
+          <Content style={{ padding: "24px", margin: "0 24px" }}>
+            <div className="AppRoutesContent"
+              style={{
+                background: "#fff",
+                padding: "24px",
+                borderRadius: "12px",
+                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
+                // minHeight: "calc(100vh - 200px)",
+              }}
+            >
+              <Routes>
+                <Route path="/catalog" element={<Catalog />} />
+                <Route path="/editor" element={<Editor />} />
+                <Route path="/execution" element={<Execution />} />
+                <Route path="/execution/:id" element={<ExecutionDetail />} />
+                {/* Catch-all route for 404 */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </div>
+          </Content>
+          <Footer
             style={{
-              background: "#fff",
-              padding: "24px",
-              borderRadius: "12px",
-              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
-              minHeight: "calc(100vh - 200px)",
+              textAlign: "center",
+              background: "transparent",
+              color: "#8c8c8c",
+              fontSize: "14px",
             }}
           >
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/catalog" element={<Catalog />} />
-              <Route path="/editor" element={<Editor />} />
-              <Route path="/execution" element={<Execution />} />
-              <Route path="/execution/:id" element={<ExecutionDetail />} />
-              {/* Catch-all route for 404 */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </div>
-        </Content>
-        <Footer
-          style={{
-            textAlign: "center",
-            background: "transparent",
-            color: "#8c8c8c",
-            fontSize: "14px",
-          }}
-        >
-          NoETL Dashboard ©2024 Created with React & TypeScript
-        </Footer>
-      </Layout>
+            NoETL ©2025
+          </Footer>
+        </Layout>
+      </AntdApp>
     </ConfigProvider>
   );
 };

@@ -278,9 +278,9 @@ tasks:
   }
 
   return (
-    <Content>
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
-        <Row justify="space-between" align="middle">
+    <Content className="PlaybookEditor">
+      <Space className="PlaybookEditor__content" direction="vertical" size="large" style={{ width: "100%" }}>
+        <Row className="PlaybookEditor__header" justify="space-between" align="middle">
           <Col>
             <Title level={2}>✏️ Playbook Editor</Title>
             {playbook ? (
@@ -298,15 +298,6 @@ tasks:
           </Col>
           <Col>
             <Space>
-              <Button
-                type="default"
-                icon={isFullscreen ? <CompressOutlined /> : <ExpandOutlined />}
-                onClick={toggleFullscreen}
-                title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-              >
-                {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-              </Button>
-              <Divider type="vertical" />
               <Button
                 type="default"
                 icon={<CheckCircleOutlined />}
@@ -347,7 +338,7 @@ tasks:
 
         {/* Validation Results */}
         {validationResult && (
-          <Card size="small">
+          <Card className="PlaybookValidationErrors" size="small">
             <Alert
               message={
                 validationResult.valid
@@ -373,15 +364,15 @@ tasks:
         {/* Flow Visualization (embedded above the code editor when requested) */}
         <FlowVisualization
           visible={showFlowVisualization}
-          embedded={showFlowVisualization}
           onClose={() => setShowFlowVisualization(false)}
           playbookId={playbookId || playbook?.id || "new"}
           playbookName={playbook?.name || "New Playbook"}
           content={content}
+          onUpdateContent={(newYaml) => setContent(newYaml)}
         />
 
         {/* Code Editor */}
-        <Card style={{ height: isFullscreen ? "100vh" : "auto", padding: 0 }}>
+        <Card className="YamlEditor" style={{ height: isFullscreen ? "100vh" : "auto", padding: 0 }}>
           <MonacoEditor
             height={isFullscreen ? "90vh" : editorHeight}
             language="yaml"

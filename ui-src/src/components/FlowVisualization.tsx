@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect, useMemo } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -11,196 +11,47 @@ import {
   Edge,
   Connection,
   BackgroundVariant,
-  NodeTypes,
-  NodeProps,
-  Handle,
-  Position,
-  MarkerType,
 } from "@xyflow/react";
-import {
-  Modal,
-  Button,
-  Spin,
-  message,
-  Input,
-  Select,
-  Space,
-  Popconfirm,
-  Tag,
-} from "antd";
+import { Modal, Button, Spin, message, Select } from "antd";
 import {
   CloseOutlined,
   FullscreenOutlined,
-  DeleteOutlined,
   PlusOutlined,
   SaveOutlined,
 } from "@ant-design/icons";
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
+import { nodeTypes, orderedNodeTypes } from './nodeTypes';
+import { EditableTaskNode, TaskNode } from "./types";
+import MonacoEditor from '@monaco-editor/react';
+// @ts-ignore
+import yaml from 'js-yaml';
 
 interface FlowVisualizationProps {
   visible: boolean;
   onClose: () => void;
   playbookId: string;
   playbookName: string;
-  content?: string; // Optional content to use instead of fetching from API
-  embedded?: boolean; // when true render inline instead of Modal
+  content?: string;
+  readOnly?: boolean;
+  hideTitle?: boolean;
+  onUpdateContent?: (newContent: string) => void;
 }
 
-interface TaskNode {
-  id: string;
-  name: string;
-  type: string;
-  config?: any;
-  dependencies?: string[];
-  description?: string;
-  enabled?: boolean;
-}
-
-interface EditableTaskNode extends TaskNode {
-  position?: { x: number; y: number };
-}
-
-// Custom editable node component
-const EditableNode: React.FC<NodeProps> = ({ data, id, selected }) => {
-  const { task, onEdit, onDelete } = data as {
-    task: EditableTaskNode;
-    onEdit: (task: EditableTaskNode) => void;
-    onDelete: (id: string) => void;
-  };
-
-  // Ensure we get the latest nodeType based on current task type
-  const nodeType =
-    nodeTypes[task?.type as keyof typeof nodeTypes] || nodeTypes.default;
-
-  const handleNameChange = (value: string) => {
-    const updatedTask = { ...task, name: value };
-    onEdit?.(updatedTask);
-  };
-
-  const handleTypeChange = (value: string) => {
-    const updatedTask = { ...task, type: value };
-    onEdit?.(updatedTask);
-  };
-
-  const handleDescriptionChange = (value: string) => {
-    const updatedTask = { ...task, description: value };
-    onEdit?.(updatedTask);
-  };
-
-  const nodeClass = `flow-node ${task?.type || "default"} ${selected ? "selected" : "unselected"
-    }`;
-
-  return (
-    <div className={nodeClass}>
-      {/* connection handles */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="flow-node-handle flow-node-handle-target"
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="flow-node-handle flow-node-handle-source"
-      />
-
-      {/* Inline toolbar shown only when node is selected */}
-      {selected && (
-        <div
-          className="flow-node-toolbar nodrag"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Type selector moved here */}
-          <Select
-            value={task?.type || "default"}
-            onChange={handleTypeChange}
-            size="small"
-            className="flow-node-type-select flow-node-toolbar-type-select"
-            popupClassName="flow-node-type-dropdown"
-            dropdownMatchSelectWidth={false}
-            getPopupContainer={() => document.body}
-            options={[
-              { value: "log", label: "📝 Log" },
-              { value: "http", label: "🌐 HTTP" },
-              { value: "sql", label: "🗄️ SQL" },
-              { value: "script", label: "⚙️ Script" },
-              { value: "secret", label: "🔑 Secret" },
-              { value: "export", label: "📤 Export" },
-              { value: "python", label: "🐍 Python" },
-              { value: "workbook", label: "📊 Workbook" },
-              { value: "default", label: "📄 Default" },
-            ]}
-          />
-          <Popconfirm
-            title="Delete this component?"
-            onConfirm={(e) => {
-              e?.stopPropagation();
-              onDelete?.(id);
-            }}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Button
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              className="flow-node-toolbar-button"
-              onClick={(e) => e.stopPropagation()}
-            />
-          </Popconfirm>
-        </div>
-      )}
-
-      {/* Header: icon + status pill now inline above separator */}
-      <div className="flow-node-header">
-        <span className="flow-node-icon" aria-hidden>
-          {nodeType.icon}
-        </span>
-        <div className={`flow-node-status inline ${task?.type || "default"}`}>
-          {(task?.type ? task.type.charAt(0).toUpperCase() + task.type.slice(1) : "Default")}
-        </div>
-      </div>
-
-      {/* Task name - always editable */}
-      <div className="flow-node-name">
-        <span className="flow-node-field-label">Name</span>
-        <Input
-          value={task?.name || "Unnamed Task"}
-          onChange={(e) => handleNameChange(e.target.value)}
-          placeholder="Task name"
-          size="small"
-          className="flow-node-name-input nodrag"
-        />
-      </div>
-
-      {/* Description - always editable */}
-      <div className="flow-node-description">
-        <span className="flow-node-field-label">Description</span>
-        <Input.TextArea
-          value={task?.description || ""}
-          onChange={(e) => handleDescriptionChange(e.target.value)}
-          placeholder="Description (optional)"
-          size="small"
-          rows={2}
-          className="flow-node-description-input nodrag"
-        />
-      </div>
-    </div>
-  );
-};
-
-const nodeTypes = {
-  log: { color: "#52c41a", icon: "📝" },
-  http: { color: "#1890ff", icon: "🌐" },
-  sql: { color: "#722ed1", icon: "🗄️" },
-  script: { color: "#fa8c16", icon: "⚙️" },
-  secret: { color: "#eb2f96", icon: "🔑" },
-  export: { color: "#13c2c2", icon: "📤" },
-  python: { color: "#3776ab", icon: "🐍" },
-  workbook: { color: "#ff6b35", icon: "📊" },
-  default: { color: "#8c8c8c", icon: "📄" },
+// Minimal metadata retained locally only for icons/colors (no editors/complex config)
+const nodeMeta: Record<string, { icon: string; color: string; label: string }> = {
+  start: { icon: '🚀', color: '#2563eb', label: 'start' },
+  workbook: { icon: '📊', color: '#ff6b35', label: 'workbook' },
+  python: { icon: '🐍', color: '#15803d', label: 'python' },
+  http: { icon: '🌐', color: '#9333ea', label: 'http' },
+  duckdb: { icon: '🦆', color: '#0d9488', label: 'duckdb' },
+  postgres: { icon: '🐘', color: '#1d4ed8', label: 'postgres' },
+  secrets: { icon: '🔐', color: '#6d28d9', label: 'secrets' },
+  playbooks: { icon: '📘', color: '#4b5563', label: 'playbooks' },
+  loop: { icon: '🔁', color: '#a16207', label: 'loop' },
+  end: { icon: '🏁', color: '#dc2626', label: 'end' },
+  log: { icon: '📝', color: '#64748b', label: 'log' },
 };
 
 const FlowVisualization: React.FC<FlowVisualizationProps> = ({
@@ -209,50 +60,87 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   playbookId,
   playbookName,
   content,
-  embedded,
+  readOnly,
+  hideTitle,
+  onUpdateContent,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-
-  // antd message with context (avoid static API)
+  const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
+  const [editorTab, setEditorTab] = useState<'config' | 'code' | 'json' | 'raw'>('config');
   const [messageApi, contextHolder] = message.useMessage();
-
-  // Editing state
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Define custom node types for ReactFlow
-  const customNodeTypes: NodeTypes = {
-    editableNode: EditableNode,
-  };
+  // Provide nodeTypes directly (already a stable object export)
+  const customNodeTypes = useMemo(() => nodeTypes, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges]
   );
 
+  // Map legacy or unknown types to supported widget types
+  const mapType = (t?: string): EditableTaskNode['type'] => {
+    switch ((t || '').toLowerCase()) {
+      case 'script':
+        return 'python';
+      case 'sql':
+        return 'duckdb';
+      case 'export':
+        return 'workbook';
+      // keep 'log' as-is now (no remap to start)
+      case 'http':
+      case 'python':
+      case 'workbook':
+      case 'duckdb':
+      case 'postgres':
+      case 'secrets':
+      case 'playbooks':
+      case 'loop':
+      case 'start':
+      case 'end':
+      case 'log':
+        return t as any;
+      default:
+        return (t as any) || 'workbook';
+    }
+  };
+
   // Handle task editing - simplified for direct updates
   const handleEditTask = useCallback(
     (updatedTask: EditableTaskNode) => {
-      setTasks((prev) =>
-        prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
-      );
-
-      // Update nodes directly using ReactFlow's setNodes
-      setNodes((currentNodes) =>
-        currentNodes.map((node) =>
-          node.id === updatedTask.id
-            ? { ...node, data: { ...node.data, task: updatedTask } }
-            : node
-        )
-      );
-
+      if (readOnly) return; // prevent edits in read-only
+      setTasks((prev) => prev.map((t) => {
+        if (t.id === updatedTask.id) {
+          // Preserve original id; only update name/config/etc.
+          return { ...t, ...updatedTask, id: t.id };
+        }
+        return t;
+      }));
+      setNodes((current) => current.map((n) => {
+        if (n.id === updatedTask.id) {
+          const existingTask: EditableTaskNode = (n.data as any)?.task || { id: updatedTask.id, name: '', type: 'workbook' };
+          const merged: EditableTaskNode = { ...existingTask, ...updatedTask, id: existingTask.id };
+          return { ...n, type: merged.type, data: { ...n.data, task: merged } } as any;
+        }
+        return n;
+      }));
       setHasChanges(true);
+      setActiveTask((prev) => (prev && prev.id === updatedTask.id ? { ...prev, ...updatedTask, id: prev.id } : prev)); // keep modal in sync
     },
-    [setNodes]
+    [setNodes, readOnly]
   );
+
+  // Handle task deletion (moved above createFlowFromTasks to satisfy hooks deps)
+  const handleDeleteTask = useCallback((taskId: string) => {
+    if (readOnly) return;
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    setHasChanges(true);
+    messageApi.success("Component deleted");
+  }, [messageApi, readOnly]);
 
   // Layout constants for auto positioning (breathe like the examples)
   const GRID_COLUMNS = 3;
@@ -278,13 +166,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
         flowNodes.push({
           id: task.id,
-          type: "editableNode",
+          type: task.type, // per-type component
           position: { x, y },
           data: {
             task,
             onEdit: handleEditTask,
             onDelete: handleDeleteTask,
-            label: null,
+            readOnly,
+            onOpen: () => setActiveTask(task),
           },
           className: "react-flow__node",
         });
@@ -321,7 +210,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
       return { nodes: flowNodes, edges: flowEdges };
     },
-    [handleEditTask]
+    [handleEditTask, handleDeleteTask, readOnly]
   );
 
   // Recreate flow when tasks change
@@ -331,28 +220,22 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     setEdges(flowEdges);
   }, [tasks, createFlowFromTasks, setNodes, setEdges]);
 
-  // Handle task deletion
-  const handleDeleteTask = useCallback((taskId: string) => {
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
-    setHasChanges(true);
-    messageApi.success("Component deleted");
-  }, [messageApi]);
-
   // Handle adding new task
   const handleAddTask = useCallback(() => {
+    if (readOnly) return;
     const newTask: EditableTaskNode = {
       id: `task_${Date.now()}`,
-      name: "New Task",
-      type: "default",
-      description: "",
+      name: 'New Component',
+      type: 'workbook',
+      description: '',
       enabled: true,
       position: { x: 100 + tasks.length * 50, y: 100 + tasks.length * 50 },
     };
 
     setTasks((prev) => [...prev, newTask]);
     setHasChanges(true);
-    messageApi.success("New component added");
-  }, [tasks, messageApi]);
+    messageApi.success('New component added');
+  }, [tasks, messageApi, readOnly]);
 
   // Re-enable automatic flow recreation for major changes
   useEffect(() => {
@@ -361,170 +244,102 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     }
   }, [tasks.length, recreateFlow]); // Only recreate when task count changes
 
-  // Save entire workflow
-  const handleSaveWorkflow = useCallback(async () => {
+  const sanitizeId = (s: string) => (s || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .toLowerCase() || `task_${Date.now()}`;
+
+  const parsePlaybookContent = (raw: string): TaskNode[] => {
+    if (!raw || !raw.trim()) return [];
     try {
-      setLoading(true);
-      // await apiService.savePlaybookWorkflow(playbookId, tasks);
-      setHasChanges(false);
-      messageApi.success("Workflow saved successfully!");
-    } catch (error) {
-      messageApi.error("Failed to save workflow");
-    } finally {
-      setLoading(false);
-    }
-  }, [tasks, playbookId, messageApi]);
-
-  const parsePlaybookContent = (content: string): TaskNode[] => {
-    try {
-      const lines = content.split("\n");
-      const tasks: TaskNode[] = [];
-      let currentTask: Partial<TaskNode> = {};
-      let inWorkflowSection = false;
-      let taskIndex = 0;
-      let workflowIndent = 0;
-      let inNestedLogic = false;
-      let nestedLevel = 0;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmed = line.trim();
-        const indent = line.length - line.trimStart().length;
-
-        if (
-          trimmed === "workflow:" ||
-          trimmed.startsWith("workflow:") ||
-          trimmed === "tasks:" ||
-          trimmed.startsWith("tasks:") ||
-          trimmed === "steps:" ||
-          trimmed.startsWith("steps:")
-        ) {
-          inWorkflowSection = true;
-          workflowIndent = indent;
-          continue;
-        }
-
-        if (inWorkflowSection) {
-          if (
-            trimmed &&
-            indent <= workflowIndent &&
-            !trimmed.startsWith("-") &&
-            trimmed.includes(":") &&
-            !trimmed.startsWith("#")
-          ) {
-            break;
-          }
-
-          if (trimmed.match(/^(next|then|else|when):/)) {
-            if (!inNestedLogic) {
-              inNestedLogic = true;
-              nestedLevel = indent;
-            }
-            continue;
-          }
-
-          if (
-            inNestedLogic &&
-            indent === workflowIndent + 2 &&
-            trimmed.startsWith("- step:")
-          ) {
-            inNestedLogic = false;
-          }
-
-          if (
-            trimmed.startsWith("- step:") &&
-            !inNestedLogic &&
-            indent === workflowIndent + 2
-          ) {
-            if (currentTask.name) {
-              tasks.push(currentTask as TaskNode);
-              taskIndex++;
-            }
-
-            const stepMatch = trimmed.match(/step:\s*([^'"]+)/);
-            const taskName = stepMatch
-              ? stepMatch[1].trim()
-              : `Step ${taskIndex + 1}`;
-
-            currentTask = {
-              id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
-              name: taskName,
-              type: "default",
-            };
-          } else if (
-            (trimmed.startsWith("- name:") ||
-              (trimmed.startsWith("-") && trimmed.includes("name:"))) &&
-            !inNestedLogic
-          ) {
-            if (currentTask.name) {
-              tasks.push(currentTask as TaskNode);
-              taskIndex++;
-            }
-
-            const nameMatch = trimmed.match(
-              /name:\s*['"](.*?)['"]|name:\s*(.+)/
-            );
-            const taskName = nameMatch
-              ? (nameMatch[1] || nameMatch[2] || "").trim()
-              : `Task ${taskIndex + 1}`;
-
-            currentTask = {
-              id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
-              name: taskName,
-              type: "default",
-            };
-          } else if (
-            trimmed.startsWith("desc:") &&
-            currentTask.name &&
-            !inNestedLogic
-          ) {
-            const descMatch = trimmed.match(
-              /desc:\s*['"](.*?)['"]|desc:\s*(.+)/
-            );
-            if (descMatch) {
-              const description = (descMatch[1] || descMatch[2] || "")
-                .trim()
-                .replace(/^["']|["']$/g, "");
-              const originalName = currentTask.name;
-              currentTask.name = description;
-              if (
-                !currentTask.id ||
-                currentTask.id ===
-                originalName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase()
-              ) {
-                currentTask.id = originalName
-                  .replace(/[^a-zA-Z0-9]/g, "_")
-                  .toLowerCase();
-              }
-            }
-          } else if (
-            trimmed.startsWith("type:") &&
-            currentTask.name &&
-            !inNestedLogic
-          ) {
-            const typeMatch = trimmed.match(
-              /type:\s*['"](.*?)['"]|type:\s*([^'"]+)/
-            );
-            if (typeMatch) {
-              currentTask.type = (typeMatch[1] || typeMatch[2] || "").trim();
-            }
-          }
-
-          if (inNestedLogic && indent <= nestedLevel) {
-            inNestedLogic = false;
-          }
-        }
-      }
-
-      if (currentTask.name) {
-        tasks.push(currentTask as TaskNode);
-      }
-
-      return tasks;
-    } catch (error) {
+      const doc: any = yaml.load(raw) || {};
+      const list = Array.isArray(doc?.workflow) ? doc.workflow
+        : Array.isArray(doc?.tasks) ? doc.tasks
+          : [];
+      if (!Array.isArray(list)) return [];
+      const parsed: TaskNode[] = [];
+      list.forEach((entry: any, idx: number) => {
+        if (!entry || typeof entry !== 'object') return;
+        const rawName: string = entry.desc || entry.name || entry.step || `Task ${idx + 1}`;
+        const baseId = sanitizeId(entry.step || entry.name || rawName || `task_${idx + 1}`);
+        let uniqueId = baseId;
+        let c = 1;
+        while (parsed.some(t => t.id === uniqueId)) uniqueId = `${baseId}_${c++}`;
+        const t: TaskNode = {
+          id: uniqueId,
+          name: rawName,
+          type: mapType(entry.type || 'workbook'),
+          config: undefined,
+        } as any;
+        const cfg: any = {};
+        if (entry.config && typeof entry.config === 'object') Object.assign(cfg, entry.config);
+        if (typeof entry.code === 'string') cfg.code = entry.code;
+        if (typeof entry.sql === 'string') cfg.sql = entry.sql;
+        if (Object.keys(cfg).length) (t as any).config = cfg;
+        parsed.push(t);
+      });
+      return parsed;
+    } catch (e) {
+      console.warn('YAML parse failed:', e);
       return [];
     }
   };
+
+  const updateWorkflowInYaml = (original: string, taskList: EditableTaskNode[]): string => {
+    let doc: any = {};
+    try { if (original && original.trim()) doc = yaml.load(original) || {}; } catch { doc = {}; }
+    if (!doc || typeof doc !== 'object') doc = {};
+    delete doc.tasks;
+    delete doc.workflow;
+
+    doc.workflow = taskList.filter(t => (t.name || '').trim()).map(t => {
+      const cfg = t.config || {};
+      const { code, sql, ...rest } = cfg;
+      const stepKey = sanitizeId(t.name || t.id);
+      const out: any = { step: stepKey };
+      if (t.name && t.name.trim() && t.name.trim() !== stepKey) out.desc = t.name.trim();
+      if (t.type && t.type !== 'workbook') out.type = t.type;
+      if (Object.keys(rest).length) out.config = rest;
+      if (code) out.code = code;
+      if (sql) out.sql = sql;
+      return out;
+    });
+
+    try {
+      return yaml.dump(doc, { noRefs: true, lineWidth: 120 });
+    } catch (e) {
+      console.error('Failed to dump YAML:', e);
+      return original;
+    }
+  };
+
+  const handleSaveWorkflow = useCallback(async () => {
+    try {
+      setLoading(true);
+      const updatedYaml = updateWorkflowInYaml(content || '', tasks);
+      if (onUpdateContent) onUpdateContent(updatedYaml);
+
+      if (playbookId && playbookId !== 'new') {
+        try {
+          await apiService.savePlaybookContent(playbookId, updatedYaml);
+          messageApi.success('Workflow saved to backend');
+        } catch (persistErr) {
+          console.error('Backend persistence failed:', persistErr);
+          messageApi.warning('YAML updated locally, backend save failed');
+        }
+      } else {
+        messageApi.info('YAML updated. Create & save playbook from main editor to persist');
+      }
+
+      setHasChanges(false);
+    } catch (error) {
+      console.error(error);
+      messageApi.error('Failed to save workflow');
+    } finally {
+      setLoading(false);
+    }
+  }, [tasks, content, onUpdateContent, messageApi, playbookId]);
 
   const loadPlaybookFlow = async () => {
     setLoading(true);
@@ -548,24 +363,24 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             playbookName.toLowerCase().includes("weather")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Fetch Weather Data", type: "http", enabled: true },
-              { id: "demo-2", name: "Process Weather Info", type: "script", enabled: true },
-              { id: "demo-3", name: "Generate Weather Report", type: "export", enabled: true },
+              { id: "demo-1", name: "Fetch Weather Data", type: 'http', enabled: true },
+              { id: "demo-2", name: "Process Weather Info", type: 'python', enabled: true },
+              { id: "demo-3", name: "Generate Weather Report", type: 'workbook', enabled: true },
             ];
           } else if (
             playbookId.toLowerCase().includes("database") ||
             playbookId.toLowerCase().includes("sql")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Connect to Database", type: "sql", enabled: true },
-              { id: "demo-2", name: "Query Data", type: "sql", enabled: true },
-              { id: "demo-3", name: "Export Results", type: "export", enabled: true },
+              { id: "demo-1", name: "Connect to Database", type: 'duckdb', enabled: true },
+              { id: "demo-2", name: "Query Data", type: 'duckdb', enabled: true },
+              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
             ];
           } else {
             demoTasks = [
-              { id: "demo-1", name: "Initialize Process", type: "log", enabled: true },
-              { id: "demo-2", name: "Process Data", type: "script", enabled: true },
-              { id: "demo-3", name: "Export Results", type: "export", enabled: true },
+              { id: "demo-1", name: "Initialize Process", type: 'start', enabled: true },
+              { id: "demo-2", name: "Process Data", type: 'python', enabled: true },
+              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
             ];
           }
 
@@ -577,6 +392,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         } else {
           const editableTasks: EditableTaskNode[] = parsedTasks.map((task) => ({
             ...task,
+            type: mapType(task.type),
             enabled: true,
           }));
           setTasks(editableTasks);
@@ -591,7 +407,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       } else {
         messageApi.warning(`No content found for playbook: ${playbookName}`);
         const demoTasks: EditableTaskNode[] = [
-          { id: "empty-1", name: "No Content Available", type: "log", enabled: true },
+          { id: "empty-1", name: "No Content Available", type: 'start', enabled: true },
         ];
         setTasks(demoTasks);
         const { nodes: flowNodes, edges: flowEdges } =
@@ -604,8 +420,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         `Failed to load playbook flow for ${playbookName}.`
       );
       const errorTasks: EditableTaskNode[] = [
-        { id: "error-1", name: "Failed to Load Playbook", type: "log", enabled: true },
-        { id: "error-2", name: "Check API Connection", type: "script", enabled: true },
+        { id: "error-1", name: "Failed to Load Playbook", type: 'start', enabled: true },
+        { id: "error-2", name: "Check API Connection", type: 'python', enabled: true },
       ];
       setTasks(errorTasks);
       const { nodes: flowNodes, edges: flowEdges } =
@@ -618,10 +434,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   useEffect(() => {
-    if ((visible || embedded) && (playbookId || content)) {
+    if (visible && (playbookId || content)) {
       loadPlaybookFlow();
     }
-  }, [visible, embedded, playbookId, content]);
+  }, [visible, playbookId, content]);
 
   const handleFullscreen = () => setFullscreen((f) => !f);
 
@@ -632,51 +448,9 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   const flowInner = (
-    <>
-      {/* Toolbar */}
-      <div className="flow-toolbar-container">
-        <Space>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleAddTask}
-            size="small"
-          >
-            Add Component
-          </Button>
-          {hasChanges && (
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              onClick={handleSaveWorkflow}
-              loading={loading}
-              size="small"
-            >
-              Save Workflow
-            </Button>
-          )}
-        </Space>
-
-        <Space>
-          <Button
-            type="text"
-            icon={<FullscreenOutlined />}
-            onClick={handleFullscreen}
-            title="Toggle Fullscreen"
-            className="flow-toolbar-button"
-            size="small"
-          />
-          <Button
-            type="text"
-            icon={<CloseOutlined />}
-            onClick={onClose}
-            title="Close"
-            className="flow-toolbar-button"
-            size="small"
-          />
-        </Space>
-      </div>
-
+    <div className="FlowVisualization flow-layout-root">
+      {contextHolder}
+      {/* Content container now full-width; dock moved inside canvas wrapper */}
       <div className="flow-content-container">
         {loading ? (
           <div className="flow-loading-container">
@@ -685,108 +459,189 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           </div>
         ) : (
           <div className="react-flow-wrapper">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              nodeTypes={customNodeTypes}
-              defaultEdgeOptions={defaultEdgeOptions}
-              connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
-              fitView
-              fitViewOptions={{ padding: 0.18 }}
-              attributionPosition="bottom-left"
-              key={`flow-${tasks.length}-${tasks
-                .map((t) => `${t.id}-${t.type}`)
-                .join("-")}`}
-            >
-              <Controls />
-              <MiniMap
-                nodeColor={(node) => {
-                  const type = (node.data as any)?.task?.type ?? "default";
-                  return (
-                    nodeTypes[type as keyof typeof nodeTypes]?.color ||
-                    nodeTypes.default.color
-                  );
-                }}
-                pannable
-                zoomable
-                style={{
-                  background: "white",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 8,
-                }}
+            {/* Left Vertical Dock now inside bordered wrapper */}
+            <div className="flow-dock">
+              {!readOnly && (
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleAddTask}
+                  size="small"
+                  className="flow-dock-btn"
+                  title="Add Component"
+                />
+              )}
+              {!readOnly && hasChanges && (
+                <Button
+                  type="primary"
+                  icon={<SaveOutlined />}
+                  onClick={handleSaveWorkflow}
+                  loading={loading}
+                  size="small"
+                  className="flow-dock-btn"
+                  title="Save Workflow"
+                />
+              )}
+              <div className="flow-dock-separator" />
+              <Button
+                type="text"
+                icon={<FullscreenOutlined />}
+                onClick={handleFullscreen}
+                title="Toggle Fullscreen"
+                className="flow-dock-btn"
+                size="small"
               />
-              <Background
-                variant={BackgroundVariant.Dots}
-                gap={22}
-                size={1}
-                color="#eaeef5"
+              <Button
+                type="text"
+                icon={<CloseOutlined />}
+                onClick={onClose}
+                title="Close"
+                className="flow-dock-btn"
+                size="small"
               />
-            </ReactFlow>
+            </div>
+            <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '500px' }}>
+              <ReactFlow
+                nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={(e, node) => { const task = (node.data as any)?.task; if (task) setActiveTask(task); }}
+                nodeTypes={customNodeTypes}
+                defaultEdgeOptions={defaultEdgeOptions}
+                connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
+                fitView
+                fitViewOptions={{ padding: 0.18 }}
+                attributionPosition="bottom-left"
+                key={`flow-${tasks.length}-${tasks.map((t) => `${t.id}-${t.type}`).join("-")}-${readOnly ? 'ro' : 'rw'}`}
+              >
+                <Controls />
+                <MiniMap
+                  nodeColor={(node) => {
+                    const type = (node.data as any)?.task?.type ?? 'workbook';
+                    return nodeMeta[type]?.color || '#8c8c8c';
+                  }}
+                  pannable
+                  zoomable
+                  style={{
+                    background: "white",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 8,
+                  }}
+                />
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={22}
+                  size={1}
+                  color="#eaeef5"
+                />
+              </ReactFlow>
+            </div>
           </div>
         )}
       </div>
-    </>
+    </div>
   );
-
-  // Render inline when embedded flag is set, otherwise use Modal
-  if (embedded) {
-    return (
-      <div
-        className={
-          fullscreen
-            ? "flow-modal-fullscreen flow-embedded"
-            : "flow-modal-windowed flow-embedded"
-        }
-        style={{
-          width: fullscreen ? "95vw" : "80vw",
-          height: fullscreen ? "85vh" : "70vh",
-          margin: "24px auto",
-        }}
-      >
-        {contextHolder}
-        <div
-          className="flow-modal-title"
-          style={{ display: "flex", alignItems: "center", gap: 12 }}
-        >
-          <span className="flow-modal-title-icon">🔄</span>
-          <span>Flow Editor - {playbookName}</span>
-          {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
-        </div>
-        {flowInner}
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {contextHolder}
-      <Modal
-        title={
-          <div className="flow-modal-title">
-            <span className="flow-modal-title-icon">🔄</span>
-            <span>Flow Editor - {playbookName}</span>
-            {hasChanges && <Tag color="orange">Unsaved Changes</Tag>}
+  if (!visible) return null;
+  return <>
+    {flowInner}
+    <Modal
+      open={!!activeTask}
+      onCancel={() => setActiveTask(null)}
+      onOk={() => setActiveTask(null)}
+      width={900}
+      title={activeTask ? `Edit: ${activeTask.name}` : ''}
+      okText="Close"
+      cancelButtonProps={{ style: { display: 'none' } }}
+    >
+      {activeTask && (
+        <div className="node-modal-body">
+          <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+            <Select
+              disabled={!!readOnly}
+              value={activeTask.type}
+              onChange={(val) => handleEditTask({ ...activeTask, type: val })}
+              options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
+              style={{ width: 180 }}
+            />
+            <Select
+              value={editorTab}
+              onChange={(v) => setEditorTab(v as any)}
+              options={[
+                { value: 'config', label: 'Config Fields' },
+                { value: 'code', label: 'Code' },
+                { value: 'json', label: 'Config JSON' },
+                { value: 'raw', label: 'Raw Task' },
+              ]}
+              style={{ width: 160 }}
+            />
           </div>
-        }
-        open={visible}
-        onCancel={onClose}
-        footer={null}
-        closable={false}
-        width={fullscreen ? "95vw" : "80vw"}
-        className={fullscreen ? "flow-modal-fullscreen" : "flow-modal-windowed"}
-        styles={
-          fullscreen
-            ? { body: { height: "85vh", padding: 0, overflow: "hidden" } }
-            : { body: { height: "70vh", padding: 0, overflow: "hidden" } }
-        }
-      >
-        {flowInner}
-      </Modal>
-    </>
-  );
+          <div style={{ marginBottom: 12 }}>
+            <input
+              disabled={!!readOnly}
+              value={activeTask.name}
+              onChange={(e) => handleEditTask({ ...activeTask, name: e.target.value })}
+              placeholder="Step name"
+              className="xy-theme__input"
+              style={{ width: '100%', padding: '6px 8px' }}
+            />
+          </div>
+          {editorTab === 'config' && (
+            <div style={{ padding: 8 }}>No structured editor for this node type. Use JSON or Code tabs.</div>
+          )}
+          {editorTab === 'code' && (
+            <div style={{ height: 300 }}>
+              <MonacoEditor
+                height="300px"
+                defaultLanguage={activeTask.type === 'python' ? 'python' : (activeTask.type === 'duckdb' || activeTask.type === 'postgres') ? 'sql' : 'javascript'}
+                value={(activeTask.config?.code) || activeTask.config?.sql || ''}
+                onChange={(val) => {
+                  if (readOnly) return;
+                  const cfg = { ...(activeTask.config || {}) } as any;
+                  if (activeTask.type === 'python') cfg.code = val || '';
+                  if (activeTask.type === 'duckdb' || activeTask.type === 'postgres') cfg.sql = val || '';
+                  handleEditTask({ ...activeTask, config: cfg });
+                }}
+                theme="vs-dark"
+                options={{ minimap: { enabled: false }, fontSize: 13 }}
+              />
+            </div>
+          )}
+          {editorTab === 'json' && (
+            <div style={{ height: 300 }}>
+              <MonacoEditor
+                height="300px"
+                defaultLanguage="json"
+                value={JSON.stringify(activeTask.config || {}, null, 2)}
+                onChange={(val) => {
+                  if (readOnly) return;
+                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...activeTask, config: parsed }); } catch { }
+                }}
+                theme="vs-dark"
+                options={{ minimap: { enabled: false }, fontSize: 13 }}
+              />
+            </div>
+          )}
+          {editorTab === 'raw' && (
+            <div style={{ height: 300 }}>
+              <MonacoEditor
+                height="300px"
+                defaultLanguage="json"
+                value={JSON.stringify(activeTask, null, 2)}
+                onChange={(val) => {
+                  if (readOnly) return;
+                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...(parsed as any), id: activeTask.id }); } catch { }
+                }}
+                theme="vs-dark"
+                options={{ minimap: { enabled: false }, fontSize: 13 }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  </>;
 };
 
 export default FlowVisualization;

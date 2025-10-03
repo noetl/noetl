@@ -1,139 +1,351 @@
-# NoETL DSL Design Specification (v2)
+# NoETL DSL Design Specification (Step Widgets v2)
 
 ## Overview
 
-The NoETL DSL is a declarative language designed to define workflows as state machines. It provides a structured way to describe workflows, tasks, and actions, enabling conditional logic, parallel execution, and reusable components. The DSL is implemented in YAML or JSON format and is validated against a JSON schema.
+The NoETL DSL defines workflows as a sequence of typed steps (widgets). Each step type has its own inputs, outputs, and execution semantics. Playbooks are YAML/JSON documents validated against the schema in `docs/playbook-schema.json`.
 
-This document outlines the key components of the DSL, their relationships, and the rules governing their execution.
+This revision replaces the previous "run/rule/case" model with explicit step types:
+- start — Entry point of a workflow. Must route to the first executable step via `next`.
+- end — Terminal step. No `next`. Used broadly.
+- workbook — Invokes a named task from the workbook library; use `task:` and `with:` to pass inputs.
+- python — Runs inline Python in the step itself.
+- http — Makes an HTTP call directly from a step (method, endpoint, headers, params/payload).
+- duckdb — Executes DuckDB SQL/script in the step.
+- postgres — Executes PostgreSQL SQL/script in the step.
+- secrets — Reads a secret from a provider (e.g., Google Secret Manager) and exposes it as `secret_value` (or a custom alias).
+- playbooks — Executes all playbooks under a catalog path, forwarding inputs via `with:`; the step result can be passed on to the next step.
+- loop — Runs a loop over either a workbook task (for single-step loops) or playbooks (for multi-step subflows).
 
 ---
 
 ## Key Components
 
-### 1. **Playbook**
-The top-level definition of a workflow. A playbook contains metadata, environment variables, reusable tasks, and a sequence of steps.
+### Playbook
+Top-level workflow definition.
 
-#### Properties:
-- **apiVersion**: The version of the DSL schema.
-- **kind**: The type of the document (e.g., `Playbook`).
-- **name**: The name of the playbook.
-- **environment**: A dictionary of global variables and configurations.
-- **context**: A dictionary of runtime variables.
-- **start**: The entry point of the workflow.
-- **tasks**: A list of reusable task definitions.
-- **steps**: A list of workflow steps.
+Properties:
+- apiVersion: DSL schema version (const: `noetl.io/v1`)
+- kind: Document kind (const: `Playbook`)
+- name: Playbook name
+- path: Catalog path for this playbook
+- environment: Global variables and config
+- context: Runtime variables (e.g., execution ids, state)
+- workbook: Library of reusable tasks callable from `workbook` steps
+- workflow: Ordered list of steps (widgets)
 
----
-
-### 2. **Step**
-A step represents a unit of workflow logic. It can execute tasks or actions and define transitions to other steps.
-
-#### Properties:
-- **name**: A unique identifier for the step.
-- **mode**: Execution mode (`sequential` or `parallel`).
-- **when**: A condition to determine if the step should run.
-- **run**: A list of tasks or actions to execute.
-- **until**: A condition to determine when to stop repeating the step.
-- **next**: A list of transitions to other steps.
-
-#### Example:
+Example:
 ```yaml
-steps:
-  - name: VerifyUser
-    mode: sequential
-    when: "{{ user_id is not None }}"
-    run:
-      - task: validate_user
-    next:
-      - when: "{{ user_valid }}"
-        run: [FetchData]
-      - when: "{{ not user_valid }}"
-        run: [HandleError]
-```
-
----
-
-### 3. **Task**
-A reusable sequence of actions. Tasks are defined once and referenced by steps.
-
-#### Properties:
-- **name**: A unique identifier for the task.
-- **run**: A list of actions to execute.
-
-#### Example:
-```yaml
-tasks:
-  - name: validate_user
-    run:
-      - action: http
-        method: GET
-        url: "https://api.example.com/validate/{{ user_id }}"
-```
-
----
-
-### 4. **Action**
-The smallest execution unit in the workflow. Actions represent specific operations, such as HTTP requests, database queries, or shell commands.
-
-#### Properties:
-- **action**: The type of operation (e.g., `http`, `postgres`, `shell`).
-- **method**: The specific method or operation to perform.
-- **parameters**: Additional parameters required for the action.
-
-#### Example:
-```yaml
-actions:
-  - action: http
-    method: POST
-    url: "https://api.example.com/data"
-    body: "{{ payload }}"
-```
-
----
-
-## Execution Semantics
-
-### Rule-Driven Transitions
-Each step defines a `rule` block that determines the control flow. Rules consist of cases, each with a condition and a set of actions or transitions.
-
-#### Key Rules:
-1. **Mandatory Rule per Step**: Every step must define a `rule`.
-2. **Case Evaluation**: Cases are evaluated in order, and the first matching case is executed.
-3. **No Mixed Run Modes**: A case cannot mix transitions and in-place actions.
-4. **Explicit Termination**: If no case matches, the workflow branch ends.
-
----
-
-## Validation Rules
-
-To ensure the integrity of the workflow, the following validation rules are enforced:
-
-1. **Unique Names**: Step and task names must be unique.
-2. **Valid References**: All step and task references must exist.
-3. **Homogeneous Run Blocks**: Each `run` block must contain either all transitions or all actions.
-4. **Complete Rules**: Each step must have at least one valid case in its `rule`.
-
----
-
-## Example Playbook
-
-```yaml
-apiVersion: "v1"
-kind: "Playbook"
-name: "UserOnboarding"
+apiVersion: noetl.io/v1
+kind: Playbook
+name: UserOnboarding
+path: workflows/example/user_onboarding
 environment:
-  db_connection: "postgres://user:pass@localhost/db"
+  postgres_url: "postgres://user:pass@localhost:5432/app"
 context:
-  user_id: null
-start:
-  run:
-    - step: VerifyUser
-tasks:
-  - name: validate_user
-    run:
-      - action: http
-        method: GET
-        url: "https://api.example.com/validate/{{ user_id }}"
-steps:
-  - name: VerifyUser
-    mode:
+  jobId: "{{ uuid() }}"
+  state: "init"
+workbook:
+  - task: get_weather
+    type: http
+    desc: Weather by city
+    method: GET
+    endpoint: "https://api.example.com/weather"
+```
+
+---
+
+## Steps (Widgets)
+
+Each step has:
+- step: Unique step name
+- type: One of `start|end|workbook|python|http|duckdb|postgres|secrets|playbooks|loop`
+- next: The next step name (string or list of names). Not allowed for `end`. Required for `start`.
+- Inputs/Outputs: Vary by type as defined below.
+
+General execution:
+- Steps execute in order by following `next`.
+- A step may optionally publish outputs to the playbook context under a variable name (see `as:` below).
+- If a step has no `next` and is not `end`, the branch terminates implicitly.
+
+### start
+Entry point that routes to the first executable step.
+
+Inputs: none
+Outputs: none
+Required: `next`
+
+Example:
+```yaml
+- step: start
+  type: start
+  next: fetch_user
+```
+
+### end
+Terminal step.
+
+Inputs: none
+Outputs: none
+Constraints: Must not define `next`.
+
+Example:
+```yaml
+- step: end
+  type: end
+```
+
+### workbook
+Invoke a named task from the workbook library.
+
+Inputs:
+- task (string, required): Name of a task defined under `workbook` at top-level
+- with (object, optional): Inputs forwarded to the task
+- as (string, optional): Variable name to store the task result
+
+Outputs:
+- Result of the task, stored under `context[as]` if `as` is provided, else available as step-local `result`
+
+Example:
+```yaml
+- step: fetch_weather
+  type: workbook
+  task: get_weather
+  with:
+    city: "Paris"
+  as: weather
+  next: end
+```
+
+### python
+Execute inline Python code.
+
+Inputs:
+- code (string, required): Python code to execute
+- with (object, optional): Variables to inject into the code context
+- as (string, optional): Variable name to store the result
+
+Outputs:
+- `result` from the last expression or explicit `return` in the code block; saved under `as` if provided
+
+Example:
+```yaml
+- step: compute_score
+  type: python
+  with:
+    a: 5
+    b: 7
+  code: |
+    total = a + b
+    return {"sum": total, "ok": True}
+  as: score
+  next: end
+```
+
+### http
+Perform an HTTP request.
+
+Inputs:
+- method (enum: GET, POST, PUT, DELETE, PATCH) required
+- endpoint (string, required)
+- headers (object, optional)
+- params (object, optional)
+- body (object|string, optional)
+- timeout (number, optional, seconds)
+- verify (boolean, optional)
+- as (string, optional)
+
+Outputs:
+- `status`, `headers`, `body`, `json` (if parseable). If `as` is provided, the whole response object is saved under that name.
+
+Example:
+```yaml
+- step: call_api
+  type: http
+  method: GET
+  endpoint: "https://api.example.com/users/{{ user_id }}"
+  headers:
+    Authorization: "Bearer {{ env.API_TOKEN }}"
+  as: user_response
+  next: end
+```
+
+### duckdb
+Run DuckDB SQL/script.
+
+Inputs:
+- script (string, required): SQL or script
+- files (array[string], optional): External file paths
+- as (string, optional)
+
+Outputs:
+- Query result set (if any), saved under `as` if provided
+
+Example:
+```yaml
+- step: duck_transform
+  type: duckdb
+  script: |
+    CREATE OR REPLACE TABLE t AS SELECT 1 AS id;
+    SELECT * FROM t;
+  as: table_rows
+  next: end
+```
+
+### postgres
+Run PostgreSQL SQL/script.
+
+Inputs:
+- sql (string, required)
+- connection (string, optional): DSN/URL; OR provide discrete fields below
+- db_host, db_port, db_user, db_password, db_name, db_schema (optional)
+- as (string, optional)
+
+Outputs:
+- Query result set (if any) or `rowcount`; saved under `as` if provided
+
+Example:
+```yaml
+- step: load_users
+  type: postgres
+  connection: "{{ environment.postgres_url }}"
+  sql: |
+    SELECT id, email FROM users LIMIT 10;
+  as: users
+  next: end
+```
+
+### secrets
+Read a secret from a provider.
+
+Inputs:
+- provider (enum: gcp, aws, azure, vault, env)
+- name (string, required): Secret identifier
+- project (string, optional)
+- version (string|number, optional)
+- as (string, optional, default logical value: `secret_value`)
+
+Outputs:
+- Secret material as a string; saved under `as` (default `secret_value`)
+
+Example:
+```yaml
+- step: get_openai_key
+  type: secrets
+  provider: gcp
+  project: my-gcp-project
+  name: OPENAI_API_KEY
+  as: openai_api_key
+  next: end
+```
+
+### playbooks
+Execute all playbooks under a catalog path.
+
+Inputs:
+- catalog_path (string, required): Path/prefix in the catalog
+- with (object, optional): Inputs to forward to each playbook
+- parallel (boolean, optional): Execute sub-playbooks in parallel
+- as (string, optional)
+
+Outputs:
+- Array of child playbook results; saved under `as` if provided
+
+Example:
+```yaml
+- step: run_batch
+  type: playbooks
+  catalog_path: workflows/batch/jobs
+  with:
+    job_date: "{{ today() }}"
+  parallel: true
+  as: batch_results
+  next: end
+```
+
+### loop
+Iterate over a collection, running either a workbook task per item or a sub-playbook per item.
+
+Variant A (workbook task per item):
+
+Inputs:
+- mode: workbook
+- in (array|string, required): Collection/expression to iterate over
+- iterator (string, required): Item variable name
+- task (string, required): Workbook task name
+- with (object, optional): Inputs (may reference `{{ iterator }}`)
+- as (string, optional): Aggregate results variable
+
+Variant B (playbooks per item):
+
+Inputs:
+- mode: playbooks
+- in (array|string, required)
+- iterator (string, required)
+- catalog_path (string, required)
+- with (object, optional)
+- parallel (boolean, optional)
+- as (string, optional)
+
+Outputs:
+- Array of per-iteration results; saved under `as` if provided
+
+Examples:
+```yaml
+- step: loop_task
+  type: loop
+  mode: workbook
+  in: "{{ workload.user_ids }}"
+  iterator: uid
+  task: get_user
+  with:
+    id: "{{ uid }}"
+  as: users
+  next: end
+
+- step: loop_playbooks
+  type: loop
+  mode: playbooks
+  in: ["2025-09-01", "2025-09-02"]
+  iterator: d
+  catalog_path: workflows/daily/jobs
+  with:
+    job_date: "{{ d }}"
+  parallel: true
+  as: daily_runs
+  next: end
+```
+
+---
+
+## Validation Summary
+
+- `start` must define `next`.
+- `end` must not define `next`.
+- Each step type only accepts its own inputs/outputs as specified above.
+- `next` may be a string or an array of step names. If omitted (and not `end`), the branch ends.
+- Step names must be unique. References in `next` must exist.
+
+---
+
+## Minimal End-to-End Example
+
+```yaml
+apiVersion: noetl.io/v1
+kind: Playbook
+name: Minimal
+path: workflows/examples/minimal
+workflow:
+  - step: start
+    type: start
+    next: ping
+
+  - step: ping
+    type: http
+    method: GET
+    endpoint: https://httpbin.org/get
+    as: resp
+    next: end
+
+  - step: end
+    type: end
+```

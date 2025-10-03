@@ -56,7 +56,7 @@ class CatalogService:
                 version = await self.get_latest_version(path)
                 if not version:
                     return None
-            
+
             async with get_async_db_connection(self.pgdb_conn_string) as conn:
                 async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
@@ -88,7 +88,8 @@ class CatalogService:
     async def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         try:
             resource_data = yaml.safe_load(content) or {}
-            resource_path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
+            resource_path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
+                resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
             # Determine latest version synchronously from DB
             latest = None
             try:
@@ -108,7 +109,8 @@ class CatalogService:
             except Exception:
                 latest = None
             latest = latest or "0.1.0"
-            resource_version = latest if latest == '0.1.0' else self.increment_version(latest)
+            resource_version = latest if latest == '0.1.0' else self.increment_version(
+                latest)
 
             async with get_async_db_connection(self.pgdb_conn_string) as conn:
                 async with conn.cursor() as cursor:
@@ -123,7 +125,8 @@ class CatalogService:
                         row = await cursor.fetchone()
                         if not row or int(row[0]) == 0:
                             break
-                        resource_version = self.increment_version(resource_version)
+                        resource_version = self.increment_version(
+                            resource_version)
                         attempt += 1
                     if attempt >= 5:
                         raise RuntimeError("Failed to find unique version")
@@ -182,6 +185,19 @@ class CatalogService:
                     return [dict(r) for r in rows]
         except Exception:
             return []
+
+    async def entry_all_versions(self, resource_path: str) -> list[Dict[str, Any]]:
+        async with get_async_db_connection(self.pgdb_conn_string) as conn:
+            async with conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(
+                    """
+                        SELECT resource_path, resource_type, resource_version, content, payload, meta, timestamp
+                        FROM catalog WHERE resource_path = %s ORDER BY timestamp DESC
+                        """,
+                    (resource_path,)
+                )
+                # rows = await cursor.fetchall()
+                return await cursor.fetchall()
 
 
 def get_catalog_service() -> CatalogService:

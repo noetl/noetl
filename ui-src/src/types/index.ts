@@ -49,23 +49,6 @@ export interface DashboardStats {
   recent_executions: ExecutionData[];
 }
 
-export interface VisualizationWidget {
-  id: string;
-  type: "chart" | "table" | "metric" | "text" | "progress" | "list";
-  title: string;
-  data: any;
-  config: {
-    chartType?: "line" | "bar" | "pie" | "area";
-    columns?: string[];
-    format?: "number" | "percentage" | "currency";
-    color?: string;
-    height?: number;
-    showLegend?: boolean;
-    responsive?: boolean;
-    pagination?: boolean | object;
-  };
-}
-
 export interface MenuItemType {
   key: string;
   label: string;
