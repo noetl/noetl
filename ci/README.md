@@ -6,7 +6,8 @@ The following tools are available for in-cluster troubleshooting: [Tshoot](manif
 ## Available Components
 
 After deployment, the following components are available on the host system:
-- Noetl API server: http://localhost:8082/api/
+- Noetl server: http://localhost:8082/
+- VictoriaLogs: http://localhost:9428/select/vmui
 - Grafana: http://localhost:3000
   - with login: `admin`; password: `admin`
 - Postgres: **`localhost:54321`**
@@ -21,12 +22,14 @@ After deployment, the following components are available on the host system:
 - kind
 - kubectl
 - yq
+- helm
 
 Install **kind**, **kubectl**, **yq** on MacOS:
 ```
 brew install kind
 brew install kubectl
 brew install yq
+brew install helm
 ```  
 
 ## Spin up kind cluster
@@ -88,12 +91,12 @@ task show-kind-images
 ```
 task deploy-noetl
 ```
-The noetl service port 8082 is exposed as port 8082 on the host system. Container folders `/opt/noetl/data` and `/opt/noetl/logs` are mounted to the host folders `ci/kind/cache/noetl-data` and `ci/kind/cache/noetl-logs`,respectively. The container status can be checked at http://localhost:8082/api/health
+The noetl service port `8082` is exposed as port `8082` on the host system. Container folders `/opt/noetl/data` and `/opt/noetl/logs` are mounted to the host folders `ci/kind/cache/noetl-data` and `ci/kind/cache/noetl-logs`,respectively. The container status can be checked at http://localhost:8082/api/health
 
 
-## Install Victoria Metrics stack
+## Install VictoriaMetrics stack
 
-### 1. Add Victoria Metrics Helm repository
+### 1. Add VictoriaMetrics Helm repository
 ```
 task add-victoriametrics-helm-repo
 ```
@@ -103,32 +106,60 @@ task add-victoriametrics-helm-repo
 task add-metrics-server-helm-repo
 ```
 
-### 3. (Optional) Check available Helm chart versions
+### 3. Add Vector Helm repository
+```
+task add-vector-helm-repo
+```
+
+### 4. (Optional) Check available Helm chart versions
 ```
 helm search repo vm/victoria-metrics-k8s-stack -l
 helm search repo vm/victoria-metrics-operator -l
+helm search repo vm/victoria-logs-single -l
 helm search repo metrics-server/metrics-server -l
+helm search repo vector/vector -l
 ```
-Version 0.60.1 is currently used for the Victoria Metrics stack deployment.  
-Version 0.54.0 is currently used for the Victoria Metrics operator deployment.  
-Version 3.13.0 is currently used for the Metrics Server deployment.  
+|         Deployment        | Version in use |
+|:--------------------------|:--------------:|
+| VictoriaMetrics stack    | 0.60.1         |
+| VictoriaMetrics operator | 0.54.0         |
+| VictoriaLogs             | 0.11.11        |
+| Metrics Server            | 3.13.0         |
+| Vector                    | 0.46.0         |
+| |
 
-### 4. Install Metrics Server
+
+### 5. Install Metrics Server
 ```
 task deploy-metrics-server
 ```
 
-### 5. Install Victoria Metrics operator
+### 6. Install VictoriaMetrics operator
 To have control over an order of managed resources removal or to be able to remove a whole namespace with managed resources it’s recommended to disable operator in k8s-stack chart (victoria-metrics-operator.enabled: false) and install it separately. [Link to the official documentation](https://docs.victoriametrics.com/helm/victoria-metrics-k8s-stack/#install-operator-separately) 
 ```
 task deploy-vmstack-operator
 ```
 
-### 6. Install Victoria Metrics stack
+### 7. Install VictoriaMetrics stack
 ```
 task deploy-vmstack
 ```
 After deployment, Grafana is available at http://localhost:3000 with the login `admin` and password `admin`.  
+
+
+### 8. Install VictoriaLogs
+```
+task deploy-vmlogs
+```
+The Victoria Logs service runs on port `9428`, which is exposed on the host system at the same port.   
+The Web UI can be accessed at: http://localhost:9428/select/vmui  
+Group view settings must be configured as follows:
+![settings](documents/img/victoria_logs_config.png "settings")
+
+### 9. Install Vector
+```
+task deploy-vector
+```
 
 ---
 
@@ -149,8 +180,10 @@ For example, the following command performs these steps:
 - Loads the built noetl image into the kind cluster
 - Deploys monitoring components, including:
   - Metrics Server
-  - Victoria Metrics operator
-  - Victoria Metrics stack
+  - VictoriaMetrics operator
+  - VictoriaMetrics stack
+  - VictoriaLogs
+  - Vector
 - Deploys Postgres
 - Deploys the noetl API server and worker
 ```

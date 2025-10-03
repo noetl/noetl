@@ -22,6 +22,12 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
 
+        # VictoriaLogs
+      - containerPort: 30428
+        hostPort: 9428
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
     # ci/kind/cache added to .gitignore
     extraMounts:
       - hostPath: ci/kind/cache/pg-data
