@@ -12,25 +12,21 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;
 
 -- Resource
 CREATE TABLE IF NOT EXISTS noetl.resource (
-    name TEXT PRIMARY KEY,
-    type TEXT,
+    name VARCHAR PRIMARY KEY,
     meta JSONB
 );
 ALTER TABLE noetl.resource OWNER TO noetl;
 
 -- Catalog
 CREATE TABLE IF NOT EXISTS noetl.catalog (
-    resource_path     TEXT     NOT NULL,
-    resource_type     TEXT     NOT NULL REFERENCES noetl.resource(name),
-    resource_version  TEXT     NOT NULL,
-    source            TEXT     NOT NULL DEFAULT 'inline',
-    resource_location TEXT,
-    content           TEXT,
-    payload           JSONB    NOT NULL,
-    meta              JSONB,
-    layout            JSONB,     -- Optional layout for UI Workflow Builder
-    template          TEXT,
-    timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    path     TEXT            NOT NULL,
+    resource VARCHAR         NOT NULL REFERENCES noetl.resource(name),
+    version  SMALLSERIAL     NOT NULL,
+    content                  TEXT,
+    layout                   JSONB,     -- Optional layout for UI Workflow Builder
+    payload                  JSONB,
+    meta                     JSONB,
+    timestamp                TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (resource_path, resource_version)
 );
 ALTER TABLE noetl.catalog OWNER TO noetl;
