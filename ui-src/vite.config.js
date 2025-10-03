@@ -9,11 +9,11 @@ export default defineConfig({
     sourcemap: true,
   },
   server: {
-    port: 3000,
-    proxy: {
-      '/api': 'http://localhost:8000',
-      '/health': 'http://localhost:8000',
-    }
+    port: 3001,
+    // proxy: {
+    //   '/api': 'http://localhost:8000',
+    //   '/health': 'http://localhost:8000',
+    // }
   },
   define: {
     __FASTAPI_URL__: JSON.stringify('http://localhost:8000')

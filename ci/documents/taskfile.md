@@ -15,12 +15,6 @@ Alternatively it can be installed from the official Homebrew repository [[packag
 brew install go-task
 ```
 
-## WinGet &nbsp;&nbsp;&nbsp;![windows](/ci/documents/img/Windows.svg "Windows")
-Task is available via the [community repository](https://github.com/microsoft/winget-pkgs) [[source](https://github.com/microsoft/winget-pkgs/tree/master/manifests/t/Task/Task)]:
-```shell
-winget install Task.Task
-```
-
 ## Setup completions
 Some installation methods will automatically install completions too, but if this isn't working for you or your chosen method doesn't include them, you can run `task --completion <shell>` to output a completion script for any supported shell.
 
@@ -37,9 +31,5 @@ alias compdef t='task'
 Add the following line into the `~/.zshrc`
 ```
 eval "$(task --completion zsh)"
-```
-### powershell
-Add the following line into the `$PROFILE\Microsoft.PowerShell_profile.ps1`
-```
-Invoke-Expression  (&task --completion powershell | Out-String)
+alias compdef t='task'
 ```

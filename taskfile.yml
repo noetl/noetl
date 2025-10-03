@@ -52,8 +52,11 @@ tasks:
     aliases: [dp]
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/postgres/namespace.yaml
+      - kubectl apply -f ci/manifests/postgres/namespace/namespace.yaml
       - sleep 2
+      - |
+        kubectl create configmap postgres-schema-ddl --namespace postgres \
+          --from-file=schema_ddl.sql.norun=noetl/database/ddl/postgres/schema_ddl.sql  
       - kubectl apply -f ci/manifests/postgres/
 
   remove-postgres:
@@ -62,6 +65,7 @@ tasks:
     cmds:
       - kubectl config use-context kind-noetl
       - kubectl delete -f ci/manifests/postgres/
+      - kubectl delete configmap postgres-schema-ddl --namespace postgres
 
 # === NOETL ===
   docker-build-noetl:
@@ -101,7 +105,7 @@ tasks:
         sh: cat .noetl_last_build_tag.txt
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/noetl/namespace.yaml
+      - kubectl apply -f ci/manifests/noetl/namespace/namespace.yaml
       - sleep 2
       - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
       - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
@@ -154,6 +158,8 @@ tasks:
   bring-all:
     desc: Build noetl; Create noetl cluster with all deployments
     aliases: [ba]
+    vars:
+      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:
       - task: check-ports
       - task: docker-build-noetl
@@ -161,4 +167,16 @@ tasks:
       - task: load-noetl-image
       - task: deploy-monitoring
       - task: deploy-postgres
+      - task: deploy-noetl
+
+
+  noetl-redeploy:
+    desc: Build noetl and redeploy
+    aliases: [redeploy]
+    vars:
+      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
+    cmds:
+      - task: docker-build-noetl
+      - task: remove-noetl
+      - task: load-noetl-image
       - task: deploy-noetl
