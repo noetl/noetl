@@ -17,6 +17,10 @@ The following diagram illustrates the main components and intent of the NoETL sy
 
 ## Quick Start
 
+## Concept
+- [Playbook notes](docs/concepts/playbook_notes.md)
+
+
 ### Installation
 
 - Install NoETL from PyPI:
