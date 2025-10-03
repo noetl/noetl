@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS noetl.catalog (
     content           TEXT,
     payload           JSONB    NOT NULL,
     meta              JSONB,
+    layout            JSONB,     -- Optional layout for UI Workflow Builder
     template          TEXT,
     timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (resource_path, resource_version)
