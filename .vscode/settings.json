@@ -1,4 +1,8 @@
 {
+    "github.copilot.chat.instructionFiles": [
+        ".github/ai-instructions.md"
+    ],
+    "github.copilot.editor.enableCodeActions": true,
     "python.testing.unittestArgs": [
         "-v",
         "-s",
