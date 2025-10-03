@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noetl-server-dashboard
+  namespace: vmstack
+  labels:
+    grafana_dashboard: "1"
+    grafana_folder: "NoETL"
+data:
+  noetl-server-dashboard.json: |
+    {
+      "title": "NoETL Server Overview",
+      "uid": "noetl-server-overview",
+      "timezone": "browser",
+      "schemaVersion": 36,
+      "version": 1,
+      "refresh": "30s",
+      "tags": [
+        "application",
+        "noetl"
+      ],
+      "panels": [
+        {
+          "type": "stat",
+          "title": "NoETL Server Up",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "datasource": "VictoriaMetrics",
+          "targets": [
+            { "expr": "noetl_up", "legendFormat": "up" }
+          ],
+          "options": { 
+            "reduceOptions": { 
+              "calcs": ["lastNotNull"], 
+              "fields": "", 
+              "values": false 
+            }, 
+            "orientation": "horizontal" 
+          },
+          "fieldConfig": { 
+            "defaults": { 
+              "mappings": [], 
+              "thresholds": { 
+                "mode": "absolute", 
+                "steps": [ 
+                  {"color": "red", "value": null}, 
+                  {"color": "green", "value": 1} 
+                ] 
+              } 
+            }, 
+            "overrides": [] 
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Uptime (since start)",
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+          "datasource": "VictoriaMetrics",
+          "targets": [
+            { "expr": "time() - noetl_process_start_time_seconds", "legendFormat": "uptime" }
+          ],
+          "options": { 
+            "reduceOptions": { 
+              "calcs": ["lastNotNull"], 
+              "fields": "", 
+              "values": false 
+            }, 
+            "textMode": "value" 
+          },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+        {
+          "type": "timeseries",
+          "title": "HTTP Requests per second",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": "VictoriaMetrics",
+          "targets": [
+            { "expr": "rate(noetl_request_total[5m])", "legendFormat": "rps" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/s" }, "overrides": [] },
+          "options": { "legend": { "showLegend": true } }
+        },
+        {
+          "type": "table",
+          "title": "Build/Server Info",
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 6 },
+          "datasource": "VictoriaMetrics",
+          "targets": [
+            { "expr": "noetl_info", "legendFormat": "{{name}} v{{version}}" }
+          ],
+          "transformations": [
+            { "id": "labelsToFields", "options": { "mode": "columns" } },
+            { "id": "reduce", "options": { "reducers": ["lastNotNull"] } }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Process start time",
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 8 },
+          "datasource": "VictoriaMetrics",
+          "targets": [
+            { "expr": "noetl_process_start_time_seconds", "legendFormat": "start" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+        {
+          "type": "logs",
+          "title": "Recent Server Logs",
+          "gridPos": { "h": 12, "w": 24, "x": 0, "y": 12 },
+          "datasource": "VictoriaLogs",
+          "options": {
+            "showLabels": true,
+            "showTime": true,
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "expr": "kubernetes.container_name:=\"noetl-server\"",
+              "refId": "A"
+            }
+          ]
+        }
+      ],
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": { "list": [] },
+      "annotations": { "list": [] }
+    }

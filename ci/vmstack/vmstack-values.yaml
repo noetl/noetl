@@ -902,13 +902,22 @@ grafana:
       initDatasources: true
       label: grafana_datasource
     dashboards:
-      provider:
-        name: default
-        orgid: 1
-      folder: /var/lib/grafana/dashboards
-      defaultFolderName: default
       enabled: true
-      multicluster: false
+      searchNamespace: vmstack
+
+  plugins:
+    - victoriametrics-logs-datasource
+
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: VictoriaLogs
+          type: victoriametrics-logs-datasource
+          url: http://vmlogs-single-server.vmlogs.svc.cluster.local:9428
+          access: proxy
+          isDefault: false
+          editable: true
 
   # -- Create datasource configmap even if grafana deployment has been disabled
   forceDeployDatasource: false
