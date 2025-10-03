@@ -1,3 +1,4 @@
+from .service import CatalogService, get_catalog_service
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Request, Query, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -15,6 +16,7 @@ from noetl.core.common import (
     get_snowflake_id,
 )
 from noetl.core.logger import setup_logger
+from .service import get_catalog_service
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
@@ -46,7 +48,6 @@ async def register_resource(
                 detail="The content or content_base64 must be provided."
             )
 
-        from .service import get_catalog_service
         catalog_service = get_catalog_service()
         result = await catalog_service.register_resource(content, resource_type)
         return result
@@ -58,13 +59,13 @@ async def register_resource(
             detail=f"Error registering resource: {e}."
         )
 
+
 @router.get("/catalog/list", response_class=JSONResponse)
 async def list_resources(
     request: Request,
     resource_type: str = None
 ):
     try:
-        from .service import get_catalog_service
         catalog_service = get_catalog_service()
         entries = await catalog_service.list_entries(resource_type)
         return {"entries": entries}
@@ -148,7 +149,8 @@ async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
 
         entry = await catalog_service.fetch_entry(playbook_id, version)
         if not entry:
-            raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
+            raise HTTPException(
+                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
 
         try:
             content = entry.get('content') or ''
@@ -191,7 +193,8 @@ async def get_catalog_playbook_content(playbook_id: str, request: Request, versi
 
         entry = await catalog_service.fetch_entry(playbook_id, version)
         if not entry:
-            raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
+            raise HTTPException(
+                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
 
         return {
             "path": playbook_id,
@@ -268,7 +271,8 @@ async def get_catalog_widgets():
                         meta_str = row[0]
                         if meta_str:
                             try:
-                                meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+                                meta = json.loads(meta_str) if isinstance(
+                                    meta_str, str) else meta_str
                                 status = meta.get('status', 'active')
                                 if status == 'active':
                                     active_count += 1
@@ -279,7 +283,8 @@ async def get_catalog_widgets():
                         else:
                             active_count += 1
         except Exception as db_error:
-            logger.warning(f"Error getting catalog stats from database: {db_error}")
+            logger.warning(
+                f"Error getting catalog stats from database: {db_error}")
             playbook_count = 0
 
         return [
@@ -326,7 +331,6 @@ async def get_catalog_widgets():
 
 
 # Dependency/helper for runtime to get playbook entry
-from .service import CatalogService, get_catalog_service
 
 
 async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
@@ -340,11 +344,13 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
         path_parts = path_to_lookup.rsplit(':', 1)
         if path_parts[1].replace('.', '').isdigit():
             path_to_lookup = path_parts[0]
-            logger.info(f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
+            logger.info(
+                f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
 
     catalog_service = get_catalog_service()
     latest_version = await catalog_service.get_latest_version(path_to_lookup)
-    logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
+    logger.info(
+        f"Using latest version for '{path_to_lookup}': {latest_version}")
 
     entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
     if not entry:
