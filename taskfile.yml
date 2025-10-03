@@ -172,7 +172,7 @@ tasks:
 
   noetl-redeploy:
     desc: Build noetl and redeploy
-    aliases: [nr]
+    aliases: [redeploy]
     vars:
       CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:

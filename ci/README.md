@@ -173,7 +173,7 @@ task deploy-noetl-scrape
 
 ### 12. Deploy noetl and postgres Grafana dashboards
 ```
-task deploy-dashboard
+task deploy-dashboards
 ```
 
 ---
@@ -199,6 +199,9 @@ For example, the following command performs these steps:
   - VictoriaMetrics stack
   - VictoriaLogs
   - Vector
+  - Postgres metrics exporter
+  - Metrics scraping
+  - Grafana dashboards
 - Deploys Postgres
 - Deploys the noetl API server and worker
 ```

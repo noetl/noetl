@@ -145,14 +145,14 @@ tasks:
       - kubectl config use-context kind-noetl
       - kubectl delete -f ci/manifests/noetl-scrape/
 
-  deploy-dashboard:
+  deploy-dashboards:
     desc: Deploy noetl and postgres Grafana dashboards
     aliases: [dd]
     cmds:
       - kubectl config use-context kind-noetl
       - kubectl apply -f ci/manifests/grafana-dashboards
 
-  remove-dashboard:
+  remove-dashboards:
     desc: Remove noetl and postgres Grafana dashboards
     aliases: [rd]
     cmds:
@@ -174,4 +174,4 @@ tasks:
       - task: deploy-vector
       - task: deploy-exporter
       - task: deploy-noetl-scrape
-      - task: deploy-dashboard
+      - task: deploy-dashboards
