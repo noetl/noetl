@@ -342,7 +342,6 @@ customConfig:
         .timestamp = to_unix_timestamp(.timestamp) ?? now()
         .labels.pod_name = .kubernetes.pod_name
 
-
   sinks:
     vlogs:
       inputs:

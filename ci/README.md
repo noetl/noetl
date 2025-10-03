@@ -154,11 +154,26 @@ task deploy-vmlogs
 The Victoria Logs service runs on port `9428`, which is exposed on the host system at the same port.   
 The Web UI can be accessed at: http://localhost:9428/select/vmui  
 Group view settings must be configured as follows:
-![settings](documents/img/victoria_logs_config.png "settings")
+![settings](documents/img/victorialogs_config.png "settings")
 
 ### 9. Install Vector
 ```
 task deploy-vector
+```
+
+### 10. Deploy exporter and VMServiceScrape for Postgres
+```
+task deploy-exporter
+```
+
+### 10. Deploy VMServiceScrape for noetl
+```
+task deploy-noetl-scrape
+```
+
+### 12. Deploy noetl and postgres Grafana dashboards
+```
+task deploy-dashboard
 ```
 
 ---

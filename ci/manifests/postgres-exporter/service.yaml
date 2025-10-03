@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: postgres
+  labels:
+    app: postgres-exporter
+spec:
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: metrics
+  selector:
+    app: postgres-exporter
