@@ -20,14 +20,14 @@ ALTER TABLE noetl.resource OWNER TO noetl;
 -- Catalog
 CREATE TABLE IF NOT EXISTS noetl.catalog (
     path     TEXT            NOT NULL,
-    resource VARCHAR         NOT NULL REFERENCES noetl.resource(name),
     version  SMALLSERIAL     NOT NULL,
+    kind     VARCHAR         NOT NULL REFERENCES noetl.resource(name),
     content                  TEXT,
     layout                   JSONB,     -- Optional layout for UI Workflow Builder
     payload                  JSONB,
     meta                     JSONB,
     timestamp                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (resource_path, resource_version)
+    PRIMARY KEY (path, version)
 );
 ALTER TABLE noetl.catalog OWNER TO noetl;
 
@@ -57,10 +57,6 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     result TEXT,
     meta TEXT,
     error TEXT,
-    loop_id VARCHAR,
-    loop_name VARCHAR,
-    iterator VARCHAR,
-    items TEXT,
     current_index INTEGER,
     current_item TEXT,
     worker_id VARCHAR,
@@ -151,8 +147,6 @@ CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
 CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
 CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
 
--- Metric (singular, following NoETL table naming convention)
--- Partitioned by date for efficient TTL management via partition dropping
 CREATE TABLE IF NOT EXISTS noetl.metric (
     metric_id BIGSERIAL,
     runtime_id BIGINT NOT NULL REFERENCES noetl.runtime(runtime_id) ON DELETE CASCADE,
@@ -189,7 +183,6 @@ BEGIN
     start_date := partition_date;
     end_date := partition_date + INTERVAL '1 day';
     
-    -- Create partition if it doesn't exist
     EXECUTE format('CREATE TABLE IF NOT EXISTS noetl.%I PARTITION OF noetl.metric
                     FOR VALUES FROM (%L) TO (%L)',
                    partition_name, start_date, end_date);

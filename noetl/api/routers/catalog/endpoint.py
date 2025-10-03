@@ -1,4 +1,10 @@
-from noetl.api.routers.catalog.schemas.catalog_resource import PlaybookResourceResponse, transform
+from noetl.api.routers.catalog.schema import (
+    PlaybookResourceResponse,
+    CatalogEntryResponse,
+    CatalogListResponse,
+    PlaybookSummaryResponse,
+    transform,
+)
 from .service import CatalogService, get_catalog_service
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Request, Query, HTTPException, BackgroundTasks
@@ -17,15 +23,20 @@ from noetl.core.common import (
     get_snowflake_id,
 )
 from noetl.core.logger import setup_logger
-from .service import get_catalog_service
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
 
-@router.post("/catalog/register", response_class=JSONResponse)
+# FastAPI dependency for catalog service
+def get_catalog_service_dependency() -> CatalogService:
+    return get_catalog_service()
+
+
+@router.post("/catalog/register", response_class=JSONResponse, tags=["Catalog"])
 async def register_resource(
     request: Request,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
     content_base64: str = None,
     content: str = None,
     resource_type: str = "Playbook"
@@ -49,7 +60,6 @@ async def register_resource(
                 detail="The content or content_base64 must be provided."
             )
 
-        catalog_service = get_catalog_service()
         result = await catalog_service.register_resource(content, resource_type)
         return result
 
@@ -61,13 +71,19 @@ async def register_resource(
         )
 
 
-@router.get("/catalog/list", response_class=JSONResponse)
+@router.get(
+    "/catalog/list",
+    response_model=CatalogListResponse,
+    tags=["Catalog"],
+    summary="List all catalog resources",
+    description="Retrieve a list of all catalog entries, optionally filtered by resource type"
+)
 async def list_resources(
     request: Request,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
     resource_type: str = None
 ):
     try:
-        catalog_service = get_catalog_service()
         entries = await catalog_service.list_entries(resource_type)
         return {"entries": entries}
 
@@ -90,11 +106,12 @@ async def get_playbooks():
     response_model=list[PlaybookResourceResponse],
     tags=["Catalog"],
 )
-async def get_catalog_resource(resource_path: str):
+async def get_catalog_resource(
+    resource_path: str,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency)
+):
     """Get resource by path all versions"""
     try:
-        from .service import get_catalog_service
-        catalog_service = get_catalog_service()
         entries = await catalog_service.entry_all_versions(resource_path)
         return [transform(PlaybookResourceResponse, entry) for entry in entries]
     except Exception as e:
@@ -102,17 +119,21 @@ async def get_catalog_resource(resource_path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/playbooks", response_class=JSONResponse)
-async def get_catalog_playbooks():
+@router.get(
+    "/catalog/playbooks",
+    response_model=list[PlaybookSummaryResponse],
+    tags=["Catalog"]
+)
+async def get_catalog_playbooks(
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency)
+):
     """Get all playbooks"""
     try:
-        from .service import get_catalog_service
-        catalog_service = get_catalog_service()
         entries = await catalog_service.list_entries('Playbook')
 
         playbooks = []
         for entry in entries:
-            meta = entry.get('meta', {})
+            meta = entry.get('meta', {}) or {}
 
             description = ""
             payload = entry.get('payload', {})
@@ -129,19 +150,22 @@ async def get_catalog_playbooks():
             if not description:
                 description = meta.get('description', '')
 
-            playbook = {
-                "id": entry.get('resource_path', ''),
-                "name": entry.get('resource_path', '').split('/')[-1],
-                "resource_type": entry.get('resource_type', ''),
-                "resource_version": entry.get('resource_version', ''),
-                "meta": entry.get('meta', ''),
-                "timestamp": entry.get('timestamp', ''),
-                "description": description,
-                "created_at": entry.get('timestamp', ''),
-                "updated_at": entry.get('timestamp', ''),
-                "status": meta.get('status', 'active'),
-                "tasks_count": meta.get('tasks_count', 0)
-            }
+            path = entry.get('path', '')
+            timestamp = entry.get('timestamp')
+
+            playbook = PlaybookSummaryResponse(
+                id=path,
+                name=path.split('/')[-1] if path else '',
+                kind=entry.get('kind', ''),
+                version=entry.get('version', 1),
+                meta=meta,
+                timestamp=timestamp,
+                description=description,
+                created_at=timestamp,
+                updated_at=timestamp,
+                status=meta.get('status', 'active'),
+                tasks_count=meta.get('tasks_count', 0)
+            )
             playbooks.append(playbook)
 
         return playbooks
@@ -150,17 +174,18 @@ async def get_catalog_playbooks():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
-async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
+@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse, tags=["Catalog"])
+async def get_catalog_playbook(
+    playbook_id: str,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
+    version: Optional[str] = None
+):
     """Get playbook by ID, optionally by version"""
     try:
         logger.info(f"Received playbook_id: '{playbook_id}'")
         if playbook_id.startswith("playbooks/"):
             playbook_id = playbook_id[10:]
             logger.info(f"Fixed playbook_id: '{playbook_id}'")
-
-        from .service import get_catalog_service
-        catalog_service = get_catalog_service()
 
         if not version:
             version = await catalog_service.get_latest_version(playbook_id)
@@ -186,8 +211,13 @@ async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
-async def get_catalog_playbook_content(playbook_id: str, request: Request, version: Optional[str] = None):
+@router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse, tags=["Catalog"])
+async def get_catalog_playbook_content(
+    playbook_id: str,
+    request: Request,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
+    version: Optional[str] = None
+):
     """Get playbook raw content"""
     try:
         logger.info(f"Received playbook_id for content: '{playbook_id}'")
@@ -201,8 +231,6 @@ async def get_catalog_playbook_content(playbook_id: str, request: Request, versi
             pass
         if not version and isinstance(body, dict):
             version = body.get('version')
-        from .service import get_catalog_service
-        catalog_service = get_catalog_service()
         if not version:
             version = await catalog_service.get_latest_version(playbook_id)
         entry = await catalog_service.fetch_entry(playbook_id, version)
@@ -222,8 +250,12 @@ async def get_catalog_playbook_content(playbook_id: str, request: Request, versi
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
-async def save_catalog_playbook_content(playbook_id: str, request: Request):
+@router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse, tags=["Catalog"])
+async def save_catalog_playbook_content(
+    playbook_id: str,
+    request: Request,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency)
+):
     """Save playbook content (stores new version)."""
     try:
         logger.info(f"Received playbook_id for save: '{playbook_id}'")
@@ -254,8 +286,6 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
         except Exception as norm_err:
             logger.warning(
                 f"Failed to normalize playbook path in YAML: {norm_err}")
-        from .service import get_catalog_service
-        catalog_service = get_catalog_service()
         # Use consistent resource type capitalization
         result = await catalog_service.register_resource(content, "Playbook")
         return {"status": "success", "message": f"Playbook '{playbook_id}' content updated.", "resource_path": result.get("resource_path"), "resource_version": result.get("resource_version")}
@@ -266,8 +296,12 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
-async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
+@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse, tags=["Catalog"])
+async def get_catalog_playbook_fallback(
+    playbook_id: str,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
+    version: Optional[str] = None
+):
     """Get playbook by ID, optionally by version
 
     Fallback: if a request meant for the /content endpoint is misrouted here (because of
@@ -288,8 +322,6 @@ async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
                 "Misrouted playbook content request detected for '%s'; serving content via fallback.",
                 original_id
             )
-            from .service import get_catalog_service
-            catalog_service = get_catalog_service()
             if not version:
                 version = await catalog_service.get_latest_version(original_id)
             entry = await catalog_service.fetch_entry(original_id, version)
@@ -298,8 +330,6 @@ async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
                     status_code=404, detail=f"Playbook '{original_id}' with version '{version}' not found.")
             return {"path": original_id, "version": version, "content": entry.get('content')}
 
-        from .service import get_catalog_service
-        catalog_service = get_catalog_service()
         if not version:
             version = await catalog_service.get_latest_version(playbook_id)
         entry = await catalog_service.fetch_entry(playbook_id, version)
@@ -321,7 +351,7 @@ async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/widgets", response_class=JSONResponse)
+@router.get("/catalog/widgets", response_class=JSONResponse, tags=["Catalog"])
 async def get_catalog_widgets():
     """Get catalog visualization widgets"""
     try:
