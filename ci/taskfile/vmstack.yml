@@ -118,6 +118,8 @@ tasks:
     aliases: [de]
     cmds:
       - kubectl config use-context kind-noetl
+      - kubectl apply -f ci/manifests/postgres-exporter/namespace/namespace.yaml
+      - sleep 2
       - kubectl apply -f ci/manifests/postgres-exporter
 
   remove-exporter:
@@ -125,21 +127,23 @@ tasks:
     aliases: [re]
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl delete -f ci/manifests/postgres-exporter
+      - kubectl delete -f ci/manifests/postgres-exporter/
 
   deploy-noetl-scrape:
     desc: Deploy VMServiceScrape for noetl
     aliases: [dns]
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/noetl-scrape
+      - kubectl apply -f ci/manifests/noetl-scrape/namespace/namespace.yaml
+      - sleep 2
+      - kubectl apply -f ci/manifests/noetl-scrape/
 
   remove-noetl-scrape:
     desc: Remove VMServiceScrape for noetl
     aliases: [rns]
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl delete -f ci/manifests/noetl-scrape
+      - kubectl delete -f ci/manifests/noetl-scrape/
 
   deploy-dashboard:
     desc: Deploy noetl and postgres Grafana dashboards
@@ -169,4 +173,5 @@ tasks:
       - task: deploy-vmlogs
       - task: deploy-vector
       - task: deploy-exporter
+      - task: deploy-noetl-scrape
       - task: deploy-dashboard

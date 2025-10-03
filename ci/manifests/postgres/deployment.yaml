@@ -83,7 +83,7 @@ spec:
                 path: init_database.sh
         - name: postgres-schema-volume
           configMap:
-            name: postgres-config-files
+            name: postgres-schema-ddl
             items:
               - key: schema_ddl.sql.norun
                 path: schema_ddl.sql.norun
