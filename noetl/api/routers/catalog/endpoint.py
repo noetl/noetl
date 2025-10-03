@@ -1,3 +1,4 @@
+from noetl.api.routers.catalog.schemas.catalog_resource import PlaybookResourceResponse, transform
 from .service import CatalogService, get_catalog_service
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Request, Query, HTTPException, BackgroundTasks
@@ -82,6 +83,23 @@ async def list_resources(
 async def get_playbooks():
     """Get all playbooks (legacy endpoint)"""
     return await get_catalog_playbooks()
+
+
+@router.get(
+    "/catalog/resource",
+    response_model=list[PlaybookResourceResponse],
+    tags=["Catalog"],
+)
+async def get_catalog_resource(resource_path: str):
+    """Get resource by path all versions"""
+    try:
+        from .service import get_catalog_service
+        catalog_service = get_catalog_service()
+        entries = await catalog_service.entry_all_versions(resource_path)
+        return [transform(PlaybookResourceResponse, entry) for entry in entries]
+    except Exception as e:
+        logger.error(f"Error getting playbooks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/catalog/playbooks", response_class=JSONResponse)

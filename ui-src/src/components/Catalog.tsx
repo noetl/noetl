@@ -26,8 +26,7 @@ import {
   UploadOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
-import { PlaybookData, VisualizationWidget } from "../types";
-import WidgetRenderer from "./WidgetRenderer";
+import { PlaybookData } from "../types";
 import "../styles/Catalog.css";
 import { useNavigate } from "react-router-dom";
 
@@ -41,7 +40,6 @@ const Catalog: React.FC = () => {
   const navigate = useNavigate();
   const [playbooks, setPlaybooks] = useState<PlaybookData[]>([]);
   const [allPlaybooks, setAllPlaybooks] = useState<PlaybookData[]>([]);
-  const [widgets, setWidgets] = useState<VisualizationWidget[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,14 +127,10 @@ const Catalog: React.FC = () => {
       setError(null);
 
       // Fetch playbooks and catalog widgets from FastAPI
-      const [playbooksResponse, widgetsResponse] = await Promise.all([
-        apiService.getPlaybooks(),
-        apiService.getCatalogWidgets(),
-      ]);
+      const playbooksResponse = await apiService.getPlaybooks();
 
       setPlaybooks(playbooksResponse);
       setAllPlaybooks(playbooksResponse); // Store all playbooks for local filtering
-      setWidgets(widgetsResponse);
     } catch (err) {
       console.error("Failed to fetch catalog data:", err);
       setError(
@@ -289,17 +283,6 @@ const Catalog: React.FC = () => {
           onSearch={handleSearch}
           onChange={handleSearchInputChange}
         />
-
-        {/* Render catalog widgets from FastAPI */}
-        {widgets.length > 0 && (
-          <Row gutter={[16, 16]}>
-            {widgets.map((widget) => (
-              <Col key={widget.id} xs={24} sm={12} md={8} lg={6}>
-                <WidgetRenderer widget={widget} />
-              </Col>
-            ))}
-          </Row>
-        )}
 
         {/* Playbooks list */}
         <Space direction="vertical" size="middle" className="catalog-playbooks-space">

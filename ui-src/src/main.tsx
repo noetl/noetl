@@ -8,18 +8,10 @@ import {
   Route,
   useNavigate,
   useLocation,
-  Navigate,
 } from "react-router-dom";
 import { Layout, Menu, Typography, ConfigProvider, Result, Button, App as AntdApp } from "antd";
-import {
-  HomeOutlined,
-  BookOutlined,
-  EditOutlined,
-  HistoryOutlined,
-} from "@ant-design/icons";
 
 // Import components
-import Dashboard from "./components/Dashboard";
 import Catalog from "./components/Catalog";
 import Editor from "./components/Editor";
 import Execution from "./components/Execution";
@@ -54,20 +46,10 @@ const NotFound: React.FC = () => {
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [selectedKey, setSelectedKey] = useState(() => {
-    if (location.pathname.startsWith("/catalog")) return "catalog";
-    if (location.pathname.startsWith("/editor")) return "editor";
-    if (location.pathname.startsWith("/execution")) return "execution";
-    return "dashboard";
-  });
 
   useEffect(() => {
-    if (location.pathname.startsWith("/catalog")) setSelectedKey("catalog");
-    else if (location.pathname.startsWith("/editor")) setSelectedKey("editor");
-    else if (location.pathname.startsWith("/execution"))
-      setSelectedKey("execution");
-    else setSelectedKey("dashboard");
-  }, [location.pathname]);
+    // navigate("/catalog");
+  }, []);
 
   return (
     <ConfigProvider
@@ -81,33 +63,28 @@ const App: React.FC = () => {
       }}
     >
       <AntdApp>
-        <Layout style={{ minHeight: "100vh", background: "#f5f5f5" }}>
+        <Layout className="app" style={{ minHeight: "100vh", background: "#f5f5f5" }}>
           <Header className="app-header">
             <div className="header-inner">
               <div className="logo">NoETL Dashboard</div>
               <Menu
                 theme="light"
                 mode="horizontal"
-                selectedKeys={[selectedKey]}
+                selectedKeys={[location.pathname]}
                 className="centered-menu"
                 items={[
                   {
-                    key: "dashboard",
-                    label: "Dashboard",
-                    onClick: () => navigate("/"),
-                  },
-                  {
-                    key: "catalog",
+                    key: "/catalog",
                     label: "Catalog",
                     onClick: () => navigate("/catalog"),
                   },
                   {
-                    key: "editor",
+                    key: "/editor",
                     label: "Editor",
                     onClick: () => navigate("/editor"),
                   },
                   {
-                    key: "execution",
+                    key: "/execution",
                     label: "Execution",
                     onClick: () => navigate("/execution"),
                   },
@@ -126,7 +103,6 @@ const App: React.FC = () => {
               }}
             >
               <Routes>
-                <Route path="/" element={<Dashboard />} />
                 <Route path="/catalog" element={<Catalog />} />
                 <Route path="/editor" element={<Editor />} />
                 <Route path="/execution" element={<Execution />} />
@@ -144,7 +120,7 @@ const App: React.FC = () => {
               fontSize: "14px",
             }}
           >
-            NoETL Dashboard ©2024 Created with React & TypeScript
+            NoETL ©2025
           </Footer>
         </Layout>
       </AntdApp>
