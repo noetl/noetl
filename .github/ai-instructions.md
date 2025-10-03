@@ -39,16 +39,50 @@ task clear-all-cache     # Clear local file cache
 ```yaml
 apiVersion: noetl.io/v1
 kind: Playbook
-workload:                 # Input parameters (readonly, Jinja2 templated)
-workflow:                 # Ordered steps with conditional flow
-  - step: name
-    type: plugin_type     # http, postgres, duckdb, python, workbook, etc.
-    data: {}             # Step-specific parameters
-    next:                 # Conditional transitions
+metadata:                 # Required metadata section
+  name: playbook_name     # Unique identifier
+  path: catalog/path      # Catalog registration path
+workload:                 # Global variables merged with payload; Jinja2 templated
+  variable: value
+workbook:                 # Named reusable tasks (optional)
+  - name: task_name       # Reference name
+    type: python          # Action type: python, http, postgres, duckdb, playbook, iterator
+    code: |               # Type-specific configuration
+      def main(input_data):
+        return result
+    save:                 # Optional: save task result to storage
+      storage: postgres
+      table: table_name
+workflow:                 # Execution flow (required, must have 'start' step)
+  - step: start           # Required entry point
+    desc: description
+    next:                 # Conditional routing
       - when: "{{ condition }}"
-        then: [steps]
-workbook:                 # Reusable task definitions
+        then:
+          - step: next_step
+        data:             # Data to pass to next steps
+          key: "{{ value }}"
+  - step: task_step
+    type: workbook        # Reference workbook task by name
+    name: task_name       # OR inline action type: python, http, postgres, etc.
+    data:                 # Data passed to action via Jinja2 templating
+      input: "{{ workload.variable }}"
+    next:
+      - step: end
+  - step: end
+    desc: End workflow
 ```
+
+**Key Concepts:**
+- **Jinja2 Templating**: All string values support Jinja2 with access to `workload`, `execution_id`, step results (e.g., `{{ step_name.data }}`), and iterator context
+- **Workflow Entry**: Must have a step named "start" as the workflow entry point
+- **Step Types**:
+  - `type: workbook` - References named task from workbook section by `name` attribute
+  - Direct action types: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
+- **Conditional Flow**: Steps use `next` with optional `when` conditions and `then` arrays for routing
+- **Iterator**: `type: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
+- **Save Blocks**: Any action can have a `save` attribute to persist results to storage backends
+- **Playbook Composition**: `type: playbook` allows calling sub-playbooks with `path` and `return_step` attributes
 
 **Credential Patterns** (v1.0+ unified auth):
 - `auth: {type: postgres, credential: key}` - Single credential lookup

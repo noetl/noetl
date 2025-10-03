@@ -3,24 +3,24 @@
 Optional block for named tasks reusable across workflows.
 
 What it is
-- A list of named actions with the same shape as normal steps (type, data, code/command/sql, assert, save)
-- Invoked from workflow steps via `type: workbook` and a reference to the task by name
+- A list of named actions with the same shape as workflow steps (type, data, auth, code/command/sql, assert, save)
+- Invoked from workflow steps via `type: workbook` and a `name` reference
 
 Required keys
-- workbook: list of tasks
-- Each task: name, type, and implementation fields for that type
+- `workbook`: array of task objects
+- Each task: `name`, `type` (any action type except `workbook`), plus fields required by that action
 
 Invocation from workflow
-- Use a workflow step with `type: workbook`
-- Reference the task by name (field may be `name` or `task` depending on resolver)
-- Pass `data:` like any other step
+- Create a workflow step with `type: workbook`
+- Provide `name: <task>` so the engine resolves the workbook entry
+- Pass `data` just like any other step to override inputs on that invocation
 
-Patterns (fragments)
+Patterns
 - Small Python utilities (validation, transformations)
-- SQL snippets for parameterized DDL/DML
-- Composable building blocks used by multiple playbooks
+- Parameterised SQL snippets (Postgres, DuckDB)
+- Reusable HTTP integrations shared across steps or playbooks
 
 Tips
-- Keep task names unique within the workbook.
-- Use `assert` on tasks to document inputs/outputs.
-- Prefer pure functions in Python tasks for predictability.
+- Keep task names unique within the workbook scope
+- Document expectations with `assert.expects`/`assert.returns`
+- Combine with `save` to persist reusable action results consistently

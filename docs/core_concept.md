@@ -1,52 +1,39 @@
 # Core Concept
 
-1. Playbook is a manifest file of the workflow.
-2. Server api provides interface for UI, CLI and Workers
-3. Worker pools arranges resources to execute actual tasks of the playbooks.
+1. A playbook is a YAML declaration of a workflow.
+2. The server exposes APIs used by the UI, CLI, and workers.
+3. Worker pools lease work from the queue and execute playbook actions.
 
-Playbook has 4 section:
-- metadata: contains name  and path and version and description of the playbook
-- workflow: has a steps and transition logic
-- workbook: is a namespace to keep named action types of the playbook that can be refered from the steps.
-- workload: is a section for the static variables that can be override or merged with payload passed to the playbook.
+## Playbook Sections
 
-Step:
-1. Steps defined in the workflow section of the playbook.  
+Each playbook contains four logical sections:
 
-2. Step has a type, e.g:  type: workbook or type: python or type: playbook.   
-2.1. If type: playbook and step has attribute path: examples/weather_loop then step will schedule this playbook for execution and pass context to it.  
-2.2. If type: workbook and step has attribute name: task_name then noetl will lookup the action type by name in the workbook section and schedule it for execution.  
-2.3  If type: python ot http or duckdb or postgres or secret - noetl will schedule the step action type with it's attributes to execute on workers' pool.  
+- **metadata** – identifies the playbook (`name`, `path`, and optional `version`, `description`).
+- **workload** – global variables merged with the payload supplied when you register or execute the playbook.
+- **workbook** – a namespace of named actions. Steps reference these entries with `type: workbook` and `name: <task>`.
+- **workflow** – the ordered list of steps, transitions, and branching logic.
 
-3. Iteration is modeled with an iterator step (`type: iterator`). It executes a nested task once per element of `collection` (exposed as `element`) and can keep aggregated results for subsequent steps.  
+All values support Jinja2 templating so you can substitute workload variables, payload data, iterator state, or previous results.
 
-4. Step may have a "next" attribute. In next attribute it may have a "when" then condition that will route transtion to the next steps.   
+## Step Behaviour
 
-# Core Concept V2
+1. Steps live inside the `workflow` array and must have a unique `step` name.
+2. Every step declares a `type`. Supported options include `workbook`, `python`, `http`, `duckdb`, `postgres`, `playbook`, and `iterator` (plus any plugin-specific types).  
+   - `type: playbook` schedules another playbook for execution (with `path` and optional `return_step`).
+   - `type: workbook` combined with `name` references a workbook task and runs its action definition.
+   - Other action types (`python`, `http`, `duckdb`, `postgres`, `secrets`, etc.) execute inline using the attributes provided on the step.
+3. Iteration is modelled with `type: iterator`. Provide `collection`, `element`, and a nested `task` (another action definition). The engine runs the task once per element and can accumulate results.
+4. Each step can expose a `next` list. Use `when`/`then`/`else` blocks to route execution and attach optional `data` payloads for downstream steps.
+5. Steps (and workbook tasks) can include a `save` block to funnel their results into storage-oriented actions such as Postgres, DuckDB, or HTTP.
+6. Steps may declare `auth` to reference credentials resolved by the execution engine.
+7. Every workflow must include a `start` step (entry router) and an `end` step to aggregate results or return them to the caller.
 
-NoETL is a lightweight and flexible workflow engine for automating tasks using...
+## Core Concept V2
 
-## The main components
+NoETL is a lightweight, event-driven workflow engine. You describe intent in playbooks and NoETL evaluates steps, manages transitions, and records state so you can replay or resume executions.
 
-1. Playbook is a manifest file of the workflow.
-2. Server api provides interface for UI, CLI and Workers
-3. Worker pools arranges resources to execute actual tasks of the playbooks.
+### Typical Flow
 
-You describe what do you want in playbooks (YAML file) and NoETL runs it step-by-step (call APIs, run Python, execute SQL, chain other playbooks and a lot of other methods). 
-
-## What a playbook contains?
-
-A playbook has four sections:
-1.	metadata – identity and description: name, path, optional version, description.
-2.	workload – inputs & knobs: Constants and defaults used by steps. At run time they can be overridden/merged with the payload you pass.
-3.	workflow – the flow of steps: The ordered list of steps with transitions, conditions, and loops.
-4.	workbook – reusable, named actions: A little library of tasks (e.g., HTTP, Python, DuckDB, Postgres) you can call from workflow steps.
-
-## How to use it?
-
-1.	Write a playbook (.yaml): define inputs, steps, and a library of reusable tasks (workbooks).
-2.	Run it from the UI or CLI and pass a payload if needed.
-3.	Workers pick up the steps and execute them; you read logs/results and move on.
-
-
-
+1. **Author** – Write a playbook: define `metadata`, declare defaults in `workload`, add reusable actions to `workbook`, and model the step graph in `workflow`.
+2. **Execute** – Run it from CLI or API, optionally providing a payload that overrides parts of `workload`.
+3. **Observe** – Workers execute steps, emit events, and persist results. You inspect logs, metrics, and saved outputs.
