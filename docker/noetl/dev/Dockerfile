@@ -35,8 +35,8 @@ RUN apt-get update && apt-get --no-install-recommends install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-ENV TZ=America/Chicago
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# ENV TZ=America/Chicago
+# RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
 

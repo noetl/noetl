@@ -1,0 +1,457 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noetl.io/schemas/playbook.schema.json",
+  "title": "NoETL Playbook",
+  "description": "Schema for validating NoETL playbooks. String values support Jinja2 templating at runtime.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "workload",
+    "workflow"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "noetl.io/v1"
+    },
+    "kind": {
+      "const": "Playbook"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "workload": {
+      "type": "object",
+      "description": "Global variables merged with payload input when an execution is registered.",
+      "default": {},
+      "additionalProperties": true
+    },
+    "workbook": {
+      "type": "array",
+      "description": "Named reusable action definitions that can be referenced from workflow steps.",
+      "items": {
+        "$ref": "#/$defs/task"
+      },
+      "uniqueItems": true
+    },
+    "workflow": {
+      "type": "array",
+      "description": "Ordered list of steps defining the workflow execution plan. Must contain 'start' and 'end' steps.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "required": ["step"],
+            "properties": {
+              "step": {
+                "const": "start"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "required": ["step"],
+            "properties": {
+              "step": {
+                "const": "end"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["name", "path"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique identifier for the playbook."
+        },
+        "path": {
+          "type": "string",
+          "description": "Catalog registration path."
+        },
+        "version": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "task": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "python",
+            "http",
+            "postgres",
+            "duckdb",
+            "playbook",
+            "iterator",
+            "secrets",
+            "runner",
+            "shell",
+            "save",
+            "noop"
+          ]
+        },
+        "desc": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "auth": {
+          "$ref": "#/$defs/auth"
+        },
+        "save": {
+          "$ref": "#/$defs/saveBlock"
+        },
+        "assert": {
+          "type": "object",
+          "properties": {
+            "expects": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "returns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "type": {
+                "const": "workbook"
+              }
+            },
+            "required": ["type"]
+          }
+        }
+      ]
+    },
+    "auth": {
+      "description": "Authentication configuration for an action.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": true
+        }
+      ]
+    },
+    "saveBlock": {
+      "type": "object",
+      "description": "Defines how a task persists its output via another action type (e.g., postgres, duckdb, http).",
+      "required": ["storage"],
+      "properties": {
+        "storage": {
+          "type": "string"
+        },
+        "auth": {
+          "$ref": "#/$defs/auth"
+        },
+        "table": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "step": {
+      "type": "object",
+      "required": ["step"],
+      "properties": {
+        "step": {
+          "type": "string"
+        },
+        "desc": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "workbook",
+            "python",
+            "http",
+            "postgres",
+            "duckdb",
+            "playbook",
+            "iterator",
+            "secrets",
+            "runner",
+            "shell",
+            "save",
+            "noop"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Reference to a workbook task when type: workbook is used."
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "auth": {
+          "$ref": "#/$defs/auth"
+        },
+        "code": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "path": {
+          "type": "string",
+          "description": "Target playbook path when type: playbook."
+        },
+        "return_step": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string",
+          "description": "Jinja2 expression resolving to the collection iterated over when type: iterator."
+        },
+        "element": {
+          "type": "string",
+          "description": "Iterator element alias when type: iterator."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["sequential", "parallel", "async"]
+        },
+        "task": {
+          "$ref": "#/$defs/iteratorTask"
+        },
+        "save": {
+          "$ref": "#/$defs/saveBlock"
+        },
+        "next": {
+          "$ref": "#/$defs/next"
+        }
+      },
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "workbook"
+              }
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["name"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "iterator"
+              }
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["collection", "element", "task"]
+          }
+        }
+      ]
+    },
+    "iteratorTask": {
+      "type": "object",
+      "description": "Action definition executed by an iterator step for each element in the collection.",
+      "properties": {
+        "task": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "workbook",
+            "python",
+            "http",
+            "postgres",
+            "duckdb",
+            "playbook",
+            "iterator",
+            "secrets",
+            "runner",
+            "shell",
+            "save",
+            "noop"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "save": {
+          "$ref": "#/$defs/saveBlock"
+        },
+        "auth": {
+          "$ref": "#/$defs/auth"
+        },
+        "return_step": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "next": {
+      "type": "array",
+      "description": "Routing rules for the subsequent steps.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["step"],
+            "properties": {
+              "step": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "required": ["when", "then"],
+            "properties": {
+              "when": {
+                "type": "string"
+              },
+              "then": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/nextTarget"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["else"],
+            "properties": {
+              "else": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/nextTarget"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "nextTarget": {
+      "type": "object",
+      "required": ["step"],
+      "properties": {
+        "step": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -4,7 +4,7 @@ metadata:
   name: noetl-ext
   namespace: noetl
   labels:
-    app: noetl
+    app: noetl-server
 spec:
   type: NodePort
   ports:
@@ -13,4 +13,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: noetl
+    app: noetl-server

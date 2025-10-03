@@ -9,5 +9,5 @@
 - DuckDB plugin supports native aliasing for ATTACH/CREATE SECRET via `credentials:` and exposes `credentials.<alias>.connstr` for Postgres.
 - Logs redact secret material; secrets are step-scoped and not persisted.
 
-See migration guide: docs/migration/0.2-auth-credentials-secret.md
+See migration guide: docs/migration/0.2_auth_credentials_secret.md
 

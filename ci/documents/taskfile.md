@@ -31,6 +31,7 @@ This method loads the completion script from the currently installed version of 
 Add the following line into the `~/.bashrc`
 ```
 eval "$(task --completion bash)"
+alias compdef t='task'
 ```
 ### zsh
 Add the following line into the `~/.zshrc`

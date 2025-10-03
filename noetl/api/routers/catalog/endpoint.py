@@ -1,3 +1,4 @@
+from .service import CatalogService, get_catalog_service
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Request, Query, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -15,6 +16,7 @@ from noetl.core.common import (
     get_snowflake_id,
 )
 from noetl.core.logger import setup_logger
+from .service import get_catalog_service
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
@@ -46,7 +48,6 @@ async def register_resource(
                 detail="The content or content_base64 must be provided."
             )
 
-        from .service import get_catalog_service
         catalog_service = get_catalog_service()
         result = await catalog_service.register_resource(content, resource_type)
         return result
@@ -65,7 +66,6 @@ async def list_resources(
     resource_type: str = None
 ):
     try:
-        from .service import get_catalog_service
         catalog_service = get_catalog_service()
         entries = await catalog_service.list_entries(resource_type)
         return {"entries": entries}
@@ -132,6 +132,42 @@ async def get_catalog_playbooks():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse)
+async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
+    """Get playbook by ID, optionally by version"""
+    try:
+        logger.info(f"Received playbook_id: '{playbook_id}'")
+        if playbook_id.startswith("playbooks/"):
+            playbook_id = playbook_id[10:]
+            logger.info(f"Fixed playbook_id: '{playbook_id}'")
+
+        from .service import get_catalog_service
+        catalog_service = get_catalog_service()
+
+        if not version:
+            version = await catalog_service.get_latest_version(playbook_id)
+
+        entry = await catalog_service.fetch_entry(playbook_id, version)
+        if not entry:
+            raise HTTPException(
+                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
+
+        try:
+            content = entry.get('content') or ''
+            if isinstance(content, bytes):
+                content = content.decode('utf-8', errors='ignore')
+            entry['payload'] = yaml.safe_load(content) or {}
+        except Exception:
+            pass
+
+        return entry
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting playbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse)
 async def get_catalog_playbook_content(playbook_id: str, request: Request, version: Optional[str] = None):
     """Get playbook raw content"""
@@ -153,8 +189,14 @@ async def get_catalog_playbook_content(playbook_id: str, request: Request, versi
             version = await catalog_service.get_latest_version(playbook_id)
         entry = await catalog_service.fetch_entry(playbook_id, version)
         if not entry:
-            raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
-        return {"path": playbook_id, "version": version, "content": entry.get('content')}
+            raise HTTPException(
+                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
+
+        return {
+            "path": playbook_id,
+            "version": version,
+            "content": entry.get('content')
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -180,9 +222,11 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
             if isinstance(parsed, dict):
                 if 'metadata' in parsed and isinstance(parsed['metadata'], dict):
                     parsed['metadata']['path'] = playbook_id
-                    parsed['metadata'].setdefault('name', playbook_id.split('/')[-1])
+                    parsed['metadata'].setdefault(
+                        'name', playbook_id.split('/')[-1])
                 else:
-                    meta = parsed.get('metadata') if isinstance(parsed.get('metadata'), dict) else {}
+                    meta = parsed.get('metadata') if isinstance(
+                        parsed.get('metadata'), dict) else {}
                     meta['path'] = playbook_id
                     meta.setdefault('name', playbook_id.split('/')[-1])
                     parsed['metadata'] = meta
@@ -190,7 +234,8 @@ async def save_catalog_playbook_content(playbook_id: str, request: Request):
                 parsed.setdefault('name', playbook_id.split('/')[-1])
                 content = yaml.safe_dump(parsed, sort_keys=False)
         except Exception as norm_err:
-            logger.warning(f"Failed to normalize playbook path in YAML: {norm_err}")
+            logger.warning(
+                f"Failed to normalize playbook path in YAML: {norm_err}")
         from .service import get_catalog_service
         catalog_service = get_catalog_service()
         # Use consistent resource type capitalization
@@ -231,7 +276,8 @@ async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
                 version = await catalog_service.get_latest_version(original_id)
             entry = await catalog_service.fetch_entry(original_id, version)
             if not entry:
-                raise HTTPException(status_code=404, detail=f"Playbook '{original_id}' with version '{version}' not found.")
+                raise HTTPException(
+                    status_code=404, detail=f"Playbook '{original_id}' with version '{version}' not found.")
             return {"path": original_id, "version": version, "content": entry.get('content')}
 
         from .service import get_catalog_service
@@ -240,7 +286,8 @@ async def get_catalog_playbook(playbook_id: str, version: Optional[str] = None):
             version = await catalog_service.get_latest_version(playbook_id)
         entry = await catalog_service.fetch_entry(playbook_id, version)
         if not entry:
-            raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
+            raise HTTPException(
+                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
         try:
             content = entry.get('content') or ''
             if isinstance(content, bytes):
@@ -285,7 +332,8 @@ async def get_catalog_widgets():
                         meta_str = row[0]
                         if meta_str:
                             try:
-                                meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+                                meta = json.loads(meta_str) if isinstance(
+                                    meta_str, str) else meta_str
                                 status = meta.get('status', 'active')
                                 if status == 'active':
                                     active_count += 1
@@ -296,7 +344,8 @@ async def get_catalog_widgets():
                         else:
                             active_count += 1
         except Exception as db_error:
-            logger.warning(f"Error getting catalog stats from database: {db_error}")
+            logger.warning(
+                f"Error getting catalog stats from database: {db_error}")
             playbook_count = 0
 
         return [
@@ -343,7 +392,6 @@ async def get_catalog_widgets():
 
 
 # Dependency/helper for runtime to get playbook entry
-from .service import CatalogService, get_catalog_service
 
 
 async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
@@ -357,11 +405,13 @@ async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
         path_parts = path_to_lookup.rsplit(':', 1)
         if path_parts[1].replace('.', '').isdigit():
             path_to_lookup = path_parts[0]
-            logger.info(f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
+            logger.info(
+                f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
 
     catalog_service = get_catalog_service()
     latest_version = await catalog_service.get_latest_version(path_to_lookup)
-    logger.info(f"Using latest version for '{path_to_lookup}': {latest_version}")
+    logger.info(
+        f"Using latest version for '{path_to_lookup}': {latest_version}")
 
     entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
     if not entry:

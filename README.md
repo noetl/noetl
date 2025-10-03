@@ -17,6 +17,10 @@ The following diagram illustrates the main components and intent of the NoETL sy
 
 ## Quick Start
 
+## Concept
+- [Playbook notes](docs/concepts/playbook_notes.md)
+
+
 ### Installation
 
 - Install NoETL from PyPI:
@@ -228,7 +232,7 @@ spec:
 EOF
 ```
 
-See [Kubernetes Deployment Guide](k8s/KIND-README.md) for detailed instructions.
+See [Kubernetes Deployment Guide](k8s/README.md) for detailed instructions.
 
 ## Credential Handling
 
@@ -319,7 +323,7 @@ NoETL v1.0+ introduces a unified authentication system that consolidates authent
 - Automatic security redaction in logs
 - Full backwards compatibility with deprecation warnings
 
-For complete migration guide, see [Unified Auth Migration Guide](docs/migration/auth-unified.md).
+For complete migration guide, see [Unified Auth Migration Guide](docs/migration/auth_unified.md).
 
 ## Workflow DSL Structure
 

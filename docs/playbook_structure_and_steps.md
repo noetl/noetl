@@ -1,38 +1,27 @@
-# Playbook structure
+# Playbook Structure
 
-## Metadata
+## Header
 
-Every playbook is a YAML doc with a fixed header plus three main blocks.
-```YAML
-# Header
+Every playbook starts with a fixed header and three logical sections. All strings can use Jinja2 templating.
+
+```yaml
 apiVersion: noetl.io/v1
 kind: Playbook
-name: name_of_playbook
-path: path/to/catalog
-version: "1.0.0"
-description: description of playbook
-
-# Main blocks
-workload: <input params>
-workflow: <step structure>
-
-# Optional block
-workbook: <taks calls from steps>
+metadata:
+  name: example_playbook
+  path: examples/example_playbook
+workload: {}
+workflow: []
+workbook: []
 ```
 
 ## Workload
 
-A flat map of inputs. These are read only and referenced via Jinja2.
-```YAML
-workload:
-  jobId: "{{ job.uuid }}"
+`workload` is an object that stores global defaults. It is merged with the payload submitted when the playbook execution is registered. Use it for constants, feature toggles, or default inputs.
 
-  # Take value from env file
+```yaml
+workload:
   pg_host: "{{ env.POSTGRES_HOST | default('localhost') }}"
-  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
-  pg_user: "{{ env.POSTGRES_USER | default('postgres') }}"
-  pg_password: "{{ env.POSTGRES_PASSWORD | default('postgres') }}"
-  pg_db: "{{ env.POSTGRES_DB | default('noetl') }}"
   cities:
     - name: "London"
       lat: 51.51
@@ -40,96 +29,140 @@ workload:
     - name: "Paris"
       lat: 48.85
       lon: 2.35
-  base_url: "https://api.open-meteo.com/v1" 
 ```
 
 ## Workflow
 
-Workflow is an ordered list of steps. All steps are isolated, you have to pass data forward explicitly. Each step may include:
-- desc - description of a step
-- type - step kind
-- with - local input
-- next - transition
-- pass - boolean/template to skip
+`workflow` is an ordered list of steps. Each step:
 
-How data flows:
-- with: sets the local context 
-- a result of a step could be reach with `step_name.result`
-- _how to get a result of a loop?_
+- has a unique `step` name.
+- declares a `type` that matches an action implementation (`workbook`, `python`, `http`, `duckdb`, `postgres`, `playbook`, `iterator`, `secrets`, etc.).
+- can define `data`, `auth`, `save`, and `next` attributes.
 
-Control flow:
-- next routes by conditions with wnen/else
-- pass pairs with workload steps to skip
-- _how to work with override?_
+### Routing
 
-```YAML
-# need an example of YANL workflow where all steps uses
+Use `next` to move between steps. Each entry in `next` can be a direct transition or a conditional block.
+
+```yaml
+- step: start
+  next:
+    - when: "{{ workload.state == 'ready' }}"
+      then:
+        - step: fetch_data
+    - else:
+        - step: end
+```
+
+### Passing Data Forward
+
+Attach a `data` object to either the step itself (inputs to the action) or to the `next` target (payload override for the downstream step).
+
+```yaml
+- step: aggregate_alerts
+  type: workbook
+  name: consolidate_alerts
+  next:
+    - data:
+        alerts: "{{ city_loop.results }}"
+      step: persist_alerts
 ```
 
 ## Workbook
 
-# Steps overview
+`workbook` hosts reusable actions referenced from steps. Every entry requires `name` and `type` and may include type-specific settings (`code`, `endpoint`, `command`, etc.). Workbook tasks can use the same action types as steps except `workbook`.
 
-## Step types
+```yaml
+workbook:
+  - name: fetch_weather
+    type: http
+    method: GET
+    endpoint: "{{ workload.base_url }}/forecast"
+    params:
+      latitude: "{{ city.lat }}"
+      longitude: "{{ city.lon }}"
+```
 
--	start — Entry point of a workflow. Must route to the first executable step via next.
--	end — Terminal step. No next. Used broadly.
--	workbook — Invokes a named task from the workbook library; use task: and with: to pass inputs.
--	python — Runs inline Python in the step itself.
--	http — Makes an HTTP call directly from a step (method, endpoint, headers, params/payload).  ￼
--	duckdb — Executes DuckDB SQL/script in the step.
--	postgres — Executes PostgreSQL SQL/script in the step.
--	secrets — Reads a secret from a provider (e.g., Google Secret Manager) and exposes it as secret_value.
--	playbooks — Executes all playbooks under a catalog path, forwarding inputs via with:; the step result can be passed on to the next step.
-- loop - Run the loop over the workbook (if you need to loop one step) or the playbook (if need to loop two or more steps)
-- _other steps?_
+## Step Types Overview
 
-## Python step
+- **start** – Entry router. Defines only `next` transitions.
+- **end** – Terminal aggregator. Optionally collates results or triggers `save` logic.
+- **workbook** – Invokes a named workbook action (requires `name`).
+- **python** – Runs inline Python via `def main(...)` using variables from `data`.
+- **http** – Calls an HTTP endpoint (method, endpoint, headers, payload).
+- **duckdb / postgres** – Execute SQL or scripts in the respective engines.
+- **secrets** – Resolve secrets into the workflow context.
+- **playbook** – Calls a child playbook and waits for completion.
+- **iterator** – Loops through a collection using a nested `task` definition.
 
-Python step can execute some python code. 
-- Entry point is a function named `main(...)` defined in a code block.
-- Input is a whatever you put under the step's with and refernced via Jinja2.
-- Output is the return value of the main function in a code block, can be accessed in the next steps via `step_name.some_return`
-```YAML
-- step: step_name
+## Python Step
+
+```yaml
+- step: score_user
   type: python
-  desc: description
-  # input for the step
-  with: 
-    some_input: "{{ input }}"
-    another_input: "{{ another input }}"
-  # python code block
+  data:
+    payload: "{{ workload.user }}"
   code: |
-  # starts with `main` function
-    def main(some_input, another_input):
-        # python code
-        return {...}
+    def main(payload):
+        return {"score": payload.get("metric", 0)}
   next:
+    - step: end
 ```
-- _how to use some help functions in the main, and what if I want to call help function in the multiple steps?_
-- _how to use several python functions in one code block?_
 
-## DuckDB step
+## DuckDB Step
 
-Runs DuckDB SQL statement inside the workflow step.
-- Input is a whatever you put under the step's with and refernced via Jinja2.
-- _how to return from the duckdb step?_
-- you have to install needed DuckDB extensions once per every step.
-- attaches to external databases also have to be defined in every step where conection is in usage.
-
-```YAML
-- step: step_nmae
+```yaml
+- step: aggregate_metrics
   type: duckdb
-  desc: description
-  with: 
-    some_input: "{{ inputs for templating }}"
-  command: |  
-
-    # connection to external postgres database if needed
-
+  command: |
     INSTALL postgres; LOAD postgres;
-
-    ATTACH 'host={{ host }} port={{ port }} user={{ user }} password={{ password }} dbname={{ db }}' AS pgdb (TYPE POSTGRES);
-
-    # DuckDB SQL code 
+    ATTACH '{{ workload.pg_conn }}' AS pgdb (TYPE POSTGRES);
+    CREATE TABLE IF NOT EXISTS metrics AS
+    SELECT * FROM pgdb.public.source_metrics;
+  save:
+    storage: duckdb
+    path: "{{ workload.output_db }}"
+  next:
+    - step: end
 ```
+
+## Iterator Step
+
+```yaml
+- step: process_users
+  type: iterator
+  collection: "{{ workload.users }}"
+  element: user
+  mode: sequential
+  task:
+    task: process_user
+    type: playbook
+    path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml
+    data:
+      user_data: "{{ user }}"
+```
+
+## Save Blocks
+
+To persist results, attach a `save` block. It dispatches the step output to another action type (e.g., Postgres, HTTP).
+
+```yaml
+save:
+  storage: postgres
+  auth: pg_local
+  table: public.weather_http_raw
+  mode: upsert
+  key: id
+  data:
+    id: "{{ execution_id }}:{{ city.name }}"
+    payload: "{{ result.payload }}"
+```
+
+## Checklist
+
+1. Define `metadata` with `name` and `path`.
+2. Populate `workload` with defaults; expect runtime payloads to merge into it.
+3. (Optionally) create `workbook` tasks for reusable actions.
+4. Model `workflow` with a `start` router, actionable steps, and an `end` aggregator.
+5. Give every step a `type`, and provide `name` when targeting the workbook.
+6. Use `next` with `when`/`then`/`else` to branch and forward `data`.
+7. Add `save` whenever a step needs to hand its output to storage.

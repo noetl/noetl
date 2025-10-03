@@ -188,7 +188,7 @@ helm upgrade --install vector vector/vector -n observability -f k8s/observabilit
   - Re-import via API anytime: `make observability-import-dashboards` (waits for Grafana to be ready by default; override wait with flags in k8s/observability/import-dashboards.sh such as `--timeout=120`).
   - You can also import the VictoriaLogs Explorer dashboard from Grafana.com for general log exploration.
 
-Log queries guide: see docs/observability/querying-noetl-logs.md for examples of filtering server vs worker logs, error rates, and top noisy pods.
+Log queries guide: see docs/observability/querying_noetl_logs.md for examples of filtering server vs worker logs, error rates, and top noisy pods.
 
 4) Scrape your NoETL server and worker pools
 

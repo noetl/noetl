@@ -133,7 +133,7 @@ class APIService {
   }
 
   async createPlaybook(data: Partial<PlaybookData>): Promise<PlaybookData> {
-    const response = await apiClient.post("/catalog/playbooks", data);
+    const response = await apiClient.post("/catalog/register", data);
     return response.data;
   }
 

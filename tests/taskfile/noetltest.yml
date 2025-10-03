@@ -133,3 +133,31 @@ tasks:
       - task: test-register-playbook-composition
       - sleep 2
       - task: test-execute-playbook-composition
+
+  test-register-hello-world:
+    desc: Register hello world playbook to cluster
+    aliases: [trhw]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  test-execute-hello-world:
+    desc: Execute hello world test on cluster
+    aliases: [tehw]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/hello_world" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  test-hello-world-full:
+    desc: Full test - register and execute hello world test
+    aliases: [thwf]
+    cmds:
+      - task: test-register-hello-world
+      - sleep 2
+      - task: test-execute-hello-world

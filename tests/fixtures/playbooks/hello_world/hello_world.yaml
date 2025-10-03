@@ -2,33 +2,33 @@ apiVersion: noetl.io/v1
 kind: Playbook
 
 metadata:
-  name: simple_test
-  path: tests/simple_test
+  name: hello_world
+  path: tests/fixtures/playbooks/hello_world
 
 workload:
   message: "Hello World"
 
 workflow:
   - step: start
-    desc: "Start simple test"
+    desc: "Start hello world test"
     next:
       - step: test_step
         data:
           message: "{{ workload.message }}"
 
   - step: test_step
-    desc: "Simple test step"
+    desc: "Hello world test step"
     type: python
     code: |
       def main(message):
-          print(f"TEST_STEP: {message}")
+          print(f"HELLO_WORLD: {message}")
           # Required envelope: {status, data, meta?}
           return {"status": "success", "data": {"message": message}}
     next:
       - step: end
 
   - step: end
-    desc: "End simple test"
+    desc: "End hello world test"
     type: save
     storage: event_log
     data:
