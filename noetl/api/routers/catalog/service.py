@@ -68,7 +68,6 @@ class CatalogService:
                 await cursor.execute("INSERT INTO noetl.resource (name) VALUES (%s) ON CONFLICT DO NOTHING", (resource_type,))
 
                 from psycopg.types.json import Json
-                # Insert new version - version will auto-increment via SMALLSERIAL
                 await cursor.execute(
                     """
                     INSERT INTO noetl.catalog
