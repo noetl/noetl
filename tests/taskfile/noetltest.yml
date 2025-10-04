@@ -72,6 +72,17 @@ tasks:
             -H 'Content-Type: application/json' \
             --data-binary @tests/fixtures/credentials/gcs_hmac_local.json
         fi
+      - echo "\n=== Registering pg_local credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json
+        fi
       - echo "\n=== Test credentials registered successfully ==="
 
   test-register-http-duckdb-postgres:

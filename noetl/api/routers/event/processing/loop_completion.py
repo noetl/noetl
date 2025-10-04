@@ -285,7 +285,7 @@ async def _process_loop_completion_status(conn, cur, event_service, parent_execu
 async def _process_direct_loop_completion(conn, cur, event_service, parent_execution_id: str, loop_step_name: str) -> None:
     """Fallback: finalize loops whose iterations ran within the same execution (no child executions).
 
-    Uses loop metadata (loop_id, loop_name, current_index) to determine completion and aggregate results.
+    Uses iterator metadata (current_index, current_item) to determine completion and aggregate results.
     Idempotent: skips if a final loop completion event already exists.
     """
     # Idempotency: skip if final completion already present for this loop
@@ -329,19 +329,18 @@ async def _process_direct_loop_completion(conn, cur, event_service, parent_execu
     if total_iterations <= 0:
         return
 
-    # Fetch per-iteration results using loop metadata fields
+    # Fetch per-iteration results using node_name instead of removed loop fields
     try:
         await cur.execute(
             """
             SELECT result, current_index, timestamp
             FROM noetl.event
             WHERE execution_id = %s
-              AND loop_name = %s
+              AND node_name = %s
               AND event_type IN ('result','action_completed')
               AND lower(status) IN ('completed','success')
               AND result IS NOT NULL 
               AND result != '{}'
-              AND loop_id IS NOT NULL
               AND current_index IS NOT NULL
               AND NOT (result::text LIKE '%%"skipped": true%%')
               AND NOT (result::text LIKE '%%"reason": "control_step"%%')
@@ -539,10 +538,7 @@ async def _emit_loop_completion_events(event_service, parent_execution_id: str,
             'loop_completed': True,
             'total_iterations': len(final_results),
             'aggregated_results': final_results
-        },
-        # Add loop metadata for final aggregation event
-        'loop_id': f"{parent_execution_id}:{loop_step_name}",
-        'loop_name': loop_step_name
+        }
     }
     await event_service.emit(loop_final_data)
     
@@ -585,10 +581,7 @@ async def _emit_loop_completion_events(event_service, parent_execution_id: str,
             'loop_completed': True,
             'total_iterations': len(final_results),
             'aggregated_results': final_results
-        },
-        # Add loop metadata
-        'loop_id': f"{parent_execution_id}:{loop_step_name}",
-        'loop_name': loop_step_name
+        }
     })
     
     # Do not emit step_completed here; let broker progression handle it idempotently

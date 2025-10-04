@@ -181,9 +181,6 @@ class EventLog:
         metadata_json: Any,
         error_text: Any,
         trace_component_json: Any,
-        loop_id: Any,
-        loop_name: Any,
-        iterator_json: Any,
         current_index: Any,
         current_item_json: Any,
         stack_trace: Any = None,
@@ -197,13 +194,11 @@ class EventLog:
                     INSERT INTO noetl.event (
                         execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type,
                         node_id, node_name, node_type, status, duration, context, result,
-                        meta, error, trace_component, loop_id, loop_name, iterator,
-                        current_index, current_item, stack_trace
+                        meta, error, trace_component, current_index, current_item, stack_trace
                     ) VALUES (
                         %s, %s, %s, %s, CURRENT_TIMESTAMP, %s,
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s::jsonb,
-                        %s, %s::jsonb, %s
+                        %s, %s, %s, %s, %s::jsonb, %s
                     )
                     ON CONFLICT (execution_id, event_id) DO NOTHING
                     """,
@@ -223,9 +218,6 @@ class EventLog:
                         metadata_json,
                         error_text,
                         trace_component_json,
-                        loop_id,
-                        loop_name,
-                        iterator_json,
                         current_index, 
                         current_item_json,
                         stack_trace,

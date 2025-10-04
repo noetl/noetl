@@ -1106,8 +1106,8 @@ def register_playbook(
         if response.status_code == 200:
             result = response.json()
             logger.info(f"Playbook registered successfully: {result}")
-            logger.info(f"Resource path: {result.get('resource_path')}")
-            logger.info(f"Resource version: {result.get('resource_version')}")
+            logger.info(f"Resource path: {result.get('path')}")
+            logger.info(f"Resource version: {result.get('version')}")
         else:
             logger.error(f"Failed to register playbook: {response.status_code}")
             logger.error(f"Response: {response.text}")

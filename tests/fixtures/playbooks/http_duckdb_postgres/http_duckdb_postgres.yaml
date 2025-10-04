@@ -27,7 +27,7 @@ workflow:
 - step: ensure_pg_table
   desc: Ensure raw HTTP results table exists in Postgres
   type: postgres
-  auth: pg_local
+  auth: pg_k8s
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_http_raw (
       id TEXT PRIMARY KEY,
@@ -79,7 +79,7 @@ workflow:
         elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
         payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
       storage: postgres
-      auth: pg_local
+      auth: pg_k8s
       table: public.weather_http_raw
       mode: upsert
       key: id
@@ -94,7 +94,7 @@ workflow:
     pg_db:
       source: credential
       type: postgres
-      key: pg_local
+      key: pg_k8s
     gcs_secret:
       source: credential
       type: hmac
@@ -138,7 +138,7 @@ workflow:
 - step: ensure_metrics_table
   desc: Ensure metrics table exists in Postgres
   type: postgres
-  auth: pg_local
+  auth: pg_k8s
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_pipeline_metrics (
       execution_id TEXT PRIMARY KEY,
@@ -152,7 +152,7 @@ workflow:
 - step: end
   desc: Finish
   type: postgres
-  auth: pg_local
+  auth: pg_k8s
   command: |
     INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved, gcs_flat_uri, gcs_agg_uri)
     VALUES (

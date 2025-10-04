@@ -67,6 +67,37 @@ tasks:
       - kubectl delete -f ci/manifests/postgres/
       - kubectl delete configmap postgres-schema-ddl --namespace postgres
 
+  postgres-reset-schema:
+    desc: Reset NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)
+    aliases: [prs]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - echo "Resetting NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)."
+      - |
+        set -a; [ -f .env ] && . .env; set +a
+        # Override with kubectl service port for Kind cluster
+        export PGHOST=localhost
+        export PGPORT=54321
+        export PGUSER=${POSTGRES_USER:-demo}
+        export PGPASSWORD=${POSTGRES_PASSWORD:-demo}
+        export PGDATABASE=${POSTGRES_DB:-demo_noetl}
+        echo "Connecting to PostgreSQL at $PGHOST:$PGPORT as $PGUSER to database $PGDATABASE"
+        echo "Dropping schema ${NOETL_SCHEMA:-noetl}..."
+        psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${NOETL_SCHEMA:-noetl} CASCADE;"
+        echo "Applying schema DDL via noetl CLI..."
+        cli=".venv/bin/noetl"
+        if [ ! -x "$cli" ]; then cli="noetl"; fi
+        if $cli db apply-schema --ensure-role; then
+          echo "Schema applied using packaged DDL."
+        else
+          echo "noetl CLI apply-schema failed; trying local DDL fallback..."
+          if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then
+            psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
+          else
+            echo "Could not apply schema (no CLI and no local DDL)."; exit 1
+          fi
+        fi
+
 # === NOETL ===
   docker-build-noetl:
     desc: Build the noetl container with dynamic tag

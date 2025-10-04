@@ -199,7 +199,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         next_step_name = first
                                     elif isinstance(first, dict):
                                         next_step_name = first.get('step') or first.get('name')
-                                        # Build transition payload with precedence: input > payload > with
+                                        # Build transition payload with precedence: input > payload > with > data
                                         merged = {}
                                         try:
                                             w = first.get('with') if isinstance(first.get('with'), dict) else None
@@ -217,6 +217,13 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                             i = first.get('input') if isinstance(first.get('input'), dict) else None
                                             if i:
                                                 merged.update(i)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            # IMPORTANT: Also check for 'data' attribute in next step transition
+                                            d = first.get('data') if isinstance(first.get('data'), dict) else None
+                                            if d:
+                                                merged['data'] = d
                                         except Exception:
                                             pass
                                         next_with = merged
@@ -492,10 +499,8 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                 'path': pb_path,
                 'version': pb_ver or 'latest',
                 iterator: item,  # Set the iterator variable (e.g., city_item)
-                '_loop': {
-                    'loop_id': f"{execution_id}:{step_name}",
-                    'loop_name': step_name,
-                    'iterator': iterator,
+                '_iterator': {
+                    'collection': iterator,
                     'current_index': idx,
                     'current_item': item,
                     'items_count': count,
@@ -537,8 +542,6 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                     'iterator': iterator,
                     'current_index': idx,
                     'current_item': item,
-                    'loop_id': f"{execution_id}:{step_name}",
-                    'loop_name': step_name,
                 })
             except Exception:
                 logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit loop_iteration", exc_info=True)
@@ -581,7 +584,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
-                # Fetch recently completed non-loop steps (no loop_id)
+                # Fetch recently completed non-loop steps  
                 # Include both action_completed and step_result events to handle workbook steps
                 await cur.execute(
                     """
@@ -589,7 +592,6 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                     FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type IN ('action_completed', 'step_result')
-                      AND (loop_id IS NULL OR loop_id = '')
                 """,
                     (execution_id,)
                 )

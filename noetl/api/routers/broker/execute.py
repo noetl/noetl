@@ -375,7 +375,7 @@ def execute_playbook_via_broker(
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                         'context': ctx,
-                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                        'meta': {'path': playbook_path, 'version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
                     }
                     if parent_event_id:
                         payload['parent_event_id'] = parent_event_id
@@ -392,7 +392,7 @@ def execute_playbook_via_broker(
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                         'context': ctx,
-                        'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                        'meta': {'path': playbook_path, 'version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
                     }
                     if parent_event_id:
                         payload['parent_event_id'] = parent_event_id
@@ -412,7 +412,7 @@ def execute_playbook_via_broker(
                     'node_type': 'playbook',
                     'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                     'context': ctx,
-                    'meta': {'playbook_path': playbook_path, 'resource_path': playbook_path, 'resource_version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                    'meta': {'path': playbook_path, 'version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
                 }, server_url)
         except Exception as e_evt:
             logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to persist execution_start event: {e_evt}")

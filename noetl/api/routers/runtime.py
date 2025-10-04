@@ -18,7 +18,7 @@ async def _upsert_worker_pool(payload: Dict[str, Any], *, require_full_payload: 
     body = payload or {}
     name = (body.get("name") or "").strip()
     runtime = (body.get("runtime") or "").strip().lower()
-    base_url = (body.get("base_url") or "").strip()
+    uri = (body.get("uri") or body.get("endpoint") or body.get("base_url") or "").strip() or None  # Support legacy names
     status = (body.get("status") or "ready").strip().lower()
     capacity = body.get("capacity")
     labels = body.get("labels")
@@ -26,9 +26,10 @@ async def _upsert_worker_pool(payload: Dict[str, Any], *, require_full_payload: 
     hostname = body.get("hostname")
     meta = body.get("meta") or {}
 
-    if not name or not runtime or not base_url:
+    # Workers don't need URIs, only name and runtime are required
+    if not name or not runtime:
         if require_full_payload:
-            raise HTTPException(status_code=400, detail="name, runtime, and base_url are required")
+            raise HTTPException(status_code=400, detail="name and runtime are required")
         return None
 
     import datetime as _dt
@@ -51,20 +52,20 @@ async def _upsert_worker_pool(payload: Dict[str, Any], *, require_full_payload: 
         async with conn.cursor() as cursor:
             await cursor.execute(
                 """
-                INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                INSERT INTO runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
                 VALUES (%s, %s, 'worker_pool', %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
-                ON CONFLICT (component_type, name)
+                ON CONFLICT (kind, name)
                 DO UPDATE SET
-                    base_url = EXCLUDED.base_url,
+                    uri = EXCLUDED.uri,
                     status = EXCLUDED.status,
                     labels = EXCLUDED.labels,
                     capacity = EXCLUDED.capacity,
                     runtime = EXCLUDED.runtime,
-                    last_heartbeat = now(),
+                    heartbeat = now(),
                     updated_at = now()
                 RETURNING runtime_id
                 """,
-                (rid, name, base_url, status, labels_json, capacity, runtime_json)
+                (rid, name, uri, status, labels_json, capacity, runtime_json)
             )
             row = await cursor.fetchone()
             try:
@@ -152,9 +153,9 @@ async def register_runtime_component(request: Request):
     try:
         body = await request.json()
         name = (body.get("name") or "").strip()
-        component_type = (body.get("component_type") or "server_api").strip()
+        kind = (body.get("kind") or body.get("component_type") or "server_api").strip()  # Support legacy name
         runtime = (body.get("runtime") or "").strip().lower()
-        base_url = (body.get("base_url") or "").strip()
+        uri = (body.get("uri") or body.get("endpoint") or body.get("base_url") or "").strip() or None  # Support legacy names
         status = (body.get("status") or "ready").strip().lower()
         capacity = body.get("capacity")
         labels = body.get("labels")
@@ -162,8 +163,11 @@ async def register_runtime_component(request: Request):
         hostname = body.get("hostname")
         meta = body.get("meta") or {}
         
-        if not name or not component_type or not base_url:
-            raise HTTPException(status_code=400, detail="name, component_type, and base_url are required")
+        # Only require URI for server_api and broker, not for worker_pool
+        if not name or not kind:
+            raise HTTPException(status_code=400, detail="name and kind are required")
+        if kind in ["server_api", "broker"] and not uri:
+            raise HTTPException(status_code=400, detail="uri is required for server_api and broker components")
 
         import datetime as _dt
         try:
@@ -185,27 +189,27 @@ async def register_runtime_component(request: Request):
             async with conn.cursor() as cursor:
                 await cursor.execute(
                     f"""
-                    INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                    INSERT INTO runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, now(), now(), now())
-                    ON CONFLICT (component_type, name)
+                    ON CONFLICT (kind, name)
                     DO UPDATE SET
-                        base_url = EXCLUDED.base_url,
+                        uri = EXCLUDED.uri,
                         status = EXCLUDED.status,
                         labels = EXCLUDED.labels,
                         capacity = EXCLUDED.capacity,
                         runtime = EXCLUDED.runtime,
-                        last_heartbeat = now(),
+                        heartbeat = now(),
                         updated_at = now()
                     RETURNING runtime_id
                     """,
-                    (rid, name, component_type, base_url, status, labels_json, capacity, runtime_json)
+                    (rid, name, kind, uri, status, labels_json, capacity, runtime_json)
                 )
                 row = await cursor.fetchone()
                 try:
                     await conn.commit()
                 except Exception:
                     pass
-        return {"status": "ok", "name": name, "component_type": component_type, "runtime_id": row[0] if row else rid}
+        return {"status": "ok", "name": name, "kind": kind, "runtime_id": row[0] if row else rid}
     except HTTPException:
         raise
     except Exception as e:
@@ -274,8 +278,8 @@ async def heartbeat_worker_pool(request: Request):
                     await cur.execute(
                         """
                         UPDATE runtime
-                        SET last_heartbeat = now(), status = 'ready', updated_at = now()
-                        WHERE component_type = 'worker_pool' AND name = %s
+                        SET heartbeat = now(), status = 'ready', updated_at = now()
+                        WHERE kind = 'worker_pool' AND name = %s
                         RETURNING runtime_id
                         """,
                         (name,)
@@ -328,7 +332,7 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cursor:
                 # Build query with optional filters
-                where_clauses = ["component_type = 'worker_pool'"]
+                where_clauses = ["kind = 'worker_pool'"]
                 params = []
                 
                 if runtime:
@@ -340,7 +344,7 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
                     params.append(status.lower())
                 
                 query = f"""
-                    SELECT name, runtime, status, capacity, labels, last_heartbeat, created_at, updated_at
+                    SELECT name, runtime, status, capacity, labels, heartbeat, created_at, updated_at
                     FROM noetl.runtime 
                     WHERE {' AND '.join(where_clauses)}
                     ORDER BY name
@@ -351,14 +355,14 @@ async def list_worker_pools(request: Request, runtime: Optional[str] = None, sta
                 
                 items = []
                 for row in rows:
-                    name, runtime_data, status, capacity, labels, last_heartbeat, created_at, updated_at = row
+                    name, runtime_data, status, capacity, labels, heartbeat, created_at, updated_at = row
                     items.append({
                         "name": name,
                         "runtime": runtime_data,
                         "status": status,
                         "capacity": capacity,
                         "labels": labels,
-                        "last_heartbeat": last_heartbeat.isoformat() if last_heartbeat else None,
+                        "heartbeat": heartbeat.isoformat() if heartbeat else None,
                         "created_at": created_at.isoformat() if created_at else None,
                         "updated_at": updated_at.isoformat() if updated_at else None
                     })
@@ -430,7 +434,7 @@ async def execute_playbook(request: Request):
         result = execute_playbook_via_broker(
             playbook_content=playbook_content,
             playbook_path=playbook_id,
-            playbook_version=entry.get("resource_version", "latest"),
+            playbook_version=entry.get("version", "latest"),
             input_payload=parameters,
             sync_to_postgres=True,
             merge=merge,
@@ -514,9 +518,9 @@ async def execute_playbook_by_path_version(request: Request):
                     async with conn.cursor() as cur:
                         await cur.execute(
                             """
-                            SELECT resource_version, content 
+                            SELECT version, content 
                             FROM noetl.catalog 
-                            WHERE resource_path = %s 
+                            WHERE path = %s 
                             ORDER BY timestamp DESC 
                             LIMIT 1
                             """,
@@ -537,7 +541,7 @@ async def execute_playbook_by_path_version(request: Request):
                             """
                             SELECT content 
                             FROM noetl.catalog 
-                            WHERE resource_path = %s AND resource_version = %s
+                            WHERE path = %s AND version = %s
                             """,
                             (path, version)
                         )
