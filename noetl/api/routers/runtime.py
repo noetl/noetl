@@ -430,7 +430,7 @@ async def execute_playbook(request: Request):
         result = execute_playbook_via_broker(
             playbook_content=playbook_content,
             playbook_path=playbook_id,
-            playbook_version=entry.get("resource_version", "latest"),
+            playbook_version=entry.get("version", "latest"),
             input_payload=parameters,
             sync_to_postgres=True,
             merge=merge,
@@ -514,9 +514,9 @@ async def execute_playbook_by_path_version(request: Request):
                     async with conn.cursor() as cur:
                         await cur.execute(
                             """
-                            SELECT resource_version, content 
+                            SELECT version, content 
                             FROM noetl.catalog 
-                            WHERE resource_path = %s 
+                            WHERE path = %s 
                             ORDER BY timestamp DESC 
                             LIMIT 1
                             """,
@@ -537,7 +537,7 @@ async def execute_playbook_by_path_version(request: Request):
                             """
                             SELECT content 
                             FROM noetl.catalog 
-                            WHERE resource_path = %s AND resource_version = %s
+                            WHERE path = %s AND version = %s
                             """,
                             (path, version)
                         )

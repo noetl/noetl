@@ -200,8 +200,8 @@ async def _load_playbook_and_index(execution_id: str) -> Tuple[Dict[str, Dict[st
                         meta = json.loads(row[1]) if row[1] else {}
                     except Exception:
                         meta = row[1] or {}
-                    pb_path = (ctx.get('path') or (meta.get('playbook_path') if isinstance(meta, dict) else None) or (meta.get('resource_path') if isinstance(meta, dict) else None))
-                    pb_ver = (ctx.get('version') or (meta.get('resource_version') if isinstance(meta, dict) else None))
+                    pb_path = (ctx.get('path') or (meta.get('path') if isinstance(meta, dict) else None))
+                    pb_ver = (ctx.get('version') or (meta.get('version') if isinstance(meta, dict) else None))
         if pb_path:
             from noetl.api.routers.catalog import get_catalog_service
             catalog = get_catalog_service()

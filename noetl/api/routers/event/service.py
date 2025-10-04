@@ -296,15 +296,8 @@ class EventService:
                       row = await cursor.fetchone()
                       exists = row[0] > 0 if row else False
 
-                      loop_id_val = event_data.get('loop_id')
-                      if loop_id_val is not None and not isinstance(loop_id_val, (str, int)):
-                          loop_id_val = json.dumps(loop_id_val)
-                      elif loop_id_val is not None:
-                          loop_id_val = str(loop_id_val)
-                      
-                      loop_name_val = event_data.get('loop_name')
-                      if loop_name_val is not None and not isinstance(loop_name_val, str):
-                          loop_name_val = str(loop_name_val)
+                      # Iterator processing for type: iterator steps
+                      # Remove old loop_id/loop_name processing since those columns are removed
                       
                       iterator_val = json.dumps(event_data.get('iterator')) if event_data.get('iterator') is not None else None
                       
@@ -316,82 +309,28 @@ class EventService:
                       
                       current_item_val = json.dumps(event_data.get('current_item')) if event_data.get('current_item') is not None else None
                       
-                      # Enhanced loop metadata extraction: check context and input_context for _loop metadata
-                      if not loop_id_val:
-                          # Try to extract from context (use context_dict, not context which is the JSON string)
-                          if context_dict and isinstance(context_dict, dict):
-                              # Support both 'workload' (server) and 'work' (worker) context keys
-                              workload = context_dict.get('workload')
-                              work = context_dict.get('work')
-                              candidate_contexts = []
-                              if workload and isinstance(workload, dict):
-                                  candidate_contexts.append(workload)
-                              if work and isinstance(work, dict):
-                                  candidate_contexts.append(work)
-                              loop_data = None
-                              for cctx in candidate_contexts:
-                                  if isinstance(cctx, dict) and isinstance(cctx.get('_loop'), dict):
-                                      loop_data = cctx.get('_loop')
-                                      break
-                              if loop_data and isinstance(loop_data, dict):
-                                  if loop_data and isinstance(loop_data, dict):
-                                      loop_id_extracted = loop_data.get('loop_id')
-                                      if loop_id_extracted is not None and not isinstance(loop_id_extracted, (str, int)):
-                                          loop_id_val = json.dumps(loop_id_extracted)
-                                      elif loop_id_extracted is not None:
-                                          loop_id_val = str(loop_id_extracted)
-                                      else:
-                                          loop_id_val = loop_id_extracted
-                                      
-                                      loop_name_extracted = loop_data.get('loop_name')
-                                      if loop_name_extracted is not None and not isinstance(loop_name_extracted, str):
-                                          loop_name_val = str(loop_name_extracted)
-                                      else:
-                                          loop_name_val = loop_name_extracted
-                                      
-                                      iterator_val = json.dumps(loop_data.get('iterator')) if loop_data.get('iterator') is not None else None
-                                      
-                                      current_index_extracted = loop_data.get('current_index')
-                                      if current_index_extracted is not None and not isinstance(current_index_extracted, (str, int)):
-                                          current_index_val = json.dumps(current_index_extracted)
-                                      elif current_index_extracted is not None:
-                                          current_index_val = str(current_index_extracted)
-                                      else:
-                                          current_index_val = current_index_extracted
-                                      
-                                      current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
+                      # Enhanced iterator metadata extraction: check context for iterator info
+                      if context_dict and isinstance(context_dict, dict):
+                          # Support both 'workload' (server) and 'work' (worker) context keys
+                          workload = context_dict.get('workload')
+                          work = context_dict.get('work')
+                          candidate_contexts = []
+                          if workload and isinstance(workload, dict):
+                              candidate_contexts.append(workload)
+                          if work and isinstance(work, dict):
+                              candidate_contexts.append(work)
                           
-                          # Try to extract from input_context if still not found
-                          if not loop_id_val:
-                              input_context_field = event_data.get('input_context')
-                              if input_context_field and isinstance(input_context_field, dict):
-                                  loop_data = input_context_field.get('_loop')
-                                  if loop_data and isinstance(loop_data, dict):
-                                      loop_id_extracted = loop_data.get('loop_id')
-                                      if loop_id_extracted is not None and not isinstance(loop_id_extracted, (str, int)):
-                                          loop_id_val = json.dumps(loop_id_extracted)
-                                      elif loop_id_extracted is not None:
-                                          loop_id_val = str(loop_id_extracted)
-                                      else:
-                                          loop_id_val = loop_id_extracted
-                                      
-                                      loop_name_extracted = loop_data.get('loop_name')
-                                      if loop_name_extracted is not None and not isinstance(loop_name_extracted, str):
-                                          loop_name_val = str(loop_name_extracted)
-                                      else:
-                                          loop_name_val = loop_name_extracted
-                                      
-                                      iterator_val = json.dumps(loop_data.get('iterator')) if loop_data.get('iterator') is not None else None
-                                      
-                                      current_index_extracted = loop_data.get('current_index')
-                                      if current_index_extracted is not None and not isinstance(current_index_extracted, (str, int)):
-                                          current_index_val = json.dumps(current_index_extracted)
-                                      elif current_index_extracted is not None:
-                                          current_index_val = str(current_index_extracted)
-                                      else:
-                                          current_index_val = current_index_extracted
-                                      
-                                      current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
+                          # Extract iterator information from context
+                          for cctx in candidate_contexts:
+                              if isinstance(cctx, dict) and isinstance(cctx.get('_iterator'), dict):
+                                  iter_data = cctx.get('_iterator')
+                                  if current_index_val is None:
+                                      current_index_val = iter_data.get('index')
+                                  if current_item_val is None:
+                                      current_item_val = json.dumps(iter_data.get('item')) if iter_data.get('item') is not None else None
+                                  if iterator_val is None:
+                                      iterator_val = json.dumps(iter_data.get('collection')) if iter_data.get('collection') is not None else None
+                                  break
                       
                       # Extract parent_execution_id from metadata or event_data
                       parent_execution_id = None
@@ -434,9 +373,6 @@ class EventService:
                                   meta = %s,
                                   error = %s,
                                   trace_component = %s::jsonb,
-                                  loop_id = %s,
-                                  loop_name = %s,
-                                  iterator = %s::jsonb,
                                   current_index = %s,
                                   current_item = %s::jsonb,
                                   timestamp = CURRENT_TIMESTAMP
@@ -450,9 +386,6 @@ class EventService:
                               metadata_str,
                               error,
                               trace_component_str,
-                              loop_id_val,
-                              loop_name_val,
-                              iterator_val,
                               current_index_val,
                               current_item_val,
                               execution_id,
@@ -482,9 +415,6 @@ class EventService:
                               metadata_json=metadata_str,
                               error_text=error,
                               trace_component_json=trace_component_str,
-                              loop_id=loop_id_val,
-                              loop_name=loop_name_val,
-                              iterator_json=iterator_val,
                               current_index=current_index_val,
                               current_item_json=current_item_val,
                               stack_trace=traceback_text,
@@ -649,12 +579,11 @@ class EventService:
                                             workload_row = await cur.fetchone()
                                             if workload_row and workload_row[0]:
                                                 workload_data = json.loads(workload_row[0])
-                                                loop_data = workload_data.get('_loop', {})
-                                                if loop_data:
+                                                iterator_data = workload_data.get('_iterator', {})
+                                                if iterator_data:
                                                     loop_metadata = {
-                                                        'loop_id': loop_data.get('loop_id'),
-                                                        'current_index': loop_data.get('current_index'),
-                                                        'current_item': loop_data.get('current_item')
+                                                        'current_index': iterator_data.get('current_index'),
+                                                        'current_item': iterator_data.get('current_item')
                                                     }
                                         except Exception as e:
                                             logger.debug(f"Failed to extract loop metadata: {e}")
@@ -790,14 +719,8 @@ class EventService:
                             except Exception:
                                 pass
 
-                            if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
-                                event_data["resource_path"] = event_data["metadata"]["playbook_path"]
-
-                            if event_data.get("context") and "path" in event_data["context"]:
-                                event_data["resource_path"] = event_data["context"]["path"]
-
-                            if event_data.get("context") and "version" in event_data["context"]:
-                                event_data["resource_version"] = event_data["context"]["version"]
+                            # Use new schema field names directly
+                            # No backward compatibility mappings needed
 
                             events.append(event_data)
 
@@ -867,14 +790,8 @@ class EventService:
                             event_data["output_result"] = event_data.get("result")
                         except Exception:
                             pass
-                        if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
-                            event_data["resource_path"] = event_data["metadata"]["playbook_path"]
-
-                        if event_data["input_context"] and "path" in event_data["input_context"]:
-                            event_data["resource_path"] = event_data["input_context"]["path"]
-
-                        if event_data["input_context"] and "version" in event_data["input_context"]:
-                            event_data["resource_version"] = event_data["input_context"]["version"]
+                        # Use new schema field names directly
+                        # No backward compatibility mappings needed
                         return {"events": [event_data]}
 
                     return None

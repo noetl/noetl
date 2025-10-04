@@ -57,11 +57,11 @@ class CatalogService:
 
     async def register_resource(self, content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         resource_data = yaml.safe_load(content) or {}
-        resource_path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
+        path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
             resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
 
         # Get the latest version for this resource
-        latest_version = await self.get_latest_version(resource_path)
+        latest_version = await self.get_latest_version(path)
 
         async with get_async_db_connection(self.pgdb_conn_string) as conn:
             async with conn.cursor() as cursor:
@@ -76,7 +76,7 @@ class CatalogService:
                     RETURNING version
                     """,
                     (
-                        resource_path,
+                        path,
                         resource_type,
                         content,
                         Json(resource_data),
@@ -84,16 +84,16 @@ class CatalogService:
                     )
                 )
                 result = await cursor.fetchone()
-                resource_version = result[0] if result else latest_version
+                version = result[0] if result else latest_version
 
                 await conn.commit()
 
         return {
             "status": "success",
-            "message": f"Resource '{resource_path}' version '{resource_version}' registered.",
-            "resource_path": resource_path,
-            "resource_version": resource_version,
-            "resource_type": resource_type,
+            "message": f"Resource '{path}' version '{version}' registered.",
+            "path": path,
+            "version": version,
+            "kind": resource_type,
         }
 
     async def list_entries(self, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:

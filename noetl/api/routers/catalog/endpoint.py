@@ -282,7 +282,7 @@ async def save_catalog_playbook_content(
                 f"Failed to normalize playbook path in YAML: {norm_err}")
         # Use consistent resource type capitalization
         result = await catalog_service.register_resource(content, "Playbook")
-        return {"status": "success", "message": f"Playbook '{playbook_id}' content updated.", "resource_path": result.get("resource_path"), "resource_version": result.get("resource_version")}
+        return {"status": "success", "message": f"Playbook '{playbook_id}' content updated.", "path": result.get("path"), "version": result.get("version")}
     except HTTPException:
         raise
     except Exception as e:

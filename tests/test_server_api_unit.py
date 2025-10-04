@@ -40,9 +40,9 @@ steps:
         result = self.catalog_service.register_resource(test_playbook)
 
         self.assertIsInstance(result, dict)
-        self.assertIn('resource_path', result)
-        self.assertIn('resource_version', result)
-        self.assertEqual(result['resource_path'], 'test_playbook')
+        self.assertIn('path', result)
+        self.assertIn('version', result)
+        self.assertEqual(result['path'], 'test_playbook')
 
     def test_get_latest_version_no_entries(self):
         self.cursor_mock.fetchone.return_value = (0,)
@@ -80,8 +80,8 @@ steps:
         result = self.catalog_service.fetch_entry('test_path', '0.1.0')
 
         self.assertIsNotNone(result)
-        self.assertEqual(result['resource_path'], 'test_path')
-        self.assertEqual(result['resource_version'], '0.1.0')
+        self.assertEqual(result['path'], 'test_path')
+        self.assertEqual(result['version'], '0.1.0')
 
     def test_fetch_entry_not_found(self):
         self.cursor_mock.fetchone.return_value = None
@@ -96,7 +96,7 @@ steps:
         result = self.catalog_service.fetch_entry('path/to/filename', '0.1.0')
 
         self.assertIsNotNone(result)
-        self.assertEqual(result['resource_path'], 'filename')
+        self.assertEqual(result['path'], 'filename')
 
 if __name__ == '__main__':
     unittest.main()

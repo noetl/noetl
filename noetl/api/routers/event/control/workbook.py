@@ -59,8 +59,8 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                     meta = json.loads(row[1]) if row[1] else {}
                 except Exception:
                     meta = row[1] or {}
-                pb_path = (ctx.get('path') or (meta.get('playbook_path') if isinstance(meta, dict) else None) or (meta.get('resource_path') if isinstance(meta, dict) else None))
-                pb_ver = (ctx.get('version') or (meta.get('resource_version') if isinstance(meta, dict) else None) or 'latest')
+                pb_path = (ctx.get('path') or (meta.get('path') if isinstance(meta, dict) else None))
+                pb_ver = (ctx.get('version') or (meta.get('version') if isinstance(meta, dict) else None) or 'latest')
                 if not pb_path:
                     return
 
