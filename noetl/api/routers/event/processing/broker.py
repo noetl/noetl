@@ -199,7 +199,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         next_step_name = first
                                     elif isinstance(first, dict):
                                         next_step_name = first.get('step') or first.get('name')
-                                        # Build transition payload with precedence: input > payload > with
+                                        # Build transition payload with precedence: input > payload > with > data
                                         merged = {}
                                         try:
                                             w = first.get('with') if isinstance(first.get('with'), dict) else None
@@ -217,6 +217,13 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                             i = first.get('input') if isinstance(first.get('input'), dict) else None
                                             if i:
                                                 merged.update(i)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            # IMPORTANT: Also check for 'data' attribute in next step transition
+                                            d = first.get('data') if isinstance(first.get('data'), dict) else None
+                                            if d:
+                                                merged['data'] = d
                                         except Exception:
                                             pass
                                         next_with = merged
