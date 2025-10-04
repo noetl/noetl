@@ -183,9 +183,7 @@ async def get_catalog_playbook(
     """Get playbook by ID, optionally by version"""
     try:
         logger.info(f"Received playbook_id: '{playbook_id}'")
-        if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]
-            logger.info(f"Fixed playbook_id: '{playbook_id}'")
+        # Accept any path structure - no prefix validation required
 
         if not version:
             version = await catalog_service.get_latest_version(playbook_id)
@@ -221,9 +219,7 @@ async def get_catalog_playbook_content(
     """Get playbook raw content"""
     try:
         logger.info(f"Received playbook_id for content: '{playbook_id}'")
-        if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]
-            logger.info(f"Fixed playbook_id for content: '{playbook_id}'")
+        # Accept any path structure - no prefix validation required
         body = None
         try:
             body = await request.json()
@@ -259,9 +255,7 @@ async def save_catalog_playbook_content(
     """Save playbook content (stores new version)."""
     try:
         logger.info(f"Received playbook_id for save: '{playbook_id}'")
-        if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]
-            logger.info(f"Fixed playbook_id for save: '{playbook_id}'")
+        # Accept any path structure - no prefix validation required
         body = await request.json()
         content = body.get("content")
         if not content:
@@ -311,9 +305,7 @@ async def get_catalog_playbook_fallback(
     """
     try:
         logger.info(f"Received playbook_id: '{playbook_id}'")
-        if playbook_id.startswith("playbooks/"):
-            playbook_id = playbook_id[10:]
-            logger.info(f"Fixed playbook_id: '{playbook_id}'")
+        # Accept any path structure - no prefix validation required
 
         # Fallback handling for misrouted content requests
         if playbook_id.endswith("/content") or playbook_id.endswith("/content/"):
@@ -363,15 +355,15 @@ async def get_catalog_widgets():
             async with get_async_db_connection() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
-                        "SELECT COUNT(DISTINCT resource_path) FROM catalog WHERE resource_type = 'widget'"
+                        "SELECT COUNT(DISTINCT path) FROM noetl.catalog WHERE kind = 'Playbook'"
                     )
                     row = await cursor.fetchone()
                     playbook_count = row[0] if row else 0
 
                     await cursor.execute(
                         """
- SELECT meta FROM catalog
- WHERE resource_type = 'widget'
+ SELECT meta FROM noetl.catalog
+ WHERE kind = 'Playbook'
                         """
                     )
                     results = await cursor.fetchall()
@@ -445,9 +437,7 @@ async def get_catalog_widgets():
 async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
     logger.info(f"Dependency received playbook_id: '{playbook_id}'")
     path_to_lookup = playbook_id.replace('%2F', '/')
-    if path_to_lookup.startswith("playbooks/"):
-        path_to_lookup = path_to_lookup.removeprefix("playbooks/")
-        logger.info(f"Trimmed playbook_id to: '{path_to_lookup}'")
+    # Accept any path structure - no prefix validation required
     version_to_lookup = None
     if ':' in path_to_lookup:
         path_parts = path_to_lookup.rsplit(':', 1)
