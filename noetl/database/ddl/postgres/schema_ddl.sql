@@ -112,7 +112,7 @@ CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
 
 -- Credential
 CREATE TABLE IF NOT EXISTS noetl.credential (
-    id SERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
     data_encrypted TEXT NOT NULL,
@@ -148,7 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
 CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
 
 CREATE TABLE IF NOT EXISTS noetl.metric (
-    metric_id BIGSERIAL,
+    metric_id BIGINT,
     runtime_id BIGINT NOT NULL REFERENCES noetl.runtime(runtime_id) ON DELETE CASCADE,
     metric_name TEXT NOT NULL,
     metric_type TEXT NOT NULL CHECK (metric_type IN ('counter', 'gauge', 'histogram', 'summary')),
@@ -317,7 +317,7 @@ $$ LANGUAGE plpgsql;
 
 -- Queue
 CREATE TABLE IF NOT EXISTS noetl.queue (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     execution_id BIGINT NOT NULL,
     node_id VARCHAR NOT NULL,
     action TEXT NOT NULL,
@@ -397,10 +397,7 @@ CREATE TABLE IF NOT EXISTS noetl.dentry (
     id BIGINT PRIMARY KEY,
     parent_id BIGINT REFERENCES noetl.dentry(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('folder')),
-    resource_type TEXT,
-    resource_id BIGINT,
-    is_positive BOOLEAN DEFAULT TRUE,
+    kind TEXT NOT NULL CHECK (kind IN ('folder')),
     meta JSONB,
     created_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE(parent_id, name)
@@ -412,7 +409,7 @@ ALTER TABLE noetl.dentry OWNER TO noetl;
 
 -- Indexes for dentry and messages
 CREATE INDEX IF NOT EXISTS idx_dentry_parent ON noetl.dentry(parent_id);
-CREATE INDEX IF NOT EXISTS idx_dentry_type ON noetl.dentry(type);
+CREATE INDEX IF NOT EXISTS idx_dentry_kind ON noetl.dentry(kind);
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
@@ -436,6 +433,11 @@ ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.queue ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.schedule ALTER COLUMN schedule_id SET DEFAULT noetl.snowflake_id();
+alter table noetl.credential ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+alter table noetl.metric ALTER COLUMN metric_id SET DEFAULT noetl.snowflake_id();
+alter table noetl.metric ALTER COLUMN runtime_id SET DEFAULT noetl.snowflake_id();
 
 -- Seed sample roles (ids via function)
 INSERT INTO noetl.role(id, name, description) VALUES (noetl.snowflake_id(), 'admin', 'Administrator') ON CONFLICT (name) DO NOTHING;
