@@ -130,20 +130,20 @@ ALTER TABLE noetl.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
 CREATE TABLE IF NOT EXISTS noetl.runtime (
     runtime_id BIGINT PRIMARY KEY,
     name TEXT NOT NULL,
-    component_type TEXT NOT NULL CHECK (component_type IN ('worker_pool','server_api','broker')),
-    base_url TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('worker_pool','server_api','broker')),
+    uri TEXT,  -- Resource URI (endpoint for servers, resource location for workers)
     status TEXT NOT NULL,
     labels JSONB,
     capabilities JSONB,
     capacity INTEGER,
     runtime JSONB,
-    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+    heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE noetl.runtime OWNER TO noetl;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_component_name ON noetl.runtime (component_type, name);
-CREATE INDEX IF NOT EXISTS idx_runtime_type ON noetl.runtime (component_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_kind_name ON noetl.runtime (kind, name);
+CREATE INDEX IF NOT EXISTS idx_runtime_kind ON noetl.runtime (kind);
 CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
 CREATE INDEX IF NOT EXISTS idx_runtime_runtime_type ON noetl.runtime ((runtime->>'type'));
 

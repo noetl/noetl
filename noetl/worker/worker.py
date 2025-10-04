@@ -152,11 +152,15 @@ def register_worker_pool_from_env() -> None:
             labels = [s.strip() for s in labels.split(',') if s.strip()]
 
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+        
+        # Generate a Kubernetes-style URI for worker identification
+        namespace = os.environ.get("POD_NAMESPACE", "noetl") 
+        worker_uri = f"k8s://{namespace}/{hostname}"
 
         payload = {
             "name": name,
             "runtime": runtime,
-            "base_url": base_url,
+            "uri": worker_uri,
             "status": "ready",
             "capacity": int(capacity) if capacity and str(capacity).isdigit() else None,
             "labels": labels,
