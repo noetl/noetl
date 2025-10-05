@@ -29,9 +29,9 @@ workflow:
 
   - step: end
     desc: "End hello world test"
-    type: save
-    storage: event_log
-    data:
-      status: "success"
+    type: end
+    save:
+      storage: event_log
       data:
+        status: "success"
         message: "{{ test_step.result.data.message }}"

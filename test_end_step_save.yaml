@@ -1,0 +1,35 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_end_step_with_save
+  path: test/end_step_save
+workload:
+  message: "Testing end step with save"
+workflow:
+  - step: start
+    desc: "Start test"
+    next:
+      - step: process_data
+        data:
+          input: "{{ workload.message }}"
+
+  - step: process_data
+    desc: "Process some data"
+    type: python
+    code: |
+      def main(input):
+          result = f"Processed: {input}"
+          print(f"PROCESSING: {result}")
+          return {"status": "success", "data": {"processed_message": result}}
+    next:
+      - step: end
+
+  - step: end
+    desc: "End step with save block"
+    type: end
+    save:
+      storage: event_log
+      data:
+        status: "success"
+        message: "{{ process_data.data.processed_message }}"
+        test_type: "end_step_with_save_test"

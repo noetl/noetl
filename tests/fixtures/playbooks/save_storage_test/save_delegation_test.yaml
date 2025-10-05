@@ -1,0 +1,102 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: save_storage_delegation_test
+  path: tests/fixtures/playbooks/save_storage_test/save_delegation_test
+  description: "Simple test demonstrating save storage delegation is working"
+
+workload:
+  test_message: "Hello from save storage delegation test!"
+
+workflow:
+  # Test 1: Event storage (default)
+  - step: event_test
+    desc: "Test event storage delegation"
+    type: python
+    code: |
+      # Simple function that doesn't need input_data parameter
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "test": "event_storage",
+                  "message": "Event storage delegation working"
+              }
+          }
+    save:
+      storage: event
+      data: "{{ result.data }}"
+    next:
+      - step: postgres_test
+
+  # Test 2: Postgres storage delegation
+  - step: postgres_test  
+    desc: "Test postgres storage delegation"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "test": "postgres_storage", 
+                  "message": "Postgres storage delegation working",
+                  "value": 123
+              }
+          }
+    save:
+      storage:
+        type: postgres
+        table: simple_test_flat
+        auth: pg_k8s
+      data:
+        test_id: "delegation_test"
+        test_name: "{{ result.data.test }}"
+        test_value: "{{ result.data.value }}"
+    next:
+      - step: duckdb_test
+
+  # Test 3: DuckDB storage delegation
+  - step: duckdb_test
+    desc: "Test duckdb storage delegation"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "test": "duckdb_storage",
+                  "message": "DuckDB storage delegation working"
+              }
+          }
+    save:
+      storage:
+        type: duckdb
+        commands: |
+          CREATE OR REPLACE TABLE test_duckdb AS 
+          SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+          SELECT * FROM test_duckdb;
+      data: "{{ result.data }}"
+    next:
+      - step: http_test
+
+  # Test 4: HTTP storage delegation  
+  - step: http_test
+    desc: "Test http storage delegation"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "test": "http_storage",
+                  "message": "HTTP storage delegation working"
+              }
+          }
+    save:
+      storage:
+        type: http
+        url: "https://httpbin.org/post"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+      data: "{{ result.data }}"

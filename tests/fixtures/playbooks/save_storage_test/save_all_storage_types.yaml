@@ -1,0 +1,413 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: save_all_storage_types_test
+  path: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
+  description: "Comprehensive test playbook covering all save storage types with data flow between steps"
+
+workload:
+  test_name: "save_storage_comprehensive_test"
+  base_data:
+    test_id: "save_test_{{ execution_id }}"
+    timestamp: "{{ now() }}"
+    test_phase: "initialization"
+
+workbook:
+  # Generate initial test data
+  - name: generate_test_data
+    type: python
+    code: |
+      def main(**kwargs):
+          import json
+          from datetime import datetime
+          
+          # Generate comprehensive test dataset
+          test_data = {
+              "execution_id": context.get("execution_id", "unknown"),
+              "test_suite": "save_storage_types",
+              "generated_at": datetime.now().isoformat(),
+              "sample_records": [
+                  {"id": 1, "name": "Alice", "department": "Engineering", "salary": 75000},
+                  {"id": 2, "name": "Bob", "department": "Marketing", "salary": 65000},
+                  {"id": 3, "name": "Carol", "department": "Sales", "salary": 70000}
+              ],
+              "metadata": {
+                  "record_count": 3,
+                  "test_type": "comprehensive_save_test",
+                  "validation_key": "save_test_validation"
+              }
+          }
+          
+          print(f"Generated test data with {len(test_data['sample_records'])} records")
+          return {"status": "success", "data": test_data}
+
+  # Transform data for postgres storage
+  - name: prepare_postgres_data
+    type: python
+    code: |
+      def main(**kwargs):
+          # Extract records and prepare for postgres INSERT
+          # Get data from previous step via context
+          source_data = context.get("generate_data", {}).get("data", {})
+          records = source_data.get("sample_records", [])
+          
+          # Add postgres-specific fields
+          postgres_data = []
+          for record in records:
+              postgres_record = record.copy()
+              postgres_record["storage_type"] = "postgres"
+              postgres_record["test_execution"] = source_data.get("execution_id", "unknown")
+              postgres_data.append(postgres_record)
+          
+          result = {
+              "postgres_records": postgres_data,
+              "table_name": "test_employees",
+              "operation": "insert_or_upsert"
+          }
+          
+          print(f"Prepared {len(postgres_data)} records for postgres storage")
+          return {"status": "success", "data": result}
+
+  # Prepare data for DuckDB analytics
+  - name: prepare_duckdb_analytics
+    type: python
+    code: |
+      def main(**kwargs):
+          import json
+          
+          # Get postgres results and create analytics dataset
+          postgres_result = context.get("test_flat_postgres_save", {}).get("data", {})
+          
+          analytics_data = {
+              "source_table": "test_employees",
+              "analysis_type": "department_summary",
+              "query_params": {
+                  "min_salary": 60000,
+                  "target_departments": ["Engineering", "Marketing", "Sales"]
+              },
+              "expected_aggregations": ["COUNT", "AVG", "MAX", "MIN"]
+          }
+          
+          print(f"Prepared analytics configuration for DuckDB")
+          return {"status": "success", "data": analytics_data}
+
+  # Prepare HTTP API payload
+  - name: prepare_http_payload
+    type: python
+    code: |
+      def main(input_data):
+          # Simulate API payload preparation
+          duckdb_result = input_data.get("data", {})
+          
+          api_payload = {
+              "webhook_type": "test_completion",
+              "test_results": {
+                  "postgres_status": "completed",
+                  "duckdb_status": "completed",
+                  "total_records_processed": 3,
+                  "test_execution_id": "{{ execution_id }}"
+              },
+              "notification": {
+                  "message": "Save storage test completed successfully",
+                  "priority": "info",
+                  "timestamp": "{{ now() }}"
+              }
+          }
+          
+          print(f"Prepared HTTP payload for webhook notification")
+          return {"status": "success", "data": api_payload}
+
+workflow:
+  # Start: Generate initial test data
+  - step: start
+    desc: "Initialize comprehensive save storage test"
+    type: python
+    code: |
+      def main(**kwargs):
+          import json
+          from datetime import datetime
+          
+          # Generate comprehensive test dataset
+          test_data = {
+              "execution_id": context.get("execution_id", "unknown"),
+              "test_suite": "save_storage_types",
+              "generated_at": datetime.now().isoformat(),
+              "sample_records": [
+                  {"id": 1, "name": "Alice", "department": "Engineering", "salary": 75000},
+                  {"id": 2, "name": "Bob", "department": "Marketing", "salary": 65000},
+                  {"id": 3, "name": "Carol", "department": "Sales", "salary": 70000}
+              ],
+              "metadata": {
+                  "record_count": 3,
+                  "test_type": "comprehensive_save_test",
+                  "validation_key": "save_test_validation"
+              }
+          }
+          
+          print(f"Generated test data with {len(test_data['sample_records'])} records")
+          return {"status": "success", "data": test_data}
+    data:
+      execution_id: "{{ execution_id }}"
+      workload: "{{ workload }}"
+    save:
+      storage: event_log
+      data: "{{ result.data }}"
+    next:
+      - step: test_flat_postgres_save
+
+  # Test 1: Flat structure postgres save
+  - step: test_flat_postgres_save
+    desc: "Test postgres save with flat storage structure"
+    type: python
+    code: |
+      def main(**kwargs):
+          # Simple pass-through to test flat save structure
+          return {
+              "status": "success", 
+              "data": {
+                  "message": "Flat postgres save test data",
+                  "test_type": "flat_structure"
+              }
+          }
+    data: "{{ start.data }}"
+    save:
+      storage: postgres
+      data:
+        test_id: "{{ execution_id }}"
+        test_name: "Test Employee Flat"
+        test_value: 55000
+        storage_type: "flat_structure"
+        test_execution: "{{ execution_id }}"
+      table: simple_test_flat
+      mode: insert
+      auth: pg_k8s
+    next:
+      - step: test_nested_postgres_save
+
+  # Test 2: Nested structure postgres save with upsert
+  - step: test_nested_postgres_save
+    desc: "Test postgres save with nested storage structure and upsert"
+    type: python
+    code: |
+      def main(**kwargs):
+          # Simple pass-through to test nested save structure
+          return {
+              "status": "success", 
+              "data": {
+                  "message": "Nested postgres save test data",
+                  "test_type": "nested_structure"
+              }
+          }
+    data: "{{ test_flat_postgres_save.data }}"
+    save:
+      storage:
+        type: postgres
+        data:
+          test_id: "{{ execution_id }}_nested"
+          test_name: "Test Employee Nested"
+          test_value: 58000
+          storage_type: "nested_structure"
+          test_execution: "{{ execution_id }}"
+        table: simple_test_nested
+        mode: upsert
+        key: test_id
+        auth: pg_k8s
+    next:
+      - step: test_postgres_statement_save
+
+  # Test 3: Postgres with custom SQL statement
+  - step: test_postgres_statement_save
+    desc: "Test postgres save with custom SQL statement"
+    type: python
+    code: |
+      def main(input_data):
+          return {
+              "status": "success", 
+              "data": {
+                  "summary_type": "department_stats",
+                  "execution_id": input_data.get("execution_id", "unknown")
+              }
+          }
+    data: "{{ test_nested_postgres_save.data }}"
+    save:
+      storage:
+        type: postgres
+        statement: |
+          INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
+          SELECT 
+            '{{ data.summary_type }}' as summary_type,
+            COUNT(*) as total_records,
+            AVG(test_value) as avg_value,
+            '{{ data.execution_id }}' as test_execution,
+            NOW() as created_at
+          FROM simple_test_flat 
+          WHERE test_execution = '{{ data.execution_id }}'
+        auth: pg_k8s
+    next:
+      - step: test_python_save
+
+  # Test 4: Python storage (custom code execution)
+  - step: test_python_save
+    desc: "Test python storage with custom processing code"
+    type: python
+    code: |
+      def main(input_data):
+          return {
+              "status": "success",
+              "data": {
+                  "processed_records": 3,
+                  "validation_status": "passed",
+                  "next_phase": "analytics"
+              }
+          }
+    data: "{{ test_postgres_statement_save.data }}"
+    save:
+      storage:
+        type: python
+        code: |
+          def main(data):
+              import json
+              import os
+              
+              # Custom python storage logic
+              result = {
+                  "storage_type": "python",
+                  "processed_data": data,
+                  "file_output": f"/tmp/noetl_test_{data.get('execution_id', 'unknown')}.json"
+              }
+              
+              # Simulate file writing
+              try:
+                  with open(result["file_output"], "w") as f:
+                      json.dump(data, f, indent=2)
+                  result["file_written"] = True
+              except Exception as e:
+                  result["file_written"] = False
+                  result["error"] = str(e)
+              
+              print(f"Python storage completed: {json.dumps(result, indent=2)}")
+              return {"status": "success", "data": result}
+    next:
+      - step: test_duckdb_save
+
+  # Test 5: DuckDB storage with analytics
+  - step: test_duckdb_save
+    desc: "Test DuckDB storage with analytics queries"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "analysis_type": "department_summary",
+                  "test_type": "duckdb_analytics"
+              }
+          }
+    data: "{{ test_python_save.data }}"
+    save:
+      storage:
+        type: duckdb
+        commands: |
+          -- Create analytics table
+          CREATE OR REPLACE TABLE test_analytics AS
+          SELECT 
+            'duckdb_analytics' as analysis_type,
+            '{{ data.analysis_type }}' as specific_analysis,
+            COUNT(*) as record_count,
+            '{{ execution_id }}' as test_execution,
+            NOW() as analysis_timestamp;
+          
+          -- Insert analysis results
+          INSERT INTO test_analytics 
+          SELECT 
+            'summary_stats' as analysis_type,
+            'execution_summary' as specific_analysis,
+            1 as record_count,
+            '{{ execution_id }}' as test_execution,
+            NOW() as analysis_timestamp;
+          
+          -- Return results
+          SELECT * FROM test_analytics WHERE test_execution = '{{ execution_id }}';
+    next:
+      - step: test_http_save
+
+  # Test 6: HTTP storage (webhook/API call)
+  - step: test_http_save
+    desc: "Test HTTP storage with webhook notification"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "webhook_type": "test_completion",
+                  "test_type": "http_webhook"
+              }
+          }
+    data: "{{ test_duckdb_save.data }}"
+    save:
+      storage:
+        type: http
+        endpoint: "https://httpbin.org/post"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+          X-Test-Suite: "noetl-save-storage"
+          X-Execution-ID: "{{ execution_id }}"
+        data:
+          test_completion: true
+          storage_tests_completed:
+            - event_log
+            - postgres_flat
+            - postgres_nested
+            - postgres_statement
+            - python
+            - duckdb
+            - http
+          execution_summary:
+            execution_id: "{{ execution_id }}"
+            total_steps: 7
+            test_status: "success"
+            timestamp: "{{ now() }}"
+    next:
+      - step: test_completion
+
+  # Final step: Test completion summary
+  - step: test_completion
+    desc: "Complete save storage comprehensive test"
+    type: python
+    code: |
+      def main(input_data):
+          import json
+          
+          summary = {
+              "test_suite": "save_storage_comprehensive",
+              "execution_id": input_data.get("execution_id", "unknown"),
+              "storage_types_tested": [
+                  "event_log",
+                  "postgres_flat_structure", 
+                  "postgres_nested_structure",
+                  "postgres_custom_statement",
+                  "python_custom_code",
+                  "duckdb_analytics",
+                  "http_webhook"
+              ],
+              "test_status": "completed",
+              "total_save_operations": 7,
+              "validation": "All save storage types successfully tested"
+          }
+          
+          print(f"TEST COMPLETION SUMMARY:")
+          print(json.dumps(summary, indent=2))
+          
+          return {"status": "success", "data": summary}
+    data: "{{ test_http_save.data }}"
+    save:
+      storage: event_log
+      data: "{{ result.data }}"
+    next:
+      - step: end
+
+  # End step
+  - step: end
+    desc: "Save storage comprehensive test completed successfully"

@@ -1,18 +1,12 @@
-""""""
-
-Python plugin compatibility shim.Python action executor for NoETL jobs.
-
-Imports from the new python package structure."""
-
+"""
+Python action executor for NoETL jobs.
 """
 
 import uuid
-
-from .python import execute_python_taskimport datetime
-
+import datetime
 import os
-
-__all__ = ['execute_python_task']import json
+import json
+import inspect
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
@@ -55,54 +49,45 @@ def execute_python_task(
     Execute a Python task.
 
     Args:
-        task_config: The task configuration
-        context: The context for rendering templates
-        jinja_env: The Jinja2 environment for template rendering
-        task_with: The rendered 'with' parameters dictionary
-        log_event_callback: A callback function to log events
+        task_config: Task configuration
+        context: Execution context
+        jinja_env: Jinja2 environment for template rendering
+        task_with: Task parameters
+        log_event_callback: Optional callback for logging events
 
     Returns:
-        A dictionary of the task result
+        Dict containing execution result
     """
     logger.debug("=== PYTHON.EXECUTE_PYTHON_TASK: Function entry ===")
-    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Parameters - task_config={task_config}, task_with={task_with}")
+    start_time = datetime.datetime.now()
+    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Start time={start_time}")
 
     task_id = str(uuid.uuid4())
-    # Prefer explicit 'name', then 'task'; fallback to generic
-    task_name = task_config.get('name') or task_config.get('task') or 'python_task'
-    start_time = datetime.datetime.now()
-
-    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Generated task_id={task_id}")
-    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task name={task_name}")
-    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Start time={start_time.isoformat()}")
+    task_name = task_config.get('name', 'unnamed_python_task')
+    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task ID={task_id}, name={task_name}")
 
     try:
-        # Prefer base64-encoded code when provided; fallback to plain inline 'code'
-        code_b64 = task_config.get('code_b64', '')
-        code_base64 = task_config.get('code_base64', '')  # Backward compatibility
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task config keys: {list(task_config.keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task with keys: {list((task_with or {}).keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Context keys: {list((context or {}).keys())}")
 
-        code = ''
-        if code_b64:
+        # Get and decode the code
+        code = None
+        if 'code_b64' in task_config:
             import base64
-            try:
-                code = base64.b64decode(code_b64.encode('ascii')).decode('utf-8')
-                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
-            except Exception as e:
-                logger.error(f"PYTHON.EXECUTE_PYTHON_TASK: Failed to decode base64 code: {e}")
-                raise ValueError(f"Invalid base64 code encoding: {e}")
-        elif code_base64:
+            code = base64.b64decode(task_config['code_b64']).decode('utf-8')
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
+        elif 'code_base64' in task_config:
             import base64
-            try:
-                code = base64.b64decode(code_base64.encode('ascii')).decode('utf-8')
-                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded backward-compatible base64 code, length={len(code)} chars")
-            except Exception as e:
-                logger.error(f"PYTHON.EXECUTE_PYTHON_TASK: Failed to decode backward-compatible base64 code: {e}")
-                raise ValueError(f"Invalid backward-compatible base64 code encoding: {e}")
-        else:
-            inline_code = task_config.get('code')
-            if isinstance(inline_code, str) and inline_code.strip():
-                code = inline_code
-                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Using inline code, length={len(code)} chars")
+            code = base64.b64decode(task_config['code_base64']).decode('utf-8')
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
+        elif 'code' in task_config:
+            code = task_config['code']
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Using inline code, length={len(code)} chars")
+
+        if not code:
+            if 'code' in task_config:
+                raise ValueError("Empty code provided.")
             else:
                 raise ValueError("No code provided. Expected 'code_b64', 'code_base64', or inline 'code' string in task configuration")
 
@@ -160,7 +145,65 @@ def execute_python_task(
             except Exception:
                 normalized_with = rendered_with
 
-            result_data = exec_locals['main'](**normalized_with)
+            # Enhanced function signature detection and flexible calling
+            main_func = exec_locals['main']
+            func_signature = inspect.signature(main_func)
+            params = list(func_signature.parameters.keys())
+            
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Function signature: {func_signature}")
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Function parameters: {params}")
+            
+            # Determine how to call the function based on its signature
+            result_data = None
+            
+            if len(params) == 0:
+                # Function takes no parameters: def main():
+                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with no parameters")
+                result_data = main_func()
+                
+            elif len(params) == 1 and 'input_data' in params:
+                # Legacy function signature: def main(input_data):
+                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with input_data parameter")
+                input_data = {
+                    'context': context,
+                    'with': normalized_with,
+                    **normalized_with  # Also include with params at top level
+                }
+                result_data = main_func(input_data)
+                
+            elif any(param.kind == inspect.Parameter.VAR_KEYWORD for param in func_signature.parameters.values()):
+                # Function accepts **kwargs: def main(**kwargs):
+                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with **kwargs")
+                call_kwargs = {
+                    'context': context,
+                    **normalized_with
+                }
+                result_data = main_func(**call_kwargs)
+                
+            else:
+                # Function has specific named parameters
+                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with specific named parameters")
+                call_kwargs = {}
+                
+                # Map available data to function parameters
+                available_data = {
+                    'context': context,
+                    **normalized_with
+                }
+                
+                for param_name in params:
+                    if param_name in available_data:
+                        call_kwargs[param_name] = available_data[param_name]
+                    elif param_name == 'input_data':
+                        # Provide input_data if specifically requested
+                        call_kwargs['input_data'] = {
+                            'context': context,
+                            'with': normalized_with,
+                            **normalized_with
+                        }
+                
+                result_data = main_func(**call_kwargs)
+
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
