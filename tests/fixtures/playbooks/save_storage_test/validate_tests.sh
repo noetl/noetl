@@ -63,7 +63,7 @@ check_noetl_services() {
 register_playbooks() {
     print_status "INFO" "Registering save storage test playbooks..."
     
-    local base_path="/Users/kadyapam/projects/noetl/noetl/tests/fixtures/playbooks/save_storage_test"
+    local base_path="./tests/fixtures/playbooks/save_storage_test"
     
     # Register simple test
     if .venv/bin/noetl playbook register "$base_path/save_simple_test.yaml" > /dev/null 2>&1; then

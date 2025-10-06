@@ -5,7 +5,7 @@
 
 HOST=${1:-localhost}
 PORT=${2:-8082}
-BASE_DIR="/Users/kadyapam/projects/noetl/noetl/tests/fixtures/playbooks"
+BASE_DIR="./tests/fixtures/playbooks"
 
 echo "Registering all test playbooks with NoETL server at $HOST:$PORT"
 echo "Base directory: $BASE_DIR"

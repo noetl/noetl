@@ -147,7 +147,7 @@ curl -s http://localhost:30082/api/metrics/partitions | jq
 This script prints the "noetl.metric" table structure and lists TTL-related functions:
 
 ```bash
-cd /Users/kadyapam/projects/noetl/noetl && .venv/bin/python -c "
+cd . && .venv/bin/python -c "
 import asyncio
 import psycopg
 from noetl.core.common import get_async_db_connection

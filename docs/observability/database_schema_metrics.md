@@ -202,7 +202,7 @@ CREATE TABLE noetl.runtime (
 Example (Python async call):
 
 ```bash
-dcd /Users/kadyapam/projects/noetl/noetl && .venv/bin/python -c "
+dcd . && .venv/bin/python -c "
 import asyncio
 from noetl.core.common import get_async_db_connection
 

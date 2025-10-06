@@ -23,7 +23,7 @@ Each playbook serves as both a test case and a reference implementation for spec
 ## Control Flow Workbook
 
 **Location**: `tests/fixtures/playbooks/control_flow_workbook/`  
-**README**: [`/Users/kadyapam/projects/noetl/noetl/tests/fixtures/playbooks/control_flow_workbook/README.md`](../../../tests/fixtures/playbooks/control_flow_workbook/README.md)
+**README**: [`./tests/fixtures/playbooks/control_flow_workbook/README.md`](../../../tests/fixtures/playbooks/control_flow_workbook/README.md)
 
 ### Purpose
 Validates the core execution control mechanisms of NoETL:
@@ -82,7 +82,7 @@ make test-control-flow-workbook-full
 ## HTTP DuckDB Postgres
 
 **Location**: `tests/fixtures/playbooks/http_duckdb_postgres/`  
-**README**: [`/Users/kadyapam/projects/noetl/noetl/tests/fixtures/playbooks/http_duckdb_postgres/README.md`](../../../tests/fixtures/playbooks/http_duckdb_postgres/README.md)
+**README**: [`./tests/fixtures/playbooks/http_duckdb_postgres/README.md`](../../../tests/fixtures/playbooks/http_duckdb_postgres/README.md)
 
 ### Purpose
 Demonstrates comprehensive data pipeline integration across multiple technologies:
@@ -165,7 +165,7 @@ make test-http-duckdb-postgres-full
 ## Playbook Composition
 
 **Location**: `tests/fixtures/playbooks/playbook_composition/`  
-**README**: [`/Users/kadyapam/projects/noetl/noetl/tests/fixtures/playbooks/playbook_composition/README.md`](../../../tests/fixtures/playbooks/playbook_composition/README.md)
+**README**: [`./tests/fixtures/playbooks/playbook_composition/README.md`](../../../tests/fixtures/playbooks/playbook_composition/README.md)
 
 ### Purpose
 Validates advanced workflow orchestration capabilities:
