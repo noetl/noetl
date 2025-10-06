@@ -36,11 +36,25 @@ workflow:
       CREATE TABLE IF NOT EXISTS simple_test_nested (
         test_id VARCHAR(255) PRIMARY KEY,
         test_name VARCHAR(255),
-        test_value VARCHAR(255),
-        execution_id VARCHAR(255),
-        nested_indicator BOOLEAN,
+        test_data JSONB,
         storage_type VARCHAR(255),
         test_execution VARCHAR(255)
+      )
+    next:
+      - step: create_summary_table
+        
+  - step: create_summary_table
+    desc: Create test summary table
+    type: postgres
+    auth: pg_k8s
+    command: |
+      CREATE TABLE IF NOT EXISTS test_summary (
+        id SERIAL PRIMARY KEY,
+        summary_type VARCHAR(255),
+        total_records INTEGER,
+        avg_value DECIMAL(10,2),
+        test_execution VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW()
       )
     next:
       - step: end

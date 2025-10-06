@@ -205,7 +205,7 @@ workflow:
         data:
           test_id: "{{ execution_id }}_nested"
           test_name: "Test Employee Nested"
-          test_value: 58000
+          test_data: '{"value": 58000, "type": "nested_structure", "meta": {"test_phase": "save_test"}}'
           storage_type: "nested_structure"
           test_execution: "{{ execution_id }}"
         table: simple_test_nested
