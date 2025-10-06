@@ -1,10 +1,13 @@
 # Python step
 
+For a more detailed usage example check: `tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml`
+
 Run inline Python, get a JSON-serializable result back from `main(...)`.
 
 What it does
 - Evaluates the provided code in-process.
 - Calls `main(**data)` and uses its return value as the step output.
+- Workbook tasks of type python are invoked the same way from workflow steps.
 
 Required keys
 - type: python
@@ -16,8 +19,9 @@ Common optional keys
 - save: Persist the return value or a projection
 
 Inputs and context
-- Values in `data:` are evaluated from context and passed to `main`.
+- Values in `data:` are evaluated from context and passed to `main`
 - Access earlier step results via `{{ previous.data }}` etc.
+- Use `print` for debug output (appears in logs)
 
 Return value rules
 - Must be JSON-serializable (dict/list/str/number/bool/null)
@@ -25,7 +29,7 @@ Return value rules
 
 Usage patterns
 - Compute derived values
-  ```yaml
+  ```YAML
   - step: summarize
     type: python
     data:
@@ -37,7 +41,7 @@ Usage patterns
   ```
 
 - Input validation with assert
-  ```yaml
+  ```YAML
   - step: summarize
     type: python
     data:
@@ -52,7 +56,7 @@ Usage patterns
   ```
 
 - Defensive coding for early/partial values (e.g., tracking states)
-  ```yaml
+  ```YAML
   - step: summarize
     type: python
     data:
@@ -65,5 +69,6 @@ Usage patterns
   ```
 
 Tips
-- Keep code side-effect free; use dedicated steps for I/O.
-- Raise ValueError with clear messages for invalid inputs to produce useful logs.
+- Keep code side-effect free; use dedicated steps for I/O
+- Raise ValueError with clear messages for invalid inputs to produce useful logs
+- All step fields (data, assert, save, etc.) are supported in workbook tasks

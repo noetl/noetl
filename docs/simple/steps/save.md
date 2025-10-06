@@ -1,9 +1,11 @@
 # Save block
 
+For a more detailed usage example check: `tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml`
+
 Persist step outputs to named variables or storages.
 
 Inline per-step save:
-```yaml
+```YAML
 - step: get
   type: http
   url: https://example.com
@@ -11,7 +13,7 @@ Inline per-step save:
 ```
 
 Iterator aggregated save:
-```yaml
+```YAML
 - step: http_loop
   type: iterator
   ...

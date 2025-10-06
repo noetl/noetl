@@ -1,5 +1,7 @@
 # HTTP step
 
+For a more detailed usage example check: `tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml`
+
 Make HTTP requests and bind responses into the playbook context.
 
 What it does
@@ -13,21 +15,21 @@ Required keys
 
 Common optional keys
 - method: GET (default), POST, PUT, DELETE, ...
-- headers: Map of request headers
-- data: Request parameters/body (GET -> query params, POST -> JSON body)
+- headers: Map of request headers (templated)
+- data: Request parameters/body (GET -> query params, POST -> JSON body; templated)
 - timeout: Request timeout in seconds
-- assert: Validate inputs/outputs
-  - expects: list of inputs to check before call
-  - returns: list of fields to check after call (e.g., `data.url`, `data.elapsed`, `data.payload`)
-- save: Persist all or a projection of the response to a variable or storage
+- assert: Validate required request fields before call and response fields after call
+  - expects: list of required inputs
+  - returns: list of required outputs (e.g., `data.url`, `data.elapsed`, `data.payload`)
+- save: Persist all or a projection of the response to a variable or external storage (e.g., Postgres)
 
 Inputs and templating
-- Reference earlier context: `{{ workload.base_url }}`, `{{ previous.data.id }}`.
-- Use simple expressions and filters; for JSON payloads prefer `| tojson` when embedding.
+- Reference earlier context: `{{ workload.base_url }}`, `{{ previous.data.id }}`
+- Use filters like `| tojson` for JSON bodies
 
 Outputs and context
-- Success response becomes `this.data` within the step, and `<step>.data` later.
-- In a loop, guard per-item saves: `this is defined and this.data is defined` to avoid nulls on failures.
+- Success response becomes `this.data` within the step, and `<step>.data` later
+- In a loop, guard per-item saves: `this is defined and this.data is defined` to avoid nulls on failures
 
 Usage patterns
 - GET with query params and response contract
@@ -45,7 +47,7 @@ Usage patterns
 
 Examples (fragments)
 - GET with params and headers
-  # ...existing code...
+  ```YAML
   method: GET
   endpoint: "{{ workload.base_url }}/forecast"
   headers:
@@ -58,9 +60,9 @@ Examples (fragments)
   assert:
     expects: [ data.latitude, data.longitude, data.hourly, data.forecast_days ]
     returns: [ data.url, data.elapsed, data.payload ]
-
+  ```
 - POST JSON with selective save
-  # ...existing code...
+  ```YAML
   method: POST
   endpoint: "https://api.example.com/items"
   headers:
@@ -69,9 +71,10 @@ Examples (fragments)
     name: "{{ previous.data.name }}"
     tags: "{{ previous.data.tags }}"
   save: { name: created_id, data: "{{ this.data.id }}" }
+  ```
 
 - Inside iterator: guarded per-item upsert
-  # ...existing code...
+  ```YAML
   type: iterator
   element: item
   collection: "{{ workload.items }}"
@@ -87,8 +90,10 @@ Examples (fragments)
       table: public.items_http
       mode: upsert
       key: id
+  ```
 
-Failure modes and tips
-- Timeouts or non-2xx responses fail the step; use `assert` to catch missing fields early.
-- Prefer saving a projection over entire payloads to reduce storage size.
-- Keep `endpoint` templating simple and well-quoted to avoid YAML parsing issues.
+Error handling
+- Timeouts or non-2xx responses fail the step unless handled by the engine
+- Use `assert` to catch missing fields early and fail fast
+- Prefer saving a projection over entire payloads to reduce storage size
+- Keep `endpoint` templating simple and well-quoted to avoid YAML parsing issues

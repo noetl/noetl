@@ -1,27 +1,29 @@
 # Postgres step
 
+For a more detailed usage example check: `tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml`
+
 Execute SQL against Postgres using a configured `auth` connection.
 
 What it does
-- Runs DDL/DML/queries on a Postgres database.
-- Suitable for schema management, inserts/updates, and simple reads.
+- Runs DDL/DML/queries on a Postgres database
+- Suitable for schema management, inserts/updates, and simple reads
 
 Required keys
 - type: postgres
 - auth: reference to a credential
-- command or sql: SQL text to execute
+- command or sql: SQL text to execute (both are supported)
 
 Common optional keys
 - assert: Validate inputs/outputs
 - save: Capture driver response or query results (engine-dependent)
 
 Templating and JSON
-- Use templating for values from context (e.g., `{{ execution_id }}`, `{{ city.name }}`).
-- For JSON payloads, wrap with $$...$$ or use tojson to avoid quoting issues.
+- Use templating for values from context (e.g., `{{ execution_id }}`, `{{ city.name }}`)
+- For JSON payloads, wrap with $$...$$ or use tojson to avoid quoting issues
 
 Usage patterns (fragments)
-- Ensure table exists (idempotent)
-  ```yaml
+- Ensure table exists (idempotent) with CREATE TABLE IF NOT EXISTS
+  ```YAML
   - step: write
     type: postgres
     auth: app_db
@@ -38,8 +40,8 @@ Usage patterns (fragments)
       );
   ```
 
-- Upsert with templated values
-  ```yaml
+- Upsert with templated values and ON CONFLICT
+  ```YAML
   - step: write
     type: postgres
     auth: app_db
@@ -53,7 +55,7 @@ Usage patterns (fragments)
   ```
 
 - Per-item save from iterator task
-  ```yaml
+  ```YAML
   - step: write
     type: postgres
     auth: app_db
@@ -70,6 +72,7 @@ Usage patterns (fragments)
   ```
 
 Tips
-- Prefer CREATE TABLE IF NOT EXISTS and ON CONFLICT for idempotency.
-- Keep transactions small; batch writes where practical.
-- Define and reference auth entries in the playbook header.
+- Prefer CREATE TABLE IF NOT EXISTS and ON CONFLICT for idempotency
+- Keep transactions small; batch writes where practical
+- Define and reference auth entries in the playbook header
+- Both `command` and `sql` fields are supported for SQL text

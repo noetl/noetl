@@ -1,17 +1,20 @@
 # Iterator (loop) step
 
+For a more detailed usage example check: `tests/fixtures/playbooks/playbook_composition/playbook_composition.yaml`
+
 Repeat a task for each item in a collection and aggregate results.
 
 What it does
-- Iterates over a list (`collection`), binding each element as a named variable.
-- Runs the nested `task` per item and collects outputs.
-- Provides per-item and aggregated save options.
+- Iterates over a list (`collection`), binding each element as a named variable
+- Runs the nested `task` per item and collects outputs
+- Provides per-item and aggregated save options
+- The `task` can itself be a sub-playbook (see playbook_composition)
 
 Required keys
 - type: iterator
 - collection: list value to iterate
 - element: variable name bound to the current item
-- task: step (or steps) to execute for each item
+- task: step (or steps, or sub-playbook) to execute for each item
 
 Control options
 - mode: sequential (default) or async
@@ -22,10 +25,10 @@ Control options
 - chunk: group size for batched processing (engine-dependent)
 
 Context variables
-- `{{ element }}`: current item (e.g., `city`)
+- `{{ element }}`: current item (e.g., `city`, `user`)
 - `_loop.index` (0-based), `_loop.count` (1-based), `_loop.size` (total)
 - `this.data` inside the task: the current step's output
-- `this.result`: list of collected per-item results
+- `this.result`: list of collected per-item results (order matches input collection)
 - `this.result_index`: list of indices for which results exist
 - Guards: `this is defined and this.data is defined` when saving per-item outputs
 
@@ -35,7 +38,7 @@ Saving
 
 Usage patterns (fragments)
 - Async HTTP fan-out with guarded Postgres upsert
-  ```yaml
+  ```YAML
   - step: http_loop
     type: iterator
     element: city
@@ -59,8 +62,25 @@ Usage patterns (fragments)
         key: id
   ```
 
+- Iterator with sub-playbook as task (see playbook_composition)
+  ```YAML
+  - step: city_forecast
+    type: iterator
+    element: city
+    collection: "{{ workload.cities }}"
+    task:
+      - include: forecast_playbook.yaml
+        vars:
+          city_name: "{{ city.name }}"
+          city_lat: "{{ city.lat }}"
+          city_lon: "{{ city.lon }}"
+    save:
+      - name: city_forecast_results
+        data: "{{ this.result }}"
+  ```
+
 - Aggregate results for later steps
-  ```yaml
+  ```YAML
   - step: http_loop
     type: iterator
     element: it
@@ -77,5 +97,5 @@ Usage patterns (fragments)
   ```
 
 Notes
-- When mode=async, ensure external services and rate limits can handle concurrency.
-- Use `order_by` to stabilize processing order if needed for deterministic ids.
+- When mode=async, ensure external services and rate limits can handle concurrency
+- Use `order_by` to stabilize processing order if needed for deterministic ids

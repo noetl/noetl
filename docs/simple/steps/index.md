@@ -1,5 +1,7 @@
 # Step types (overview)
 
+For a more detailed usage example check: `tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml`
+
 - start: Entry point. Routes to the first executable step via `next`.
 - end: Terminal step.
 - http: HTTP requests (endpoint, method, headers, data, timeout, assert, save)

@@ -3,14 +3,14 @@
 Define the playbook kind, version, and identity. Appears at the top of every file.
 
 What it is
-- Declares apiVersion and kind
+- Declares apiVersion and kind (always `noetl.io/v1` and `Playbook` for NoETL v1)
 - Provides metadata for identification and cataloging
 
 Required keys
-- apiVersion: noetl.io/v1
-- kind: Playbook
+- apiVersion: noetl.io/v1 (always)
+- kind: Playbook (always)
 - metadata.name: unique name within your catalog
-- metadata.path: catalog path (used by tooling/tests)
+- metadata.path: catalog path (must match repo/test location exactly for automation)
 
 Common optional keys
 - metadata.version: your own semantic version (string)
@@ -23,7 +23,7 @@ kind: Playbook
 metadata:
   name: my_playbook
   path: examples/my_playbook
-  version: "1.0.0"
+  version: "0.1.0"
   description: Minimal example
 ```
 

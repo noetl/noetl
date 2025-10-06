@@ -18,9 +18,12 @@ Step keys (common)
 
 Transitions (next)
 - Single continuation: one entry
-- Conditional branches: multiple entries with `when`
+- Conditional branches: multiple entries with `when` (expression on previous step's `result`)
 - Parallel fan-out: multiple entries without `when` (run concurrently)
 - Iterator: use `type: iterator` to fan out per item and aggregate
+
+Special step types
+- `type: start` and `type: end` are special; do not require implementation fields
 
 Data passing rules
 - `data:` is evaluated before the step executes and passed into the step implementation
@@ -29,7 +32,7 @@ Data passing rules
 
 Common patterns (fragments)
 - Linear chain: start → A → B → end
-- Conditional route: branch on a flag (true/false)
+- Conditional route: branch on a flag (true/false) using `when: "{{ result.flag }}"`
 - Parallel fan-out: two or more next steps with no conditions
 - Per-item loop: iterator over a list with inner task and aggregated save
 
