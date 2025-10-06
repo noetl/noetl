@@ -118,9 +118,15 @@ workbook:
           return {"status": "success", "data": api_payload}
 
 workflow:
-  # Start: Generate initial test data
+  # Start: Route to initialization
   - step: start
     desc: "Initialize comprehensive save storage test"
+    next:
+      - step: initialize_test_data
+
+  # Initialize test data
+  - step: initialize_test_data
+    desc: "Generate initial test data"
     type: python
     code: |
       def main(**kwargs):
