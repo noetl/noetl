@@ -88,3 +88,9 @@ include = ["noetl*"]
 
 [tool.setuptools.package-data]
 "noetl" = ["ui/**/*", "database/ddl/**/*"]
+
+[dependency-groups]
+dev = [
+    "build>=1.2.2.post1",
+    "twine>=6.1.0",
+]

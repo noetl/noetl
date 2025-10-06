@@ -6,7 +6,7 @@ import json
 import yaml
 import base64
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from noetl.keyval import KeyVal, KeyValBuilder
+from noetl.core.keyval import KeyVal, KeyValBuilder
 
 class TestKeyVal(unittest.TestCase):
     def setUp(self):
