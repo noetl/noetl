@@ -154,23 +154,29 @@ async def get_execution(execution_id: str):
                 detail=f"Execution '{execution_id}' not found."
             )
 
+        # Get the first event for playbook path information (execution_start event)
+        first_event = events.get("events", [])[0] if events.get("events") else None
+        
+        # Get the latest event for status and result information
         latest_event = None
         for event in events.get("events", []):
             if not latest_event or (event.get("timestamp", "") > latest_event.get("timestamp", "")):
                 latest_event = event
 
-        if not latest_event:
+        if not latest_event or not first_event:
             raise HTTPException(
                 status_code=404,
                 detail=f"No events found for execution '{execution_id}'."
             )
 
-        metadata = latest_event.get("metadata", {})
-        context = latest_event.get("context", {})
-        result = latest_event.get("result", {})
-
-        playbook_id = metadata.get('path', context.get('path', ''))
+        # Get playbook path from first event (execution_start)
+        first_metadata = first_event.get("metadata", {})
+        first_context = first_event.get("context", {})
+        playbook_id = first_metadata.get('path', first_context.get('path', ''))
         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+
+        # Get status and result from latest event
+        result = latest_event.get("result", {})
 
         raw_status = latest_event.get("status", "")
         status = event_service._normalize_status(raw_status)
@@ -201,7 +207,7 @@ async def get_execution(execution_id: str):
             progress = 0
 
         execution_data = {
-            "id": execution_id,
+            "execution_id": execution_id,
             "playbook_id": playbook_id,
             "playbook_name": playbook_name,
             "status": status,
