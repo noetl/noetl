@@ -24,7 +24,6 @@ import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
 import { nodeTypes, orderedNodeTypes } from './nodeTypes';
 import { EditableTaskNode, TaskNode } from "./types";
-import MonacoEditor from '@monaco-editor/react';
 // @ts-ignore
 import yaml from 'js-yaml';
 
@@ -68,8 +67,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // Minimal global edit modal state (only type change + delete)
   const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
-  const [editorTab, setEditorTab] = useState<'config' | 'code' | 'json' | 'raw'>('config');
   const [messageApi, contextHolder] = message.useMessage();
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
@@ -129,7 +128,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         return n;
       }));
       setHasChanges(true);
-      setActiveTask((prev) => (prev && prev.id === updatedTask.id ? { ...prev, ...updatedTask, id: prev.id } : prev)); // keep modal in sync
     },
     [setNodes, readOnly]
   );
@@ -173,7 +171,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             onEdit: handleEditTask,
             onDelete: handleDeleteTask,
             readOnly,
-            onOpen: () => setActiveTask(task),
+            // onOpen not used (click handler below)
           },
           className: "react-flow__node",
         });
@@ -507,7 +505,17 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                onNodeClick={(e, node) => { const task = (node.data as any)?.task; if (task) setActiveTask(task); }}
+                onNodeClick={(e, node) => {
+                  // Explicit global flag set by HTTP edit button to bypass type modal
+                  if ((window as any).__skipNextNodeModal) {
+                    (window as any).__skipNextNodeModal = false;
+                    return;
+                  }
+                  const target = e.target as HTMLElement;
+                  if (target && target.closest('.http-edit-btn')) return;
+                  const task = (node.data as any)?.task;
+                  if (task) setActiveTask(task);
+                }}
                 nodeTypes={customNodeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
                 connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
@@ -549,95 +557,28 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     <Modal
       open={!!activeTask}
       onCancel={() => setActiveTask(null)}
-      onOk={() => setActiveTask(null)}
-      width={900}
-      title={activeTask ? `Edit: ${activeTask.name}` : ''}
-      okText="Close"
-      cancelButtonProps={{ style: { display: 'none' } }}
+      footer={null}
+      title={activeTask ? `Node: ${activeTask.name}` : ''}
+      width={420}
     >
       {activeTask && (
-        <div className="node-modal-body">
-          <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ fontSize: 12, fontWeight: 500 }}>Type</label>
             <Select
               disabled={!!readOnly}
               value={activeTask.type}
               onChange={(val) => handleEditTask({ ...activeTask, type: val })}
               options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
-              style={{ width: 180 }}
-            />
-            <Select
-              value={editorTab}
-              onChange={(v) => setEditorTab(v as any)}
-              options={[
-                { value: 'config', label: 'Config Fields' },
-                { value: 'code', label: 'Code' },
-                { value: 'json', label: 'Config JSON' },
-                { value: 'raw', label: 'Raw Task' },
-              ]}
-              style={{ width: 160 }}
+              style={{ width: '100%' }}
             />
           </div>
-          <div style={{ marginBottom: 12 }}>
-            <input
-              disabled={!!readOnly}
-              value={activeTask.name}
-              onChange={(e) => handleEditTask({ ...activeTask, name: e.target.value })}
-              placeholder="Step name"
-              className="xy-theme__input"
-              style={{ width: '100%', padding: '6px 8px' }}
-            />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+            <Button onClick={() => setActiveTask(null)}>Close</Button>
+            {!readOnly && (
+              <Button danger onClick={() => { if (activeTask) { handleDeleteTask(activeTask.id); setActiveTask(null); } }}>Delete</Button>
+            )}
           </div>
-          {editorTab === 'config' && (
-            <div style={{ padding: 8 }}>No structured editor for this node type. Use JSON or Code tabs.</div>
-          )}
-          {editorTab === 'code' && (
-            <div style={{ height: 300 }}>
-              <MonacoEditor
-                height="300px"
-                defaultLanguage={activeTask.type === 'python' ? 'python' : (activeTask.type === 'duckdb' || activeTask.type === 'postgres') ? 'sql' : 'javascript'}
-                value={(activeTask.config?.code) || activeTask.config?.sql || ''}
-                onChange={(val) => {
-                  if (readOnly) return;
-                  const cfg = { ...(activeTask.config || {}) } as any;
-                  if (activeTask.type === 'python') cfg.code = val || '';
-                  if (activeTask.type === 'duckdb' || activeTask.type === 'postgres') cfg.sql = val || '';
-                  handleEditTask({ ...activeTask, config: cfg });
-                }}
-                theme="vs-dark"
-                options={{ minimap: { enabled: false }, fontSize: 13 }}
-              />
-            </div>
-          )}
-          {editorTab === 'json' && (
-            <div style={{ height: 300 }}>
-              <MonacoEditor
-                height="300px"
-                defaultLanguage="json"
-                value={JSON.stringify(activeTask.config || {}, null, 2)}
-                onChange={(val) => {
-                  if (readOnly) return;
-                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...activeTask, config: parsed }); } catch { }
-                }}
-                theme="vs-dark"
-                options={{ minimap: { enabled: false }, fontSize: 13 }}
-              />
-            </div>
-          )}
-          {editorTab === 'raw' && (
-            <div style={{ height: 300 }}>
-              <MonacoEditor
-                height="300px"
-                defaultLanguage="json"
-                value={JSON.stringify(activeTask, null, 2)}
-                onChange={(val) => {
-                  if (readOnly) return;
-                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...(parsed as any), id: activeTask.id }); } catch { }
-                }}
-                theme="vs-dark"
-                options={{ minimap: { enabled: false }, fontSize: 13 }}
-              />
-            </div>
-          )}
         </div>
       )}
     </Modal>
