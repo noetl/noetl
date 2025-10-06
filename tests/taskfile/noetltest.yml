@@ -1,5 +1,14 @@
 version: '3.45'
 
+# NoETL Test Task Automation
+# ===========================
+# Key workflows:
+# - setup-test-environment: Register all credentials and test playbooks (one-time setup)
+# - register-all-test-playbooks: Register all test playbooks from fixtures directory  
+# - test-create-tables: Create database tables required for save storage tests
+# - test-*-full: Complete test workflows including setup, table creation, and execution
+# - test-save-storage-all: Run complete save storage test suite with optimized setup
+
 tasks:
   # === Test Tasks ===
   test-register-control-flow-workbook:
@@ -23,10 +32,10 @@ tasks:
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/control_flow_workbook" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
 
   test-control-flow-workbook-full:
-    desc: Full test - register and execute control flow workbook on cluster
+    desc: Full test - setup environment and execute control flow workbook on cluster
     aliases: [tcfwf]
     cmds:
-      - task: test-register-control-flow-workbook
+      - task: setup-test-environment
       - sleep 2
       - task: test-execute-control-flow-workbook
 
@@ -85,6 +94,28 @@ tasks:
         fi
       - echo "\n=== Test credentials registered successfully ==="
 
+  register-all-test-playbooks:
+    desc: Register all test playbooks from fixtures directory to cluster
+    aliases: [ratp]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - echo "=== Registering all test playbooks ==="
+      - ./register_test_playbooks.sh {{ .NOETL_HOST }} {{ .NOETL_PORT }}
+      - echo "=== All test playbooks registered successfully ==="
+
+  setup-test-environment:
+    desc: Complete test environment setup - register credentials and all playbooks
+    aliases: [ste]
+    cmds:
+      - echo "=== Setting up complete test environment ==="
+      - task: register-test-credentials
+      - sleep 2
+      - task: register-all-test-playbooks
+      - echo "=== Test environment setup completed ==="
+
   test-register-http-duckdb-postgres:
     desc: Register HTTP DuckDB Postgres playbook to cluster
     aliases: [trhdp]
@@ -106,12 +137,10 @@ tasks:
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/http_duckdb_postgres" --host localhost --port 8082 --json
 
   test-http-duckdb-postgres-full:
-    desc: Full test - register credentials, register playbook, and execute HTTP DuckDB Postgres test
+    desc: Full test - setup environment and execute HTTP DuckDB Postgres test
     aliases: [thdpf]
     cmds:
-      - task: register-test-credentials
-      - sleep 2
-      - task: test-register-http-duckdb-postgres
+      - task: setup-test-environment
       - sleep 2
       - task: test-execute-http-duckdb-postgres
 
@@ -172,3 +201,168 @@ tasks:
       - task: test-register-hello-world
       - sleep 2
       - task: test-execute-hello-world
+
+  # === Save Storage Test Tasks ===
+  test-create-tables:
+    desc: Create required database tables for save storage tests
+    aliases: [tct]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - echo "=== Creating database tables for save storage tests ==="
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+      - sleep 10
+      - echo "=== Database tables created successfully ==="
+
+  test-register-save-simple:
+    desc: Register save storage simple test playbook to cluster
+    aliases: [trsss]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_simple_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  test-execute-save-simple:
+    desc: Execute save storage simple test on cluster
+    aliases: [tesss]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_simple_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  test-save-simple-full:
+    desc: Full test - setup environment, create tables, and execute save storage simple test
+    aliases: [tsssf]
+    cmds:
+      - task: setup-test-environment
+      - sleep 2
+      - task: test-create-tables
+      - sleep 5
+      - task: test-execute-save-simple
+
+  # === Save Storage Delegation Test ===
+  test-register-save-delegation:
+    desc: Register save storage delegation test playbook to cluster
+    aliases: [trsdt]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_delegation_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  test-execute-save-delegation:
+    desc: Execute save storage delegation test on cluster
+    aliases: [tesdt]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_delegation_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  test-save-delegation-full:
+    desc: Full test - setup environment, create tables, and execute save storage delegation test
+    aliases: [tsdtf]
+    cmds:
+      - task: setup-test-environment
+      - sleep 2
+      - task: test-create-tables
+      - sleep 5
+      - task: test-execute-save-delegation
+      - sleep 2
+      - task: test-execute-save-simple
+
+  test-register-save-comprehensive:
+    desc: Register save storage comprehensive test playbook to cluster
+    aliases: [trsct]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_all_storage_types.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  test-execute-save-comprehensive:
+    desc: Execute save storage comprehensive test on cluster
+    aliases: [tesct]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_all_storage_types" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  test-save-comprehensive-full:
+    desc: Full test - setup environment, create tables, and execute save storage comprehensive test
+    aliases: [tsctf]
+    cmds:
+      - task: setup-test-environment
+      - sleep 2
+      - task: test-create-tables
+      - sleep 5
+      - task: test-execute-save-comprehensive
+
+  test-register-save-edge-cases:
+    desc: Register save storage edge cases test playbook to cluster
+    aliases: [trsec]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_edge_cases.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  test-execute-save-edge-cases:
+    desc: Execute save storage edge cases test on cluster
+    aliases: [tesec]
+    env:
+      NOETL_HOST: localhost
+      NOETL_PORT: 8082
+    cmds:
+      - kubectl config use-context kind-noetl
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_edge_cases" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  test-save-edge-cases-full:
+    desc: Full test - setup environment, create tables, and execute save storage edge cases test
+    aliases: [tsecf]
+    cmds:
+      - task: setup-test-environment
+      - sleep 2
+      - task: test-create-tables
+      - sleep 5
+      - task: test-execute-save-edge-cases
+
+  test-save-storage-all:
+    desc: Run all save storage tests (simple, comprehensive, edge cases)
+    aliases: [tssall]
+    cmds:
+      - echo "=== Running Save Storage Test Suite ==="
+      - task: setup-test-environment
+      - sleep 2
+      - task: test-create-tables
+      - sleep 5
+      - echo "=== Running save storage simple test ==="
+      - task: test-execute-save-simple
+      - sleep 5
+      - echo "=== Running save storage comprehensive test ==="
+      - task: test-execute-save-comprehensive
+      - sleep 5
+      - echo "=== Running save storage edge cases test ==="
+      - task: test-execute-save-edge-cases
+      - echo "=== Save Storage Test Suite Completed ==="
+
+  validate-save-storage-tests:
+    desc: Validate save storage test environment and run validation script
+    aliases: [vsst]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - echo "=== Running Save Storage Test Validation ==="
+      - tests/fixtures/playbooks/save_storage_test/validate_tests.sh validate
+      - echo "=== Save Storage Test Validation Completed ==="

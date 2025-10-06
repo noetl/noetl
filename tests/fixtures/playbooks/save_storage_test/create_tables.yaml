@@ -1,0 +1,63 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: create_test_tables
+  path: tests/fixtures/playbooks/save_storage_test/create_tables
+  
+workload:
+  test_name: create_test_tables
+
+workflow:
+  - step: start
+    desc: Start table creation
+    next:
+      - step: create_flat_table
+        
+  - step: create_flat_table
+    desc: Create flat test table
+    type: postgres
+    auth: pg_k8s
+    command: |
+      CREATE TABLE IF NOT EXISTS simple_test_flat (
+        test_id VARCHAR(255) PRIMARY KEY,
+        test_name VARCHAR(255),
+        test_value INTEGER,
+        storage_type VARCHAR(255),
+        test_execution VARCHAR(255)
+      )
+    next:
+      - step: create_nested_table
+        
+  - step: create_nested_table  
+    desc: Create nested test table
+    type: postgres
+    auth: pg_k8s
+    command: |
+      CREATE TABLE IF NOT EXISTS simple_test_nested (
+        test_id VARCHAR(255) PRIMARY KEY,
+        test_name VARCHAR(255),
+        test_data JSONB,
+        storage_type VARCHAR(255),
+        test_execution VARCHAR(255)
+      )
+    next:
+      - step: create_summary_table
+        
+  - step: create_summary_table
+    desc: Create test summary table
+    type: postgres
+    auth: pg_k8s
+    command: |
+      CREATE TABLE IF NOT EXISTS test_summary (
+        id SERIAL PRIMARY KEY,
+        summary_type VARCHAR(255),
+        total_records INTEGER,
+        avg_value DECIMAL(10,2),
+        test_execution VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    next:
+      - step: end
+        
+  - step: end
+    desc: Table creation completed

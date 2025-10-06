@@ -1,0 +1,100 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: save_storage_simple_test
+  path: tests/fixtures/playbooks/save_storage_test/save_simple_test
+  description: "Simple test playbook demonstrating basic save storage patterns"
+
+workload:
+  test_data:
+    id: 100
+    name: "Simple Test Record"
+    category: "testing"
+    value: 42.5
+
+workflow:
+  # Test 1: Event log storage (default)
+  - step: start
+    desc: "Test event log storage (simplest form)"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "step": "event_log_test",
+                  "message": "Testing event log storage",
+                  "test_id": "evt_001"
+              }
+          }
+    save:
+      storage: event_log
+      data: "{{ result.data }}"
+    next:
+      - step: postgres_flat_test
+
+  # Test 2: Postgres flat structure
+  - step: postgres_flat_test
+    desc: "Test postgres save with flat structure"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success", 
+              "data": {
+                  "record_id": 100,
+                  "description": "Postgres flat structure test",
+                  "source_step": "postgres_flat_test"
+              }
+          }
+    save:
+      storage: postgres
+      auth: pg_k8s
+      table: simple_test_flat
+      data:
+        test_id: "{{ result.data.record_id }}"
+        test_name: "{{ result.data.description }}"
+        test_value: 42
+    next:
+      - step: postgres_nested_test
+
+  # Test 3: Postgres nested structure
+  - step: postgres_nested_test
+    desc: "Test postgres save with nested structure"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "test_type": "nested_structure",
+                  "nested_id": 200
+              }
+          }
+    save:
+      storage:
+        type: postgres
+        table: simple_test_nested
+        mode: upsert
+        key: test_id
+        auth: pg_k8s
+      data:
+        test_id: "{{ result.data.nested_id }}"
+        test_name: "nested_structure_test"
+        test_value: "{{ workload.test_data.value }}"
+        execution_id: "{{ execution_id }}"
+        nested_indicator: true
+    next:
+      - step: end
+
+  - step: end
+    desc: "Test completion"
+    type: python
+    code: |
+      def main(**kwargs):
+          return {
+              "status": "success",
+              "data": {
+                  "message": "All save storage tests completed successfully"
+              }
+          }

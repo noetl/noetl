@@ -795,6 +795,25 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     t = str((sd or {}).get('type') or '').lower()
                     if not t:
                         return False
+                    
+                    # Check if step has a save block - if so, it's actionable regardless of type
+                    save_block = sd.get('save')
+                    if save_block:
+                        # Also check if save block has nested storage.type that should override step type
+                        storage = save_block.get('storage')
+                        if isinstance(storage, dict) and 'type' in storage:
+                            # Nested structure: storage.type indicates the action type to use
+                            storage_type = storage.get('type', '').strip().lower()
+                            if storage_type in {'http', 'python', 'duckdb', 'postgres', 'secrets'}:
+                                # Override type with storage.type for execution
+                                t = storage_type
+                        elif isinstance(storage, str):
+                            # Flat structure: use storage value as action type if it's a known action type
+                            storage_type = storage.strip().lower()
+                            if storage_type in {'http', 'python', 'duckdb', 'postgres', 'secrets'}:
+                                t = storage_type
+                        return True
+                        
                     # Include 'save' so save steps run on workers (iterator is the only loop type)
                     if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','iterator'}:
                         if t == 'python':
@@ -814,9 +833,15 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     # Defer loop expansion to the normal broker path to avoid undefined variable issues here.
                     # The standard enqueue below will handle loop steps via evaluate_broker_for_execution.
                     pass
+                # Determine task type, treating steps with save blocks as save tasks
+                step_type = step_def.get('type') or 'python'
+                # If step has a save block but type is not 'save', treat it as a save task
+                if step_def.get('save') and step_type not in {'save', 'http', 'python', 'duckdb', 'postgres', 'secrets', 'workbook', 'playbook', 'iterator'}:
+                    step_type = 'save'
+                
                 task_def = {
                     'name': next_step_name,
-                    'type': step_def.get('type') or 'python',
+                    'type': step_type,
                 }
                 for _fld in (
                     'task','code','command','commands','sql',

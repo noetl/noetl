@@ -1,0 +1,62 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: test_storage_structures
+  path: test/storage_structures
+
+workload:
+  message: Test both flat and nested storage structures
+
+workflow:
+- step: start
+  desc: Start workflow
+  next:
+  - step: test_flat_structure
+    
+- step: test_flat_structure
+  desc: Test flat storage structure (backward compatible)
+  type: python
+  code: |
+    def main(input_data):
+        result = "Test data from flat structure"
+        print(f"FLAT_STRUCTURE: {result}")
+        return {"status": "success", "data": {"message": result}}
+  save:
+    storage: postgres
+    data:
+      id: '{{ execution_id }}_flat'
+      execution_id: '{{ execution_id }}'
+      message: '{{ step.data.message if step.data else "flat test" }}'
+    auth: pg_k8s
+    table: public.test_save_structures
+    mode: upsert
+    key: id
+  next:
+  - step: test_nested_structure
+
+- step: test_nested_structure
+  desc: Test nested storage structure (recommended)
+  type: python
+  code: |
+    def main(input_data):
+        result = "Test data from nested structure"
+        print(f"NESTED_STRUCTURE: {result}")
+        return {"status": "success", "data": {"message": result}}
+  save:
+    storage:
+      type: postgres
+      data:
+        id: '{{ execution_id }}_nested'
+        execution_id: '{{ execution_id }}'
+        message: '{{ step.data.message if step.data else "nested test" }}'
+      auth: pg_k8s
+      table: public.test_save_structures
+      mode: upsert
+      key: id
+  next:
+  - step: end
+
+- step: end
+  desc: End workflow
+  type: end

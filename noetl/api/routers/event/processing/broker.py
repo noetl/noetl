@@ -238,9 +238,16 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to finalize non-actionable step", exc_info=True)
                                     return
                                 # Build task for actionable step
+                                step_type = step_def.get('type') or 'python'
+                                
+                                # If step has a save block but type is not 'save', treat it as a save task
+                                # This ensures save blocks are handled by the save plugin
+                                if step_def.get('save') and step_type not in {'save', 'http', 'python', 'duckdb', 'postgres', 'secrets', 'workbook', 'playbook', 'iterator'}:
+                                    step_type = 'save'
+                                
                                 task = {
                                     'name': next_step_name,
-                                    'type': step_def.get('type') or 'python',
+                                    'type': step_type,
                                 }
                                 for fld in (
                                     'task','run','code','command','commands','sql',
@@ -722,6 +729,11 @@ def _is_actionable_step(step_def: dict) -> bool:
         t = str((step_def or {}).get('type') or '').lower()
         if not t:
             return False
+        
+        # Check if step has a save block - if so, it's actionable regardless of type
+        if step_def.get('save'):
+            return True
+            
         # Include 'save' so save steps run on workers
         if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','iterator'}:
             # For python, require code in step_def
