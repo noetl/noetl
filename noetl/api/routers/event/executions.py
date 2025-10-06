@@ -207,7 +207,7 @@ async def get_execution(execution_id: str):
             progress = 0
 
         execution_data = {
-            "execution_id": execution_id,
+            "id": execution_id,
             "playbook_id": playbook_id,
             "playbook_name": playbook_name,
             "status": status,
