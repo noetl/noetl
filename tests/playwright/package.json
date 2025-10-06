@@ -1,0 +1,35 @@
+{
+  "name": "athena-embed-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-End tests for AthenaHealth Embedded App using Playwright",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "playwright test --ui",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report",
+    "install": "npx playwright install",
+    "update": "npx playwright install --with-deps"
+  },
+  "dependencies": {
+    "@google-cloud/cloud-sql-connector": "^1.8.2",
+    "dotenv": "^16.4.7",
+    "graphql-ws": "^6.0.4",
+    "pg": "^8.16.3",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.2",
+    "@types/pg": "^8.15.5",
+    "eslint": "^8.55.0",
+    "playwright": "^1.41.0",
+    "prettier": "^3.0.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
