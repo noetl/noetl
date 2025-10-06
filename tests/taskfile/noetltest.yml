@@ -107,6 +107,8 @@ tasks:
       - echo "=== All test playbooks registered successfully ==="
 
   setup-test-environment:
+  # before run we need go to https://console.cloud.google.com/security/secret-manager/secret/gcs_hmac_local/versions?project=noetl-demo-19700101
+  # copy and paste to tests/fixtures/credentials/gcs_hmac_local.json the values for key_id and secret
     desc: Complete test environment setup - register credentials and all playbooks
     aliases: [ste]
     cmds:
