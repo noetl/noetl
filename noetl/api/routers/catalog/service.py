@@ -25,7 +25,7 @@ class CatalogService:
                 row = await cursor.fetchone()
                 if row and row[0] is not None:
                     return int(row[0])
-                return 1
+                return 0  # Return 0 so that first version will be 1
 
     async def fetch_entry(self, path: str, version: str | int) -> Optional[Dict[str, Any]]:
         # Handle "latest" version by getting the actual latest version
@@ -60,8 +60,9 @@ class CatalogService:
         path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
             resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
 
-        # Get the latest version for this resource
+        # Get the latest version for this resource and increment it
         latest_version = await self.get_latest_version(path)
+        new_version = latest_version + 1
 
         async with get_async_db_connection(self.pgdb_conn_string) as conn:
             async with conn.cursor() as cursor:
@@ -71,12 +72,13 @@ class CatalogService:
                 await cursor.execute(
                     """
                     INSERT INTO noetl.catalog
-                    (path, kind, content, payload, meta)
-                    VALUES (%s, %s, %s, %s, %s)
+                    (path, version, kind, content, payload, meta)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING version
                     """,
                     (
                         path,
+                        new_version,
                         resource_type,
                         content,
                         Json(resource_data),
@@ -84,7 +86,7 @@ class CatalogService:
                     )
                 )
                 result = await cursor.fetchone()
-                version = result[0] if result else latest_version
+                version = result[0] if result else new_version
 
                 await conn.commit()
 
