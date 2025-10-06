@@ -169,7 +169,7 @@ async def get_execution(execution_id: str):
         context = latest_event.get("context", {})
         result = latest_event.get("result", {})
 
-        playbook_id = metadata.get('resource_path', context.get('path', ''))
+        playbook_id = metadata.get('path', context.get('path', ''))
         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
 
         raw_status = latest_event.get("status", "")
