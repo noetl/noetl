@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, StrictUndefined, BaseLoader
 
+from noetl.core.common import convert_snowflake_ids_for_api, get_async_db_connection
+from noetl.core.status import validate_status
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -308,6 +310,21 @@ class QueueWorker:
     # ------------------------------------------------------------------
     # Queue interaction helpers
     # ------------------------------------------------------------------
+    
+    def _validate_event_status(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and ensure event status is properly normalized before sending."""
+        try:
+            status = event_data.get("status")
+            if status:
+                # This will raise ValueError if status is invalid
+                validated_status = validate_status(status)
+                event_data["status"] = validated_status
+            return event_data
+        except ValueError as e:
+            logger.error(f"Invalid status in event: {e}. Event: {event_data}")
+            # This will stop execution as required - show valid statuses in error
+            raise ValueError(f"Worker generated invalid event status. Must be one of: STARTED, RUNNING, PAUSED, PENDING, FAILED, COMPLETED. {str(e)}")
+    
     def _register_pool(self) -> None:
         """Best-effort registration of this worker pool."""
         try:
@@ -521,7 +538,7 @@ class QueueWorker:
             start_event = {
                 "execution_id": execution_id,
                 "event_type": "action_started",
-                "status": "RUNNING",
+                "status": "STARTED",
                 "node_id": node_id,
                 "node_name": task_name,
                 "node_type": node_type_val,
@@ -535,6 +552,7 @@ class QueueWorker:
                 start_event["parent_event_id"] = parent_event_id
             
             from noetl.plugin import report_event
+            start_event = self._validate_event_status(start_event)
             report_event(start_event, self.server_url)
 
             try:
@@ -655,7 +673,7 @@ class QueueWorker:
                     error_event = {
                         "execution_id": execution_id,
                         "event_type": "action_error",
-                        "status": "ERROR",
+                        "status": "FAILED",
                         "node_id": node_id,
                         "node_name": task_name,
                         "node_type": node_type_val,
@@ -670,6 +688,7 @@ class QueueWorker:
                         error_event["parent_event_id"] = parent_event_id
                     
                     from noetl.plugin import report_event
+                    error_event = self._validate_event_status(error_event)
                     report_event(error_event, self.server_url)
                     emitted_error = True
                     raise RuntimeError(err_msg or "Task returned error status")
@@ -690,6 +709,7 @@ class QueueWorker:
                         complete_event["parent_event_id"] = parent_event_id
                     
                     from noetl.plugin import report_event
+                    complete_event = self._validate_event_status(complete_event)
                     report_event(complete_event, self.server_url)
 
                     # Emit a companion step_result event for easier querying of results per step
@@ -713,6 +733,7 @@ class QueueWorker:
                             step_result_event["parent_event_id"] = parent_event_id
                         
                         from noetl.plugin import report_event
+                        step_result_event = self._validate_event_status(step_result_event)
                         report_event(step_result_event, self.server_url)
                     except Exception:
                         logger.debug("WORKER: Failed to emit step_result companion event", exc_info=True)
@@ -727,7 +748,7 @@ class QueueWorker:
                     error_event = {
                         "execution_id": execution_id,
                         "event_type": "action_error",
-                        "status": "ERROR",
+                        "status": "FAILED",
                         "node_id": node_id,
                         "node_name": task_name,
                         "node_type": node_type_val,
@@ -742,6 +763,7 @@ class QueueWorker:
                         error_event["parent_event_id"] = parent_event_id
                     
                     from noetl.plugin import report_event
+                    error_event = self._validate_event_status(error_event)
                     report_event(error_event, self.server_url)
                 raise  # Re-raise to let the worker handle job failure
         else:

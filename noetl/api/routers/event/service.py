@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.core.status import validate_status
 from noetl.api.routers.event.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
@@ -18,19 +19,7 @@ class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
-    def _normalize_status(self, raw: str | None) -> str:
-        if not raw:
-            return 'pending'
-        s = str(raw).strip().lower()
-        if s in {'completed', 'complete', 'success', 'succeeded', 'done'}:
-            return 'completed'
-        if s in {'error', 'failed', 'failure'}:
-            return 'failed'
-        if s in {'running', 'run', 'in_progress', 'in-progress', 'progress', 'started', 'start'}:
-            return 'running'
-        if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
-            return 'pending'
-        return 'pending'
+
 
     async def get_all_executions(self) -> List[Dict[str, Any]]:
         """
@@ -76,7 +65,20 @@ class EventService:
                         playbook_id = metadata.get('resource_path', input_context.get('path', ''))
                         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
                         raw_status = row[2]
-                        status = self._normalize_status(raw_status)
+                        
+                        # For existing data, we need to handle potentially non-normalized statuses
+                        # by normalizing them only for display purposes, but log warnings
+                        if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                            status = raw_status
+                        else:
+                            # Legacy data - normalize for display but log warning
+                            from noetl.core.status import normalize_status
+                            try:
+                                status = normalize_status(raw_status)
+                                logger.warning(f"Found non-normalized status '{raw_status}' in execution {execution_id}. This should be fixed in the source.")
+                            except ValueError:
+                                logger.error(f"Invalid status '{raw_status}' in execution {execution_id}. Defaulting to 'PENDING'.")
+                                status = 'PENDING'
 
                         start_time = row[3].isoformat() if row[3] else None
                         end_time = None
@@ -102,15 +104,27 @@ class EventService:
                                     end_dt = datetime.fromisoformat(end_time)
                                     duration = (end_dt - start_dt).total_seconds()
 
-                        progress = 100 if status in ['completed', 'failed'] else 0
-                        if status == 'running':
+                        progress = 100 if status in ['COMPLETED', 'FAILED'] else 0
+                        if status in ['STARTED', 'RUNNING']:
                             # Count total events & those considered finished (completed/failed)
                             await cursor.execute("""
                                 SELECT status FROM event WHERE execution_id = %s
                             """, (execution_id,))
-                            event_statuses = [self._normalize_status(r[0]) for r in await cursor.fetchall()]
+                            event_statuses = []
+                            for r in await cursor.fetchall():
+                                event_status = r[0]
+                                if event_status and event_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                                    event_statuses.append(event_status)
+                                else:
+                                    # Legacy data - normalize for calculation
+                                    from noetl.core.status import normalize_status
+                                    try:
+                                        normalized = normalize_status(event_status)
+                                        event_statuses.append(normalized)
+                                    except ValueError:
+                                        event_statuses.append('PENDING')
                             total_steps = len(event_statuses)
-                            completed_steps = sum(1 for s in event_statuses if s in {'completed', 'failed'})
+                            completed_steps = sum(1 for s in event_statuses if s in {'COMPLETED', 'FAILED'})
                             if total_steps > 0:
                                 progress = int((completed_steps / total_steps) * 100)
 
@@ -156,7 +170,15 @@ class EventService:
             event_id = event_data.get("event_id", snow or f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id
             event_type = event_data.get("event_type", "UNKNOWN")
-            status = event_data.get("status", "CREATED")
+            raw_status = event_data.get("status", "PENDING")
+            
+            # Validate status - this will raise ValueError if invalid
+            try:
+                status = validate_status(raw_status) if raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'} else validate_status('PENDING')
+            except ValueError as e:
+                logger.error(f"Invalid status '{raw_status}' in event: {e}")
+                raise ValueError(f"Invalid event status '{raw_status}'. {str(e)}")
+            
             parent_event_id = event_data.get("parent_id") or event_data.get("parent_event_id")
             execution_id = event_data.get("execution_id", event_id)
             node_id = event_data.get("node_id", event_id)
@@ -710,8 +732,22 @@ class EventService:
                                 "execution_id": execution_id,
                                 "resource_path": None,
                                 "resource_version": None,
-                                "normalized_status": self._normalize_status(row[5])
                             }
+                            
+                            # Add normalized_status for backwards compatibility
+                            # For existing data, handle potentially non-normalized statuses
+                            raw_status = row[5]
+                            if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                                event_data["normalized_status"] = raw_status
+                            else:
+                                # Legacy data - normalize for compatibility
+                                from noetl.core.status import normalize_status
+                                try:
+                                    event_data["normalized_status"] = normalize_status(raw_status)
+                                    logger.warning(f"Found non-normalized status '{raw_status}' in event {row[0]}. This should be fixed in the source.")
+                                except ValueError:
+                                    logger.error(f"Invalid status '{raw_status}' in event {row[0]}. Defaulting to 'PENDING'.")
+                                    event_data["normalized_status"] = 'PENDING'
                             # Backward/consumer compatibility: also expose legacy alias keys
                             try:
                                 event_data["input_context"] = event_data.get("context")

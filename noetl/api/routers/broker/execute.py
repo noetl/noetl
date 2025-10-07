@@ -370,7 +370,7 @@ def execute_playbook_via_broker(
                     payload = {
                         'event_type': 'execution_start',
                         'execution_id': execution_id,
-                        'status': 'IN_PROGRESS',
+                        'status': 'STARTED',
                         'timestamp': datetime.datetime.now().isoformat(),
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
@@ -387,7 +387,7 @@ def execute_playbook_via_broker(
                     payload = {
                         'event_type': 'execution_start',
                         'execution_id': execution_id,
-                        'status': 'IN_PROGRESS',
+                        'status': 'STARTED',
                         'timestamp': datetime.datetime.now().isoformat(),
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
@@ -407,7 +407,7 @@ def execute_playbook_via_broker(
                 report_event({
                     'event_type': 'execution_start',
                     'execution_id': execution_id,
-                    'status': 'IN_PROGRESS',
+                    'status': 'STARTED',
                     'timestamp': datetime.datetime.now().isoformat(),
                     'node_type': 'playbook',
                     'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
