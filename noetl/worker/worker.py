@@ -142,7 +142,10 @@ def register_worker_pool_from_env() -> None:
     try:
         runtime = os.environ.get("NOETL_WORKER_POOL_RUNTIME", "").strip().lower()
         if not runtime:
-            return
+            # Default to 'cpu' if not specified for backward compatibility
+            runtime = "cpu"
+            logger.info("NOETL_WORKER_POOL_RUNTIME not set, defaulting to 'cpu'")
+            
         base_url = os.environ.get("NOETL_WORKER_BASE_URL", "http://queue-worker").strip()
         name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
         server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
@@ -170,11 +173,14 @@ def register_worker_pool_from_env() -> None:
             "hostname": hostname,
         }
         url = f"{server_url}/worker/pool/register"
+        
+        logger.info(f"Registering worker pool '{name}' with runtime '{runtime}' at {url}")
+        
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=10.0) as client:  # Increased timeout
                 resp = client.post(url, json=payload)
                 if resp.status_code == 200:
-                    logger.info(f"Worker pool registered: {name} ({runtime}) -> {base_url}")
+                    logger.info(f"Worker pool registered: {name} ({runtime}) -> {worker_uri}")
                     try:
                         with open(f'/tmp/noetl_worker_pool_name_{name}', 'w') as f:
                             f.write(name)
@@ -182,10 +188,13 @@ def register_worker_pool_from_env() -> None:
                         pass
                 else:
                     logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
+                    raise Exception(f"Registration failed with status {resp.status_code}: {resp.text}")
         except Exception as e:
-            logger.warning(f"Worker pool register exception: {e}")
-    except Exception:
-        logger.exception("Unexpected error during worker pool registration")
+            logger.error(f"Worker pool register exception: {e}")
+            raise
+    except Exception as e:
+        logger.exception(f"Unexpected error during worker pool registration: {e}")
+        raise
 
 
 def deregister_worker_pool_from_env() -> None:
@@ -783,6 +792,12 @@ class QueueWorker:
     # ------------------------------------------------------------------
     async def _report_simple_worker_metrics(self) -> None:
         """Report simple worker metrics for standalone QueueWorker instances."""
+        # Check if metrics are disabled
+        metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+        if metrics_disabled:
+            logger.debug("Simple metric reporting disabled")
+            return
+        
         try:
             import psutil
             
@@ -955,6 +970,12 @@ class ScalableQueueWorkerPool:
 
     async def _report_worker_metrics(self, component_name: str) -> None:
         """Report worker metrics to the server."""
+        # Check if metrics are disabled
+        metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+        if metrics_disabled:
+            logger.debug(f"Metric reporting disabled for {component_name}")
+            return
+        
         try:
             # Import here to avoid circular imports
             import psutil
@@ -1083,10 +1104,22 @@ class ScalableQueueWorkerPool:
     async def run_forever(self) -> None:
         """Run the auto-scaling loop until ``stop`` is called."""
         # Ensure single registration for the pool
+        registration_success = False
         try:
             register_worker_pool_from_env()
-        except Exception:
-            logger.debug("Pool initial registration failed", exc_info=True)
+            registration_success = True
+            logger.info("Worker pool registration completed successfully")
+        except Exception as e:
+            logger.warning(f"Pool initial registration failed: {e}")
+
+        # Retry registration if it failed
+        if not registration_success:
+            logger.info("Retrying worker pool registration...")
+            try:
+                register_worker_pool_from_env()
+                logger.info("Worker pool registration retry succeeded")
+            except Exception as e:
+                logger.error(f"Worker pool registration retry failed: {e}")
 
         # Heartbeat loop task
         heartbeat_interval = float(os.environ.get("NOETL_WORKER_HEARTBEAT_INTERVAL", "15"))
@@ -1095,18 +1128,34 @@ class ScalableQueueWorkerPool:
             name = os.environ.get('NOETL_WORKER_POOL_NAME') or 'worker-cpu'
             payload = {"name": name}
             url = f"{self.server_url}/worker/pool/heartbeat"
+            consecutive_failures = 0
+            max_failures = 5
+            
             while not self._stop.is_set():
                 try:
                     async with httpx.AsyncClient(timeout=5.0) as client:
                         resp = await client.post(url, json=payload)
                         if resp.status_code != 200:
-                            logger.debug(f"Worker heartbeat non-200 {resp.status_code}: {resp.text}")
+                            logger.warning(f"Worker heartbeat non-200 {resp.status_code}: {resp.text}")
+                            consecutive_failures += 1
+                        else:
+                            consecutive_failures = 0
                     
-                    # Report metrics with heartbeat
-                    await self._report_worker_metrics(name)
+                    # Report metrics with heartbeat (if enabled)
+                    metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+                    if not metrics_disabled:
+                        try:
+                            await self._report_worker_metrics(name)
+                        except Exception as metrics_error:
+                            logger.debug(f"Worker metrics reporting failed: {metrics_error}")
                     
-                except Exception:
-                    logger.debug("Worker heartbeat/metrics failed", exc_info=True)
+                except Exception as e:
+                    consecutive_failures += 1
+                    logger.warning(f"Worker heartbeat failed (attempt {consecutive_failures}/{max_failures}): {e}")
+                    if consecutive_failures >= max_failures:
+                        logger.error(f"Worker heartbeat failed {max_failures} consecutive times, still continuing...")
+                        consecutive_failures = 0  # Reset to avoid spam
+                
                 await asyncio.sleep(heartbeat_interval)
 
         hb_task = asyncio.create_task(_heartbeat_loop())

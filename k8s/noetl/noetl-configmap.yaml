@@ -24,6 +24,7 @@ data:
   NOETL_SCHEMA_VALIDATE: "true"
   NOETL_RUNTIME_SWEEP_INTERVAL: "15"
   NOETL_RUNTIME_OFFLINE_SECONDS: "60"
+  NOETL_DISABLE_METRICS: "true"
   POSTGRES_USER: "demo"
   POSTGRES_DB: "demo_noetl"
   POSTGRES_HOST: "postgres.postgres.svc.cluster.local"

@@ -174,6 +174,12 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
         async def _report_server_metrics(component_name: str):
             """Report server metrics periodically."""
+            # Check if metrics are disabled
+            metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+            if metrics_disabled:
+                logger.debug(f"Server metric reporting disabled for {component_name}")
+                return
+            
             try:
                 import httpx
                 from ..api.routers.metrics import collect_system_metrics
