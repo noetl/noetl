@@ -1,0 +1,360 @@
+version: '3.45'
+
+tasks:
+  server-debug:
+    desc: Run NoETL server in debug mode as a background daemon with logging
+    aliases: [sdbg]
+    cmds:
+      - |
+        set -e
+        mkdir -p logs
+
+        # Select env file: ENV_FILE overrides; otherwise prefer .env.pycharm if present; else .env
+        env_file="${ENV_FILE:-}"
+        if [ -z "$env_file" ]; then
+          if [ -f ".env.pycharm" ]; then env_file=".env.pycharm"; else env_file=".env"; fi
+        fi
+        # Load environment if file exists
+        set -a; [ -f "$env_file" ] && . "$env_file"; set +a
+        echo "Using env file: $env_file"
+
+        # Prefer local venv's python, fallback to system python
+        py=".venv/bin/python"
+        if [ ! -x "$py" ]; then py="python"; fi
+        echo "Using python: $py"
+
+        # Compute host/port from env with sensible defaults
+        host="${NOETL_API_HOST:-${NOETL_HOST:-0.0.0.0}}"
+        port="${NOETL_API_PORT:-${NOETL_PORT:-8083}}"
+        echo "Server will bind to $host:$port"
+
+        # Preflight: check if port is busy and kill existing process if found
+        if command -v lsof >/dev/null 2>&1; then
+          pids=$(lsof -t -i TCP:$port -sTCP:LISTEN || true)
+          if [ -n "$pids" ]; then
+            echo "Port $port is already in use by PID(s): $pids"
+            echo "Killing existing process(es)..."
+            kill $pids || true
+            sleep 1
+            for pid in $pids; do
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "Force killing $pid"
+                kill -9 "$pid" || true
+              fi
+            done
+            echo "Waiting for port to be freed..."
+            sleep 1
+          fi
+        fi
+
+        # Run ASGI app via uvicorn factory in background; pass-through any extra CLI args
+        logfile="logs/server-debug.log"
+        pidfile="logs/server-debug.pid"
+
+        if "$py" -c "import uvicorn" >/dev/null 2>&1; then
+          bash -c "exec \"$py\" -m uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level debug > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
+          server_pid=$(cat "$pidfile")
+        elif command -v uvicorn >/dev/null 2>&1; then
+          bash -c "exec uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level debug > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
+          server_pid=$(cat "$pidfile")
+        else
+          echo "uvicorn is not installed in the active interpreter or PATH."
+          echo "Install it with one of:"
+          echo "  uv add uvicorn"
+          echo "  uv pip install uvicorn"
+          exit 1
+        fi
+        echo "Server started with PID $server_pid"
+        echo "Logs: $logfile"
+        echo "PID file: $pidfile"
+        echo "To stop: task server-debug-stop"
+        sleep 2
+        if kill -0 $server_pid 2>/dev/null; then
+          echo "Server is running on $host:$port"
+        else
+          echo "Server failed to start. Check logs: $logfile"
+          exit 1
+        fi
+
+  server-debug-stop:
+    desc: Stop the background NoETL server debug process
+    aliases: [sdbg-stop]
+    cmds:
+      - |
+        pidfile="logs/server-debug.pid"
+        if [ ! -f "$pidfile" ]; then
+          echo "No PID file found at $pidfile"
+          echo "Server may not be running or was started differently"
+          exit 0
+        fi
+        pid=$(cat "$pidfile")
+        if [ -z "$pid" ]; then
+          echo "PID file is empty"
+          rm -f "$pidfile"
+          exit 0
+        fi
+        if kill -0 "$pid" 2>/dev/null; then
+          echo "Stopping server (PID $pid)..."
+          kill "$pid" || true
+          sleep 2
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Force killing server..."
+            kill -9 "$pid" || true
+          fi
+          echo "Server stopped"
+        else
+          echo "Server (PID $pid) is not running"
+        fi
+        rm -f "$pidfile"
+
+  server-kill-8083:
+    desc: Kill any process listening on port 8083 (uses NOETL_API_PORT/NOETL_PORT if set)
+    aliases: [sk83]
+    cmds:
+      - |
+        set -e
+        port="${NOETL_API_PORT:-${NOETL_PORT:-8083}}"
+        if command -v lsof >/dev/null 2>&1; then
+          pids=$(lsof -t -i TCP:$port -sTCP:LISTEN || true)
+        elif command -v fuser >/dev/null 2>&1; then
+          pids=$(fuser -n tcp $port 2>/dev/null || true)
+        else
+          echo "Neither lsof nor fuser found. Please install one."
+          exit 1
+        fi
+        if [ -z "$pids" ]; then
+          echo "No process is listening on port $port."
+          exit 0
+        fi
+        echo "Killing PIDs on port $port: $pids"
+        kill $pids || true
+        sleep 1
+        for pid in $pids; do
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Force killing $pid"
+            kill -9 "$pid" || true
+          fi
+        done
+        echo "Done."
+
+  kill-port:
+    desc: "Kill any process listening on the specified TCP port. Usage: task kill-port PORT=8090"
+    vars:
+      PORT: "{{ or .PORT (or (env \"PORT\") \"\") }}"
+    cmds:
+      - |
+        set -e
+        port="{{.PORT}}"
+        if [ -z "$port" ]; then
+          echo "PORT is required: task kill-port PORT=8090"
+          exit 1
+        fi
+        if command -v lsof >/dev/null 2>&1; then
+          pids=$(lsof -t -i TCP:$port -sTCP:LISTEN || true)
+        elif command -v fuser >/dev/null 2>&1; then
+          pids=$(fuser -n tcp $port 2>/dev/null || true)
+        else
+          echo "Neither lsof nor fuser found. Please install one."
+          exit 1
+        fi
+        if [ -z "$pids" ]; then
+          echo "No process is listening on port $port."
+          exit 0
+        fi
+        echo "Killing PIDs on port $port: $pids"
+        kill $pids || true
+        sleep 1
+        for pid in $pids; do
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Force killing $pid"
+            kill -9 "$pid" || true
+          fi
+        done
+        echo "Done."
+
+  worker-debug:
+    desc: Run NoETL worker in debug mode as a background daemon with logging
+    aliases: [wdbg]
+    cmds:
+      - |
+        set -e
+        mkdir -p logs
+
+        # Select env file: ENV_FILE overrides; otherwise prefer .env.pycharm if present; else .env
+        env_file="${ENV_FILE:-}"
+        if [ -z "$env_file" ]; then
+          if [ -f ".env.pycharm" ]; then env_file=".env.pycharm"; else env_file=".env"; fi
+        fi
+        # Load environment if file exists
+        set -a; [ -f "$env_file" ] && . "$env_file"; set +a
+        echo "Using env file: $env_file"
+
+        # Ensure worker points to the local server on 8083 unless already provided
+        : "${NOETL_API_URL:=http://localhost:8083}"
+        export NOETL_API_URL
+
+        # Ensure run mode is worker for the main dispatcher
+        export NOETL_RUN_MODE=worker
+
+        # Prefer local venv's python, fallback to system python
+        py=".venv/bin/python"
+        if [ ! -x "$py" ]; then py="python"; fi
+        echo "Using python: $py"
+
+        # Run worker via CLI in background; pass-through any extra CLI args
+        logfile="logs/worker-debug.log"
+        pidfile="logs/worker-debug.pid"
+
+        bash -c "exec \"$py\" -m noetl.main worker start > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
+        worker_pid=$(cat "$pidfile")
+        echo "Worker started with PID $worker_pid"
+        echo "Logs: $logfile"
+        echo "PID file: $pidfile"
+        echo "To stop: task worker-debug-stop"
+        sleep 2
+        if kill -0 $worker_pid 2>/dev/null; then
+          echo "Worker is running"
+        else
+          echo "Worker failed to start. Check logs: $logfile"
+          exit 1
+        fi
+
+  worker-debug-stop:
+    desc: Stop the background NoETL worker debug process
+    aliases: [wdbg-stop]
+    cmds:
+      - |
+        pidfile="logs/worker-debug.pid"
+        if [ ! -f "$pidfile" ]; then
+          echo "No PID file found at $pidfile"
+          echo "Worker may not be running or was started differently"
+          exit 0
+        fi
+        pid=$(cat "$pidfile")
+        if [ -z "$pid" ]; then
+          echo "PID file is empty"
+          rm -f "$pidfile"
+          exit 0
+        fi
+        if kill -0 "$pid" 2>/dev/null; then
+          echo "Stopping worker (PID $pid)..."
+          kill "$pid" || true
+          sleep 2
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Force killing worker..."
+            kill -9 "$pid" || true
+          fi
+          echo "Worker stopped"
+        else
+          echo "Worker (PID $pid) is not running"
+        fi
+        rm -f "$pidfile"
+
+  debug-stop-all:
+    desc: Stop both server and worker debug processes
+    aliases: [stop-all]
+    cmds:
+      - task: server-debug-stop
+      - task: worker-debug-stop
+
+  debug-kill-all:
+    desc: Force kill ALL noetl server and worker processes (including orphaned ones)
+    aliases: [kill-all]
+    cmds:
+      - |
+        echo "Searching for all noetl processes..."
+
+        # Find and kill server processes
+        server_pids=$(ps aux | grep -E "uvicorn.*noetl.server" | grep -v grep | awk '{print $2}')
+        if [ -n "$server_pids" ]; then
+          echo "Found server processes: $server_pids"
+          for pid in $server_pids; do
+            echo "Killing server PID $pid..."
+            kill -9 "$pid" 2>/dev/null || true
+          done
+        else
+          echo "No server processes found"
+        fi
+
+        # Find and kill worker processes
+        worker_pids=$(ps aux | grep -E "noetl.main worker" | grep -v grep | awk '{print $2}')
+        if [ -n "$worker_pids" ]; then
+          echo "Found worker processes: $worker_pids"
+          for pid in $worker_pids; do
+            echo "Killing worker PID $pid..."
+            kill -9 "$pid" 2>/dev/null || true
+          done
+        else
+          echo "No worker processes found"
+        fi
+
+        # Clean up PID files
+        rm -f logs/server-debug.pid logs/worker-debug.pid
+        echo "Done. All noetl processes killed and PID files cleaned up."
+
+  debug-status:
+    desc: Check status of server and worker debug processes
+    aliases: [status]
+    cmds:
+      - |
+        echo "=== Debug Process Status ==="
+        echo ""
+
+        # Check server
+        server_pidfile="logs/server-debug.pid"
+        if [ -f "$server_pidfile" ]; then
+          server_pid=$(cat "$server_pidfile")
+          if kill -0 "$server_pid" 2>/dev/null; then
+            echo "✓ Server (PID $server_pid) is RUNNING"
+            echo "  Logs: logs/server-debug.log"
+          else
+            echo "✗ Server (PID $server_pid) is NOT running"
+          fi
+        else
+          echo "✗ Server: No PID file found"
+        fi
+
+        echo ""
+
+        # Check worker
+        worker_pidfile="logs/worker-debug.pid"
+        if [ -f "$worker_pidfile" ]; then
+          worker_pid=$(cat "$worker_pidfile")
+          if kill -0 "$worker_pid" 2>/dev/null; then
+            echo "✓ Worker (PID $worker_pid) is RUNNING"
+            echo "  Logs: logs/worker-debug.log"
+          else
+            echo "✗ Worker (PID $worker_pid) is NOT running"
+          fi
+        else
+          echo "✗ Worker: No PID file found"
+        fi
+
+        echo ""
+        echo "Commands:"
+        echo "  task server-debug-stop  - Stop server"
+        echo "  task worker-debug-stop  - Stop worker"
+        echo "  task debug-stop-all     - Stop both"
+
+  noetl-local-start:
+    desc: Start both NoETL server and worker in debug mode locally
+    aliases: [local-start, lstart]
+    cmds:
+      - task: server-debug
+      - echo "Waiting 5 seconds for server to be ready..."
+      - sleep 5
+      - task: worker-debug
+      - echo ""
+      - echo "=== NoETL Local Stack Started ==="
+      - echo "Server - http://localhost:8083"
+      - echo "API Docs - http://localhost:8083/docs"
+      - echo ""
+      - echo "Logs -"
+      - echo "  Server - logs/server-debug.log"
+      - echo "  Worker - logs/worker-debug.log"
+      - echo ""
+      - echo "Commands -"
+      - echo "  task debug-status       - Check status"
+      - echo "  task debug-stop-all     - Stop both"
+      - echo "  tail -f logs/server-debug.log  - Follow server logs"
+      - echo "  tail -f logs/worker-debug.log  - Follow worker logs"

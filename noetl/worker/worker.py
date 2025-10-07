@@ -158,9 +158,14 @@ def register_worker_pool_from_env() -> None:
 
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
         
-        # Generate a Kubernetes-style URI for worker identification
-        namespace = os.environ.get("POD_NAMESPACE", "noetl") 
-        worker_uri = f"k8s://{namespace}/{hostname}"
+        # Generate worker URI based on environment (k8s or local)
+        namespace = os.environ.get("POD_NAMESPACE")
+        if namespace:
+            # Running in Kubernetes
+            worker_uri = f"k8s://{namespace}/{hostname}"
+        else:
+            # Running locally
+            worker_uri = f"local://{hostname}"
 
         payload = {
             "name": name,

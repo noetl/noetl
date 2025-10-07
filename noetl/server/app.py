@@ -274,7 +274,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                 await cur.execute(
                                     """
                                     UPDATE runtime SET status = 'offline', updated_at = now()
-                                    WHERE status != 'offline' AND heartbeat < (now() - interval '%s seconds')
+                                    WHERE status != 'offline' AND heartbeat < (now() - make_interval(secs => %s))
                                     """,
                                     (offline_after,)
                                 )
