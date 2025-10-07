@@ -98,25 +98,6 @@ tasks:
           fi
         fi
 
-  postgres-migrate-queue:
-    desc: Migrate existing queue table to new schema (preserves data)
-    aliases: [pmq]
-    cmds:
-      - kubectl config use-context kind-noetl
-      - echo "Migrating queue table schema..."
-      - |
-        set -a; [ -f .env ] && . .env; set +a
-        # Override with kubectl service port for Kind cluster
-        export PGHOST=localhost
-        export PGPORT=54321
-        export PGUSER=${POSTGRES_USER:-demo}
-        export PGPASSWORD=${POSTGRES_PASSWORD:-demo}
-        export PGDATABASE=${POSTGRES_DB:-demo_noetl}
-        echo "Connecting to PostgreSQL at $PGHOST:$PGPORT as $PGUSER to database $PGDATABASE"
-        echo "Running queue table migration..."
-        psql -v ON_ERROR_STOP=1 -f queue_migration.sql
-        echo "Queue migration completed."
-
 # === NOETL ===
   docker-build-noetl:
     desc: Build the noetl container with dynamic tag
