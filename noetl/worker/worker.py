@@ -419,6 +419,7 @@ class QueueWorker:
             logger.debug("WORKER: server-side render exception; using raw context", exc_info=True)
             context = raw_context
         execution_id = job.get("execution_id")
+        catalog_id = job.get("catalog_id")
         node_id = job.get("node_id") or f"job_{job.get('id')}"
 
         # If server returned a rendered task, use it; otherwise parse raw.
@@ -546,6 +547,7 @@ class QueueWorker:
 
             start_event = {
                 "execution_id": execution_id,
+                "catalog_id": catalog_id,
                 "event_type": "action_started",
                 "status": "STARTED",
                 "node_id": node_id,
@@ -553,7 +555,7 @@ class QueueWorker:
                 "node_type": node_type_val,
                 "context": {"work": context, "task": action_cfg},
                 "trace_component": {"worker_raw_context": raw_context},
-                "timestamp": datetime.datetime.now().isoformat(),
+                
             }
             if loop_meta:
                 start_event.update(loop_meta)
@@ -681,6 +683,7 @@ class QueueWorker:
                         tb_text = result.get('traceback') or ''
                     error_event = {
                         "execution_id": execution_id,
+                        "catalog_id": catalog_id,
                         "event_type": "action_error",
                         "status": "FAILED",
                         "node_id": node_id,
@@ -689,7 +692,7 @@ class QueueWorker:
                         "error": err_msg,
                         "traceback": tb_text,
                         "result": result,
-                        "timestamp": datetime.datetime.now().isoformat(),
+                        
                     }
                     if loop_meta:
                         error_event.update(loop_meta)
@@ -704,13 +707,13 @@ class QueueWorker:
                 else:
                     complete_event = {
                         "execution_id": execution_id,
+                        "catalog_id": catalog_id,
                         "event_type": "action_completed",
                         "status": "COMPLETED",
                         "node_id": node_id,
                         "node_name": task_name,
                         "node_type": node_type_val,
                         "result": result,
-                        "timestamp": datetime.datetime.now().isoformat(),
                     }
                     if loop_meta:
                         complete_event.update(loop_meta)
@@ -728,13 +731,14 @@ class QueueWorker:
                             norm_result = result['data']
                         step_result_event = {
                             "execution_id": execution_id,
+                            "catalog_id": catalog_id,
                             "event_type": "step_result",
                             "status": "COMPLETED",
                             "node_id": node_id,
                             "node_name": task_name,
                             "node_type": node_type_val,
                             "result": norm_result,
-                            "timestamp": datetime.datetime.now().isoformat(),
+                            
                         }
                         if loop_meta:
                             step_result_event.update(loop_meta)
@@ -756,6 +760,7 @@ class QueueWorker:
                 if not locals().get('emitted_error'):
                     error_event = {
                         "execution_id": execution_id,
+                        "catalog_id": catalog_id,
                         "event_type": "action_error",
                         "status": "FAILED",
                         "node_id": node_id,
@@ -764,7 +769,7 @@ class QueueWorker:
                         "error": f"{type(e).__name__}: {str(e)}",
                         "traceback": tb_text,
                         "result": {"error": str(e), "traceback": tb_text},
-                        "timestamp": datetime.datetime.now().isoformat(),
+                        
                     }
                     if loop_meta:
                         error_event.update(loop_meta)
@@ -848,7 +853,7 @@ class QueueWorker:
                         "metric_name": m.get("metric_name", ""),
                         "metric_type": m.get("metric_type", "gauge"),
                         "metric_value": m.get("metric_value", 0),
-                        "timestamp": datetime.datetime.now().isoformat(),
+                        
                         "labels": {
                             "component": component_name,
                             "worker_id": self.worker_id,
@@ -1068,7 +1073,7 @@ class ScalableQueueWorkerPool:
                         "metric_name": m.get("metric_name", ""),
                         "metric_type": m.get("metric_type", "gauge"),
                         "metric_value": m.get("metric_value", 0),
-                        "timestamp": datetime.datetime.now().isoformat(),
+                        
                         "labels": {
                             "component": component_name,
                             "worker_id": self.worker_id,
