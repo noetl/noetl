@@ -35,12 +35,13 @@ class EventService:
                         WITH latest_events AS (
                             SELECT 
                                 execution_id,
-                                MAX(timestamp) as latest_timestamp
+                                MAX(created_at) as latest_timestamp
                             FROM event
                             GROUP BY execution_id
                         )
                         SELECT 
                             e.execution_id,
+                            e.catalog_id,
                             e.event_type,
                             e.status,
                             e.timestamp,
@@ -50,8 +51,8 @@ class EventService:
                             e.error,
                             e.stack_trace
                         FROM event e
-                        JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
-                        ORDER BY e.timestamp DESC
+                        JOIN latest_events le ON e.execution_id = le.execution_id AND e.created_at = le.latest_timestamp
+                        ORDER BY e.created_at DESC
                     """)
 
                     rows = await cursor.fetchall()
@@ -59,12 +60,32 @@ class EventService:
 
                     for row in rows:
                         execution_id = row[0]
-                        metadata = json.loads(row[4]) if row[4] else {}
-                        input_context = json.loads(row[5]) if row[5] else {}
-                        output_result = json.loads(row[6]) if row[6] else {}
-                        playbook_id = metadata.get('resource_path', input_context.get('path', ''))
-                        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-                        raw_status = row[2]
+                        catalog_id = row[1]
+                        metadata = row[5] if row[5] else {}  # meta is now JSONB
+                        input_context = json.loads(row[6]) if row[6] else {}
+                        output_result = json.loads(row[7]) if row[7] else {}
+                        
+                        # Try to get playbook info from catalog_id first, then fallback to metadata
+                        playbook_id = ''
+                        playbook_name = 'Unknown'
+                        if catalog_id:
+                            try:
+                                await cursor.execute("""
+                                    SELECT path FROM noetl.catalog WHERE catalog_id = %s
+                                """, (catalog_id,))
+                                catalog_row = await cursor.fetchone()
+                                if catalog_row:
+                                    playbook_id = catalog_row[0]
+                                    playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                            except Exception:
+                                pass
+                        
+                        # Fallback to metadata if no catalog_id or catalog lookup failed
+                        if not playbook_id:
+                            playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+                            playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                        
+                        raw_status = row[3]
                         
                         # For existing data, we need to handle potentially non-normalized statuses
                         # by normalizing them only for display purposes, but log warnings
@@ -80,12 +101,12 @@ class EventService:
                                 logger.error(f"Invalid status '{raw_status}' in execution {execution_id}. Defaulting to 'PENDING'.")
                                 status = 'PENDING'
 
-                        start_time = row[3].isoformat() if row[3] else None
+                        start_time = row[4].isoformat() if row[4] else None
                         end_time = None
                         duration = None
 
                         await cursor.execute("""
-                            SELECT MIN(timestamp) FROM event WHERE execution_id = %s
+                            SELECT MIN(created_at) FROM event WHERE execution_id = %s
                         """, (execution_id,))
                         min_time_row = await cursor.fetchone()
                         if min_time_row and min_time_row[0]:
@@ -93,7 +114,7 @@ class EventService:
 
                         if status in ['completed', 'failed']:
                             await cursor.execute("""
-                                SELECT MAX(timestamp) FROM event WHERE execution_id = %s
+                                SELECT MAX(created_at) FROM event WHERE execution_id = %s
                             """, (execution_id,))
                             max_time_row = await cursor.fetchone()
                             if max_time_row and max_time_row[0]:
@@ -138,12 +159,12 @@ class EventService:
                             "duration": duration,
                             "progress": progress,
                             "result": output_result,
-                            "error": row[7]
+                            "error": row[8]
                         }
 
                         # Attach stack trace when present
                         try:
-                            st = row[8]
+                            st = row[9]
                             if st:
                                 execution_data['stack_trace'] = st
                         except Exception:
@@ -304,12 +325,73 @@ class EventService:
                       # Default parent_event_id if missing: link to previous event in the same execution
                       if not parent_event_id:
                           try:
-                              await cursor.execute("SELECT event_id FROM event WHERE execution_id = %s ORDER BY timestamp DESC LIMIT 1", (execution_id,))
+                              await cursor.execute("SELECT event_id FROM event WHERE execution_id = %s ORDER BY created_at DESC LIMIT 1", (execution_id,))
                               _prev = await cursor.fetchone()
                               if _prev and _prev[0]:
                                   parent_event_id = _prev[0]
                           except Exception:
                               pass
+
+                      # Resolve catalog_id from metadata if available - REQUIRED
+                      catalog_id = None
+                      try:
+                          # First try metadata
+                          if metadata and isinstance(metadata, dict):
+                              resource_path = metadata.get('path')
+                              resource_version = metadata.get('version')
+                              if resource_path and resource_version:
+                                  await cursor.execute(
+                                      "SELECT catalog_id FROM noetl.catalog WHERE path = %s AND version = %s",
+                                      (resource_path, resource_version)
+                                  )
+                                  catalog_row = await cursor.fetchone()
+                                  if catalog_row:
+                                      catalog_id = catalog_row[0]
+                          
+                          # If not found in metadata, try context directly
+                          if not catalog_id and context_dict and isinstance(context_dict, dict):
+                              # Check direct path/version in context
+                              ctx_path = context_dict.get('path')
+                              ctx_version = context_dict.get('version')
+                              if ctx_path and ctx_version:
+                                  await cursor.execute(
+                                      "SELECT catalog_id FROM noetl.catalog WHERE path = %s AND version = %s",
+                                      (ctx_path, ctx_version)
+                                  )
+                                  catalog_row = await cursor.fetchone()
+                                  if catalog_row:
+                                      catalog_id = catalog_row[0]
+                              
+                              # Also check nested workload/work contexts
+                              if not catalog_id:
+                                  for ctx_key in ['work', 'workload']:
+                                      ctx_data = context_dict.get(ctx_key)
+                                      if isinstance(ctx_data, dict):
+                                          ctx_path = ctx_data.get('path')
+                                          ctx_version = ctx_data.get('version')
+                                          if ctx_path and ctx_version:
+                                              await cursor.execute(
+                                                  "SELECT catalog_id FROM noetl.catalog WHERE path = %s AND version = %s",
+                                                  (ctx_path, ctx_version)
+                                              )
+                                              catalog_row = await cursor.fetchone()
+                                              if catalog_row:
+                                                  catalog_id = catalog_row[0]
+                                                  break
+                          
+                          # catalog_id is REQUIRED - fail if not found
+                          if catalog_id is None:
+                              error_msg = f"catalog_id is required but could not be resolved for event {event_type} in execution {execution_id}. Available metadata: {metadata}, context keys: {list(context_dict.keys()) if context_dict else 'None'}"
+                              logger.error(error_msg)
+                              raise ValueError(error_msg)
+                              
+                      except ValueError:
+                          # Re-raise validation errors
+                          raise
+                      except Exception as e:
+                          error_msg = f"Failed to resolve catalog_id for event {event_type} in execution {execution_id}: {e}"
+                          logger.error(error_msg)
+                          raise ValueError(error_msg)
                       await cursor.execute("""
                           SELECT COUNT(*) FROM event
                           WHERE execution_id = %s AND event_id = %s
@@ -387,19 +469,21 @@ class EventService:
                       if exists:
                           await cursor.execute("""
                               UPDATE event SET
+                                  catalog_id = %s,
                                   event_type = %s,
                                   status = %s,
                                   duration = %s,
                                   context = %s,
                                   result = %s,
-                                  meta = %s,
+                                  meta = %s::jsonb,
                                   error = %s,
                                   trace_component = %s::jsonb,
                                   current_index = %s,
                                   current_item = %s::jsonb,
-                                  timestamp = CURRENT_TIMESTAMP
+                                  created_at = CURRENT_TIMESTAMP
                               WHERE execution_id = %s AND event_id = %s
                           """, (
+                              catalog_id,
                               event_type,
                               status,
                               duration,
@@ -426,6 +510,7 @@ class EventService:
                               event_id=event_id,
                               parent_event_id=parent_event_id,
                               parent_execution_id=parent_execution_id,
+                              catalog_id=catalog_id,
                               event_type=event_type,
                               node_id=node_id,
                               node_name=node_name,
@@ -576,7 +661,7 @@ class EventService:
                                               AND result IS NOT NULL
                                               AND result != '{}'
                                               AND result != 'null'
-                                            ORDER BY timestamp DESC
+                                            ORDER BY created_at DESC
                                             LIMIT 1
                                             """,
                                             (exec_id,)
@@ -705,10 +790,11 @@ class EventService:
                             context, 
                             result, 
                             meta, 
-                            error
+                            error,
+                            catalog_id
                         FROM event 
                         WHERE execution_id = %s
-                        ORDER BY timestamp
+                        ORDER BY created_at
                     """, (execution_id,))
 
                     rows = await cursor.fetchall()
@@ -727,8 +813,9 @@ class EventService:
                                 # Store in canonical keys
                                 "context": json.loads(row[8]) if row[8] else None,
                                 "result": json.loads(row[9]) if row[9] else None,
-                                "metadata": json.loads(row[10]) if row[10] else None,
+                                "metadata": row[10] if row[10] else None,  # meta is now JSONB
                                 "error": row[11],
+                                "catalog_id": row[12],
                                 "execution_id": execution_id,
                                 "resource_path": None,
                                 "resource_version": None,
@@ -795,7 +882,8 @@ class EventService:
                             meta, 
                             error,
                             stack_trace,
-                            execution_id
+                            execution_id,
+                            catalog_id
                         FROM event 
                         WHERE event_id = %s
                     """, (event_id,))
@@ -813,10 +901,11 @@ class EventService:
                             "timestamp": row[7].isoformat() if row[7] else None,
                             "context": json.loads(row[8]) if row[8] else None,
                             "result": json.loads(row[9]) if row[9] else None,
-                            "metadata": json.loads(row[10]) if row[10] else None,
+                            "metadata": row[10] if row[10] else None,  # meta is now JSONB
                             "error": row[11],
                             "stack_trace": row[12],
                             "execution_id": row[13],
+                            "catalog_id": row[14],
                             "resource_path": None,
                             "resource_version": None
                         }

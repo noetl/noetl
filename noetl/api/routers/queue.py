@@ -11,10 +11,25 @@ logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 router = APIRouter(tags=["Queue"])
 
+async def get_catalog_id_from_execution(execution_id: int) -> int:
+    """Get catalog_id from the first event of an execution."""
+    async with get_async_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1",
+                (execution_id,)
+            )
+            row = await cur.fetchone()
+            if row:
+                return row[0]
+            else:
+                raise ValueError(f"No catalog_id found for execution {execution_id}")
+
 @router.post("/queue/enqueue", response_class=JSONResponse)
 async def enqueue_job(request: Request):
     """Enqueue a job into the noetl.queue table.
-    Body: { execution_id, node_id, action, context?, priority?, max_attempts?, available_at? } (input_context supported for backward compatibility)
+    Body: { execution_id, node_id, action, context?,@router.post("/queue/{queue_id}/heartbeat", response_class=JSONResponse)
+async def heartbeat_job(queue_id: int, request: Request):riority?, max_attempts?, available_at? } (input_context supported for backward compatibility)
     """
     try:
         body = await request.json()
@@ -33,17 +48,20 @@ async def enqueue_job(request: Request):
 
         # Convert execution_id from string to int for database storage
         execution_id_int = snowflake_id_to_int(execution_id)
+        
+        # Get catalog_id from the execution's first event
+        catalog_id = await get_catalog_id_from_execution(execution_id_int)
 
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()))
+                    INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()))
                     ON CONFLICT (execution_id, node_id) DO NOTHING
-                    RETURNING id
+                    RETURNING queue_id
                     """,
-                    (execution_id_int, node_id, action, json.dumps(context), priority, max_attempts, available_at)
+                    (execution_id_int, catalog_id, node_id, action, json.dumps(context), priority, max_attempts, available_at)
                 )
                 row = await cur.fetchone()
                 await conn.commit()
@@ -74,9 +92,9 @@ async def lease_job(request: Request):
                 await cur.execute(
                     """
                     WITH cte AS (
-                      SELECT id FROM noetl.queue
+                      SELECT queue_id FROM noetl.queue
                       WHERE status='queued' AND (available_at IS NULL OR available_at <= now())
-                      ORDER BY priority DESC, id
+                      ORDER BY priority DESC, queue_id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
                     )
@@ -87,7 +105,7 @@ async def lease_job(request: Request):
                         last_heartbeat=now(),
                         attempts = q.attempts + 1
                     FROM cte
-                    WHERE q.id = cte.id
+                    WHERE q.queue_id = cte.queue_id
                     RETURNING q.*;
                     """,
                     (worker_id, str(lease_seconds))
@@ -114,22 +132,22 @@ async def lease_job(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/queue/{job_id}/complete", response_class=JSONResponse)
-async def complete_job(job_id: int):
+@router.post("/queue/{queue_id}/complete", response_class=JSONResponse)
+async def complete_job(queue_id: int):
     """Mark a job completed."""
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE id = %s RETURNING id, execution_id, context",
-                    (job_id,)
+                    "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE queue_id = %s RETURNING queue_id, execution_id, context",
+                    (queue_id,)
                 )
                 row = await cur.fetchone()
                 await conn.commit()
         if not row:
             raise HTTPException(status_code=404, detail="job not found")
         
-        logger.info(f"QUEUE_COMPLETION_DEBUG: Job {job_id} completed for execution {row[1] if isinstance(row, tuple) else row.get('execution_id')}")
+        logger.info(f"QUEUE_COMPLETION_DEBUG: Job {queue_id} completed for execution {row[1] if isinstance(row, tuple) else row.get('execution_id')}")
         # schedule broker evaluation best-effort
         try:
             exec_id = row[1] if isinstance(row, tuple) else row.get("execution_id")
@@ -175,7 +193,7 @@ async def complete_job(job_id: int):
                         async with conn.cursor() as cur:
                             # Resolve return_step from the queue.action for the completed job (best-effort)
                             try:
-                                await cur.execute("SELECT action FROM noetl.queue WHERE id = %s", (job_id,))
+                                await cur.execute("SELECT action FROM noetl.queue WHERE queue_id = %s", (queue_id,))
                                 _act = await cur.fetchone()
                                 _act_json = None
                                 if _act:
@@ -198,7 +216,7 @@ async def complete_job(job_id: int):
                                 """
                                 SELECT result FROM noetl.event
                                 WHERE execution_id = %s AND event_type = 'execution_complete'
-                                ORDER BY timestamp DESC
+                                ORDER BY created_at DESC
                                 LIMIT 1
                                 """,
                                 (exec_id,)
@@ -217,7 +235,7 @@ async def complete_job(job_id: int):
                                       AND result != '{}'
                                               AND NOT (result::text LIKE '%%"skipped": true%%')
                                               AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                                    ORDER BY timestamp DESC
+                                    ORDER BY created_at DESC
                                     LIMIT 1
                                     """,
                                     (exec_id, return_step)
@@ -238,7 +256,7 @@ async def complete_job(job_id: int):
                                           AND result != '{}'
                                           AND NOT (result::text LIKE '%%"skipped": true%%')
                                           AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                                        ORDER BY timestamp DESC
+                                        ORDER BY created_at DESC
                                         LIMIT 1
                                         """,
                                         (exec_id, step_name)
@@ -259,7 +277,7 @@ async def complete_job(job_id: int):
                                       AND result != '{}'
                                       AND NOT (result::text LIKE '%%"skipped": true%%')
                                       AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                                    ORDER BY timestamp DESC
+                                    ORDER BY created_at DESC
                                     LIMIT 1
                                     """,
                                     (exec_id,)
@@ -276,7 +294,7 @@ async def complete_job(job_id: int):
                                       AND lower(status) IN ('completed','success')
                                       AND result IS NOT NULL
                                       AND result != '{}'
-                                    ORDER BY timestamp DESC
+                                    ORDER BY created_at DESC
                                     LIMIT 1
                                     """,
                                     (exec_id,)
@@ -296,7 +314,7 @@ async def complete_job(job_id: int):
                                       AND result != '{}'
                                       AND NOT (result::text LIKE '%%"skipped": true%%')
                                       AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                                    ORDER BY timestamp DESC
+                                    ORDER BY created_at DESC
                                     LIMIT 1
                                     """,
                                     (exec_id,)
@@ -322,7 +340,7 @@ async def complete_job(job_id: int):
                                     WHERE execution_id = %s
                                       AND event_type = 'action_completed'
                                       AND lower(status) IN ('completed','success')
-                                    ORDER BY timestamp DESC
+                                    ORDER BY created_at DESC
                                     LIMIT 1
                                     """,
                                     (exec_id,)
@@ -347,7 +365,7 @@ async def complete_job(job_id: int):
                                   AND event_type = 'loop_iteration'
                                   AND node_name = %s
                                   AND context LIKE %s
-                                ORDER BY timestamp DESC
+                                ORDER BY created_at DESC
                                 LIMIT 1
                                 """,
                                 (parent_execution_id, parent_step, f'%"child_execution_id": "{exec_id}"%')
@@ -440,7 +458,7 @@ async def complete_job(job_id: int):
                                               AND result IS NOT NULL AND result != '{}'
                                               AND NOT (result::text LIKE '%%"skipped": true%%')
                                               AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                                            ORDER BY timestamp
+                                            ORDER BY created_at
                                             """,
                                             (parent_execution_id, parent_step)
                                         )
@@ -585,16 +603,16 @@ async def complete_job(job_id: int):
                         await evaluate_broker_for_execution(parent_execution_id)
         except Exception:
             logger.debug("Failed to schedule evaluation from complete_job", exc_info=True)
-        return {"status": "ok", "id": job_id}
+        return {"status": "ok", "id": queue_id}
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error completing job {job_id}: {e}")
+        logger.exception(f"Error completing job {queue_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/queue/{job_id}/fail", response_class=JSONResponse)
-async def fail_job(job_id: int, request: Request):
+@router.post("/queue/{queue_id}/fail", response_class=JSONResponse)
+async def fail_job(queue_id: int, request: Request):
     """Mark job failed; optionally reschedule if attempts < max_attempts.
     Body: { retry_delay_seconds?, retry? }
     If retry is explicitly false, mark the job as terminal 'dead' immediately.
@@ -605,7 +623,7 @@ async def fail_job(job_id: int, request: Request):
         retry = body.get("retry", True)
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute("SELECT attempts, max_attempts FROM noetl.queue WHERE id = %s", (job_id,))
+                await cur.execute("SELECT attempts, max_attempts FROM noetl.queue WHERE queue_id = %s", (queue_id,))
                 row = await cur.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="job not found")
@@ -614,23 +632,23 @@ async def fail_job(job_id: int, request: Request):
 
                 if retry is False:
                     # Caller indicates this failure should not be retried
-                    await cur.execute("UPDATE noetl.queue SET status='dead' WHERE id = %s RETURNING id", (job_id,))
+                    await cur.execute("UPDATE noetl.queue SET status='dead' WHERE queue_id = %s RETURNING queue_id", (queue_id,))
                 elif attempts >= max_attempts:
-                    await cur.execute("UPDATE noetl.queue SET status='dead' WHERE id = %s RETURNING id", (job_id,))
+                    await cur.execute("UPDATE noetl.queue SET status='dead' WHERE queue_id = %s RETURNING queue_id", (queue_id,))
                 else:
-                    await cur.execute("UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval WHERE id = %s RETURNING id", (str(retry_delay), job_id))
+                    await cur.execute("UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id", (str(retry_delay), queue_id,))
                 updated = await cur.fetchone()
                 await conn.commit()
-        return {"status": "ok", "id": job_id}
+        return {"status": "ok", "id": queue_id}
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error failing job {job_id}: {e}")
+        logger.exception(f"Error failing job {queue_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/queue/{job_id}/heartbeat", response_class=JSONResponse)
-async def heartbeat_job(job_id: int, request: Request):
+@router.post("/queue/{queue_id}/heartbeat", response_class=JSONResponse)
+async def heartbeat_job(queue_id: int, request: Request):
     """Update heartbeat and optionally extend lease_until.
     Body: { worker_id?, extend_seconds? }
     """
@@ -641,18 +659,18 @@ async def heartbeat_job(job_id: int, request: Request):
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
                 if extend:
-                    await cur.execute("UPDATE noetl.queue SET last_heartbeat = now(), lease_until = now() + (%s || ' seconds')::interval WHERE id = %s RETURNING id", (str(int(extend)), job_id))
+                    await cur.execute("UPDATE noetl.queue SET last_heartbeat = now(), lease_until = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id", (str(int(extend)), queue_id))
                 else:
-                    await cur.execute("UPDATE noetl.queue SET last_heartbeat = now() WHERE id = %s RETURNING id", (job_id,))
+                    await cur.execute("UPDATE noetl.queue SET last_heartbeat = now() WHERE queue_id = %s RETURNING queue_id", (queue_id,))
                 row = await cur.fetchone()
                 await conn.commit()
         if not row:
             raise HTTPException(status_code=404, detail="job not found")
-        return {"status": "ok", "id": job_id}
+        return {"status": "ok", "id": queue_id}
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error heartbeating job {job_id}: {e}")
+        logger.exception(f"Error heartbeating job {queue_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -673,7 +691,7 @@ async def list_queue(status: str = None, execution_id: str = None, worker_id: st
         where = f"WHERE {' AND '.join(filters)}" if filters else ''
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(f"SELECT * FROM noetl.queue {where} ORDER BY priority DESC, id LIMIT %s", params + [limit])
+                await cur.execute(f"SELECT * FROM noetl.queue {where} ORDER BY priority DESC, queue_id LIMIT %s", params + [limit])
                 rows = await cur.fetchall()
         for r in rows:
             if r.get('context') is None:
@@ -747,33 +765,33 @@ async def reserve_job(request: Request):
 @router.post("/queue/ack")
 async def ack_job(request: Request):
     body = await request.json()
-    job_id = body.get("job_id")
+    queue_id = body.get("queue_id")
     worker_id = body.get("worker_id")
-    if not job_id or not worker_id:
-        raise HTTPException(status_code=400, detail="job_id, worker_id required")
+    if not queue_id or not worker_id:
+        raise HTTPException(status_code=400, detail="queue_id, worker_id required")
     async with get_async_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT worker_id FROM noetl.queue WHERE id = %s", (job_id,))
+            await cur.execute("SELECT worker_id FROM noetl.queue WHERE queue_id = %s", (queue_id,))
             row = await cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="job not found")
             if row.get("worker_id") != worker_id:
                 raise HTTPException(status_code=409, detail="worker mismatch")
-            await cur.execute("UPDATE noetl.queue SET status='done', lease_until=NULL WHERE id = %s", (job_id,))
+            await cur.execute("UPDATE noetl.queue SET status='done', lease_until=NULL WHERE queue_id = %s", (queue_id,))
             await conn.commit()
     return {"ok": True}
 
 @router.post("/queue/nack")
 async def nack_job(request: Request):
     body = await request.json()
-    job_id = body.get("job_id")
+    queue_id = body.get("queue_id")
     worker_id = body.get("worker_id")
     retry_delay_seconds = int(body.get("retry_delay_seconds", 60))
-    if not job_id or not worker_id:
-        raise HTTPException(status_code=400, detail="job_id, worker_id required")
+    if not queue_id or not worker_id:
+        raise HTTPException(status_code=400, detail="queue_id, worker_id required")
     async with get_async_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT worker_id, attempts, max_attempts FROM noetl.queue WHERE id = %s", (job_id,))
+            await cur.execute("SELECT worker_id, attempts, max_attempts FROM noetl.queue WHERE queue_id = %s", (queue_id,))
             row = await cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="job not found")
@@ -782,11 +800,11 @@ async def nack_job(request: Request):
             attempts = row.get("attempts", 0)
             max_attempts = row.get("max_attempts", 5)
             if attempts >= max_attempts:
-                await cur.execute("UPDATE noetl.queue SET status='dead' WHERE id = %s", (job_id,))
+                await cur.execute("UPDATE noetl.queue SET status='dead' WHERE queue_id = %s", (queue_id,))
             else:
                 await cur.execute(
-                    "UPDATE noetl.queue SET status='queued', worker_id=NULL, lease_until=NULL, available_at = now() + (%s || ' seconds')::interval WHERE id = %s",
-                    (str(retry_delay_seconds), job_id)
+                    "UPDATE noetl.queue SET status='queued', worker_id=NULL, lease_until=NULL, available_at = now() + (%s || ' seconds')::interval WHERE queue_id = %s",
+                    (str(retry_delay_seconds), queue_id)
                 )
             await conn.commit()
     return {"ok": True}

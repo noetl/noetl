@@ -89,10 +89,10 @@ async def get_execution_summary(request: Request, execution_id: str):
                 async with conn2.cursor(row_factory=dict_row) as cur3:
                     await cur3.execute(
                         """
-                        SELECT node_name, error, timestamp
+                        SELECT node_name, error, created_at
                         FROM noetl.event
                         WHERE execution_id = %s AND event_type = 'action_error'
-                        ORDER BY timestamp DESC
+                        ORDER BY created_at DESC
                         LIMIT 3
                         """,
                         (execution_id,)

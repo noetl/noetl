@@ -70,14 +70,22 @@ class BrokerService:
                                 if (not _row or int(_row[0]) == 0) and (not _logrow or int(_logrow[0]) == 0):
                                     action = {"type": "result_aggregation"}
                                     ic = {"step_name": step_name, "loop_step_name": step_name, "total_iterations": (ctx.get('total_iterations') if isinstance(ctx, dict) else None)}
+                                    
+                                    # Get catalog_id from execution's first event
+                                    _cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (execution_id,))
+                                    catalog_row = _cur.fetchone()
+                                    if not catalog_row:
+                                        raise ValueError(f"No catalog_id found for execution {execution_id}")
+                                    catalog_id = catalog_row[0]
+                                    
                                     _cur.execute(
                                         """
-                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                        INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
                                         ON CONFLICT (execution_id, node_id) DO NOTHING
-                                        RETURNING id
+                                        RETURNING queue_id
                                         """,
-                                        (execution_id, f"{execution_id}-result-agg-{step_name}", _json.dumps(action), _json.dumps(ic), 5, 3)
+                                        (execution_id, catalog_id, f"{execution_id}-result-agg-{step_name}", _json.dumps(action), _json.dumps(ic), 5, 3)
                                     )
                                     _conn.commit()
                                     logger.info(f"BROKER_SERVICE: Enqueued result_aggregation job for {execution_id}/{step_name}")

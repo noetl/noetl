@@ -104,6 +104,7 @@ data:
     -- Event
     CREATE TABLE IF NOT EXISTS noetl.event (
         execution_id BIGINT,
+        catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
         event_id BIGINT,
         parent_event_id BIGINT,
         parent_execution_id BIGINT,
@@ -116,7 +117,7 @@ data:
         duration DOUBLE PRECISION,
         context TEXT,
         result TEXT,
-        meta TEXT,
+        meta JSONB,
         error TEXT,
         current_index INTEGER,
         current_item TEXT,
@@ -129,6 +130,7 @@ data:
         PRIMARY KEY (execution_id, event_id)
     );
     ALTER TABLE noetl.event OWNER TO noetl;
+    ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id);
     ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS trace_component JSONB;
     ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
     ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS stack_trace TEXT;
@@ -378,8 +380,9 @@ data:
 
     -- Queue
     CREATE TABLE IF NOT EXISTS noetl.queue (
-        id BIGINT PRIMARY KEY,
+        queue_id BIGINT PRIMARY KEY,
         execution_id BIGINT NOT NULL,
+        catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
         node_id VARCHAR NOT NULL,
         action TEXT NOT NULL,
         context JSONB,
@@ -387,12 +390,18 @@ data:
         priority INTEGER NOT NULL DEFAULT 0,
         attempts INTEGER NOT NULL DEFAULT 0,
         max_attempts INTEGER NOT NULL DEFAULT 5,
-        available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        available_at TIMESTAMPTZ,
         lease_until TIMESTAMPTZ,
         worker_id TEXT,
-        last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_heartbeat TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        parent_execution_id BIGINT,
+        parent_event_id BIGINT,
+        event_id BIGINT,
+        node_name VARCHAR,
+        node_type VARCHAR,
+        UNIQUE(execution_id, node_id)
     );
     ALTER TABLE noetl.queue OWNER TO noetl;
     CREATE INDEX IF NOT EXISTS idx_queue_status ON noetl.queue (status);
@@ -494,7 +503,7 @@ data:
     ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
     ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
     ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-    ALTER TABLE noetl.queue ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+    ALTER TABLE noetl.queue ALTER COLUMN queue_id SET DEFAULT noetl.snowflake_id();
     ALTER TABLE noetl.schedule ALTER COLUMN schedule_id SET DEFAULT noetl.snowflake_id();
     alter table noetl.credential ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
     alter table noetl.metric ALTER COLUMN metric_id SET DEFAULT noetl.snowflake_id();

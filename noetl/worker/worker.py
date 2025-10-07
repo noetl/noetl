@@ -357,21 +357,21 @@ class QueueWorker:
             logger.debug("Failed to lease job", exc_info=True)
             return None
 
-    async def _complete_job(self, job_id: int) -> None:
+    async def _complete_job(self, queue_id: int) -> None:
         try:
-            logger.debug(f"WORKER: Completing job {job_id}")
+            logger.debug(f"WORKER: Completing job {queue_id}")
             async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(f"{self.server_url}/queue/{job_id}/complete")
+                await client.post(f"{self.server_url}/queue/{queue_id}/complete")
         except Exception:  # pragma: no cover - network best effort
-            logger.debug("Failed to complete job %s", job_id, exc_info=True)
+            logger.debug("Failed to complete job %s", queue_id, exc_info=True)
 
-    async def _fail_job(self, job_id: int) -> None:
+    async def _fail_job(self, queue_id: int) -> None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 # Do not retry failed jobs by default; mark terminal 'dead'
-                await client.post(f"{self.server_url}/queue/{job_id}/fail", json={"retry": False})
+                await client.post(f"{self.server_url}/queue/{queue_id}/fail", json={"retry": False})
         except Exception:  # pragma: no cover - network best effort
-            logger.debug("Failed to mark job %s failed", job_id, exc_info=True)
+            logger.debug("Failed to mark job %s failed", queue_id, exc_info=True)
 
     # ------------------------------------------------------------------
     # Job execution
@@ -390,9 +390,9 @@ class QueueWorker:
                 "extra_context": {
                     "env": dict(os.environ),
                     "job": {
-                        "id": job.get("id"),
+                        "id": job.get("queue_id"),
                         # Provide uuid alias for templates expecting {{ job.uuid }}
-                        "uuid": str(job.get("id")) if job.get("id") is not None else None,
+                        "uuid": str(job.get("queue_id")) if job.get("queue_id") is not None else None,
                         "execution_id": job.get("execution_id"),
                         "node_id": job.get("node_id"),
                         "worker_id": self.worker_id,
@@ -776,7 +776,7 @@ class QueueWorker:
                     report_event(error_event, self.server_url)
                 raise  # Re-raise to let the worker handle job failure
         else:
-            logger.warning("Job %s has no actionable configuration", str(job.get("id")))
+            logger.warning("Job %s has no actionable configuration", str(job.get("queue_id")))
 
     async def _execute_job(self, job: Dict[str, Any]) -> None:
         loop = asyncio.get_running_loop()
@@ -784,10 +784,10 @@ class QueueWorker:
         executor = self._process_pool if use_process else self._thread_pool
         try:
             await loop.run_in_executor(executor, self._execute_job_sync, job)
-            await self._complete_job(job["id"])
+            await self._complete_job(job["queue_id"])
         except Exception as exc:
-            logger.exception("Error executing job %s: %s", job.get("id"), exc)
-            await self._fail_job(job["id"])
+            logger.exception("Error executing job %s: %s", job.get("queue_id"), exc)
+            await self._fail_job(job["queue_id"])
 
     # ------------------------------------------------------------------
     async def _report_simple_worker_metrics(self) -> None:

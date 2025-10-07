@@ -203,7 +203,7 @@ async def _process_loop_completion_status(conn, cur, event_service, parent_execu
         WHERE execution_id = %s 
           AND event_type = 'end_loop'
           AND node_name = %s
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         LIMIT 1
         """,
         (parent_execution_id, loop_step_name)
@@ -333,7 +333,7 @@ async def _process_direct_loop_completion(conn, cur, event_service, parent_execu
     try:
         await cur.execute(
             """
-            SELECT result, current_index, timestamp
+            SELECT result, current_index, created_at
             FROM noetl.event
             WHERE execution_id = %s
               AND node_name = %s
@@ -344,7 +344,7 @@ async def _process_direct_loop_completion(conn, cur, event_service, parent_execu
               AND current_index IS NOT NULL
               AND NOT (result::text LIKE '%%"skipped": true%%')
               AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-            ORDER BY current_index, timestamp
+            ORDER BY current_index, created_at
             """,
             (parent_execution_id, loop_step_name)
         )
@@ -398,7 +398,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
           AND lower(status) IN ('completed','success')
           AND result IS NOT NULL
           AND result != '{}'
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         LIMIT 1
         """,
         (child_exec_id,)
@@ -425,7 +425,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
           AND result != '{}'
           AND NOT (result::text LIKE '%%"skipped": true%%')
           AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         """,
         (child_exec_id,)
     )
@@ -455,7 +455,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
           AND result != '{}'
           AND NOT (result::text LIKE '%%"skipped": true%%')
           AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         LIMIT 1
         """,
         (child_exec_id,)
@@ -623,7 +623,7 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
                 """
                 SELECT event_id FROM noetl.event
                 WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
-                ORDER BY timestamp
+                ORDER BY created_at
                 """,
                 (parent_execution_id, loop_step_name)
             )
@@ -651,14 +651,22 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
                 'iteration_event_ids': iter_event_ids
             }
         }
+        # Get catalog_id from execution's first event
+        await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id,))
+        catalog_row = await cur.fetchone()
+        if not catalog_row:
+            raise ValueError(f"No catalog_id found for execution {parent_execution_id}")
+        catalog_id = catalog_row[0]
+        
         await cur.execute(
             """
-            INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-            VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-            RETURNING id
+            INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+            RETURNING queue_id
             """,
             (
                 parent_execution_id,
+                catalog_id,
                 agg_node_id,
                 json.dumps(agg_encoded),
                 json.dumps(agg_ctx),
@@ -683,7 +691,7 @@ async def _enqueue_next_workflow_steps(conn, cur, parent_execution_id: str, loop
                 """
                 SELECT context, meta FROM noetl.event
                 WHERE execution_id = %s
-                ORDER BY timestamp ASC
+                ORDER BY created_at ASC
                 LIMIT 1
                 """,
                 (parent_execution_id,)
@@ -915,7 +923,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     """
                     SELECT context FROM noetl.event
                     WHERE execution_id = %s::bigint AND event_type IN ('execution_start','execution_started')
-                    ORDER BY timestamp ASC LIMIT 1
+                    ORDER BY created_at ASC LIMIT 1
                     """,
                     (parent_execution_id,)
                 )
@@ -965,14 +973,22 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
             except Exception:
                 pass
             
+            # Get catalog_id from parent execution's first event
+            await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id,))
+            catalog_row = await cur.fetchone()
+            if not catalog_row:
+                raise ValueError(f"No catalog_id found for execution {parent_execution_id}")
+            catalog_id = catalog_row[0]
+            
             await cur.execute(
                 """
-                INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                RETURNING id
+                INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                RETURNING queue_id
                 """,
                 (
                     parent_execution_id,
+                    catalog_id,
                     f"{parent_execution_id}:{next_step_name}",
                     json.dumps(encoded),
                     json.dumps(job_ctx),

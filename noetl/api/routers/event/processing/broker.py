@@ -132,7 +132,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                             """
                             SELECT context FROM noetl.event
                             WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
-                            ORDER BY timestamp DESC LIMIT 1
+                            ORDER BY created_at DESC LIMIT 1
                             """,
                             (execution_id,)
                         )
@@ -410,14 +410,22 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     # Encode and enqueue task
                                     encoded = encode_task_for_queue(task)
                                     
+                                    # Get catalog_id from execution's first event
+                                    await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
+                                    catalog_row = await cur.fetchone()
+                                    if not catalog_row:
+                                        raise ValueError(f"No catalog_id found for execution {execution_id}")
+                                    catalog_id = catalog_row[0]
+                                    
                                     await cur.execute(
                                         """
-                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                        RETURNING id
+                                        INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                                        RETURNING queue_id
                                         """,
                                         (
                                             snowflake_id_to_int(execution_id),
+                                            catalog_id,
                                             f"{execution_id}:{next_step_name}",
                                             json.dumps(encoded),
                                             json.dumps(ctx),
@@ -554,14 +562,22 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                 logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit loop_iteration", exc_info=True)
 
             try:
+                # Get catalog_id from execution's first event
+                await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
+                catalog_row = await cur.fetchone()
+                if not catalog_row:
+                    raise ValueError(f"No catalog_id found for execution {execution_id}")
+                catalog_id = catalog_row[0]
+                
                 await cur.execute(
                     """
-                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                    RETURNING id
+                    INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                    RETURNING queue_id
                     """,
                     (
                         snowflake_id_to_int(execution_id),
+                        catalog_id,
                         f"{execution_id}:{step_name}:{idx}",
                         json.dumps(encoded_task),
                         json.dumps(ctx),
@@ -641,7 +657,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                     """
                     SELECT meta, context FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
-                    ORDER BY timestamp ASC
+                    ORDER BY created_at ASC
                     LIMIT 1
                     """,
                     (execution_id,)

@@ -45,7 +45,7 @@ class PlaybookResourceResponse(AppBaseModel):
     layout: dict[str, Any] | None = None
     payload: dict[str, Any] | None = None
     meta: dict[str, Any]
-    timestamp: datetime
+    created_at: datetime
 
     @model_validator(mode="after")
     def check_content_or_layout(cls, model):
@@ -63,7 +63,7 @@ class CatalogEntryResponse(AppBaseModel):
     layout: dict[str, Any] | None = None
     payload: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
-    timestamp: datetime
+    created_at: datetime
 
 
 class CatalogListResponse(AppBaseModel):
@@ -78,7 +78,6 @@ class PlaybookSummaryResponse(AppBaseModel):
     kind: str
     version: int
     meta: dict[str, Any] | None = None
-    timestamp: datetime
     description: str | None = None
     created_at: datetime
     updated_at: datetime

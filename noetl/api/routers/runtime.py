@@ -492,7 +492,7 @@ async def execute_playbook_by_path_version(request: Request):
     Body:
       { path: str, version?: str, input_payload?: dict, merge?: bool, sync_to_postgres?: bool }
     Returns:
-      { execution_id: str, timestamp: str, result?: dict }
+      { execution_id: str, created_at: str, result?: dict }
     """
     try:
         body = await request.json()
@@ -521,7 +521,7 @@ async def execute_playbook_by_path_version(request: Request):
                             SELECT version, content 
                             FROM noetl.catalog 
                             WHERE path = %s 
-                            ORDER BY timestamp DESC 
+                            ORDER BY created_at DESC 
                             LIMIT 1
                             """,
                             (path,)

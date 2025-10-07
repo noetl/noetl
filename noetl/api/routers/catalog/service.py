@@ -15,6 +15,19 @@ class CatalogService:
     def __init__(self, pgdb_conn_string: str | None = None):
         self.pgdb_conn_string = pgdb_conn_string or get_pgdb_connection()
 
+    async def get_catalog_id(self, resource_path: str, version: str | int) -> Optional[int]:
+        """Get catalog_id for a given path and version"""
+        async with get_async_db_connection(self.pgdb_conn_string) as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT catalog_id FROM noetl.catalog WHERE path = %s AND version = %s",
+                    (resource_path, int(version) if version else 1),
+                )
+                row = await cursor.fetchone()
+                if row:
+                    return row[0]
+                return None
+
     async def get_latest_version(self, resource_path: str) -> int:
         async with get_async_db_connection(self.pgdb_conn_string) as conn:
             async with conn.cursor() as cursor:
@@ -41,7 +54,7 @@ class CatalogService:
             async with conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(
                     """
-                    SELECT c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.timestamp
+                    SELECT c.catalog_id, c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.created_at
                     FROM noetl.catalog c
                     WHERE c.path = %s AND c.version = %s
                     """,
@@ -74,7 +87,7 @@ class CatalogService:
                     INSERT INTO noetl.catalog
                     (path, version, kind, content, payload, meta)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING version
+                    RETURNING catalog_id, version
                     """,
                     (
                         path,
@@ -86,7 +99,8 @@ class CatalogService:
                     )
                 )
                 result = await cursor.fetchone()
-                version = result[0] if result else new_version
+                catalog_id = result[0] if result else None
+                version = result[1] if result else new_version
 
                 await conn.commit()
 
@@ -95,6 +109,7 @@ class CatalogService:
             "message": f"Resource '{path}' version '{version}' registered.",
             "path": path,
             "version": version,
+            "catalog_id": catalog_id,
             "kind": resource_type,
         }
 
@@ -104,18 +119,18 @@ class CatalogService:
                 if resource_type:
                     await cursor.execute(
                         """
-                        SELECT c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.timestamp
+                        SELECT c.catalog_id, c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.created_at
                         FROM noetl.catalog c
-                        WHERE c.kind = %s ORDER BY c.timestamp DESC
+                        WHERE c.kind = %s ORDER BY c.created_at DESC
                         """,
                         (resource_type,)
                     )
                 else:
                     await cursor.execute(
                         """
-                        SELECT c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.timestamp
+                        SELECT c.catalog_id, c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.created_at
                         FROM noetl.catalog c
-                        ORDER BY c.timestamp DESC
+                        ORDER BY c.created_at DESC
                         """
                     )
                 rows = await cursor.fetchall() or []
@@ -126,9 +141,9 @@ class CatalogService:
             async with conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(
                     """
-                        SELECT c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.timestamp
+                        SELECT c.catalog_id, c.path, c.version, c.kind, c.content, c.layout, c.payload, c.meta, c.created_at
                         FROM noetl.catalog c
-                        WHERE c.path = %s ORDER BY c.timestamp DESC
+                        WHERE c.path = %s ORDER BY c.created_at DESC
                         """,
                     (resource_path,)
                 )

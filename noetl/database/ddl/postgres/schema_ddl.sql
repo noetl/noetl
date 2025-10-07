@@ -19,6 +19,7 @@ ALTER TABLE noetl.resource OWNER TO noetl;
 
 -- Catalog
 CREATE TABLE IF NOT EXISTS noetl.catalog (
+    catalog_id BIGINT PRIMARY KEY,
     path     TEXT            NOT NULL,
     version  SMALLSERIAL     NOT NULL,
     kind     VARCHAR         NOT NULL REFERENCES noetl.resource(name),
@@ -26,16 +27,16 @@ CREATE TABLE IF NOT EXISTS noetl.catalog (
     layout                   JSONB,     -- Optional layout for UI Workflow Builder
     payload                  JSONB,
     meta                     JSONB,
-    timestamp                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (path, version)
+    created_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (path, version)
 );
 ALTER TABLE noetl.catalog OWNER TO noetl;
 
 -- Workload
 CREATE TABLE IF NOT EXISTS noetl.workload (
     execution_id BIGINT,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    data TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    data JSONB,
     PRIMARY KEY (execution_id)
 );
 ALTER TABLE noetl.workload OWNER TO noetl;
@@ -43,10 +44,11 @@ ALTER TABLE noetl.workload OWNER TO noetl;
 -- Event
 CREATE TABLE IF NOT EXISTS noetl.event (
     execution_id BIGINT,
+    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
     event_id BIGINT,
     parent_event_id BIGINT,
     parent_execution_id BIGINT,
-    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     event_type VARCHAR,
     node_id VARCHAR,
     node_name VARCHAR,
@@ -55,7 +57,7 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     duration DOUBLE PRECISION,
     context TEXT,
     result TEXT,
-    meta TEXT,
+    meta   JSONB,
     error TEXT,
     current_index INTEGER,
     current_item TEXT,
@@ -72,7 +74,7 @@ ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS trace_component JSONB;
 ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
 ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS stack_trace TEXT;
 DO $$ BEGIN
-    ALTER TABLE noetl.event ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE noetl.event ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
 EXCEPTION WHEN others THEN NULL; END $$;
 
 -- Workflow/workbook/transition
@@ -156,8 +158,7 @@ CREATE TABLE IF NOT EXISTS noetl.metric (
     labels JSONB,
     help_text TEXT,
     unit TEXT,
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     -- TTL: automatically delete metrics older than 1 day
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '1 day'),
     PRIMARY KEY (metric_id, created_at)
@@ -167,7 +168,7 @@ ALTER TABLE noetl.metric OWNER TO noetl;
 -- Create indexes on the parent table (will be inherited by partitions)
 CREATE INDEX IF NOT EXISTS idx_metric_runtime_id ON noetl.metric (runtime_id);
 CREATE INDEX IF NOT EXISTS idx_metric_name ON noetl.metric (metric_name);
-CREATE INDEX IF NOT EXISTS idx_metric_timestamp ON noetl.metric (timestamp);
+CREATE INDEX IF NOT EXISTS idx_metric_created_at ON noetl.metric (created_at);
 CREATE INDEX IF NOT EXISTS idx_metric_runtime_name ON noetl.metric (runtime_id, metric_name);
 CREATE INDEX IF NOT EXISTS idx_metric_labels ON noetl.metric USING GIN (labels);
 
@@ -317,8 +318,9 @@ $$ LANGUAGE plpgsql;
 
 -- Queue
 CREATE TABLE IF NOT EXISTS noetl.queue (
-    id BIGINT PRIMARY KEY,
+    queue_id BIGINT PRIMARY KEY,
     execution_id BIGINT NOT NULL,
+    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
     node_id VARCHAR NOT NULL,
     action TEXT NOT NULL,
     context JSONB,
@@ -326,21 +328,20 @@ CREATE TABLE IF NOT EXISTS noetl.queue (
     priority INTEGER NOT NULL DEFAULT 0,
     attempts INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 5,
-    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    available_at TIMESTAMPTZ,
     lease_until TIMESTAMPTZ,
     worker_id TEXT,
-    last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_heartbeat TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    parent_execution_id BIGINT,
+    parent_event_id BIGINT,
+    event_id BIGINT,
+    node_name VARCHAR,
+    node_type VARCHAR,
+    UNIQUE(execution_id, node_id)
 );
 ALTER TABLE noetl.queue OWNER TO noetl;
-CREATE INDEX IF NOT EXISTS idx_queue_status ON noetl.queue (status);
-CREATE INDEX IF NOT EXISTS idx_queue_priority ON noetl.queue (priority);
-CREATE INDEX IF NOT EXISTS idx_queue_available_at ON noetl.queue (available_at);
-CREATE INDEX IF NOT EXISTS idx_queue_worker ON noetl.queue (worker_id);
-DO $$ BEGIN
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_exec_node ON noetl.queue (execution_id, node_id);
-EXCEPTION WHEN others THEN NULL; END $$;
 
 -- Schedule
 CREATE TABLE IF NOT EXISTS noetl.schedule (
@@ -430,10 +431,11 @@ END;
 $$ LANGUAGE plpgsql;
 ALTER FUNCTION noetl.snowflake_id() OWNER TO noetl;
 ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.catalog ALTER COLUMN catalog_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.queue ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.queue ALTER COLUMN queue_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.schedule ALTER COLUMN schedule_id SET DEFAULT noetl.snowflake_id();
 alter table noetl.credential ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 alter table noetl.metric ALTER COLUMN metric_id SET DEFAULT noetl.snowflake_id();

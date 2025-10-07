@@ -92,7 +92,7 @@ async def handle_step_event(event: Dict[str, Any], et: str) -> None:
                                         WHERE execution_id = %s
                                           AND node_name = %s
                                           AND event_type = 'action_completed'
-                                        ORDER BY timestamp DESC
+                                        ORDER BY created_at DESC
                                         LIMIT 1
                                         """,
                                         (execution_id, step_name)
@@ -186,7 +186,7 @@ async def _load_playbook_and_index(execution_id: str) -> Tuple[Dict[str, Dict[st
                     """
                     SELECT context, meta FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
-                    ORDER BY timestamp ASC LIMIT 1
+                    ORDER BY created_at ASC LIMIT 1
                     """,
                     (execution_id,)
                 )

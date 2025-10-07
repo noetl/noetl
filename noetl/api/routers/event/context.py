@@ -91,7 +91,7 @@ async def render_context(request: Request):
                     """
                     SELECT context, meta FROM event
                     WHERE execution_id = %s
-                    ORDER BY timestamp ASC
+                    ORDER BY created_at ASC
                     LIMIT 1
                     """,
                     (execution_id,)

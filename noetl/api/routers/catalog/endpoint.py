@@ -151,7 +151,7 @@ async def get_catalog_playbooks(
                 description = meta.get('description', '')
 
             path = entry.get('path', '')
-            timestamp = entry.get('timestamp')
+            created_at = entry.get('created_at')
 
             playbook = PlaybookSummaryResponse(
                 id=path,
@@ -159,10 +159,9 @@ async def get_catalog_playbooks(
                 kind=entry.get('kind', ''),
                 version=entry.get('version', 1),
                 meta=meta,
-                timestamp=timestamp,
+                created_at=created_at,
                 description=description,
-                created_at=timestamp,
-                updated_at=timestamp,
+                updated_at=created_at,
                 status=meta.get('status', 'active'),
                 tasks_count=meta.get('tasks_count', 0)
             )
