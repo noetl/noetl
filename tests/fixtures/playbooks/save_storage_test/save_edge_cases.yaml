@@ -1,0 +1,235 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: save_edge_cases
+  path: tests/fixtures/playbooks/save_storage_test/save_edge_cases
+  description: "Test playbook for save storage edge cases and error scenarios"
+
+workload:
+  test_scenarios:
+    - "mixed_data_types"
+    - "large_payload"
+    - "special_characters"
+    - "empty_data"
+
+workflow:
+  # Test mixed data types
+  - step: start
+    desc: "Test save with mixed data types"
+    type: python
+    code: |
+      def main(input_data):
+          import datetime
+          import decimal
+          
+          mixed_data = {
+              "string_field": "test_string",
+              "integer_field": 12345,
+              "float_field": 3.14159,
+              "boolean_field": True,
+              "null_field": None,
+              "datetime_field": datetime.datetime.now().isoformat(),
+              "list_field": [1, 2, 3, "mixed", True],
+              "dict_field": {"nested": "value", "count": 42},
+              "decimal_field": float(decimal.Decimal("99.99"))
+          }
+          
+          return {"status": "success", "data": mixed_data}
+    save:
+      storage:
+        type: postgres
+        data: "{{ result.data }}"
+        table: test_mixed_types
+        auth:
+          type: postgres
+          credential: pg_k8s
+    next:
+      - step: test_special_characters
+
+  # Test special characters and unicode
+  - step: test_special_characters
+    desc: "Test save with special characters and unicode"
+    type: python
+    code: |
+      def main(input_data):
+          special_data = {
+              "quotes": "This has 'single' and \"double\" quotes",
+              "unicode": "Unicode: αβγδε, 中文, 🚀🌟",
+              "sql_injection": "'; DROP TABLE test; --",
+              "newlines": "Line 1\nLine 2\r\nLine 3",
+              "backslashes": "C:\\path\\to\\file",
+              "json_string": '{"embedded": "json", "value": 123}'
+          }
+          
+          return {"status": "success", "data": special_data}
+    data: "{{ start.data }}"
+    save:
+      storage:
+        type: postgres
+        data: "{{ result.data }}"
+        table: test_special_chars
+        mode: insert
+        auth:
+          type: postgres
+          credential: pg_k8s
+    next:
+      - step: test_empty_data
+
+  # Test empty and null data scenarios
+  - step: test_empty_data
+    desc: "Test save with empty and null data"
+    type: python
+    code: |
+      def main(input_data):
+          empty_scenarios = {
+              "empty_string": "",
+              "empty_list": [],
+              "empty_dict": {},
+              "zero_value": 0,
+              "false_value": False,
+              "none_value": None
+          }
+          
+          return {"status": "success", "data": empty_scenarios}
+    data: "{{ test_special_characters.data }}"
+    save:
+      storage:
+        type: python
+        code: |
+          def main(data):
+              import json
+              
+              # Handle empty/null data gracefully
+              processed = {}
+              for key, value in data.items():
+                  if value is None:
+                      processed[key] = "NULL_VALUE"
+                  elif value == "":
+                      processed[key] = "EMPTY_STRING"
+                  elif value == []:
+                      processed[key] = "EMPTY_LIST"
+                  elif value == {}:
+                      processed[key] = "EMPTY_DICT"
+                  else:
+                      processed[key] = value
+              
+              result = {
+                  "original_data": data,
+                  "processed_data": processed,
+                  "processing_notes": "Handled empty/null values"
+              }
+              
+              print(f"Empty data processing: {json.dumps(result, indent=2)}")
+              return {"status": "success", "data": result}
+    next:
+      - step: test_large_payload
+
+  # Test large payload handling
+  - step: test_large_payload
+    desc: "Test save with large data payload"
+    type: python
+    code: |
+      def main(input_data):
+          # Generate moderately large dataset
+          large_data = {
+              "metadata": {
+                  "test_type": "large_payload",
+                  "record_count": 100
+              },
+              "records": []
+          }
+          
+          for i in range(100):
+              record = {
+                  "id": i + 1,
+                  "name": f"Test Record {i + 1}",
+                  "description": f"This is a test record with ID {i + 1} " * 5,  # Repeat for size
+                  "data_field": f"data_value_{i}",
+                  "large_text": "Lorem ipsum dolor sit amet " * 20  # Large text field
+              }
+              large_data["records"].append(record)
+          
+          return {"status": "success", "data": large_data}
+    data: "{{ test_empty_data.data }}"
+    save:
+      storage:
+        type: duckdb
+        commands: |
+          -- Create table for large dataset
+          CREATE OR REPLACE TABLE test_large_payload AS
+          SELECT 
+            'large_payload_test' as test_type,
+            {{ result.data.metadata.record_count }} as record_count,
+            '{{ execution_id }}' as execution_id,
+            NOW() as created_at;
+          
+          -- Simulate processing large data
+          INSERT INTO test_large_payload 
+          VALUES ('large_data_processed', 100, '{{ execution_id }}', NOW());
+          
+          SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
+    next:
+      - step: test_error_recovery
+
+  # Test error recovery scenarios
+  - step: test_error_recovery
+    desc: "Test save error handling and recovery"
+    type: python
+    code: |
+      def main(input_data):
+          # Data that might cause issues but should be handled gracefully
+          potentially_problematic = {
+              "valid_field": "this should work",
+              "test_execution": input_data.get("execution_id", "unknown"),
+              "recovery_test": True
+          }
+          
+          return {"status": "success", "data": potentially_problematic}
+    data: "{{ test_large_payload.data }}"
+    save:
+      storage:
+        type: http
+        endpoint: "https://httpbin.org/status/200"  # This should succeed
+        method: POST
+        headers:
+          Content-Type: "application/json"
+          X-Test-Type: "error-recovery"
+        data: "{{ result.data }}"
+    next:
+      - step: test_completion_summary
+
+  # Final summary
+  - step: test_completion_summary
+    desc: "Summarize edge case testing results"
+    type: python
+    code: |
+      def main(input_data):
+          summary = {
+              "edge_case_tests_completed": [
+                  "mixed_data_types",
+                  "special_characters_unicode",
+                  "empty_null_data",
+                  "large_payload",
+                  "error_recovery"
+              ],
+              "storage_types_tested": [
+                  "postgres",
+                  "python", 
+                  "duckdb",
+                  "http"
+              ],
+              "test_status": "completed",
+              "execution_id": input_data.get("execution_id", "unknown")
+          }
+          
+          return {"status": "success", "data": summary}
+    data: "{{ test_error_recovery.data }}"
+    save:
+      storage: event_log
+      data: "{{ result.data }}"
+    next:
+      - step: end
+
+  # End
+  - step: end
+    desc: "Edge case testing completed"

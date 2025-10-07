@@ -18,7 +18,7 @@ fi
 
 # Validate the deployment YAML
 echo -e "${GREEN}Validating NoETL deployment YAML...${NC}"
-kubectl apply --dry-run=client -f /Users/kadyapam/projects/noetl/noetl/k8s/noetl/noetl-deployment.yaml
+kubectl apply --dry-run=client -f ./k8s/noetl/noetl-deployment.yaml
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Deployment YAML is valid.${NC}"
 else
@@ -28,7 +28,7 @@ fi
 
 # Validate the service YAML
 echo -e "${GREEN}Validating NoETL service YAML...${NC}"
-kubectl apply --dry-run=client -f /Users/kadyapam/projects/noetl/noetl/k8s/noetl/noetl-service.yaml
+kubectl apply --dry-run=client -f ./k8s/noetl/noetl-service.yaml
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Service YAML is valid.${NC}"
 else

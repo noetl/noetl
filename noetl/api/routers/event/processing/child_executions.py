@@ -96,7 +96,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                               AND result != '{}'
                               AND NOT (result::text LIKE '%%"skipped": true%%')
                               AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                            ORDER BY timestamp DESC
+                            ORDER BY created_at DESC
                             LIMIT 1
                             """,
                             (child_exec_id, step_name)
@@ -127,7 +127,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                               AND result != '{}'
                               AND NOT (result::text LIKE '%%"skipped": true%%')
                               AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                            ORDER BY timestamp DESC
+                            ORDER BY created_at DESC
                             LIMIT 1
                             """,
                             (child_exec_id,)
@@ -169,7 +169,7 @@ async def check_and_process_completed_child_executions(parent_execution_id: str)
                                       AND event_type = 'loop_iteration'
                                       AND node_name = %s
                                       AND context LIKE %s
-                                    ORDER BY timestamp DESC
+                                    ORDER BY created_at DESC
                                     LIMIT 1
                                     """,
                                     (parent_execution_id, parent_step, f'%"child_execution_id": "{child_exec_id}"%')

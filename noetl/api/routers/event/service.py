@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.core.status import validate_status
 from noetl.api.routers.event.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
@@ -18,19 +19,7 @@ class EventService:
     def __init__(self, pgdb_conn_string: str | None = None):
         pass
 
-    def _normalize_status(self, raw: str | None) -> str:
-        if not raw:
-            return 'pending'
-        s = str(raw).strip().lower()
-        if s in {'completed', 'complete', 'success', 'succeeded', 'done'}:
-            return 'completed'
-        if s in {'error', 'failed', 'failure'}:
-            return 'failed'
-        if s in {'running', 'run', 'in_progress', 'in-progress', 'progress', 'started', 'start'}:
-            return 'running'
-        if s in {'created', 'queued', 'pending', 'init', 'initialized', 'new'}:
-            return 'pending'
-        return 'pending'
+
 
     async def get_all_executions(self) -> List[Dict[str, Any]]:
         """
@@ -46,12 +35,13 @@ class EventService:
                         WITH latest_events AS (
                             SELECT 
                                 execution_id,
-                                MAX(timestamp) as latest_timestamp
+                                MAX(created_at) as latest_timestamp
                             FROM event
                             GROUP BY execution_id
                         )
                         SELECT 
                             e.execution_id,
+                            e.catalog_id,
                             e.event_type,
                             e.status,
                             e.timestamp,
@@ -61,8 +51,8 @@ class EventService:
                             e.error,
                             e.stack_trace
                         FROM event e
-                        JOIN latest_events le ON e.execution_id = le.execution_id AND e.timestamp = le.latest_timestamp
-                        ORDER BY e.timestamp DESC
+                        JOIN latest_events le ON e.execution_id = le.execution_id AND e.created_at = le.latest_timestamp
+                        ORDER BY e.created_at DESC
                     """)
 
                     rows = await cursor.fetchall()
@@ -70,20 +60,53 @@ class EventService:
 
                     for row in rows:
                         execution_id = row[0]
-                        metadata = json.loads(row[4]) if row[4] else {}
-                        input_context = json.loads(row[5]) if row[5] else {}
-                        output_result = json.loads(row[6]) if row[6] else {}
-                        playbook_id = metadata.get('resource_path', input_context.get('path', ''))
-                        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-                        raw_status = row[2]
-                        status = self._normalize_status(raw_status)
+                        catalog_id = row[1]
+                        metadata = row[5] if row[5] else {}  # meta is now JSONB
+                        input_context = json.loads(row[6]) if row[6] else {}
+                        output_result = json.loads(row[7]) if row[7] else {}
+                        
+                        # Try to get playbook info from catalog_id first, then fallback to metadata
+                        playbook_id = ''
+                        playbook_name = 'Unknown'
+                        if catalog_id:
+                            try:
+                                await cursor.execute("""
+                                    SELECT path FROM noetl.catalog WHERE catalog_id = %s
+                                """, (catalog_id,))
+                                catalog_row = await cursor.fetchone()
+                                if catalog_row:
+                                    playbook_id = catalog_row[0]
+                                    playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                            except Exception:
+                                pass
+                        
+                        # Fallback to metadata if no catalog_id or catalog lookup failed
+                        if not playbook_id:
+                            playbook_id = metadata.get('resource_path', input_context.get('path', ''))
+                            playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                        
+                        raw_status = row[3]
+                        
+                        # For existing data, we need to handle potentially non-normalized statuses
+                        # by normalizing them only for display purposes, but log warnings
+                        if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                            status = raw_status
+                        else:
+                            # Legacy data - normalize for display but log warning
+                            from noetl.core.status import normalize_status
+                            try:
+                                status = normalize_status(raw_status)
+                                logger.warning(f"Found non-normalized status '{raw_status}' in execution {execution_id}. This should be fixed in the source.")
+                            except ValueError:
+                                logger.error(f"Invalid status '{raw_status}' in execution {execution_id}. Defaulting to 'PENDING'.")
+                                status = 'PENDING'
 
-                        start_time = row[3].isoformat() if row[3] else None
+                        start_time = row[4].isoformat() if row[4] else None
                         end_time = None
                         duration = None
 
                         await cursor.execute("""
-                            SELECT MIN(timestamp) FROM event WHERE execution_id = %s
+                            SELECT MIN(created_at) FROM event WHERE execution_id = %s
                         """, (execution_id,))
                         min_time_row = await cursor.fetchone()
                         if min_time_row and min_time_row[0]:
@@ -91,7 +114,7 @@ class EventService:
 
                         if status in ['completed', 'failed']:
                             await cursor.execute("""
-                                SELECT MAX(timestamp) FROM event WHERE execution_id = %s
+                                SELECT MAX(created_at) FROM event WHERE execution_id = %s
                             """, (execution_id,))
                             max_time_row = await cursor.fetchone()
                             if max_time_row and max_time_row[0]:
@@ -102,15 +125,27 @@ class EventService:
                                     end_dt = datetime.fromisoformat(end_time)
                                     duration = (end_dt - start_dt).total_seconds()
 
-                        progress = 100 if status in ['completed', 'failed'] else 0
-                        if status == 'running':
+                        progress = 100 if status in ['COMPLETED', 'FAILED'] else 0
+                        if status in ['STARTED', 'RUNNING']:
                             # Count total events & those considered finished (completed/failed)
                             await cursor.execute("""
                                 SELECT status FROM event WHERE execution_id = %s
                             """, (execution_id,))
-                            event_statuses = [self._normalize_status(r[0]) for r in await cursor.fetchall()]
+                            event_statuses = []
+                            for r in await cursor.fetchall():
+                                event_status = r[0]
+                                if event_status and event_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                                    event_statuses.append(event_status)
+                                else:
+                                    # Legacy data - normalize for calculation
+                                    from noetl.core.status import normalize_status
+                                    try:
+                                        normalized = normalize_status(event_status)
+                                        event_statuses.append(normalized)
+                                    except ValueError:
+                                        event_statuses.append('PENDING')
                             total_steps = len(event_statuses)
-                            completed_steps = sum(1 for s in event_statuses if s in {'completed', 'failed'})
+                            completed_steps = sum(1 for s in event_statuses if s in {'COMPLETED', 'FAILED'})
                             if total_steps > 0:
                                 progress = int((completed_steps / total_steps) * 100)
 
@@ -124,12 +159,12 @@ class EventService:
                             "duration": duration,
                             "progress": progress,
                             "result": output_result,
-                            "error": row[7]
+                            "error": row[8]
                         }
 
                         # Attach stack trace when present
                         try:
-                            st = row[8]
+                            st = row[9]
                             if st:
                                 execution_data['stack_trace'] = st
                         except Exception:
@@ -156,7 +191,15 @@ class EventService:
             event_id = event_data.get("event_id", snow or f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id
             event_type = event_data.get("event_type", "UNKNOWN")
-            status = event_data.get("status", "CREATED")
+            raw_status = event_data.get("status", "PENDING")
+            
+            # Validate status - this will raise ValueError if invalid
+            try:
+                status = validate_status(raw_status) if raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'} else validate_status('PENDING')
+            except ValueError as e:
+                logger.error(f"Invalid status '{raw_status}' in event: {e}")
+                raise ValueError(f"Invalid event status '{raw_status}'. {str(e)}")
+            
             parent_event_id = event_data.get("parent_id") or event_data.get("parent_event_id")
             execution_id = event_data.get("execution_id", event_id)
             node_id = event_data.get("node_id", event_id)
@@ -282,12 +325,73 @@ class EventService:
                       # Default parent_event_id if missing: link to previous event in the same execution
                       if not parent_event_id:
                           try:
-                              await cursor.execute("SELECT event_id FROM event WHERE execution_id = %s ORDER BY timestamp DESC LIMIT 1", (execution_id,))
+                              await cursor.execute("SELECT event_id FROM event WHERE execution_id = %s ORDER BY created_at DESC LIMIT 1", (execution_id,))
                               _prev = await cursor.fetchone()
                               if _prev and _prev[0]:
                                   parent_event_id = _prev[0]
                           except Exception:
                               pass
+
+                      # Resolve catalog_id from metadata if available - REQUIRED
+                      catalog_id = None
+                      try:
+                          # First try metadata
+                          if metadata and isinstance(metadata, dict):
+                              resource_path = metadata.get('path')
+                              resource_version = metadata.get('version')
+                              if resource_path and resource_version:
+                                  await cursor.execute(
+                                      "SELECT catalog_id FROM noetl.catalog WHERE path = %s AND version = %s",
+                                      (resource_path, resource_version)
+                                  )
+                                  catalog_row = await cursor.fetchone()
+                                  if catalog_row:
+                                      catalog_id = catalog_row[0]
+                          
+                          # If not found in metadata, try context directly
+                          if not catalog_id and context_dict and isinstance(context_dict, dict):
+                              # Check direct path/version in context
+                              ctx_path = context_dict.get('path')
+                              ctx_version = context_dict.get('version')
+                              if ctx_path and ctx_version:
+                                  await cursor.execute(
+                                      "SELECT catalog_id FROM noetl.catalog WHERE path = %s AND version = %s",
+                                      (ctx_path, ctx_version)
+                                  )
+                                  catalog_row = await cursor.fetchone()
+                                  if catalog_row:
+                                      catalog_id = catalog_row[0]
+                              
+                              # Also check nested workload/work contexts
+                              if not catalog_id:
+                                  for ctx_key in ['work', 'workload']:
+                                      ctx_data = context_dict.get(ctx_key)
+                                      if isinstance(ctx_data, dict):
+                                          ctx_path = ctx_data.get('path')
+                                          ctx_version = ctx_data.get('version')
+                                          if ctx_path and ctx_version:
+                                              await cursor.execute(
+                                                  "SELECT catalog_id FROM noetl.catalog WHERE path = %s AND version = %s",
+                                                  (ctx_path, ctx_version)
+                                              )
+                                              catalog_row = await cursor.fetchone()
+                                              if catalog_row:
+                                                  catalog_id = catalog_row[0]
+                                                  break
+                          
+                          # catalog_id is REQUIRED - fail if not found
+                          if catalog_id is None:
+                              error_msg = f"catalog_id is required but could not be resolved for event {event_type} in execution {execution_id}. Available metadata: {metadata}, context keys: {list(context_dict.keys()) if context_dict else 'None'}"
+                              logger.error(error_msg)
+                              raise ValueError(error_msg)
+                              
+                      except ValueError:
+                          # Re-raise validation errors
+                          raise
+                      except Exception as e:
+                          error_msg = f"Failed to resolve catalog_id for event {event_type} in execution {execution_id}: {e}"
+                          logger.error(error_msg)
+                          raise ValueError(error_msg)
                       await cursor.execute("""
                           SELECT COUNT(*) FROM event
                           WHERE execution_id = %s AND event_id = %s
@@ -296,15 +400,8 @@ class EventService:
                       row = await cursor.fetchone()
                       exists = row[0] > 0 if row else False
 
-                      loop_id_val = event_data.get('loop_id')
-                      if loop_id_val is not None and not isinstance(loop_id_val, (str, int)):
-                          loop_id_val = json.dumps(loop_id_val)
-                      elif loop_id_val is not None:
-                          loop_id_val = str(loop_id_val)
-                      
-                      loop_name_val = event_data.get('loop_name')
-                      if loop_name_val is not None and not isinstance(loop_name_val, str):
-                          loop_name_val = str(loop_name_val)
+                      # Iterator processing for type: iterator steps
+                      # Remove old loop_id/loop_name processing since those columns are removed
                       
                       iterator_val = json.dumps(event_data.get('iterator')) if event_data.get('iterator') is not None else None
                       
@@ -316,82 +413,28 @@ class EventService:
                       
                       current_item_val = json.dumps(event_data.get('current_item')) if event_data.get('current_item') is not None else None
                       
-                      # Enhanced loop metadata extraction: check context and input_context for _loop metadata
-                      if not loop_id_val:
-                          # Try to extract from context (use context_dict, not context which is the JSON string)
-                          if context_dict and isinstance(context_dict, dict):
-                              # Support both 'workload' (server) and 'work' (worker) context keys
-                              workload = context_dict.get('workload')
-                              work = context_dict.get('work')
-                              candidate_contexts = []
-                              if workload and isinstance(workload, dict):
-                                  candidate_contexts.append(workload)
-                              if work and isinstance(work, dict):
-                                  candidate_contexts.append(work)
-                              loop_data = None
-                              for cctx in candidate_contexts:
-                                  if isinstance(cctx, dict) and isinstance(cctx.get('_loop'), dict):
-                                      loop_data = cctx.get('_loop')
-                                      break
-                              if loop_data and isinstance(loop_data, dict):
-                                  if loop_data and isinstance(loop_data, dict):
-                                      loop_id_extracted = loop_data.get('loop_id')
-                                      if loop_id_extracted is not None and not isinstance(loop_id_extracted, (str, int)):
-                                          loop_id_val = json.dumps(loop_id_extracted)
-                                      elif loop_id_extracted is not None:
-                                          loop_id_val = str(loop_id_extracted)
-                                      else:
-                                          loop_id_val = loop_id_extracted
-                                      
-                                      loop_name_extracted = loop_data.get('loop_name')
-                                      if loop_name_extracted is not None and not isinstance(loop_name_extracted, str):
-                                          loop_name_val = str(loop_name_extracted)
-                                      else:
-                                          loop_name_val = loop_name_extracted
-                                      
-                                      iterator_val = json.dumps(loop_data.get('iterator')) if loop_data.get('iterator') is not None else None
-                                      
-                                      current_index_extracted = loop_data.get('current_index')
-                                      if current_index_extracted is not None and not isinstance(current_index_extracted, (str, int)):
-                                          current_index_val = json.dumps(current_index_extracted)
-                                      elif current_index_extracted is not None:
-                                          current_index_val = str(current_index_extracted)
-                                      else:
-                                          current_index_val = current_index_extracted
-                                      
-                                      current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
+                      # Enhanced iterator metadata extraction: check context for iterator info
+                      if context_dict and isinstance(context_dict, dict):
+                          # Support both 'workload' (server) and 'work' (worker) context keys
+                          workload = context_dict.get('workload')
+                          work = context_dict.get('work')
+                          candidate_contexts = []
+                          if workload and isinstance(workload, dict):
+                              candidate_contexts.append(workload)
+                          if work and isinstance(work, dict):
+                              candidate_contexts.append(work)
                           
-                          # Try to extract from input_context if still not found
-                          if not loop_id_val:
-                              input_context_field = event_data.get('input_context')
-                              if input_context_field and isinstance(input_context_field, dict):
-                                  loop_data = input_context_field.get('_loop')
-                                  if loop_data and isinstance(loop_data, dict):
-                                      loop_id_extracted = loop_data.get('loop_id')
-                                      if loop_id_extracted is not None and not isinstance(loop_id_extracted, (str, int)):
-                                          loop_id_val = json.dumps(loop_id_extracted)
-                                      elif loop_id_extracted is not None:
-                                          loop_id_val = str(loop_id_extracted)
-                                      else:
-                                          loop_id_val = loop_id_extracted
-                                      
-                                      loop_name_extracted = loop_data.get('loop_name')
-                                      if loop_name_extracted is not None and not isinstance(loop_name_extracted, str):
-                                          loop_name_val = str(loop_name_extracted)
-                                      else:
-                                          loop_name_val = loop_name_extracted
-                                      
-                                      iterator_val = json.dumps(loop_data.get('iterator')) if loop_data.get('iterator') is not None else None
-                                      
-                                      current_index_extracted = loop_data.get('current_index')
-                                      if current_index_extracted is not None and not isinstance(current_index_extracted, (str, int)):
-                                          current_index_val = json.dumps(current_index_extracted)
-                                      elif current_index_extracted is not None:
-                                          current_index_val = str(current_index_extracted)
-                                      else:
-                                          current_index_val = current_index_extracted
-                                      
-                                      current_item_val = json.dumps(loop_data.get('current_item')) if loop_data.get('current_item') is not None else None
+                          # Extract iterator information from context
+                          for cctx in candidate_contexts:
+                              if isinstance(cctx, dict) and isinstance(cctx.get('_iterator'), dict):
+                                  iter_data = cctx.get('_iterator')
+                                  if current_index_val is None:
+                                      current_index_val = iter_data.get('index')
+                                  if current_item_val is None:
+                                      current_item_val = json.dumps(iter_data.get('item')) if iter_data.get('item') is not None else None
+                                  if iterator_val is None:
+                                      iterator_val = json.dumps(iter_data.get('collection')) if iter_data.get('collection') is not None else None
+                                  break
                       
                       # Extract parent_execution_id from metadata or event_data
                       parent_execution_id = None
@@ -426,22 +469,21 @@ class EventService:
                       if exists:
                           await cursor.execute("""
                               UPDATE event SET
+                                  catalog_id = %s,
                                   event_type = %s,
                                   status = %s,
                                   duration = %s,
                                   context = %s,
                                   result = %s,
-                                  meta = %s,
+                                  meta = %s::jsonb,
                                   error = %s,
                                   trace_component = %s::jsonb,
-                                  loop_id = %s,
-                                  loop_name = %s,
-                                  iterator = %s::jsonb,
                                   current_index = %s,
                                   current_item = %s::jsonb,
-                                  timestamp = CURRENT_TIMESTAMP
+                                  created_at = CURRENT_TIMESTAMP
                               WHERE execution_id = %s AND event_id = %s
                           """, (
+                              catalog_id,
                               event_type,
                               status,
                               duration,
@@ -450,9 +492,6 @@ class EventService:
                               metadata_str,
                               error,
                               trace_component_str,
-                              loop_id_val,
-                              loop_name_val,
-                              iterator_val,
                               current_index_val,
                               current_item_val,
                               execution_id,
@@ -471,6 +510,7 @@ class EventService:
                               event_id=event_id,
                               parent_event_id=parent_event_id,
                               parent_execution_id=parent_execution_id,
+                              catalog_id=catalog_id,
                               event_type=event_type,
                               node_id=node_id,
                               node_name=node_name,
@@ -482,9 +522,6 @@ class EventService:
                               metadata_json=metadata_str,
                               error_text=error,
                               trace_component_json=trace_component_str,
-                              loop_id=loop_id_val,
-                              loop_name=loop_name_val,
-                              iterator_json=iterator_val,
                               current_index=current_index_val,
                               current_item_json=current_item_val,
                               stack_trace=traceback_text,
@@ -624,7 +661,7 @@ class EventService:
                                               AND result IS NOT NULL
                                               AND result != '{}'
                                               AND result != 'null'
-                                            ORDER BY timestamp DESC
+                                            ORDER BY created_at DESC
                                             LIMIT 1
                                             """,
                                             (exec_id,)
@@ -649,12 +686,11 @@ class EventService:
                                             workload_row = await cur.fetchone()
                                             if workload_row and workload_row[0]:
                                                 workload_data = json.loads(workload_row[0])
-                                                loop_data = workload_data.get('_loop', {})
-                                                if loop_data:
+                                                iterator_data = workload_data.get('_iterator', {})
+                                                if iterator_data:
                                                     loop_metadata = {
-                                                        'loop_id': loop_data.get('loop_id'),
-                                                        'current_index': loop_data.get('current_index'),
-                                                        'current_item': loop_data.get('current_item')
+                                                        'current_index': iterator_data.get('current_index'),
+                                                        'current_item': iterator_data.get('current_item')
                                                     }
                                         except Exception as e:
                                             logger.debug(f"Failed to extract loop metadata: {e}")
@@ -754,10 +790,11 @@ class EventService:
                             context, 
                             result, 
                             meta, 
-                            error
+                            error,
+                            catalog_id
                         FROM event 
                         WHERE execution_id = %s
-                        ORDER BY timestamp
+                        ORDER BY created_at
                     """, (execution_id,))
 
                     rows = await cursor.fetchall()
@@ -776,13 +813,28 @@ class EventService:
                                 # Store in canonical keys
                                 "context": json.loads(row[8]) if row[8] else None,
                                 "result": json.loads(row[9]) if row[9] else None,
-                                "metadata": json.loads(row[10]) if row[10] else None,
+                                "metadata": row[10] if row[10] else None,  # meta is now JSONB
                                 "error": row[11],
+                                "catalog_id": row[12],
                                 "execution_id": execution_id,
                                 "resource_path": None,
                                 "resource_version": None,
-                                "normalized_status": self._normalize_status(row[5])
                             }
+                            
+                            # Add normalized_status for backwards compatibility
+                            # For existing data, handle potentially non-normalized statuses
+                            raw_status = row[5]
+                            if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                                event_data["normalized_status"] = raw_status
+                            else:
+                                # Legacy data - normalize for compatibility
+                                from noetl.core.status import normalize_status
+                                try:
+                                    event_data["normalized_status"] = normalize_status(raw_status)
+                                    logger.warning(f"Found non-normalized status '{raw_status}' in event {row[0]}. This should be fixed in the source.")
+                                except ValueError:
+                                    logger.error(f"Invalid status '{raw_status}' in event {row[0]}. Defaulting to 'PENDING'.")
+                                    event_data["normalized_status"] = 'PENDING'
                             # Backward/consumer compatibility: also expose legacy alias keys
                             try:
                                 event_data["input_context"] = event_data.get("context")
@@ -790,14 +842,8 @@ class EventService:
                             except Exception:
                                 pass
 
-                            if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
-                                event_data["resource_path"] = event_data["metadata"]["playbook_path"]
-
-                            if event_data.get("context") and "path" in event_data["context"]:
-                                event_data["resource_path"] = event_data["context"]["path"]
-
-                            if event_data.get("context") and "version" in event_data["context"]:
-                                event_data["resource_version"] = event_data["context"]["version"]
+                            # Use new schema field names directly
+                            # No backward compatibility mappings needed
 
                             events.append(event_data)
 
@@ -836,7 +882,8 @@ class EventService:
                             meta, 
                             error,
                             stack_trace,
-                            execution_id
+                            execution_id,
+                            catalog_id
                         FROM event 
                         WHERE event_id = %s
                     """, (event_id,))
@@ -854,10 +901,11 @@ class EventService:
                             "timestamp": row[7].isoformat() if row[7] else None,
                             "context": json.loads(row[8]) if row[8] else None,
                             "result": json.loads(row[9]) if row[9] else None,
-                            "metadata": json.loads(row[10]) if row[10] else None,
+                            "metadata": row[10] if row[10] else None,  # meta is now JSONB
                             "error": row[11],
                             "stack_trace": row[12],
                             "execution_id": row[13],
+                            "catalog_id": row[14],
                             "resource_path": None,
                             "resource_version": None
                         }
@@ -867,14 +915,8 @@ class EventService:
                             event_data["output_result"] = event_data.get("result")
                         except Exception:
                             pass
-                        if event_data["metadata"] and "playbook_path" in event_data["metadata"]:
-                            event_data["resource_path"] = event_data["metadata"]["playbook_path"]
-
-                        if event_data["input_context"] and "path" in event_data["input_context"]:
-                            event_data["resource_path"] = event_data["input_context"]["path"]
-
-                        if event_data["input_context"] and "version" in event_data["input_context"]:
-                            event_data["resource_version"] = event_data["input_context"]["version"]
+                        # Use new schema field names directly
+                        # No backward compatibility mappings needed
                         return {"events": [event_data]}
 
                     return None

@@ -44,7 +44,7 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                     """
                     SELECT context, meta FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
-                    ORDER BY timestamp ASC LIMIT 1
+                    ORDER BY created_at ASC LIMIT 1
                     """,
                     (execution_id,)
                 )
@@ -59,8 +59,8 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                     meta = json.loads(row[1]) if row[1] else {}
                 except Exception:
                     meta = row[1] or {}
-                pb_path = (ctx.get('path') or (meta.get('playbook_path') if isinstance(meta, dict) else None) or (meta.get('resource_path') if isinstance(meta, dict) else None))
-                pb_ver = (ctx.get('version') or (meta.get('resource_version') if isinstance(meta, dict) else None) or 'latest')
+                pb_path = (ctx.get('path') or (meta.get('path') if isinstance(meta, dict) else None))
+                pb_ver = (ctx.get('version') or (meta.get('version') if isinstance(meta, dict) else None) or 'latest')
                 if not pb_path:
                     return
 
@@ -155,18 +155,25 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                 if qrow and (isinstance(qrow, tuple) or isinstance(qrow, list)):
                     qid = qrow[0]
                     await cur.execute(
-                        "UPDATE noetl.queue SET action = %s, context = %s::jsonb WHERE id = %s",
+                        "UPDATE noetl.queue SET action = %s, context = %s::jsonb WHERE queue_id = %s",
                         (json.dumps(encoded), json.dumps(job_ctx), qid)
                     )
                 else:
                     # Insert a new queue row if missing
+                    # Get catalog_id from execution's first event
+                    await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (execution_id,))
+                    catalog_row = await cur.fetchone()
+                    if not catalog_row:
+                        raise ValueError(f"No catalog_id found for execution {execution_id}")
+                    catalog_id = catalog_row[0]
+                    
                     await cur.execute(
                         """
-                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                        RETURNING id
+                        INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                        RETURNING queue_id
                         """,
-                        (execution_id, node_id, json.dumps(encoded), json.dumps(job_ctx), 5, 3)
+                        (execution_id, catalog_id, node_id, json.dumps(encoded), json.dumps(job_ctx), 5, 3)
                     )
                 try:
                     await conn.commit()

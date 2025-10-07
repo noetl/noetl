@@ -1,6 +1,6 @@
 import json
 from pydantic import ValidationError
-from noetl.api.routers.catalog.schemas.catalog_resource import PlaybookResourceResponse, transform
+from noetl.api.routers.catalog.schema import PlaybookResourceResponse, transform
 
 
 a = [

@@ -52,8 +52,11 @@ tasks:
     aliases: [dp]
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/postgres/namespace.yaml
+      - kubectl apply -f ci/manifests/postgres/namespace/namespace.yaml
       - sleep 2
+      - |
+        kubectl create configmap postgres-schema-ddl --namespace postgres \
+          --from-file=schema_ddl.sql.norun=noetl/database/ddl/postgres/schema_ddl.sql  
       - kubectl apply -f ci/manifests/postgres/
 
   remove-postgres:
@@ -62,6 +65,38 @@ tasks:
     cmds:
       - kubectl config use-context kind-noetl
       - kubectl delete -f ci/manifests/postgres/
+      - kubectl delete configmap postgres-schema-ddl --namespace postgres
+
+  postgres-reset-schema:
+    desc: Reset NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)
+    aliases: [prs]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - echo "Resetting NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)."
+      - |
+        set -a; [ -f .env ] && . .env; set +a
+        # Override with kubectl service port for Kind cluster
+        export PGHOST=localhost
+        export PGPORT=54321
+        export PGUSER=${POSTGRES_USER:-demo}
+        export PGPASSWORD=${POSTGRES_PASSWORD:-demo}
+        export PGDATABASE=${POSTGRES_DB:-demo_noetl}
+        echo "Connecting to PostgreSQL at $PGHOST:$PGPORT as $PGUSER to database $PGDATABASE"
+        echo "Dropping schema ${NOETL_SCHEMA:-noetl}..."
+        psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${NOETL_SCHEMA:-noetl} CASCADE;"
+        echo "Applying schema DDL via noetl CLI..."
+        cli=".venv/bin/noetl"
+        if [ ! -x "$cli" ]; then cli="noetl"; fi
+        if $cli db apply-schema --ensure-role; then
+          echo "Schema applied using packaged DDL."
+        else
+          echo "noetl CLI apply-schema failed; trying local DDL fallback..."
+          if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then
+            psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
+          else
+            echo "Could not apply schema (no CLI and no local DDL)."; exit 1
+          fi
+        fi
 
 # === NOETL ===
   docker-build-noetl:
@@ -101,7 +136,7 @@ tasks:
         sh: cat .noetl_last_build_tag.txt
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/noetl/namespace.yaml
+      - kubectl apply -f ci/manifests/noetl/namespace/namespace.yaml
       - sleep 2
       - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
       - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
@@ -154,6 +189,8 @@ tasks:
   bring-all:
     desc: Build noetl; Create noetl cluster with all deployments
     aliases: [ba]
+    vars:
+      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:
       - task: check-ports
       - task: docker-build-noetl
@@ -161,4 +198,16 @@ tasks:
       - task: load-noetl-image
       - task: deploy-monitoring
       - task: deploy-postgres
+      - task: deploy-noetl
+
+
+  noetl-redeploy:
+    desc: Build noetl and redeploy
+    aliases: [redeploy]
+    vars:
+      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
+    cmds:
+      - task: docker-build-noetl
+      - task: remove-noetl
+      - task: load-noetl-image
       - task: deploy-noetl

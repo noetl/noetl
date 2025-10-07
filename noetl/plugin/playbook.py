@@ -38,57 +38,68 @@ def execute_playbook_task(
         A dictionary of the task result
     """
     logger.debug("=== PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Function entry ===")
-    logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Parameters - task_config={task_config}, task_with={task_with}")
+    logger.debug(
+        f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Parameters - task_config={task_config}, task_with={task_with}")
 
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'playbook_task')
     start_time = datetime.datetime.now()
 
-    logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Generated task_id={task_id}")
+    logger.debug(
+        f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Generated task_id={task_id}")
     logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Task name={task_name}")
-    logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Start time={start_time.isoformat()}")
+    logger.debug(
+        f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Start time={start_time.isoformat()}")
 
     try:
         # Debug: Log all available parameters in task_config
-        logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Available task_config keys: {list(task_config.keys())}")
-        logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Full task_config: {task_config}")
-        
+        logger.debug(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Available task_config keys: {list(task_config.keys())}")
+        logger.debug(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Full task_config: {task_config}")
+
         # Get playbook path from task configuration - check multiple possible parameter names
-        playbook_path = (task_config.get('resource_path') or 
-                        task_config.get('playbook_path') or 
-                        task_config.get('path'))
-        
-        playbook_content = (task_config.get('content') or 
-                           task_config.get('playbook_content'))
-        
-        logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Extracted playbook_path: {playbook_path}")
-        logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Extracted playbook_content: {playbook_content is not None}")
-        
+        playbook_path = (task_config.get('resource_path') or
+                         task_config.get('playbook_path') or
+                         task_config.get('path'))
+
+        playbook_content = (task_config.get('content') or
+                            task_config.get('playbook_content'))
+
+        logger.debug(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Extracted playbook_path: {playbook_path}")
+        logger.debug(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Extracted playbook_content: {playbook_content is not None}")
+
         # Check if this is a "playbooks" type task (referencing another playbook by path)
         if not playbook_path and not playbook_content:
             # If no explicit path/content, this might be a task referencing another playbook
             # Let's check for common patterns
-            task_path = task_config.get('path')  # Common in multi-playbook scenarios
+            # Common in multi-playbook scenarios
+            task_path = task_config.get('path')
             if task_path:
                 playbook_path = task_path
-                logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Using path parameter: {playbook_path}")
+                logger.debug(
+                    f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Using path parameter: {playbook_path}")
             else:
                 # Maybe this is supposed to be a "workbook" type task instead?
                 task_ref = task_config.get('task')
                 if task_ref:
                     error_msg = f"Playbook task requires 'resource_path' or 'path' parameter to reference another playbook. If you want to execute a task from the workbook, use type 'workbook' instead of 'playbook'. Available parameters: {list(task_config.keys())}"
-                    logger.error(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}")
+                    logger.error(
+                        f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}")
                     return {
                         'id': task_id,
-                        'status': 'error', 
+                        'status': 'error',
                         'error': error_msg
                     }
                 else:
                     error_msg = f"Playbook task requires 'resource_path', 'path', or 'content' parameter. Available parameters: {list(task_config.keys())}"
-                    logger.error(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}")
+                    logger.error(
+                        f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}")
                     return {
                         'id': task_id,
-                        'status': 'error', 
+                        'status': 'error',
                         'error': error_msg
                     }
 
@@ -96,34 +107,37 @@ def execute_playbook_task(
         if playbook_path and not playbook_content:
             try:
                 # For path-based playbook execution, we need to load the playbook from the path
-                logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Loading playbook from path: {playbook_path}")
-                
+                logger.info(
+                    f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Loading playbook from path: {playbook_path}")
+
                 # Try to load playbook from file system (common pattern in examples)
                 import os
                 import yaml
-                
+
                 # Check common playbook file locations
                 possible_paths = [
-                    f"/Users/kadyapam/projects/noetl/noetl/examples/{playbook_path.replace('examples/', '')}.yaml",
-                    f"/Users/kadyapam/projects/noetl/noetl/{playbook_path}.yaml",
+                    f"./examples/{playbook_path.replace('examples/', '')}.yaml",
+                    f"./{playbook_path}.yaml",
                     f"{playbook_path}.yaml",
                     playbook_path
                 ]
-                
+
                 content_loaded = False
                 for file_path in possible_paths:
                     if os.path.exists(file_path):
-                        logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Found playbook file at: {file_path}")
+                        logger.debug(
+                            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Found playbook file at: {file_path}")
                         with open(file_path, 'r') as f:
                             playbook_data = yaml.safe_load(f)
                             playbook_content = yaml.dump(playbook_data)
                             content_loaded = True
                             break
-                
+
                 if not content_loaded:
                     # If file not found, create a minimal playbook reference
                     # This allows the broker to handle the playbook resolution
-                    logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Playbook file not found locally, using path reference")
+                    logger.debug(
+                        f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Playbook file not found locally, using path reference")
                     playbook_content = f"""
 apiVersion: noetl.io/v1
 kind: Playbook
@@ -138,7 +152,7 @@ workflow:
   - step: end
     desc: "End"
 """
-                    
+
             except Exception as e:
                 error_msg = f"Failed to load playbook from path {playbook_path}: {str(e)}"
                 logger.error(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}")
@@ -152,8 +166,10 @@ workflow:
         if playbook_content:
             try:
                 # Render the playbook content with the current context
-                rendered_content = render_template(jinja_env, playbook_content, context)
-                logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Rendered playbook content")
+                rendered_content = render_template(
+                    jinja_env, playbook_content, context)
+                logger.debug(
+                    f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Rendered playbook content")
             except Exception as e:
                 error_msg = f"Failed to render playbook content: {str(e)}"
                 logger.error(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}")
@@ -190,12 +206,14 @@ workflow:
             context_meta = {}
 
         parent_execution_id = (
-            (parent_context.get('execution_id') if isinstance(parent_context, dict) else None)
+            (parent_context.get('execution_id')
+             if isinstance(parent_context, dict) else None)
             or parent_meta.get('parent_execution_id')
             or context_meta.get('parent_execution_id')
         )
         parent_event_id = (
-            (parent_context.get('event_id') if isinstance(parent_context, dict) else None)
+            (parent_context.get('event_id') if isinstance(
+                parent_context, dict) else None)
             or parent_meta.get('parent_event_id')
             or context_meta.get('parent_event_id')
         )
@@ -204,7 +222,8 @@ workflow:
         )
         parent_step = task_name
 
-        logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Executing nested playbook - path={playbook_path}, version={playbook_version}, parent_execution_id={parent_execution_id}")
+        logger.info(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Executing nested playbook - path={playbook_path}, version={playbook_version}, parent_execution_id={parent_execution_id}")
 
         # Execute the playbook (support loop expansion when provided)
         try:
@@ -213,10 +232,12 @@ workflow:
 
             # Legacy loop support has been removed. Enforce the new iterator task wrapper.
             if isinstance(task_config.get('loop'), dict):
-                raise ValueError("playbook task no longer supports 'loop' blocks. Wrap the playbook in a 'type: iterator' task with 'collection' and 'element', and move this playbook under iterator.task")
+                raise ValueError(
+                    "playbook task no longer supports 'loop' blocks. Wrap the playbook in a 'type: iterator' task with 'collection' and 'element', and move this playbook under iterator.task")
 
             # No loop: single execution
-            logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Calling execute_playbook_via_broker with parent_execution_id={parent_execution_id}")
+            logger.info(
+                f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Calling execute_playbook_via_broker with parent_execution_id={parent_execution_id}")
             result = execute_playbook_via_broker(
                 playbook_content=rendered_content,
                 playbook_path=playbook_path or f"nested/{task_name}",
@@ -228,17 +249,21 @@ workflow:
                 parent_event_id=parent_event_id,
                 parent_step=parent_step
             )
-            logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Broker execution completed with status={result.get('status')}, execution_id={result.get('execution_id')}")
+            logger.info(
+                f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Broker execution completed with status={result.get('status')}, execution_id={result.get('execution_id')}")
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
-            logger.info(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Nested playbook execution completed")
-            logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Task duration={duration} seconds")
+            logger.info(
+                f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Nested playbook execution completed")
+            logger.debug(
+                f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Task duration={duration} seconds")
 
             # Log success event
             if log_event_callback:
-                logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Writing task_end event log")
+                logger.debug(
+                    f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Writing task_end event log")
                 event_id = str(uuid.uuid4())
                 log_event_callback(
                     'task_end', task_id, task_name, 'playbook',
@@ -255,20 +280,24 @@ workflow:
                 'duration': duration
             }
 
-            logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Returning success result={success_result}")
-            logger.debug("=== PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Function exit (success) ===")
+            logger.debug(
+                f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Returning success result={success_result}")
+            logger.debug(
+                "=== PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Function exit (success) ===")
             return success_result
 
         except Exception as e:
             error_msg = f"Playbook execution failed: {str(e)}"
-            logger.error(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}", exc_info=True)
-            
+            logger.error(
+                f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}", exc_info=True)
+
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
             # Log error event
             if log_event_callback:
-                logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Writing task_error event log")
+                logger.debug(
+                    f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Writing task_error event log")
                 event_id = str(uuid.uuid4())
                 log_event_callback(
                     'task_error', task_id, task_name, 'playbook',
@@ -285,14 +314,17 @@ workflow:
 
     except Exception as e:
         error_msg = f"Unexpected error in playbook task: {str(e)}"
-        logger.error(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}", exc_info=True)
-        
+        logger.error(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: {error_msg}", exc_info=True)
+
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
-        logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Task duration={duration} seconds (error path)")
+        logger.debug(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Task duration={duration} seconds (error path)")
 
         if log_event_callback:
-            logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Writing task_error event log")
+            logger.debug(
+                f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Writing task_error event log")
             event_id = str(uuid.uuid4())
             log_event_callback(
                 'task_error', task_id, task_name, 'playbook',
@@ -305,8 +337,10 @@ workflow:
             'status': 'error',
             'error': error_msg
         }
-        logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Returning error result={result}")
-        logger.debug("=== PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Function exit (error) ===")
+        logger.debug(
+            f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Returning error result={result}")
+        logger.debug(
+            "=== PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Function exit (error) ===")
         return result
 
 

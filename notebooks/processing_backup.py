@@ -873,7 +873,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                     """
                                     INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                     VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                    RETURNING id
+                                    RETURNING queue_id
                                     """,
                                     (
                                         parent_execution_id,
@@ -1007,7 +1007,7 @@ async def check_and_process_completed_loops(parent_execution_id: str):
                                             """
                                             INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                             VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                            RETURNING id
+                                            RETURNING queue_id
                                             """,
                                             (
                                                 parent_execution_id,
@@ -1486,7 +1486,7 @@ async def evaluate_broker_for_execution(
                                                         """
                                                         INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                                         VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                                        RETURNING id
+                                                        RETURNING queue_id
                                                         """,
                                                         (
                                                             _sf_to_int(execution_id),
@@ -1527,7 +1527,7 @@ async def evaluate_broker_for_execution(
                                                 """
                                                 INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
                                                 VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                                RETURNING id
+                                                RETURNING queue_id
                                                 """,
                                                 (
                                                     _sf_to_int(execution_id),

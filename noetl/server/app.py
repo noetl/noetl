@@ -103,15 +103,15 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             with conn.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                    INSERT INTO runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
                     VALUES (%s, %s, 'server_api', %s, 'ready', %s, NULL, %s, now(), now(), now())
-                    ON CONFLICT (component_type, name)
+                    ON CONFLICT (kind, name)
                     DO UPDATE SET
-                        base_url = EXCLUDED.base_url,
+                        uri = EXCLUDED.uri,
                         status = EXCLUDED.status,
                         labels = EXCLUDED.labels,
                         runtime = EXCLUDED.runtime,
-                        last_heartbeat = now(),
+                        heartbeat = now(),
                         updated_at = now()
                     """,
                     (rid, name, server_url, labels_json, runtime_json)
@@ -141,7 +141,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                         """
                         UPDATE runtime
                         SET status = 'offline', updated_at = now()
-                        WHERE component_type = 'server_api' AND name = %s
+                        WHERE kind = 'server_api' AND name = %s
                         """,
                         (name,)
                     )
@@ -174,6 +174,12 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
         async def _report_server_metrics(component_name: str):
             """Report server metrics periodically."""
+            # Check if metrics are disabled
+            metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+            if metrics_disabled:
+                logger.debug(f"Server metric reporting disabled for {component_name}")
+                return
+            
             try:
                 import httpx
                 from ..api.routers.metrics import collect_system_metrics
@@ -189,7 +195,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             await cur.execute(
                                 """
                                 SELECT COUNT(*) FROM runtime 
-                                WHERE component_type IN ('worker_pool', 'queue_worker') 
+                                WHERE kind IN ('worker_pool', 'queue_worker') 
                                 AND status = 'ready'
                                 """
                             )
@@ -227,7 +233,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 # Report via self-report endpoint
                 payload = {
                     "component_name": component_name,
-                    "component_type": "server_api",
+                    "kind": "server_api",
                     "metrics": [
                         {
                             "metric_name": m.metric_name if hasattr(m, 'metric_name') else m.get("metric_name", ""),
@@ -268,7 +274,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                 await cur.execute(
                                     """
                                     UPDATE runtime SET status = 'offline', updated_at = now()
-                                    WHERE status != 'offline' AND last_heartbeat < (now() - interval '%s seconds')
+                                    WHERE status != 'offline' AND heartbeat < (now() - interval '%s seconds')
                                     """,
                                     (offline_after,)
                                 )
@@ -280,8 +286,8 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                 await cur.execute(
                                     """
                                     UPDATE runtime 
-                                    SET last_heartbeat = now(), updated_at = now(), status = 'ready'
-                                    WHERE component_type = 'server_api' AND name = %s
+                                    SET heartbeat = now(), updated_at = now(), status = 'ready'
+                                    WHERE kind = 'server_api' AND name = %s
                                     """,
                                     (server_name,)
                                 )
@@ -301,14 +307,14 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
                                     await cur.execute(
                                         """
-                                        INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                                        INSERT INTO runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
                                         VALUES (%s, %s, 'server_api', %s, 'ready', NULL, NULL, %s::jsonb, now(), now(), now())
-                                        ON CONFLICT (component_type, name)
+                                        ON CONFLICT (kind, name)
                                         DO UPDATE SET
-                                            base_url = EXCLUDED.base_url,
+                                            uri = EXCLUDED.uri,
                                             status = EXCLUDED.status,
                                             runtime = EXCLUDED.runtime,
-                                            last_heartbeat = now(),
+                                            heartbeat = now(),
                                             updated_at = now()
                                         """,
                                         (rid, server_name, server_url, runtime_payload)

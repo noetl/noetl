@@ -61,7 +61,7 @@ workflow:
       # Provide an explicit task identifier so nested playbook propagates correct parent_step
       task: process_users
       type: playbook
-      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml
+      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
       return_step: finalize_result
       data:
         user_data: "{{ user }}"

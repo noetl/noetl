@@ -106,12 +106,58 @@ tasks:
           --namespace vector --create-namespace \
           --wait --wait-for-jobs
 
-  remove--vector:
+  remove-vector:
     desc:  Remove Vector
     aliases: [rv]
     cmds:
       - kubectl config use-context kind-noetl
       - helm uninstall vector -n vector
+
+  deploy-exporter:
+    desc: Deploy postgres-exporter and vmscrape
+    aliases: [de]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl apply -f ci/manifests/postgres-exporter/namespace/namespace.yaml
+      - sleep 2
+      - kubectl apply -f ci/manifests/postgres-exporter
+
+  remove-exporter:
+    desc: Remove postgres-exporter and vmscrape
+    aliases: [re]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl delete -f ci/manifests/postgres-exporter/
+
+  deploy-noetl-scrape:
+    desc: Deploy VMServiceScrape for noetl
+    aliases: [dns]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl apply -f ci/manifests/noetl-scrape/namespace/namespace.yaml
+      - sleep 2
+      - kubectl apply -f ci/manifests/noetl-scrape/
+
+  remove-noetl-scrape:
+    desc: Remove VMServiceScrape for noetl
+    aliases: [rns]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl delete -f ci/manifests/noetl-scrape/
+
+  deploy-dashboards:
+    desc: Deploy noetl and postgres Grafana dashboards
+    aliases: [dd]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl apply -f ci/manifests/grafana-dashboards
+
+  remove-dashboards:
+    desc: Remove noetl and postgres Grafana dashboards
+    aliases: [rd]
+    cmds:
+      - kubectl config use-context kind-noetl
+      - kubectl delete -f ci/manifests/grafana-dashboards
 
 # === Combined Tasks ===
   deploy-monitoring:
@@ -120,8 +166,12 @@ tasks:
     cmds:
       - task: add-metrics-server-helm-repo
       - task: add-victoriametrics-helm-repo
+      - task: add-vector-helm-repo
       - task: deploy-metrics-server
       - task: deploy-vmstack-operator
       - task: deploy-vmstack
       - task: deploy-vmlogs
       - task: deploy-vector
+      - task: deploy-exporter
+      - task: deploy-noetl-scrape
+      - task: deploy-dashboards

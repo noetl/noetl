@@ -7,7 +7,7 @@ DuckDB uses ? as placeholders
 
 EVENT_LOG_INSERT_POSTGRES = """
 INSERT INTO event
-(execution_id, event_id, parent_event_id, timestamp, event_type,
+(execution_id, event_id, parent_event_id, created_at, event_type,
  node_id, node_name, node_type, status, duration,
  context, result, meta, error,
  loop_id, loop_name, iterator, items, current_index, current_item,
@@ -17,7 +17,7 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
 
 EVENT_LOG_INSERT_DUCKDB = """
 INSERT INTO event
-(execution_id, event_id, parent_event_id, timestamp, event_type,
+(execution_id, event_id, parent_event_id, created_at, event_type,
  node_id, node_name, node_type, status, duration,
  context, result, meta, error,
  loop_id, loop_name, iterator, items, current_index, current_item,
@@ -40,7 +40,7 @@ SELECT loop_name, iterator, items
 FROM event
 WHERE execution_id = %s
   AND loop_id = %s
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -49,7 +49,7 @@ SELECT loop_name, iterator, items
 FROM event
 WHERE execution_id = ?
   AND loop_id = ?
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -58,7 +58,7 @@ SELECT loop_name, iterator, items, current_index, current_item
 FROM event
 WHERE execution_id = %s
   AND loop_id = %s
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -67,7 +67,7 @@ SELECT loop_name, iterator, items, current_index, current_item
 FROM event
 WHERE execution_id = ?
   AND loop_id = ?
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -76,7 +76,7 @@ SELECT NULL::text as results
 FROM event
 WHERE execution_id = %s
   AND loop_id = %s
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -85,7 +85,7 @@ SELECT NULL as results
 FROM event
 WHERE execution_id = ?
   AND loop_id = ?
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -109,42 +109,42 @@ GET_ACTIVE_LOOPS_POSTGRES = """
 SELECT el.loop_id, el.loop_name, el.iterator, el.items, el.current_index, el.current_item
 FROM event el
 INNER JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event
     WHERE execution_id = %s
       AND loop_id IS NOT NULL
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = %s
   AND el.distributed_state != 'completed'
-ORDER BY el.timestamp ASC
+ORDER BY el.created_at ASC
 """
 
 GET_ACTIVE_LOOPS_DUCKDB = """
 SELECT el.loop_id, el.loop_name, el.iterator, el.items, el.current_index, el.current_item
 FROM event el
 INNER JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event
     WHERE execution_id = ?
       AND loop_id IS NOT NULL
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = ?
   AND el.distributed_state != 'completed'
-ORDER BY el.timestamp ASC
+ORDER BY el.created_at ASC
 """
 
 FIND_LOOP_BY_NAME_POSTGRES = """
 SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event el
 JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event
     WHERE execution_id = %s
       AND loop_name = %s
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = %s
   AND el.loop_name = %s
 """
@@ -153,12 +153,12 @@ FIND_LOOP_BY_NAME_DUCKDB = """
 SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event el
 JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event
     WHERE execution_id = ?
       AND loop_name = ?
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = ?
   AND el.loop_name = ?
 """
@@ -167,16 +167,16 @@ FIND_LOOP_INCLUDE_COMPLETED_POSTGRES = """
 SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event el
 INNER JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event
     WHERE execution_id = %s
       AND loop_name = %s
       AND loop_id IS NOT NULL
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = %s
   AND el.loop_name = %s
-ORDER BY el.timestamp DESC
+ORDER BY el.created_at DESC
 LIMIT 1
 """
 
@@ -184,16 +184,16 @@ FIND_LOOP_INCLUDE_COMPLETED_DUCKDB = """
 SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event el
 INNER JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event
     WHERE execution_id = ?
       AND loop_name = ?
       AND loop_id IS NOT NULL
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = ?
   AND el.loop_name = ?
-ORDER BY el.timestamp DESC
+ORDER BY el.created_at DESC
 LIMIT 1
 """
 
@@ -201,17 +201,17 @@ FIND_LOOP_EXCLUDE_COMPLETED_POSTGRES = """
 SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event_log
     WHERE execution_id = %s
       AND loop_name = %s
       AND loop_id IS NOT NULL
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = %s
   AND el.loop_name = %s
   AND el.distributed_state != 'completed'
-ORDER BY el.timestamp DESC
+ORDER BY el.created_at DESC
 LIMIT 1
 """
 
@@ -219,17 +219,17 @@ FIND_LOOP_EXCLUDE_COMPLETED_DUCKDB = """
 SELECT el.loop_id, el.iterator, el.items, el.current_index, el.current_item
 FROM event_log el
 INNER JOIN (
-    SELECT loop_id, MAX(timestamp) as latest_timestamp
+    SELECT loop_id, MAX(created_at) as latest_timestamp
     FROM event_log
     WHERE execution_id = ?
       AND loop_name = ?
       AND loop_id IS NOT NULL
     GROUP BY loop_id
-) latest ON el.loop_id = latest.loop_id AND el.timestamp = latest.latest_timestamp
+) latest ON el.loop_id = latest.loop_id AND el.created_at = latest.latest_timestamp
 WHERE el.execution_id = ?
   AND el.loop_name = ?
   AND el.distributed_state != 'completed'
-ORDER BY el.timestamp DESC
+ORDER BY el.created_at DESC
 LIMIT 1
 """
 
@@ -252,7 +252,7 @@ SELECT loop_name, iterator, items, current_index, results
 FROM event
 WHERE execution_id = %s
   AND loop_id = %s
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -261,30 +261,30 @@ SELECT loop_name, iterator, items, current_index, results
 FROM event_log
 WHERE execution_id = ?
   AND loop_id = ?
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
 EXPORT_EXECUTION_DATA_POSTGRES = """
-SELECT execution_id, event_id, parent_event_id, timestamp, event_type,
+SELECT execution_id, event_id, parent_event_id, created_at, event_type,
        node_id, node_name, node_type, status, duration,
        context, result, meta, error,
        loop_id, loop_name, iterator, items, current_index, current_item,
        worker_id, distributed_state, context_key, context_value
 FROM event_log
 WHERE execution_id = %s
-ORDER BY timestamp
+ORDER BY created_at
 """
 
 EXPORT_EXECUTION_DATA_DUCKDB = """
-SELECT execution_id, event_id, parent_event_id, timestamp, event_type,
+SELECT execution_id, event_id, parent_event_id, created_at, event_type,
        node_id, node_name, node_type, status, duration,
        context, result, meta, error,
        loop_id, loop_name, iterator, items, current_index, current_item,
        worker_id, distributed_state, context_key, context_value
 FROM event_log
 WHERE execution_id = ?
-ORDER BY timestamp
+ORDER BY created_at
 """
 
 FIND_NODE_BY_NAME_POSTGRES = """
@@ -293,7 +293,7 @@ FROM event
 WHERE execution_id = %s
   AND node_name = %s
   AND status = 'success'
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 
@@ -303,7 +303,7 @@ FROM event
 WHERE execution_id = ?
   AND node_name = ?
   AND status = 'success'
-ORDER BY timestamp DESC
+ORDER BY created_at DESC
 LIMIT 1
 """
 

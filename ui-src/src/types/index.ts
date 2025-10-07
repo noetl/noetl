@@ -9,8 +9,8 @@ export interface ServerStatus {
 export interface PlaybookData {
   id: string;
   name: string;
-  resource_type: string;
-  resource_version: string;
+  kind: string;
+  version: number;
   meta: any;
   timestamp: string;
   status: "active" | "inactive" | "draft";
