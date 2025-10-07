@@ -44,14 +44,17 @@ class EventService:
                             e.catalog_id,
                             e.event_type,
                             e.status,
-                            e.timestamp,
+                            e.created_at,
                             e.meta,
                             e.context,
                             e.result,
                             e.error,
-                            e.stack_trace
+                            e.stack_trace,
+                            c.path,
+                            c.version
                         FROM event e
                         JOIN latest_events le ON e.execution_id = le.execution_id AND e.created_at = le.latest_timestamp
+                        JOIN catalog c on c.catalog_id = e.catalog_id
                         ORDER BY e.created_at DESC
                     """)
 
@@ -60,30 +63,16 @@ class EventService:
 
                     for row in rows:
                         execution_id = row[0]
-                        catalog_id = row[1]
-                        metadata = row[5] if row[5] else {}  # meta is now JSONB
-                        input_context = json.loads(row[6]) if row[6] else {}
+                        # catalog_id = row[1]
+                        # metadata = row[5] if row[5] else {}  # meta is now JSONB
+                        # input_context = json.loads(row[6]) if row[6] else {}
                         output_result = json.loads(row[7]) if row[7] else {}
                         
                         # Try to get playbook info from catalog_id first, then fallback to metadata
-                        playbook_id = ''
-                        playbook_name = 'Unknown'
-                        if catalog_id:
-                            try:
-                                await cursor.execute("""
-                                    SELECT path FROM noetl.catalog WHERE catalog_id = %s
-                                """, (catalog_id,))
-                                catalog_row = await cursor.fetchone()
-                                if catalog_row:
-                                    playbook_id = catalog_row[0]
-                                    playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-                            except Exception:
-                                pass
-                        
-                        # Fallback to metadata if no catalog_id or catalog lookup failed
-                        if not playbook_id:
-                            playbook_id = metadata.get('resource_path', input_context.get('path', ''))
-                            playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                        playbook_id = row[10]
+                        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                       
+                    
                         
                         raw_status = row[3]
                         

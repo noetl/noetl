@@ -549,7 +549,7 @@ const Execution: React.FC = () => {
       title: "Execution ID",
       dataIndex: "id",
       key: "id",
-      render: (id: string) => <Text code>{id.substring(0, 8)}</Text>,
+      render: (id: string) => <Text code>{id}</Text>,
     },
     {
       title: "Playbook",
@@ -581,8 +581,8 @@ const Execution: React.FC = () => {
       title: "Start Time",
       dataIndex: "start_time",
       key: "start_time",
-      render: (startTime: string) =>
-        moment(startTime).format("YYYY-MM-DD HH:mm:ss"),
+      // render: (startTime: string) => moment(startTime).format("YYYY-MM-DD HH:mm:ss"),
+      render: (startTime: string) => startTime,
     },
     {
       title: "Duration",
