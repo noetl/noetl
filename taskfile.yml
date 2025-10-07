@@ -221,7 +221,159 @@ tasks:
       - task: postgres-reset-schema 
       - task: noetl-redeploy
       - uv pip install -e ".[dev]" # noetl CLI with dev extras
+      - sleep 30
       - task: setup-test-environment
       - task: test-create-tables
-      - echo `UI :http://localhost:8082`
-      - echo `API :http://localhost:8082/docs`
+      - echo "UI :http://localhost:8082"
+      - echo "API :http://localhost:8082/docs"
+
+  server-debug:
+    desc: Run NoETL server in debug mode via Python module (uses .env or .env.pycharm)
+    aliases: [sdbg]
+    cmds:
+      - |
+        set -e
+        # Select env file: ENV_FILE overrides; otherwise prefer .env.pycharm if present; else .env
+        env_file="${ENV_FILE:-}"
+        if [ -z "$env_file" ]; then
+          if [ -f ".env.pycharm" ]; then env_file=".env.pycharm"; else env_file=".env"; fi
+        fi
+        # Load environment if file exists
+        set -a; [ -f "$env_file" ] && . "$env_file"; set +a
+        echo "Using env file: $env_file"
+
+        # Prefer local venv's python, fallback to system python
+        py=".venv/bin/python"
+        if [ ! -x "$py" ]; then py="python"; fi
+        echo "Using python: $py"
+
+        # Compute host/port from env with sensible defaults
+        host="${NOETL_API_HOST:-${NOETL_HOST:-0.0.0.0}}"
+        port="${NOETL_API_PORT:-${NOETL_PORT:-8083}}"
+        echo "Server will bind to $host:$port"
+
+        # Preflight: check if port is busy and kill existing process if found
+        if command -v lsof >/dev/null 2>&1; then
+          pids=$(lsof -t -i TCP:$port -sTCP:LISTEN || true)
+          if [ -n "$pids" ]; then
+            echo "Port $port is already in use by PID(s): $pids"
+            echo "Killing existing process(es)..."
+            kill $pids || true
+            sleep 1
+            for pid in $pids; do
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "Force killing $pid"
+                kill -9 "$pid" || true
+              fi
+            done
+            echo "Waiting for port to be freed..."
+            sleep 1
+          fi
+        fi
+
+        # Run ASGI app via uvicorn factory; pass-through any extra CLI args (can override --port, --host, etc.)
+        if "$py" -c "import uvicorn" >/dev/null 2>&1; then
+          exec "$py" -m uvicorn noetl.server:create_app --factory --host "$host" --port "$port" --log-level debug {{.CLI_ARGS}}
+        elif command -v uvicorn >/dev/null 2>&1; then
+          exec uvicorn noetl.server:create_app --factory --host "$host" --port "$port" --log-level debug {{.CLI_ARGS}}
+        else
+          echo "uvicorn is not installed in the active interpreter or PATH."
+          echo "Install it with one of:"
+          echo "  uv add uvicorn"
+          echo "  uv pip install uvicorn"
+          exit 1
+        fi
+
+  server-kill-8083:
+    desc: Kill any process listening on port 8083 (uses NOETL_API_PORT/NOETL_PORT if set)
+    aliases: [sk83]
+    cmds:
+      - |
+        set -e
+        port="${NOETL_API_PORT:-${NOETL_PORT:-8083}}"
+        if command -v lsof >/dev/null 2>&1; then
+          pids=$(lsof -t -i TCP:$port -sTCP:LISTEN || true)
+        elif command -v fuser >/dev/null 2>&1; then
+          pids=$(fuser -n tcp $port 2>/dev/null || true)
+        else
+          echo "Neither lsof nor fuser found. Please install one."
+          exit 1
+        fi
+        if [ -z "$pids" ]; then
+          echo "No process is listening on port $port."
+          exit 0
+        fi
+        echo "Killing PIDs on port $port: $pids"
+        kill $pids || true
+        sleep 1
+        for pid in $pids; do
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Force killing $pid"
+            kill -9 "$pid" || true
+          fi
+        done
+        echo "Done."
+
+  kill-port:
+    desc: "Kill any process listening on the specified TCP port. Usage: task kill-port PORT=8090"
+    vars:
+      PORT: "{{ or .PORT (or (env \"PORT\") \"\") }}"
+    cmds:
+      - |
+        set -e
+        port="{{.PORT}}"
+        if [ -z "$port" ]; then
+          echo "PORT is required: task kill-port PORT=8090"
+          exit 1
+        fi
+        if command -v lsof >/dev/null 2>&1; then
+          pids=$(lsof -t -i TCP:$port -sTCP:LISTEN || true)
+        elif command -v fuser >/dev/null 2>&1; then
+          pids=$(fuser -n tcp $port 2>/dev/null || true)
+        else
+          echo "Neither lsof nor fuser found. Please install one."
+          exit 1
+        fi
+        if [ -z "$pids" ]; then
+          echo "No process is listening on port $port."
+          exit 0
+        fi
+        echo "Killing PIDs on port $port: $pids"
+        kill $pids || true
+        sleep 1
+        for pid in $pids; do
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Force killing $pid"
+            kill -9 "$pid" || true
+          fi
+        done
+        echo "Done."
+
+  worker-debug:
+    desc: Run NoETL worker in debug mode pointing to server on port 8083 (uses .env or .env.pycharm)
+    aliases: [wdbg]
+    cmds:
+      - |
+        set -e
+        # Select env file: ENV_FILE overrides; otherwise prefer .env.pycharm if present; else .env
+        env_file="${ENV_FILE:-}"
+        if [ -z "$env_file" ]; then
+          if [ -f ".env.pycharm" ]; then env_file=".env.pycharm"; else env_file=".env"; fi
+        fi
+        # Load environment if file exists
+        set -a; [ -f "$env_file" ] && . "$env_file"; set +a
+
+        # Ensure worker points to the local server on 8083 unless already provided
+        : "${NOETL_API_URL:=http://localhost:8083}"
+        export NOETL_API_URL
+
+        # Ensure run mode is worker for the main dispatcher
+        export NOETL_RUN_MODE=worker
+
+        # Prefer local venv's python, fallback to system python
+        py=".venv/bin/python"
+        if [ ! -x "$py" ]; then py="python"; fi
+
+        # Run worker via CLI (typer): 'noetl main worker start'; pass-through any extra CLI args
+        exec "$py" -m noetl.main worker start {{.CLI_ARGS}}
+
