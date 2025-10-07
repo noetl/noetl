@@ -8,15 +8,15 @@ version: '3.45'
 # - test-create-tables: Create database tables required for save storage tests
 # - test-*-full: Complete test workflows including setup, table creation, and execution
 # - test-save-storage-all: Run complete save storage test suite with optimized setup
+env:
+  NOETL_HOST: localhost
+  NOETL_PORT: 8082
 
 tasks:
   # === Test Tasks ===
   test-register-control-flow-workbook:
     desc: Register control flow workbook playbook to cluster
     aliases: [trcfw]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 30082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
@@ -24,9 +24,6 @@ tasks:
   test-execute-control-flow-workbook:
     desc: Execute control flow workbook test on cluster
     aliases: [tecfw]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 30082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/control_flow_workbook" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
@@ -54,9 +51,6 @@ tasks:
   register-test-credentials:
     desc: Register test credentials (pg_k8s and gcs_hmac_local) to cluster
     aliases: [rtc]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - echo "=== Registering pg_k8s credential ==="
@@ -97,9 +91,6 @@ tasks:
   register-all-test-playbooks:
     desc: Register all test playbooks from fixtures directory to cluster
     aliases: [ratp]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - echo "=== Registering all test playbooks ==="
@@ -121,22 +112,16 @@ tasks:
   test-register-http-duckdb-postgres:
     desc: Register HTTP DuckDB Postgres playbook to cluster
     aliases: [trhdp]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
-      - .venv/bin/noetl register tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml --host localhost --port 8082
+      - .venv/bin/noetl register tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
 
   test-execute-http-duckdb-postgres:
     desc: Execute HTTP DuckDB Postgres test on cluster
     aliases: [tehdp]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/http_duckdb_postgres" --host localhost --port 8082 --json
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/http_duckdb_postgres" -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
 
   test-http-duckdb-postgres-full:
     desc: Full test - setup environment and execute HTTP DuckDB Postgres test
@@ -149,22 +134,16 @@ tasks:
   test-register-playbook-composition:
     desc: Register playbook composition test to cluster
     aliases: [trpc]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
-      - .venv/bin/noetl register tests/fixtures/playbooks/playbook_composition/playbook_composition.yaml --host localhost --port 8082
+      - .venv/bin/noetl register tests/fixtures/playbooks/playbook_composition/playbook_composition.yaml -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
 
   test-execute-playbook-composition:
     desc: Execute playbook composition test on cluster
     aliases: [tepc]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/playbook_composition/playbook_composition" --host localhost --port 8082 --json
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/playbook_composition/playbook_composition"-host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
 
   test-playbook-composition-full:
     desc: Full test - register credentials, register playbook, and execute playbook composition test
@@ -179,9 +158,6 @@ tasks:
   test-register-hello-world:
     desc: Register hello world playbook to cluster
     aliases: [trhw]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
@@ -189,9 +165,6 @@ tasks:
   test-execute-hello-world:
     desc: Execute hello world test on cluster
     aliases: [tehw]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/hello_world" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
@@ -208,22 +181,16 @@ tasks:
   test-create-tables:
     desc: Create required database tables for save storage tests
     aliases: [tct]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - echo "=== Creating database tables for save storage tests ==="
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} --json
       - sleep 10
       - echo "=== Database tables created successfully ==="
 
   test-register-save-simple:
     desc: Register save storage simple test playbook to cluster
     aliases: [trsss]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_simple_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
@@ -231,9 +198,6 @@ tasks:
   test-execute-save-simple:
     desc: Execute save storage simple test on cluster
     aliases: [tesss]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_simple_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
@@ -252,9 +216,6 @@ tasks:
   test-register-save-delegation:
     desc: Register save storage delegation test playbook to cluster
     aliases: [trsdt]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_delegation_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
@@ -262,9 +223,6 @@ tasks:
   test-execute-save-delegation:
     desc: Execute save storage delegation test on cluster
     aliases: [tesdt]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_delegation_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
@@ -284,9 +242,6 @@ tasks:
   test-register-save-comprehensive:
     desc: Register save storage comprehensive test playbook to cluster
     aliases: [trsct]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_all_storage_types.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
@@ -294,9 +249,6 @@ tasks:
   test-execute-save-comprehensive:
     desc: Execute save storage comprehensive test on cluster
     aliases: [tesct]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_all_storage_types" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
@@ -314,9 +266,6 @@ tasks:
   test-register-save-edge-cases:
     desc: Register save storage edge cases test playbook to cluster
     aliases: [trsec]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_edge_cases.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
@@ -324,9 +273,6 @@ tasks:
   test-execute-save-edge-cases:
     desc: Execute save storage edge cases test on cluster
     aliases: [tesec]
-    env:
-      NOETL_HOST: localhost
-      NOETL_PORT: 8082
     cmds:
       - kubectl config use-context kind-noetl
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_edge_cases" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
