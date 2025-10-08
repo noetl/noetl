@@ -123,8 +123,46 @@ Tasks
   - `task local-setup-test` (alias)
 - Notes:
   - This is the local equivalent of the Kubernetes-based `setup-test-environment`.
-  - After completion, use `task test-create-tables` to create database tables for save storage tests.
-  - Use `task ui-dev` to start the UI and interact with the test environment.
+  - Test playbooks use templated `pg_auth` that defaults to `pg_k8s` but can be overridden at runtime.
+  - Use `task test-create-tables-local` and `task test-execute-local` for local testing.
+
+13) **test-create-tables-local** (aliases: `tctl`)
+- What it does: Creates database tables required for save storage tests using local postgres credentials.
+- Process:
+  1. Verifies NoETL server is running on port 8083
+  2. Executes the `create_tables` playbook with `pg_auth=pg_local` override
+- Prerequisites:
+  - NoETL server running on port 8083
+  - Test environment setup completed (`task local-setup-test`)
+- Usage: `task test-create-tables-local`
+
+14) **test-execute-local** (aliases: none)
+- What it does: Executes any test playbook with local postgres credentials.
+- Parameters: `PLAYBOOK` (required) - path to the playbook to execute
+- Process:
+  1. Verifies NoETL server is running on port 8083
+  2. Executes the specified playbook with `pg_auth=pg_local` override
+- Prerequisites:
+  - NoETL server running on port 8083
+  - Test environment setup completed (`task local-setup-test`)
+- Usage examples:
+  - `task test-execute-local PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test`
+  - `task test-execute-local PLAYBOOK=tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres`
+
+15) **noetl-local-full-setup** (aliases: `local-full-setup`, `lfs`)
+- What it does: Complete one-command setup for local NoETL development environment.
+- Process:
+  1. Sets up test environment (credentials, playbooks, schema reset)
+  2. Stops any existing services and starts fresh server + worker
+  3. Creates database tables for testing
+  4. Displays service status and next steps
+- Prerequisites:
+  - Update `tests/fixtures/credentials/gcs_hmac_local.json` with valid GCS HMAC credentials
+- Usage: `task noetl-local-full-setup` or `task lfs`
+- Notes:
+  - This is the **recommended single command** for complete local setup
+  - Everything runs automatically except the UI (which must be started separately)
+  - After completion, run `task ui-dev` in a new terminal to start the UI
 
 Notes and tips
 - If you change ports, ensure both server and worker agree (worker uses `NOETL_API_URL`).
@@ -135,3 +173,73 @@ Troubleshooting
 - `uvicorn` not found: Install with one of: `uv add uvicorn` or `uv pip install uvicorn`.
 - Permission issues killing ports: You may need elevated permissions depending on your OS and port.
 - Virtualenv: Tasks prefer `.venv/bin/python` when present; create it and install dependencies to match your project environment.
+
+Runtime Override Pattern for Credentials
+========================================
+
+NoETL test playbooks use templated authentication to work across different environments (Kubernetes vs local development). The playbooks default to `pg_k8s` credentials but can be overridden at runtime using the `--payload` and `--merge` options.
+
+Playbook Structure:
+```yaml
+workload:
+  pg_auth: pg_k8s  # Default for Kubernetes environment
+  # other workload variables...
+
+workflow:
+  - step: some_postgres_step
+    type: postgres
+    auth: "{{ workload.pg_auth }}"  # Uses templated value
+    command: |
+      SELECT * FROM test_table;
+```
+
+Runtime Override Examples:
+```bash
+# Kubernetes environment (uses default pg_k8s)
+noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_simple_test" \
+  --host k8s-cluster-host --port 8082
+
+# Local development (override to use pg_local)  
+noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_simple_test" \
+  --host localhost --port 8083 \
+  --payload '{"pg_auth": "pg_local"}' --merge
+
+# Override multiple workload variables
+noetl execute playbook "my_test_playbook" \
+  --host localhost --port 8083 \
+  --payload '{"pg_auth": "pg_local", "test_mode": "debug"}' --merge
+```
+
+Local Testing Workflow:
+
+**Option 1: One-Command Setup (Recommended)**
+```bash
+# Complete setup (everything except UI)
+task noetl-local-full-setup
+
+# In a new terminal, start UI
+task ui-dev
+
+# Test execution
+task test-execute-local PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test
+```
+
+**Option 2: Step-by-Step Setup**
+```bash
+# 1. Setup local test environment (one-time setup)
+task local-setup-test
+
+# 2. Start/restart NoETL services (recommended after setup)
+task noetl-local-start
+
+# 3. Create database tables (uses pg_local automatically)
+task test-create-tables-local
+
+# 4. Execute specific test playbooks (uses pg_local automatically)
+task test-execute-local PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test
+
+# 5. Start UI for interaction
+task ui-dev
+```
+
+The `--merge` flag ensures that the payload values are merged into the existing workload rather than replacing it entirely, allowing you to override specific keys while preserving other workload data.

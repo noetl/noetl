@@ -6,6 +6,7 @@ metadata:
   description: "Simple test playbook demonstrating basic save storage patterns"
 
 workload:
+  pg_auth: pg_k8s
   test_data:
     id: 100
     name: "Simple Test Record"
@@ -49,7 +50,7 @@ workflow:
           }
     save:
       storage: postgres
-      auth: pg_k8s
+      auth: "{{ workload.pg_auth }}"
       table: simple_test_flat
       data:
         test_id: "{{ result.data.record_id }}"
@@ -77,7 +78,7 @@ workflow:
         table: simple_test_nested
         mode: upsert
         key: test_id
-        auth: pg_k8s
+        auth: "{{ workload.pg_auth }}"
       data:
         test_id: "{{ result.data.nested_id }}"
         test_name: "nested_structure_test"

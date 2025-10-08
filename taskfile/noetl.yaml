@@ -461,10 +461,15 @@ tasks:
         fi
         echo "✓ Test credentials registered"
         
-        # Register all test playbooks using local server
-        echo "Registering all test playbooks..."
+        # Register all test playbooks using local server with local postgres auth
+        echo "Registering all test playbooks with local postgres credentials..."
         ./register_test_playbooks.sh localhost 8083
         echo "✓ Test playbooks registered"
+        
+        echo ""
+        echo "NOTE: Test playbooks are registered with default pg_auth=pg_k8s"
+        echo "      To execute with local credentials, override at runtime:"
+        echo "      .venv/bin/noetl execute playbook <name> --payload '{\"pg_auth\": \"pg_local\"}' --merge"
         
         echo ""
         echo "=== Test environment setup completed successfully ==="
@@ -473,8 +478,119 @@ tasks:
         echo "UI (if running): http://localhost:3001"
         echo ""
         echo "Next steps:"
-        echo "  task test-create-tables  - Create database tables for save storage tests"
+        echo "  task noetl-local-start  - Start/restart both server and worker (recommended)"
+        echo "  task test-create-tables-local - Create database tables for save storage tests"
         echo "  task ui-dev             - Start the UI dev server"
+        echo ""
+        echo "NOTE: If you need to restart services after schema reset, run:"
+        echo "      task debug-stop-all && task noetl-local-start"
         echo ""
         echo "NOTE: Before running, ensure you've updated tests/fixtures/credentials/gcs_hmac_local.json"
         echo "      with values from: https://console.cloud.google.com/security/secret-manager/secret/gcs_hmac_local/versions?project=noetl-demo-19700101"
+
+  test-create-tables-local:
+    desc: Create database tables for save storage tests using local postgres credentials
+    aliases: [tctl]
+    cmds:
+      - |
+        set -e
+        echo "=== Creating database tables for save storage tests (local) ==="
+        
+        # Check if local server is running
+        if ! curl -s -m 2 -f "http://localhost:8083/health" >/dev/null 2>&1; then
+          echo "ERROR: NoETL server is not running on port 8083"
+          echo "Please start the server first with: task server-debug"
+          exit 1
+        fi
+        
+        if [ -x ".venv/bin/noetl" ]; then
+          cli=".venv/bin/noetl"
+        else
+          cli="noetl"
+        fi
+        
+        echo "Executing create_tables playbook with local postgres credentials..."
+        $cli execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" \
+          --host localhost --port 8083 \
+          --payload '{"pg_auth": "pg_local"}' --merge --json
+        echo "✓ Database tables created successfully"
+
+  test-execute-local:
+    desc: Execute a test playbook with local postgres credentials
+    vars:
+      PLAYBOOK: "{{ or .PLAYBOOK \"\" }}"
+    cmds:
+      - |
+        set -e
+        playbook="{{.PLAYBOOK}}"
+        if [ -z "$playbook" ]; then
+          echo "ERROR: PLAYBOOK parameter is required"
+          echo "Usage: task test-execute-local PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test"
+          exit 1
+        fi
+        
+        # Check if local server is running
+        if ! curl -s -m 2 -f "http://localhost:8083/health" >/dev/null 2>&1; then
+          echo "ERROR: NoETL server is not running on port 8083"
+          echo "Please start the server first with: task server-debug"
+          exit 1
+        fi
+        
+        if [ -x ".venv/bin/noetl" ]; then
+          cli=".venv/bin/noetl"
+        else
+          cli="noetl"
+        fi
+        
+        echo "Executing playbook: $playbook (with local postgres credentials)"
+        $cli execute playbook "$playbook" \
+          --host localhost --port 8083 \
+          --payload '{"pg_auth": "pg_local"}' --merge --json
+
+  noetl-local-full-setup:
+    desc: Complete local setup - test environment, services, and tables (everything except UI)
+    aliases: [local-full-setup, lfs]
+    cmds:
+      - |
+        set -e
+        echo "=== NoETL Local Full Setup Starting ==="
+        echo ""
+        
+        echo "Step 1/4: Setting up test environment..."
+        task noetl-local-setup-test-environment
+        echo ""
+        
+        echo "Step 2/4: Starting NoETL services..."
+        task debug-stop-all || true  # Stop any existing services
+        sleep 2
+        task noetl-local-start
+        echo ""
+        
+        echo "Step 3/4: Creating database tables..."
+        sleep 3  # Give services time to fully start
+        task test-create-tables-local
+        echo ""
+        
+        echo "Step 4/4: Checking service status..."
+        task debug-status
+        echo ""
+        
+        echo "=== 🎉 NoETL Local Full Setup Complete! ==="
+        echo ""
+        echo "Services Running:"
+        echo "  ✅ NoETL Server: http://localhost:8083"
+        echo "  ✅ NoETL Worker: background process"
+        echo "  ✅ Database: tables created"
+        echo "  ✅ Test Environment: credentials and playbooks registered"
+        echo ""
+        echo "Next Steps:"
+        echo "  🌐 Start UI: task ui-dev"
+        echo "  📊 API Docs: http://localhost:8083/docs"
+        echo "  🧪 Run Test: task test-execute-local PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test"
+        echo ""
+        echo "Logs:"
+        echo "  📄 Server: tail -f logs/server-debug.log"
+        echo "  🔧 Worker: tail -f logs/worker-debug.log"
+        echo ""
+        echo "To start UI in a new terminal:"
+        echo "  task ui-dev"

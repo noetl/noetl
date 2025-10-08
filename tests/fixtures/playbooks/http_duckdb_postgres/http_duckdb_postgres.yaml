@@ -6,6 +6,7 @@ metadata:
   path: tests/fixtures/playbooks/http_duckdb_postgres   # catalog path; do not change in tests
 
 workload:
+  pg_auth: pg_k8s
   message: HTTP -> DuckDB -> Postgres pipeline
   cities:
   - name: London
@@ -27,7 +28,7 @@ workflow:
 - step: ensure_pg_table
   desc: Ensure raw HTTP results table exists in Postgres
   type: postgres
-  auth: pg_k8s
+  auth: "{{ workload.pg_auth }}"
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_http_raw (
       id TEXT PRIMARY KEY,
@@ -80,7 +81,7 @@ workflow:
           url: "{{ this.data.url if this is defined and this.data is defined else '' }}"
           elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
           payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
-        auth: pg_k8s
+        auth: "{{ workload.pg_auth }}"
         table: public.weather_http_raw
         mode: upsert
         key: id
@@ -139,7 +140,7 @@ workflow:
 - step: ensure_metrics_table
   desc: Ensure metrics table exists in Postgres
   type: postgres
-  auth: pg_k8s
+  auth: "{{ workload.pg_auth }}"
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_pipeline_metrics (
       execution_id TEXT PRIMARY KEY,
@@ -153,7 +154,7 @@ workflow:
 - step: end
   desc: Finish
   type: postgres
-  auth: pg_k8s
+  auth: "{{ workload.pg_auth }}"
   command: |
     INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved, gcs_flat_uri, gcs_agg_uri)
     VALUES (
