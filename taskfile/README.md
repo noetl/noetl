@@ -94,18 +94,18 @@ Tasks
 
 11) **ui-dev** (aliases: `ui`, `ui-start`)
 - What it does: Starts the NoETL UI locally using the Vite dev server and connects to the local NoETL server.
-- API connection: Connects to the local NoETL server at `http://localhost:8083` by default.
+- API connection: Connects to the local NoETL server at `http://localhost:8083/api` by default.
   - Health check: Verifies that the NoETL server is running and responding before starting the UI.
   - If the server is not running, displays a warning with instructions to start it using `task server-debug`.
 - Environment:
-  - `VITE_API_BASE_URL` (optional): Manually override the API base URL used by the UI.
+  - `VITE_API_BASE_URL` (optional): Manually override the API base URL used by the UI. Must include the `/api` path.
 - Usage examples:
-  - `task ui-dev` (connects to http://localhost:8083)
-  - `VITE_API_BASE_URL=http://localhost:9000 task ui-dev`
+  - `task ui-dev` (connects to http://localhost:8083/api)
+  - `VITE_API_BASE_URL=http://localhost:9000/api task ui-dev`
 - Prerequisites:
   - NoETL server must be running on port 8083. Start with `task server-debug` if needed.
 - Notes:
-  - The UI dev server listens on port 3001 by default.
+  - The UI dev server listens on port 3001 by default (or next available port if 3001 is busy).
   - You need Node.js and npm installed. The task installs UI deps automatically if missing.
 
 Notes and tips

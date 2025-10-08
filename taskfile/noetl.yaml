@@ -397,17 +397,18 @@ tasks:
           api_url="$VITE_API_BASE_URL"
           echo "Using VITE_API_BASE_URL from env: $api_url"
         else
-          # Use local server on port 8083
-          api_url="http://localhost:8083"
+          # Use local server on port 8083 with /api prefix
+          api_url="http://localhost:8083/api"
           echo "Using local NoETL server: $api_url"
           
-          # Check if server is running
+          # Check if server is running (check base URL without /api)
+          base_url="http://localhost:8083"
           if command -v curl >/dev/null 2>&1; then
-            if ! curl -s -m 2 -f "$api_url/health" >/dev/null 2>&1; then
-              echo "WARNING: NoETL server not responding at $api_url"
+            if ! curl -s -m 2 -f "$base_url/health" >/dev/null 2>&1; then
+              echo "WARNING: NoETL server not responding at $base_url"
               echo "Make sure to start the server first with: task server-debug"
             else
-              echo "✓ NoETL server is running at $api_url"
+              echo "✓ NoETL server is running at $base_url"
             fi
           fi
         fi
