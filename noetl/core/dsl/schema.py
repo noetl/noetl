@@ -140,8 +140,10 @@ class DatabaseSchema:
                                 """, (self.noetl_schema, self.noetl_schema))
                                 try:
                                     ac.execute(f"GRANT ALL PRIVILEGES ON SCHEMA {self.noetl_schema} TO {self.noetl_user}")
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.error(f"Failed to grant schema privileges to user {self.noetl_user}: {e}")
+                                    logger.exception("Schema privilege grant failed:")
+                                    # Continue but log the issue - this could cause permission problems later
                         finally:
                             admin.close()
                         self.conn = psycopg.connect(self.pgdb)
@@ -592,11 +594,16 @@ class DatabaseSchema:
                 ))
                 self.conn.commit()
                 return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Database operation failed: {e}")
+            logger.exception("Database operation exception details:")
             try:
                 self.conn.rollback()
-            except Exception:
-                pass
+                logger.info("Transaction rolled back successfully")
+            except Exception as rollback_e:
+                logger.error(f"Critical: Transaction rollback failed: {rollback_e}")
+                logger.exception("Rollback failure details:")
+                # This is a serious issue - database may be in inconsistent state
             return False
     
     def get_errors(self, 

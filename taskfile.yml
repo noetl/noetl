@@ -14,6 +14,9 @@ includes:
   tests:
     taskfile: tests/taskfile/noetltest.yml
     flatten: true
+  noetl:
+    taskfile: taskfile/noetl.yaml
+    flatten: true
 
 tasks:
   default:
@@ -211,3 +214,19 @@ tasks:
       - task: remove-noetl
       - task: load-noetl-image
       - task: deploy-noetl
+
+  noetl-reset:
+    desc: Build noetl and redeploy with new schema and tests playbooks in kind cluster
+    aliases: [nreset]
+    vars:
+      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
+    cmds:
+      - task: postgres-reset-schema 
+      - task: noetl-redeploy
+      - uv pip install -e ".[dev]" # noetl CLI with dev extras
+      - sleep 30
+      - task: setup-test-environment
+      - task: test-create-tables
+      - echo "UI :http://localhost:8082"
+      - echo "API :http://localhost:8082/docs"
+

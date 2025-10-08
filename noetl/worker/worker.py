@@ -121,11 +121,14 @@ def deregister_server_from_env() -> None:
 
         try:
             os.remove('/tmp/noetl_server_name')
-        except Exception:
-            pass
+        except FileNotFoundError:
+            pass  # Expected if file doesn't exist
+        except Exception as e:
+            logger.error(f"Failed to remove server name file: {e}")
         logger.info(f"Deregistered server: {name}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Critical error during server deregistration: {e}")
+        logger.exception("Server deregistration exception details:")
 
 
 def register_worker_pool_from_env() -> None:
@@ -158,9 +161,14 @@ def register_worker_pool_from_env() -> None:
 
         hostname = os.environ.get("HOSTNAME") or socket.gethostname()
         
-        # Generate a Kubernetes-style URI for worker identification
-        namespace = os.environ.get("POD_NAMESPACE", "noetl") 
-        worker_uri = f"k8s://{namespace}/{hostname}"
+        # Generate worker URI based on environment (k8s or local)
+        namespace = os.environ.get("POD_NAMESPACE")
+        if namespace:
+            # Running in Kubernetes
+            worker_uri = f"k8s://{namespace}/{hostname}"
+        else:
+            # Running locally
+            worker_uri = f"local://{hostname}"
 
         payload = {
             "name": name,
@@ -273,14 +281,18 @@ def _on_worker_terminate(signum, frame):
                 time.sleep(backoff_base * (2 ** (attempt - 1)))
     finally:
         logger.info("Worker termination signal handler completed")
-        pass
 
 
 try:
     signal.signal(signal.SIGTERM, _on_worker_terminate)
     signal.signal(signal.SIGINT, _on_worker_terminate)
-except Exception:
-    pass
+except Exception as e:
+    logger.error(f"Failed to register signal handlers: {e}")
+    logger.exception("Signal handler registration failed:")
+    # This is a critical failure - signal handlers are essential for graceful shutdown
+    import sys
+    logger.critical("Exiting due to signal handler registration failure")
+    sys.exit(1)
 
 
 def _get_server_url() -> str:

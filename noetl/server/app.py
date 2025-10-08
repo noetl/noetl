@@ -274,15 +274,17 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                 await cur.execute(
                                     """
                                     UPDATE runtime SET status = 'offline', updated_at = now()
-                                    WHERE status != 'offline' AND heartbeat < (now() - interval '%s seconds')
+                                    WHERE status != 'offline' AND heartbeat < (now() - make_interval(secs => %s))
                                     """,
                                     (offline_after,)
                                 )
                             except Exception as e:
-                                logger.debug(f"Runtime offline sweep failed: {e}")
+                                logger.error(f"Runtime offline sweep failed: {e}")
+                                logger.exception("Sweep offline exception details:")
 
                             # Server heartbeat
                             try:
+                                logger.info(f"About to update server heartbeat for {server_name}")
                                 await cur.execute(
                                     """
                                     UPDATE runtime 
@@ -291,6 +293,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                     """,
                                     (server_name,)
                                 )
+                                logger.info(f"Server heartbeat updated for {server_name}, rows affected: {cur.rowcount}")
                                 if cur.rowcount == 0 and auto_recreate_runtime:
                                     logger.info("Server runtime row missing; auto recreating")
                                     import datetime as _dt
@@ -320,11 +323,14 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                         (rid, server_name, server_url, runtime_payload)
                                     )
                             except Exception as e:
-                                logger.debug(f"Server heartbeat refresh failed: {e}")
+                                logger.error(f"Server heartbeat refresh failed: {e}")
+                                logger.exception("Heartbeat exception details:")
                             try:
                                 await conn.commit()
-                            except Exception:
-                                pass
+                                logger.info(f"Runtime sweeper transaction committed successfully")
+                            except Exception as e:
+                                logger.error(f"Runtime sweeper commit failed: {e}")
+                                logger.exception("Commit failure details:")
                     
                     # Report server metrics periodically
                     if current_time - last_metrics_time >= metrics_interval:
@@ -335,14 +341,18 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             logger.debug(f"Server metrics reporting failed: {e}")
                             
                 except Exception as outer_e:
-                    logger.debug(f"Runtime sweeper loop error: {outer_e}")
+                    logger.error(f"Runtime sweeper loop error: {outer_e}")
+                    logger.exception("Sweeper loop exception details:")
                 await asyncio.sleep(sweep_interval)
 
         sweeper_task: Optional[asyncio.Task] = None
         try:
+            logger.info("Starting runtime sweeper background task...")
             sweeper_task = asyncio.create_task(_runtime_sweeper())
+            logger.info("Runtime sweeper background task started successfully")
         except Exception as e:
-            logger.debug(f"Failed to start runtime sweeper: {e}")
+            logger.error(f"Failed to start runtime sweeper: {e}")
+            logger.exception("Runtime sweeper startup exception details:")
 
         yield
         # Shutdown
@@ -352,12 +362,14 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 sweeper_task.cancel()
                 with contextlib.suppress(Exception):
                     await sweeper_task
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Critical error during sweeper task shutdown: {e}")
+                logger.exception("Sweeper shutdown exception details:")
         try:
             deregister_server_directly()
         except Exception as e:
-            logger.debug(f"Server deregistration failed during shutdown: {e}")
+            logger.error(f"Server deregistration failed during shutdown: {e}")
+            # Don't pass this silently - log but continue shutdown
 
     settings = get_settings()
 

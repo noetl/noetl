@@ -7,6 +7,8 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from fastapi import HTTPException
+from psycopg.rows import dict_row
+
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.status import validate_status
@@ -44,14 +46,17 @@ class EventService:
                             e.catalog_id,
                             e.event_type,
                             e.status,
-                            e.timestamp,
+                            e.created_at,
                             e.meta,
                             e.context,
                             e.result,
                             e.error,
-                            e.stack_trace
+                            e.stack_trace,
+                            c.path,
+                            c.version
                         FROM event e
                         JOIN latest_events le ON e.execution_id = le.execution_id AND e.created_at = le.latest_timestamp
+                        JOIN catalog c on c.catalog_id = e.catalog_id
                         ORDER BY e.created_at DESC
                     """)
 
@@ -60,30 +65,16 @@ class EventService:
 
                     for row in rows:
                         execution_id = row[0]
-                        catalog_id = row[1]
-                        metadata = row[5] if row[5] else {}  # meta is now JSONB
-                        input_context = json.loads(row[6]) if row[6] else {}
+                        # catalog_id = row[1]
+                        # metadata = row[5] if row[5] else {}  # meta is now JSONB
+                        # input_context = json.loads(row[6]) if row[6] else {}
                         output_result = json.loads(row[7]) if row[7] else {}
                         
                         # Try to get playbook info from catalog_id first, then fallback to metadata
-                        playbook_id = ''
-                        playbook_name = 'Unknown'
-                        if catalog_id:
-                            try:
-                                await cursor.execute("""
-                                    SELECT path FROM noetl.catalog WHERE catalog_id = %s
-                                """, (catalog_id,))
-                                catalog_row = await cursor.fetchone()
-                                if catalog_row:
-                                    playbook_id = catalog_row[0]
-                                    playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
-                            except Exception:
-                                pass
-                        
-                        # Fallback to metadata if no catalog_id or catalog lookup failed
-                        if not playbook_id:
-                            playbook_id = metadata.get('resource_path', input_context.get('path', ''))
-                            playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                        playbook_id = row[10]
+                        playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+                       
+                    
                         
                         raw_status = row[3]
                         
@@ -183,10 +174,12 @@ class EventService:
             # Generate event_id using snowflake when not provided
             try:
                 snow = get_snowflake_id_str()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"String snowflake ID generation failed: {e}")
                 try:
                     snow = str(get_snowflake_id())
-                except Exception:
+                except Exception as e2:
+                    logger.warning(f"Numeric snowflake ID generation failed: {e2}")
                     snow = None
             event_id = event_data.get("event_id", snow or f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id
@@ -776,74 +769,41 @@ class EventService:
         """
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute("""
-                        SELECT 
-                            event_id, 
-                            event_type, 
-                            node_id, 
-                            node_name, 
-                            node_type, 
-                            status, 
-                            duration, 
-                            timestamp, 
-                            context, 
-                            result, 
-                            meta, 
-                            error,
-                            catalog_id
-                        FROM event 
-                        WHERE execution_id = %s
-                        ORDER BY created_at
-                    """, (execution_id,))
+                                         SELECT event_id,
+                                                event_type,
+                                                node_id,
+                                                node_name,
+                                                node_type,
+                                                status,
+                                                duration,
+                                                created_at,
+                                                context,
+                                                result,
+                                                meta,
+                                                error,
+                                                catalog_id
+                                         FROM event
+                                         WHERE execution_id = %s
+                                         ORDER BY created_at
+                                         """, (execution_id,))
 
                     rows = await cursor.fetchall()
                     if rows:
                         events = []
                         for row in rows:
-                            event_data = {
-                                "event_id": row[0],
-                                "event_type": row[1],
-                                "node_id": row[2],
-                                "node_name": row[3],
-                                "node_type": row[4],
-                                "status": row[5],
-                                "duration": row[6],
-                                "timestamp": row[7].isoformat() if row[7] else None,
-                                # Store in canonical keys
-                                "context": json.loads(row[8]) if row[8] else None,
-                                "result": json.loads(row[9]) if row[9] else None,
-                                "metadata": row[10] if row[10] else None,  # meta is now JSONB
-                                "error": row[11],
-                                "catalog_id": row[12],
-                                "execution_id": execution_id,
-                                "resource_path": None,
-                                "resource_version": None,
-                            }
-                            
-                            # Add normalized_status for backwards compatibility
-                            # For existing data, handle potentially non-normalized statuses
-                            raw_status = row[5]
-                            if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
-                                event_data["normalized_status"] = raw_status
-                            else:
-                                # Legacy data - normalize for compatibility
-                                from noetl.core.status import normalize_status
-                                try:
-                                    event_data["normalized_status"] = normalize_status(raw_status)
-                                    logger.warning(f"Found non-normalized status '{raw_status}' in event {row[0]}. This should be fixed in the source.")
-                                except ValueError:
-                                    logger.error(f"Invalid status '{raw_status}' in event {row[0]}. Defaulting to 'PENDING'.")
-                                    event_data["normalized_status"] = 'PENDING'
-                            # Backward/consumer compatibility: also expose legacy alias keys
-                            try:
-                                event_data["input_context"] = event_data.get("context")
-                                event_data["output_result"] = event_data.get("result")
-                            except Exception:
-                                pass
+                            # Use the dictionary keys directly, no manual mapping needed
+                            event_data = dict(row)
+                            event_data["execution_id"] = execution_id
+                            event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
+                            event_data["metadata"] = row["meta"]
 
-                            # Use new schema field names directly
-                            # No backward compatibility mappings needed
+                            # Parse JSON fields if they're strings
+                            if isinstance(row["context"], str):
+                                event_data["context"] = json.loads(row["context"])
+                            if isinstance(row["result"], str):
+                                event_data["result"] = json.loads(row["result"])
 
                             events.append(event_data)
 

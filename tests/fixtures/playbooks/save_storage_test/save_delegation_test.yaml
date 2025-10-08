@@ -6,6 +6,7 @@ metadata:
   description: "Simple test demonstrating save storage delegation is working"
 
 workload:
+  pg_auth: pg_k8s
   test_message: "Hello from save storage delegation test!"
 
 workflow:
@@ -47,7 +48,7 @@ workflow:
       storage:
         type: postgres
         table: simple_test_flat
-        auth: pg_k8s
+        auth: "{{ workload.pg_auth }}"
       data:
         test_id: "delegation_test"
         test_name: "{{ result.data.test }}"

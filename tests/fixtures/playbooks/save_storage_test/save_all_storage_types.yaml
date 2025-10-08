@@ -6,6 +6,7 @@ metadata:
   description: "Comprehensive test playbook covering all save storage types with data flow between steps"
 
 workload:
+  pg_auth: pg_k8s
   test_name: "save_storage_comprehensive_test"
   base_data:
     test_id: "save_test_{{ execution_id }}"
@@ -186,7 +187,7 @@ workflow:
         test_execution: "{{ execution_id }}"
       table: simple_test_flat
       mode: insert
-      auth: pg_k8s
+      auth: "{{ workload.pg_auth }}"
     next:
       - step: test_nested_postgres_save
 
@@ -217,7 +218,7 @@ workflow:
         table: simple_test_nested
         mode: upsert
         key: test_id
-        auth: pg_k8s
+        auth: "{{ workload.pg_auth }}"
     next:
       - step: test_postgres_statement_save
 
@@ -248,7 +249,7 @@ workflow:
             NOW() as created_at
           FROM simple_test_flat 
           WHERE test_execution = '{{ data.execution_id }}'
-        auth: pg_k8s
+        auth: "{{ workload.pg_auth }}"
     next:
       - step: test_python_save
 

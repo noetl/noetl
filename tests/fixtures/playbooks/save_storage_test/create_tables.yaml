@@ -6,6 +6,7 @@ metadata:
   
 workload:
   test_name: create_test_tables
+  pg_auth: pg_k8s
 
 workflow:
   - step: start
@@ -16,7 +17,7 @@ workflow:
   - step: create_flat_table
     desc: Create flat test table
     type: postgres
-    auth: pg_k8s
+    auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS simple_test_flat (
         test_id VARCHAR(255) PRIMARY KEY,
@@ -31,7 +32,7 @@ workflow:
   - step: create_nested_table  
     desc: Create nested test table
     type: postgres
-    auth: pg_k8s
+    auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS simple_test_nested (
         test_id VARCHAR(255) PRIMARY KEY,
@@ -46,7 +47,7 @@ workflow:
   - step: create_summary_table
     desc: Create test summary table
     type: postgres
-    auth: pg_k8s
+    auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS test_summary (
         id SERIAL PRIMARY KEY,

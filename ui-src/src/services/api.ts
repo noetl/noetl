@@ -172,7 +172,7 @@ class APIService {
   async executePlaybookWithPayload(
     requestBody: any,
   ): Promise<{ execution_id: string }> {
-    const response = await apiClient.post("/agent/execute", requestBody);
+    const response = await apiClient.post("/execute", requestBody);
     return response.data;
   }
 
