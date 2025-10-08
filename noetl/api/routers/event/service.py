@@ -7,6 +7,8 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from fastapi import HTTPException
+from psycopg.rows import dict_row
+
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.status import validate_status
@@ -767,74 +769,41 @@ class EventService:
         """
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute("""
-                        SELECT 
-                            event_id, 
-                            event_type, 
-                            node_id, 
-                            node_name, 
-                            node_type, 
-                            status, 
-                            duration, 
-                            timestamp, 
-                            context, 
-                            result, 
-                            meta, 
-                            error,
-                            catalog_id
-                        FROM event 
-                        WHERE execution_id = %s
-                        ORDER BY created_at
-                    """, (execution_id,))
+                                         SELECT event_id,
+                                                event_type,
+                                                node_id,
+                                                node_name,
+                                                node_type,
+                                                status,
+                                                duration,
+                                                created_at,
+                                                context,
+                                                result,
+                                                meta,
+                                                error,
+                                                catalog_id
+                                         FROM event
+                                         WHERE execution_id = %s
+                                         ORDER BY created_at
+                                         """, (execution_id,))
 
                     rows = await cursor.fetchall()
                     if rows:
                         events = []
                         for row in rows:
-                            event_data = {
-                                "event_id": row[0],
-                                "event_type": row[1],
-                                "node_id": row[2],
-                                "node_name": row[3],
-                                "node_type": row[4],
-                                "status": row[5],
-                                "duration": row[6],
-                                "timestamp": row[7].isoformat() if row[7] else None,
-                                # Store in canonical keys
-                                "context": json.loads(row[8]) if row[8] else None,
-                                "result": json.loads(row[9]) if row[9] else None,
-                                "metadata": row[10] if row[10] else None,  # meta is now JSONB
-                                "error": row[11],
-                                "catalog_id": row[12],
-                                "execution_id": execution_id,
-                                "resource_path": None,
-                                "resource_version": None,
-                            }
-                            
-                            # Add normalized_status for backwards compatibility
-                            # For existing data, handle potentially non-normalized statuses
-                            raw_status = row[5]
-                            if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
-                                event_data["normalized_status"] = raw_status
-                            else:
-                                # Legacy data - normalize for compatibility
-                                from noetl.core.status import normalize_status
-                                try:
-                                    event_data["normalized_status"] = normalize_status(raw_status)
-                                    logger.warning(f"Found non-normalized status '{raw_status}' in event {row[0]}. This should be fixed in the source.")
-                                except ValueError:
-                                    logger.error(f"Invalid status '{raw_status}' in event {row[0]}. Defaulting to 'PENDING'.")
-                                    event_data["normalized_status"] = 'PENDING'
-                            # Backward/consumer compatibility: also expose legacy alias keys
-                            try:
-                                event_data["input_context"] = event_data.get("context")
-                                event_data["output_result"] = event_data.get("result")
-                            except Exception:
-                                pass
+                            # Use the dictionary keys directly, no manual mapping needed
+                            event_data = dict(row)
+                            event_data["execution_id"] = execution_id
+                            event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
+                            event_data["metadata"] = row["meta"]
 
-                            # Use new schema field names directly
-                            # No backward compatibility mappings needed
+                            # Parse JSON fields if they're strings
+                            if isinstance(row["context"], str):
+                                event_data["context"] = json.loads(row["context"])
+                            if isinstance(row["result"], str):
+                                event_data["result"] = json.loads(row["result"])
 
                             events.append(event_data)
 
