@@ -4,6 +4,7 @@ Overview
 - This folder contains task definitions used with the `go-task` runner (`Taskfile`). The tasks in `taskfile/noetl.yaml` help you quickly start, stop, and inspect a local NoETL development stack.
 - Typical usage:
   - `task noetl-local-start`
+  - `task ui-dev`
   - `task debug-status`
   - `task debug-stop-all`
 
@@ -23,6 +24,7 @@ Common environment variables
 - `NOETL_API_PORT` / `NOETL_PORT`: Port for the API server (default `8083`).
 - `NOETL_API_URL`: Worker API base URL (defaults to `http://localhost:8083` in `worker-debug`).
 - `NOETL_RUN_MODE`: Set to `worker` by `worker-debug` when launching the worker dispatcher.
+- `VITE_API_BASE_URL`: UI dev server API base URL. If unset, `task ui-dev` will auto-detect a running local API (prefers `http://localhost:8083`, falls back to `http://localhost:8000`).
 
 Tasks
 
@@ -89,6 +91,22 @@ Tasks
 - Usage examples:
   - `task noetl-local-start`
   - `ENV_FILE=.env NOETL_API_PORT=8090 task noetl-local-start`
+
+11) **ui-dev** (aliases: `ui`, `ui-start`)
+- What it does: Starts the NoETL UI locally using the Vite dev server and connects to the local NoETL server.
+- API connection: Connects to the local NoETL server at `http://localhost:8083` by default.
+  - Health check: Verifies that the NoETL server is running and responding before starting the UI.
+  - If the server is not running, displays a warning with instructions to start it using `task server-debug`.
+- Environment:
+  - `VITE_API_BASE_URL` (optional): Manually override the API base URL used by the UI.
+- Usage examples:
+  - `task ui-dev` (connects to http://localhost:8083)
+  - `VITE_API_BASE_URL=http://localhost:9000 task ui-dev`
+- Prerequisites:
+  - NoETL server must be running on port 8083. Start with `task server-debug` if needed.
+- Notes:
+  - The UI dev server listens on port 3001 by default.
+  - You need Node.js and npm installed. The task installs UI deps automatically if missing.
 
 Notes and tips
 - If you change ports, ensure both server and worker agree (worker uses `NOETL_API_URL`).
