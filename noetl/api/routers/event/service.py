@@ -172,10 +172,12 @@ class EventService:
             # Generate event_id using snowflake when not provided
             try:
                 snow = get_snowflake_id_str()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"String snowflake ID generation failed: {e}")
                 try:
                     snow = str(get_snowflake_id())
-                except Exception:
+                except Exception as e2:
+                    logger.warning(f"Numeric snowflake ID generation failed: {e2}")
                     snow = None
             event_id = event_data.get("event_id", snow or f"evt_{os.urandom(16).hex()}")
             event_data["event_id"] = event_id

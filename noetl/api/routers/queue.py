@@ -168,19 +168,24 @@ async def complete_job(queue_id: int):
                         # Extract return_step from the queue.action when available (preferred)
                         # NOTE: We no longer access a cursor here because the initial transaction scope is closed.
                         # This value will be resolved later within a fresh DB connection below.
-                        pass
+                        
                         # Legacy fallback: some older producers embed action JSON in input_context
                         if return_step is None:
-                            action_data = context_data.get('action')
-                            if isinstance(action_data, str):
-                                try:
-                                    action_json = json.loads(action_data)
-                                    if isinstance(action_json, dict):
-                                        return_step = action_json.get('with', {}).get('return_step')
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
+                            try:
+                                action_data = context_data.get('action')
+                                if isinstance(action_data, str):
+                                    try:
+                                        action_json = json.loads(action_data)
+                                        if isinstance(action_json, dict):
+                                            return_step = action_json.get('with', {}).get('return_step')
+                                    except json.JSONDecodeError as e:
+                                        logger.debug(f"Failed to parse action_data as JSON: {e}")
+                                    except Exception as e:
+                                        logger.warning(f"Unexpected error parsing action_data: {e}")
+                            except Exception as e:
+                                logger.debug(f"Error extracting return_step from task: {e}")
+                except Exception as e:
+                    logger.debug(f"Error processing job context metadata: {e}")
             
             # If this is a child execution that completed, emit a mapping event to link results to parent loop
             if parent_execution_id and parent_step and parent_execution_id != exec_id:
