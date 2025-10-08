@@ -416,3 +416,65 @@ tasks:
         export VITE_API_BASE_URL="$api_url"
         echo "Launching UI with VITE_API_BASE_URL=$VITE_API_BASE_URL"
         npm run dev
+
+  noetl-local-setup-test-environment:
+    desc: Setup test environment using local NoETL service on port 8083 - reset postgres, register credentials and playbooks
+    aliases: [local-setup-test, lste]
+    cmds:
+      - |
+        set -e
+        echo "=== Setting up test environment using local NoETL service (port 8083) ==="
+        
+        # Check if local server is running
+        echo "Checking if NoETL server is running on port 8083..."
+        if ! curl -s -m 2 -f "http://localhost:8083/health" >/dev/null 2>&1; then
+          echo "ERROR: NoETL server is not running on port 8083"
+          echo "Please start the server first with: task server-debug"
+          exit 1
+        fi
+        echo "✓ NoETL server is running"
+        
+        # Reset postgres schema
+        echo "Resetting PostgreSQL schema..."
+        task postgres-reset-schema
+        echo "✓ PostgreSQL schema reset completed"
+        
+        # Wait a moment for schema to be ready
+        sleep 3
+        
+        # Register test credentials using local server
+        echo "Registering test credentials..."
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json | jq -C . || echo "pg_local credential registration failed"
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json | jq -C . || echo "gcs_hmac_local credential registration failed"
+        else
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json || echo "pg_local credential registration failed"
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json || echo "gcs_hmac_local credential registration failed"
+        fi
+        echo "✓ Test credentials registered"
+        
+        # Register all test playbooks using local server
+        echo "Registering all test playbooks..."
+        ./register_test_playbooks.sh localhost 8083
+        echo "✓ Test playbooks registered"
+        
+        echo ""
+        echo "=== Test environment setup completed successfully ==="
+        echo "NoETL server: http://localhost:8083"
+        echo "API docs: http://localhost:8083/docs"
+        echo "UI (if running): http://localhost:3001"
+        echo ""
+        echo "Next steps:"
+        echo "  task test-create-tables  - Create database tables for save storage tests"
+        echo "  task ui-dev             - Start the UI dev server"
+        echo ""
+        echo "NOTE: Before running, ensure you've updated tests/fixtures/credentials/gcs_hmac_local.json"
+        echo "      with values from: https://console.cloud.google.com/security/secret-manager/secret/gcs_hmac_local/versions?project=noetl-demo-19700101"

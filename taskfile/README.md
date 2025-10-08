@@ -108,6 +108,24 @@ Tasks
   - The UI dev server listens on port 3001 by default (or next available port if 3001 is busy).
   - You need Node.js and npm installed. The task installs UI deps automatically if missing.
 
+12) **noetl-local-setup-test-environment** (aliases: `local-setup-test`, `lste`)
+- What it does: Complete test environment setup using the local NoETL service on port 8083.
+- Process:
+  1. Verifies NoETL server is running on port 8083
+  2. Resets PostgreSQL schema using `postgres-reset-schema`
+  3. Registers test credentials (`pg_local.json`, `gcs_hmac_local.json`)
+  4. Registers all test playbooks from `tests/fixtures/playbooks/`
+- Prerequisites:
+  - NoETL server must be running on port 8083. Start with `task server-debug` if needed.
+  - Update `tests/fixtures/credentials/gcs_hmac_local.json` with valid GCS HMAC credentials.
+- Usage examples:
+  - `task noetl-local-setup-test-environment`
+  - `task local-setup-test` (alias)
+- Notes:
+  - This is the local equivalent of the Kubernetes-based `setup-test-environment`.
+  - After completion, use `task test-create-tables` to create database tables for save storage tests.
+  - Use `task ui-dev` to start the UI and interact with the test environment.
+
 Notes and tips
 - If you change ports, ensure both server and worker agree (worker uses `NOETL_API_URL`).
 - If a process fails to start, consult the relevant log file in `logs/` (`server-debug.log` or `worker-debug.log`).
