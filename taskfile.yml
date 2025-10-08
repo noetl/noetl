@@ -139,20 +139,19 @@ tasks:
         sh: cat .noetl_last_build_tag.txt
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/noetl/namespace/namespace.yaml
-      - sleep 2
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
-      - kubectl apply -f ci/manifests/noetl/
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+      - yq -i ".image.tag = \"$IMAGE_TAG\"" ci/noetl/kind-values.yaml
+      - |
+        helm upgrade --install noetl oci://ghcr.io/noetl/noetl-helm:0.1.0 \
+          --namespace noetl --create-namespace --values ci/noetl/kind-values.yaml \
+          --set secrets.postgresPassword="demo"  --set secrets.noetlPassword="noetl"
+      - yq -i ".image.tag = \"\"" ci/noetl/kind-values.yaml
 
   remove-noetl:
     desc: Remove noetl from the noetl kind cluster
     aliases: [rn]
     cmds:
       - kubectl config use-context kind-noetl
-      - kubectl delete -f ci/manifests/noetl/
+      - helm uninstall noetl -n noetl --wait
 
   clear-docker-images:
     desc: Clear all {{ .REGISTRY }}/{{ .IMAGE_NAME }} docker images
@@ -229,4 +228,3 @@ tasks:
       - task: test-create-tables
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"
-

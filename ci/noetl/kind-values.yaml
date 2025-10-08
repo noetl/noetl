@@ -1,0 +1,87 @@
+fullnameOverride: "noetl"
+replicaCount: 1
+image:
+  repository: local/noetl
+  tag: ""
+  pullPolicy: IfNotPresent
+serverContainer:
+  command: ["/opt/noetl/.venv/bin/python3"]
+  args: ["-m", "uvicorn", "noetl.server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8082", "--log-level", "info"]
+workerContainer:
+  command: ["noetl"]
+  args: ["worker", "start"]
+service:
+  type: ClusterIP
+  port: 8082
+additionalNodePort:
+  enabled: true
+  nodePort: 30082
+serverResources:
+  requests:
+    cpu: "0.5"
+    memory: "1Gi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+workerRequests:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+secrets:
+  postgresPassword: ""
+  noetlPassword: ""
+serverConfigMapData:
+  TZ: "America/Chicago"
+  LOG_LEVEL: "INFO"
+  PYTHONPATH: "/opt/noetl"
+  NOETL_DATA_DIR: "/opt/noetl/data"
+  NOETL_RUN_MODE: "server"
+  NOETL_ENABLE_UI: "true"
+  NOETL_DEBUG: "true"
+  NOETL_HOST: "0.0.0.0"
+  # NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"  is taken from the service
+  NOETL_SERVER_NAME: "server-k8s"
+  NOETL_SERVER: "uvicorn"
+  NOETL_SERVER_WORKERS: "1"
+  NOETL_SERVER_RELOAD: "false"
+  NOETL_AUTO_RECREATE_RUNTIME: "true"
+  NOETL_DROP_SCHEMA: "false"
+  NOETL_SCHEMA_VALIDATE: "true"
+  NOETL_RUNTIME_SWEEP_INTERVAL: "15"
+  NOETL_RUNTIME_OFFLINE_SECONDS: "60"
+  NOETL_DISABLE_METRICS: "true"
+  POSTGRES_USER: "demo"
+  POSTGRES_DB: "demo_noetl"
+  POSTGRES_HOST: "postgres.postgres.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_SCHEMA: "public"
+  NOETL_USER: "noetl"
+  NOETL_SCHEMA: "noetl"
+  NOETL_DB_STARTUP_TIMEOUT: "180"
+  NOETL_DB_RETRY_INTERVAL: "5"
+#   NOETL_PORT: "8082" is taken from the service.port
+
+workerConfigMapData:
+  NOETL_RUN_MODE: "worker"
+  # NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"  is taken from the service
+  NOETL_WORKER_POOL_RUNTIME: "cpu"
+  NOETL_WORKER_POOL_NAME: "worker-cpu-01-k8s"
