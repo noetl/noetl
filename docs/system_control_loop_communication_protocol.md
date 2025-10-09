@@ -79,18 +79,22 @@ The broker reads the workload and playbook, figures out the next actionable step
 ## 4) Queue API contracts (server)
 
 - File: noetl/api/routers/queue.py
-  - POST /queue/enqueue → enqueue_job(): 28–73
-    - Validates input, resolves `catalog_id` via first event, inserts into `noetl.queue`: 55–68
-  - POST /queue/lease → lease_job(): 76–132
-    - Atomically sets status=leased, assigns worker_id, increments attempts, sets lease_until / last_heartbeat: 92–115
-    - Returns a JSON object with job fields; normalizes `context` for consumers: 119–127
-  - POST /queue/{id}/complete → complete_job(): 135–616
-    - Marks status=done; then best‑effort emits parent/loop result mapping to events and triggers broker re‑evaluation: 150–611
-  - POST /queue/{id}/fail → fail_job(): 619–652
-    - If retry=false or attempts>=max_attempts → status=dead; else requeue with delay: 626–647
-  - POST /queue/{id}/heartbeat → heartbeat_job(): 655–679
-    - Updates last_heartbeat and optional lease extension: 666–670
-  - GET /queue → list_queue(): 682–707; GET /queue/size: 710–721
+  - Helper: normalize_execution_id(): 14–31
+    - Defers to normalize_execution_id_for_db to ensure bigint execution_id for all SQL params touching queue/event.
+  - Helper: get_catalog_id_from_execution(): 33–46
+    - Reads catalog_id from the execution’s first event.
+  - POST /queue/enqueue → enqueue_job(): 47–93
+    - Validates input, normalizes execution_id via helper, resolves `catalog_id` via first event, inserts into `noetl.queue`: 65–86
+  - POST /queue/lease → lease_job(): 95–152
+    - Atomically sets status=leased, assigns worker_id, increments attempts, sets lease_until / last_heartbeat: 112–129
+    - Returns a JSON object with job fields; normalizes `context` for consumers: 140–146
+  - POST /queue/{id}/complete → complete_job(): 154–636
+    - Marks status=done; then best‑effort emits parent/loop result mapping to events and triggers broker re‑evaluation: 169–629
+  - POST /queue/{id}/fail → fail_job(): 638–671
+    - If retry=false or attempts>=max_attempts → status=dead; else requeue with delay: 657–665
+  - POST /queue/{id}/heartbeat → heartbeat_job(): 674–698
+    - Updates last_heartbeat and optional lease extension: 685–690
+  - GET /queue → list_queue(): 701–727; GET /queue/size: 729–741
 
 
 ## 5) Worker behavior
@@ -127,14 +131,14 @@ Note: Worker reports events through plugin layer:
 
 The following issues are observed or likely to cause inconsistencies in the enqueue → work → report → next‑enqueue pipeline. Each item includes suggested changes with code references.
 
-1) Ensure consistent execution_id type for queue and catalog lookups
-- Symptom: Mixed use of string Snowflake IDs vs int in SQL parameters can lead to missing `catalog_id` lookups and failed queue inserts.
-- Evidence:
-  - processing/broker.py uses snowflake_id_to_int(execution_id) when inserting into queue (lines 413–419, 427–434, 566–586).
-  - queue.enqueue_job converts from string to int via snowflake_id_to_int (lines 49–54).
-- Fix:
-  - Audit all queue inserts to ensure execution_id is passed as int consistently. The processing/broker paths are correct; verify any other enqueue paths (e.g., controllers) use `snowflake_id_to_int` before SQL.
-  - Add a small helper in queue router to normalize execution_id inputs, and reuse it from any new enqueue points.
+1) Normalize execution_id handling across queue and broker (Implemented)
+- Status: Implemented in commit 66f2dda1f596f3ce2b0db9a23c6b8d1dbd6ea582 (2025-10-08). Added queue.normalize_execution_id() delegating to normalize_execution_id_for_db and used it in /queue/enqueue. BrokerService now normalizes via normalize_execution_id_for_db; broker evaluation continues to use snowflake_id_to_int at DB boundaries.
+- Impact: Clients may submit execution_id as string; server persists/queries using bigint consistently. Roundtrip enqueue → lease → complete works with string inputs.
+- Evidence/References:
+  - noetl/api/routers/queue.py: helper 14–31; enqueue 47–93 (uses helper); catalog resolver 33–46.
+  - noetl/api/routers/broker/service.py: normalization at 42–48, checks/enqueue use int 78–95.
+  - noetl/api/routers/event/processing/broker.py: queue inserts cast via snowflake_id_to_int at 414–419, 424–439, 595–603.
+- Follow-ups: Add unit test asserting enqueue → lease → complete roundtrip when execution_id is provided as string (see Section 10 task 1 acceptance criteria).
 
 2) Strengthen dedupe and idempotency around step_started and loop_iteration
 - Symptom: Duplicate marker events can produce noisy logs and confusing UI.
