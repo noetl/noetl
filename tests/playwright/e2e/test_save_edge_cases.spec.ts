@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 
-test.describe('Weather Example', () => {
+test.describe('Save edge cases', () => {
 
     // Run the registration command before all tests in this suite
     test.beforeAll(() => {
-        console.log('Registering weather example...');
-        execSync('noetl register ./examples/weather/weather_example.yaml --host localhost --port 8082', { stdio: 'inherit' });
+        console.log('Registering save_edge_cases...');
+        execSync('noetl register tests/fixtures/playbooks/save_storage_test/save_edge_cases.yaml --host localhost --port 8082', { stdio: 'inherit' });
     });
 
     test('should open catalog page', async ({ page }) => {
@@ -16,8 +16,8 @@ test.describe('Weather Example', () => {
         // Check that the page title contains "NoETL Dashboard"
         await expect(page).toHaveTitle('NoETL Dashboard');
 
-        // Locate the first element that contains the text "weather_example"
-        const exampleItem = page.locator("(//*[text()='weather_example']/following::button[normalize-space()='Execute'])[1]");
+        // Locate the first element that contains the text "save_edge_cases"
+        const exampleItem = page.locator("(//*[text()='save_edge_cases']/following::button[normalize-space()='Execute'])[1]");
 
         // Inside that element, find the child with text "Execute" and click it
         await exampleItem.click();
@@ -47,6 +47,9 @@ test.describe('Weather Example', () => {
         const row = page.locator('.ant-table-tbody > tr:first-child');
         const cells = row.locator('td');
 
+        // Wait until all cells in the row have non-empty text
+        await expect(cells.first()).toHaveText(/.+/);
+
         // Get all text contents of the cells in the row
         const values = await cells.allTextContents();
 
@@ -56,9 +59,34 @@ test.describe('Weather Example', () => {
         console.log(rowData);
 
         // Assertions
-        await expect(rowData.Playbook).toBe('weather_example');
+        await expect(rowData.Playbook).toBe('save_edge_cases');
         await expect(rowData.Status).toBe('STARTED');
         await expect(rowData.Duration).toBe('8h 0m');
+
+        // Wait a bit for the execution to complete
+        await page.waitForTimeout(5000);
+        // Refresh the page
+        await page.reload();
+
+        // Choose the first row of the table again
+        const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
+        const updatedCells = updatedRow.locator('td');
+        // Get all text contents of the cells in the row
+        const updatedValues = await updatedCells.allTextContents();
+        // Map headers to their corresponding values
+        const updatedRowData = Object.fromEntries(headers.map((key, i) => [key, updatedValues[i]]));
+
+        console.log(updatedRowData);
+
+        // Assert changes
+        await expect(page).toHaveTitle('NoETL Dashboard');
+        await expect(updatedRowData.Status).toBe('Completed');
+        // await expect(updatedRowData.Playbook).toBe('save_edge_cases');
+
+        // Click the "View" button for the "save_edge_cases" task
+        // TODO fix the selector below from "Unknown" to "save_edge_cases"
+        const viewButton = await page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
+        await viewButton.click();
 
     });
 

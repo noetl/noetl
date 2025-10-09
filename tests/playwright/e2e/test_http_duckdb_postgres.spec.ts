@@ -28,6 +28,11 @@ test.describe('HTTP DuckDB to Postgres', () => {
         // now check
         await expect(page.url()).toContain('/execution');
 
+        const loader = page.locator("//*[text()='Loading executions...']");
+        await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+        // Wait for the loader to disappear
+        await loader.waitFor({ state: 'detached' });
+
         const headers = [
             'Execution ID',
             'Playbook',
@@ -52,7 +57,7 @@ test.describe('HTTP DuckDB to Postgres', () => {
 
         // Assertions
         // await expect(rowData.Playbook).toBe('http_duckdb_postgres');
-        // await expect(rowData.Status).toBe('Running');
+        // await expect(rowData.Status).toBe('STARTED');
         // await expect(rowData.Duration).toBe('8h 0m');
 
         // Wait a bit for the execution to complete

@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 
-test.describe('User Profile Scorer', () => {
+test.describe('Save deligation test', () => {
 
     // Run the registration command before all tests in this suite
     test.beforeAll(() => {
-        console.log('Registering user_profile_scorer...');
-        execSync('noetl register tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml --host localhost --port 8082', { stdio: 'inherit' });
+        console.log('Registering save_delegation_test...');
+        execSync('noetl register tests/fixtures/playbooks/save_storage_test/save_delegation_test.yaml --host localhost --port 8082', { stdio: 'inherit' });
     });
 
     test('should open catalog page', async ({ page }) => {
@@ -16,8 +16,8 @@ test.describe('User Profile Scorer', () => {
         // Check that the page title contains "NoETL Dashboard"
         await expect(page).toHaveTitle('NoETL Dashboard');
 
-        // Locate the first element that contains the text "user_profile_scorer"
-        const exampleItem = page.locator("(//*[text()='user_profile_scorer']/following::button[normalize-space()='Execute'])[1]");
+        // Locate the first element that contains the text "save_delegation_test"
+        const exampleItem = page.locator("(//*[text()='save_delegation_test']/following::button[normalize-space()='Execute'])[1]");
 
         // Inside that element, find the child with text "Execute" and click it
         await exampleItem.click();
@@ -59,7 +59,7 @@ test.describe('User Profile Scorer', () => {
         console.log(rowData);
 
         // Assertions
-        await expect(rowData.Playbook).toBe('user_profile_scorer');
+        await expect(rowData.Playbook).toBe('save_delegation_test');
         await expect(rowData.Status).toBe('STARTED');
         await expect(rowData.Duration).toBe('8h 0m');
 
@@ -81,10 +81,10 @@ test.describe('User Profile Scorer', () => {
         // Assert changes
         await expect(page).toHaveTitle('NoETL Dashboard');
         await expect(updatedRowData.Status).toBe('Completed');
-        // await expect(updatedRowData.Playbook).toBe('user_profile_scorer');
+        // await expect(updatedRowData.Playbook).toBe('save_delegation_test');
 
-        // Click the "View" button for the "user_profile_scorer" task
-        // TODO fix the selector below from "Unknown" to "user_profile_scorer"
+        // Click the "View" button for the "save_delegation_test" task
+        // TODO fix the selector below from "Unknown" to "save_delegation_test"
         const viewButton = await page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
         await viewButton.click();
 

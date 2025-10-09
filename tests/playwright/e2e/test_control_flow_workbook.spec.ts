@@ -28,6 +28,11 @@ test.describe('Control flow workbook', () => {
         // now check
         await expect(page.url()).toContain('/execution');
 
+        const loader = page.locator("//*[text()='Loading executions...']");
+        await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+        // Wait for the loader to disappear
+        await loader.waitFor({ state: 'detached' });
+
         const headers = [
             'Execution ID',
             'Playbook',
@@ -52,7 +57,7 @@ test.describe('Control flow workbook', () => {
 
         // Assertions
         await expect(rowData.Playbook).toBe('control_flow_workbook');
-        await expect(rowData.Status).toBe('Running');
+        await expect(rowData.Status).toBe('STARTED');
         await expect(rowData.Duration).toBe('8h 0m');
 
         // Wait a bit for the execution to complete
@@ -115,12 +120,12 @@ test.describe('Control flow workbook', () => {
         // Example assert step_started
         await expect(tableData[1]['Event Type']).toBe('step_started');
         await expect(tableData[1]['Node Name']).toBe('eval_flag');
-        await expect(tableData[1].Status).toBe('RUNNING');
+        await expect(tableData[1].Status).toBe('STARTED');
 
         // Example assert action_started
         await expect(tableData[2]['Event Type']).toBe('action_started');
         await expect(tableData[2]['Node Name']).toBe('compute_flag');
-        await expect(tableData[2].Status).toBe('RUNNING');
+        await expect(tableData[2].Status).toBe('STARTED');
 
         // Example assert action_completed
         await expect(tableData[3]['Event Type']).toBe('action_completed');
