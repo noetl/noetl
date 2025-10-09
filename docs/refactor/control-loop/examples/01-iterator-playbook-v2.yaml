@@ -1,0 +1,66 @@
+# Iterator v2 Playbook Example (NON-BACKWARD-COMPATIBLE)
+# Purpose: Demonstrate how to represent an iterator step in v2 where executable actions use `tool`
+# Flow: start -> city_loop (iterator/http) -> end
+
+kind: Playbook
+
+# Mandatory metadata for catalog linkage and identification
+metadata:
+  path: docs/refactor/control-loop/examples/01-iterator-playbook-v2.yaml
+  name: iterator-http-example
+
+# Static variables available to the execution context; can be overridden by transitions/payloads
+workload:
+  message: "HTTP iterator demo"
+  base_url: https://api.open-meteo.com/v1
+  cities:
+    - name: London
+      lat: 51.51
+      lon: -0.13
+    - name: Paris
+      lat: 48.85
+      lon: 2.35
+
+workflow:
+  - name: start
+    type: start
+    next:
+      - step: city_loop
+
+  # Iterator is a control-flow step: keep `type: iterator`.
+  # The executable action within the iterator uses `tool: <plugin>`.
+  - name: city_loop
+    type: iterator
+    collection: "{{ workload.cities }}"  # list of items to iterate over
+    element: city                         # item variable name available within the task/templates
+    mode: async                           # async | sequential
+    task:
+      name: fetch_weather
+      tool: http                          # executable action uses `tool`
+      endpoint: "{{ workload.base_url }}/forecast"
+      method: GET
+      headers:
+        User-Agent: NoETL Iterator Demo/1.0
+      data:
+        latitude: "{{ city.lat }}"
+        longitude: "{{ city.lon }}"
+        hourly: temperature_2m
+        forecast_days: 1
+      assert:
+        expects: [latitude, longitude, hourly, forecast_days]
+        returns: [data.url, data.elapsed, data.payload]
+      save:
+        - tool: event_log
+          data:
+            city: "{{ city.name }}"
+            url: "{{ this.data.url if this is defined and this.data is defined else '' }}"
+            elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
+    next:
+      - end
+
+  - name: end
+    type: end
+    save:
+      - tool: event_log
+        data:
+          summary: "Fetched weather for {{ workload.cities | map(attribute='name') | list | join(', ') }}"

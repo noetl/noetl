@@ -1,0 +1,76 @@
+# Simple v2 Playbook Example (NON-BACKWARD-COMPATIBLE)
+# Purpose: Minimal example to exercise the refactored control loop
+# Flow: start -> evaluate_temp (workbook/python) -> end (result mapping)
+
+kind: Playbook
+
+# Mandatory metadata for catalog linkage and identification
+metadata:
+  path: docs/refactor/control-loop/examples/00-simple-playbook-v2.yaml
+  name: simple-temperature-check
+
+# Static variables available to the execution context; can be overridden by payload
+# (e.g., transition payloads, API payloads). See control-loop docs for precedence.
+workload:
+  city: "Prague"
+  unit: "C"
+
+# Workbook defines reusable, named actions. Steps can reference them by name
+# using type: workbook and task: <name>.
+workbook:
+  - name: evaluate_temp
+    tool: python
+    # Minimal inline code. The worker expects a dict with required envelope fields.
+    code: |
+      def main(city: str = "Unknown", unit: str = "C", **kwargs):
+          # Pretend to evaluate temperature; keep it deterministic for tests
+          temp_c = 21
+          result = {
+              "status": "success",
+              "data": {
+                  "city": city,
+                  "temp_c": temp_c,
+                  "feels_like_c": 20,
+                  "unit": unit
+              },
+              "meta": {"source": "test"}
+          }
+          return result
+
+workflow:
+  - name: start
+    type: start
+    next:
+      - step: evaluate_temp
+        # Transition data overlays the step's own data and can override workload
+        data:
+          city: "{{ workload.city }}"
+
+  - name: evaluate_temp
+    type: workbook
+    task: evaluate_temp  # reference the workbook action by name
+    # Data for the task; values can be templated from workload/transition
+    data:
+      city: "{{ city or workload.city }}"
+      unit: "{{ unit or workload.unit }}"
+
+    # Demonstrate save semantics (optional for this example). See docs/save_result.md
+    save:
+      - when: "{{ evaluate_temp.status == 'success' }}"
+        tool: event_log
+        data:
+          city: "{{ evaluate_temp.data.city }}"
+          temp_c: "{{ evaluate_temp.data.temp_c }}"
+    next:
+      - end
+
+  - name: end
+    type: end
+    # Produce the final playbook result deterministically
+    save:
+      - when: "{{ evaluate_temp.status == 'success' }}"
+        tool: event_log
+        data:
+          summary: "Temperature in {{ evaluate_temp.data.city }} is {{ evaluate_temp.data.temp_c }}C"
+          city: "{{ evaluate_temp.data.city }}"
+          temp_c: "{{ evaluate_temp.data.temp_c }}"

@@ -27,6 +27,8 @@ Key components:
 
 ## 2) Server: event persistence and trigger
 
+v2 schema requirement: Playbooks MUST define metadata.path and metadata.name. Event ingestion and broker rely on metadata/context to resolve catalog_id; lacking metadata can cause event rejection unless resolved from earliest execution event (see service.py catalog_id resolution and fallback). See docs/refactor/control-loop/examples/00-simple-playbook-v2.yaml for reference.
+
 When anyone (client or worker) submits an event, EventService writes it to the `noetl.event` table, enforces catalog linkage, and triggers broker processing.
 
 - Event ingestion: noetl/api/routers/event/service.py
@@ -197,6 +199,23 @@ The following issues are observed or likely to cause inconsistencies in the enqu
 4. EventService.emit persists `action_completed` and triggers broker, which emits `step_completed` and enqueues next step.
 5. For iterator steps, `_handle_loop_step` emits `loop_iteration` per item and enqueues `<execution_id>:loop:<idx>` tasks. After all complete, queue.complete and broker completion handlers emit aggregated `action_completed` + `result` + `loop_completed`, then enqueue downstream transitions.
 
+
+### 8.1) Iterator representation (v2 schema)
+
+- Iterator is a control-flow step: keep `type: iterator` at the step level.
+- The executable action within an iterator uses `tool: <plugin>` inside the nested `task` block (e.g., `tool: http`, `tool: python`).
+- Minimal schema for an iterator step:
+  - type: iterator
+  - collection: <list or templated list>
+  - element: <item variable name>
+  - mode: async | sequential (optional; default async)
+  - task: { name?, tool, data/input/payload/with, assert?, save? }
+- See examples:
+  - Test fixture (legacy-style task.type): tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml (step: http_loop)
+  - v2 example (task.tool): docs/refactor/control-loop/examples/01-iterator-playbook-v2.yaml
+- Event flow for iterator:
+  - Broker emits one `step_started` for the iterator step, then `loop_iteration` per item and enqueues per-item jobs with context including `_iterator` metadata.
+  - Worker emits `action_started`/`action_completed` per item; server aggregates and emits final `action_completed` + `result` + `loop_completed` when all items finish.
 
 ## 9) References (quick index)
 
@@ -378,6 +397,6 @@ Below is a curated set of actionable issues you can create in GitHub. Each task 
 - Labels: docs | Effort: S | Priority: Low
 
 Notes on rollout and risk:
-- Most changes are backward-compatible; DB constraint additions require short migrations and may reject rare duplicates—schedule during a maintenance window.
+- This v2 refactor is not backward compatible. Expect breaking changes; schedule migrations during a maintenance window and coordinate releases.
 - Ensure workers and server are upgraded together for lineage and payload precedence alignment.
 
