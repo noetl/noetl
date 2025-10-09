@@ -31,7 +31,7 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
     - Updates the existing queue row's action for node_id f"{execution_id}:{step_name}", or inserts if missing
     - Adds _meta.parent_event_id to the job context for lineage
     """
-    from noetl.core.common import get_async_db_connection
+    from noetl.core.common import get_async_db_connection, normalize_execution_id_for_db
     from noetl.api.routers.broker.endpoint import encode_task_for_queue
     from noetl.api.routers.catalog import get_catalog_service
     import yaml as _yaml
@@ -39,6 +39,9 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
+                # Convert execution_id to int for database operations
+                execution_id_int = normalize_execution_id_for_db(execution_id)
+                
                 # Load playbook path/version
                 await cur.execute(
                     """
@@ -46,7 +49,7 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
                     ORDER BY created_at ASC LIMIT 1
                     """,
-                    (execution_id,)
+                    (execution_id_int,)
                 )
                 row = await cur.fetchone()
                 if not row:
@@ -149,7 +152,7 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                     WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased')
                     ORDER BY id DESC LIMIT 1
                     """,
-                    (execution_id, node_id)
+                    (execution_id_int, node_id)
                 )
                 qrow = await cur.fetchone()
                 if qrow and (isinstance(qrow, tuple) or isinstance(qrow, list)):
@@ -161,7 +164,7 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                 else:
                     # Insert a new queue row if missing
                     # Get catalog_id from execution's first event
-                    await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (execution_id,))
+                    await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (execution_id_int,))
                     catalog_row = await cur.fetchone()
                     if not catalog_row:
                         raise ValueError(f"No catalog_id found for execution {execution_id}")
@@ -173,7 +176,7 @@ async def resolve_workbook_and_update_queue(execution_id: str, step_name: str, t
                         VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
                         RETURNING queue_id
                         """,
-                        (execution_id, catalog_id, node_id, json.dumps(encoded), json.dumps(job_ctx), 5, 3)
+                        (execution_id_int, catalog_id, node_id, json.dumps(encoded), json.dumps(job_ctx), 5, 3)
                     )
                 try:
                     await conn.commit()

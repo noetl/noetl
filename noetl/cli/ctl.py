@@ -42,7 +42,7 @@ def start_worker_service(
     core_config._settings = None
     core_config._ENV_LOADED = False
     
-    get_settings(reload=True)
+    # get_settings(reload=True)
 
     if not os.environ.get("NOETL_WORKER_POOL_RUNTIME"):
         os.environ["NOETL_WORKER_POOL_RUNTIME"] = "cpu"
@@ -314,27 +314,18 @@ def start_server(
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     access_log_env = os.environ.get("NOETL_ACCESS_LOG", "false").strip().lower()
     access_log = access_log_env in ("1","true","yes","y","on")
-    if workers and workers > 1:
-        uvicorn.run(
-            "noetl.server:create_app",
-            factory=True,
-            host=host,
-            port=port,
-            workers=workers,
-            reload=reload,
-            log_level=log_level,
-            access_log=access_log,
-        )
-    else:
-        uvicorn.run(
-            "noetl.server:create_app",
-            factory=True,
-            host=host,
-            port=port,
-            reload=reload,
-            log_level=log_level,
-            access_log=access_log,
-        )
+    uvicorn.run(
+        "noetl.server:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        workers=workers if workers and workers > 1 else None,
+        reload=reload,
+        log_level=log_level,
+        access_log=access_log,
+        lifespan="on",
+        timeout_graceful_shutdown=10
+    )
 
 
 def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
@@ -348,7 +339,9 @@ def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_lev
             "--bind", f"{host}:{port}",
             "--workers", str(workers),
             "--worker-class", "uvicorn.workers.UvicornWorker",
-            "--log-level", log_level
+            "--log-level", log_level,
+            "--graceful-timeout", "5",
+            "--timeout", "10",
         ]
 
         if reload:

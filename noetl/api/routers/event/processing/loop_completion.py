@@ -600,13 +600,16 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
     """Enqueue an aggregation job for the completed loop."""
     
     try:
+        from noetl.core.common import normalize_execution_id_for_db
+        parent_execution_id_int = normalize_execution_id_for_db(parent_execution_id)
+        
         agg_node_id = f"{parent_execution_id}:{loop_step_name}:aggregate"
         await cur.execute(
             """
             SELECT COUNT(*) FROM noetl.queue
             WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased')
             """,
-            (parent_execution_id, agg_node_id)
+            (parent_execution_id_int, agg_node_id)
         )
         _agg_cntrow = await cur.fetchone()
         _agg_already = bool(_agg_cntrow and int(_agg_cntrow[0]) > 0)
@@ -652,7 +655,7 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
             }
         }
         # Get catalog_id from execution's first event
-        await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id,))
+        await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id_int,))
         catalog_row = await cur.fetchone()
         if not catalog_row:
             raise ValueError(f"No catalog_id found for execution {parent_execution_id}")
@@ -665,7 +668,7 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
             RETURNING queue_id
             """,
             (
-                parent_execution_id,
+                parent_execution_id_int,
                 catalog_id,
                 agg_node_id,
                 json.dumps(agg_encoded),
@@ -759,13 +762,16 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
     """Enqueue a specific next step in the workflow."""
     
     try:
+        from noetl.core.common import normalize_execution_id_for_db
+        parent_execution_id_int = normalize_execution_id_for_db(parent_execution_id)
+        
         # Avoid duplicate enqueues: check if a job for this next step is already pending
         await cur.execute(
             """
             SELECT COUNT(*) FROM noetl.queue
             WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased')
             """,
-            (parent_execution_id, f"{parent_execution_id}:{next_step_name}")
+            (parent_execution_id_int, f"{parent_execution_id}:{next_step_name}")
         )
         _cntrow = await cur.fetchone()
         _already = bool(_cntrow and int(_cntrow[0]) > 0)
@@ -780,7 +786,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                       AND node_name = %s
                       AND event_type IN ('action_started','action_completed')
                     """,
-                    (parent_execution_id, next_step_name)
+                    (parent_execution_id_int, next_step_name)
                 )
                 _evtrow = await cur.fetchone()
                 _already = bool(_evtrow and int(_evtrow[0]) > 0)
@@ -974,7 +980,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 pass
             
             # Get catalog_id from parent execution's first event
-            await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id,))
+            await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id_int,))
             catalog_row = await cur.fetchone()
             if not catalog_row:
                 raise ValueError(f"No catalog_id found for execution {parent_execution_id}")
@@ -987,7 +993,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 RETURNING queue_id
                 """,
                 (
-                    parent_execution_id,
+                    parent_execution_id_int,
                     catalog_id,
                     f"{parent_execution_id}:{next_step_name}",
                     json.dumps(encoded),

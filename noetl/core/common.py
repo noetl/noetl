@@ -88,6 +88,43 @@ def snowflake_id_to_int(snowflake_id: Union[int, str, None]) -> int:
     return 0
 
 
+def normalize_execution_id_for_db(execution_id: Union[int, str, None]) -> int:
+    """
+    Normalize execution_id for consistent database operations.
+    
+    This is a centralized utility to ensure all execution_id values are converted
+    from Snowflake ID strings to integers before being used in SQL parameters.
+    This prevents catalog_id lookup failures and queue insert issues.
+    
+    Args:
+        execution_id: String, integer, or None Snowflake ID
+        
+    Returns:
+        Integer representation of the execution_id, or 0 for invalid/None values
+        
+    Raises:
+        ValueError: If execution_id is provided but cannot be converted to a valid integer
+    """
+    if execution_id is None:
+        return 0
+        
+    if isinstance(execution_id, int):
+        return execution_id
+        
+    if isinstance(execution_id, str):
+        try:
+            converted = int(execution_id)
+            if converted == 0 and execution_id not in ('0', ''):
+                # Only raise error if non-zero string couldn't be converted properly
+                # This allows '0' and '' to pass through as 0
+                return converted
+            return converted
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid execution_id: {execution_id}")
+    
+    raise ValueError(f"Unsupported execution_id type: {type(execution_id)}")
+
+
 def convert_snowflake_ids_for_api(data: Any) -> Any:
     """
     Recursively convert snowflake ID fields to strings for API responses.

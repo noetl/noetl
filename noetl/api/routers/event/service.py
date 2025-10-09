@@ -372,6 +372,21 @@ class EventService:
                                                   catalog_id = catalog_row[0]
                                                   break
                           
+                          # catalog_id is REQUIRED - fallback to earliest execution event if not found
+                          if catalog_id is None:
+                              logger.warning(f"catalog_id not found in metadata/context for event {event_type} in execution {execution_id}, attempting fallback to earliest execution event")
+                              try:
+                                  await cursor.execute(
+                                      "SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1",
+                                      (execution_id,)
+                                  )
+                                  catalog_row = await cursor.fetchone()
+                                  if catalog_row:
+                                      catalog_id = catalog_row[0]
+                                      logger.info(f"catalog_id resolved from fallback for execution {execution_id}: {catalog_id}")
+                              except Exception as fallback_e:
+                                  logger.debug(f"Fallback catalog_id resolution failed: {fallback_e}")
+                          
                           # catalog_id is REQUIRED - fail if not found
                           if catalog_id is None:
                               error_msg = f"catalog_id is required but could not be resolved for event {event_type} in execution {execution_id}. Available metadata: {metadata}, context keys: {list(context_dict.keys()) if context_dict else 'None'}"
@@ -739,12 +754,12 @@ class EventService:
                         import asyncio
                         from .processing import evaluate_broker_for_execution
                         if asyncio.get_event_loop().is_running():
-                            asyncio.create_task(evaluate_broker_for_execution(execution_id))
+                            asyncio.create_task(evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id)))
                         else:
-                            await evaluate_broker_for_execution(execution_id)
+                            await evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id))
                     except RuntimeError:
                         from .processing import evaluate_broker_for_execution
-                        await evaluate_broker_for_execution(execution_id)
+                        await evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id))
             except Exception:
                 logger.debug("Failed to schedule broker evaluation from emit", exc_info=True)
 
