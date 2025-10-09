@@ -432,6 +432,14 @@ class QueueWorker:
             context = raw_context
         execution_id = job.get("execution_id")
         catalog_id = job.get("catalog_id")
+        
+        # Fallback: get catalog_id from context if not present in job
+        if not catalog_id:
+            try:
+                catalog_id = context.get("catalog_id") if isinstance(context, dict) else None
+            except Exception:
+                pass
+        
         node_id = job.get("node_id") or f"job_{job.get('id')}"
 
         # If server returned a rendered task, use it; otherwise parse raw.
@@ -556,6 +564,10 @@ class QueueWorker:
 
             # Determine node_type for events (iterator vs task)
             node_type_val = "iterator" if act_type == "iterator" else "task"
+
+            # Warn if catalog_id is missing but continue execution
+            if not catalog_id:
+                logger.warning(f"WORKER: catalog_id is missing for job {job.get('id')} execution {execution_id}. Events may fail to be recorded.")
 
             start_event = {
                 "execution_id": execution_id,

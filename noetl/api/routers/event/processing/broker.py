@@ -417,10 +417,14 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         raise ValueError(f"No catalog_id found for execution {execution_id}")
                                     catalog_id = catalog_row[0]
                                     
+                                    # Add catalog_id to context for worker
+                                    ctx['catalog_id'] = catalog_id
+                                    
                                     await cur.execute(
                                         """
                                         INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
                                         VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                                        ON CONFLICT (execution_id, node_id) DO NOTHING
                                         RETURNING queue_id
                                         """,
                                         (
@@ -535,6 +539,19 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
             except Exception:
                 pass
 
+            # Get catalog_id from execution's first event and add to context
+            try:
+                await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
+                catalog_row = await cur.fetchone()
+                if catalog_row:
+                    catalog_id = catalog_row[0]
+                    ctx['catalog_id'] = catalog_id
+                else:
+                    raise ValueError(f"No catalog_id found for execution {execution_id}")
+            except Exception as e:
+                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Failed to get catalog_id for loop item {idx}: {e}")
+                continue
+
             # Priority: sequential mode uses index-based priority, async mode uses same priority
             priority = 5 - idx if loop_mode == 'sequential' else 5
 
@@ -562,17 +579,16 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                 logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit loop_iteration", exc_info=True)
 
             try:
-                # Get catalog_id from execution's first event
-                await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
-                catalog_row = await cur.fetchone()
-                if not catalog_row:
-                    raise ValueError(f"No catalog_id found for execution {execution_id}")
-                catalog_id = catalog_row[0]
+                # catalog_id is already in context, use it for queue insert
+                catalog_id = ctx.get('catalog_id')
+                if not catalog_id:
+                    raise ValueError(f"No catalog_id available for execution {execution_id}")
                 
                 await cur.execute(
                     """
                     INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
                     VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                    ON CONFLICT (execution_id, node_id) DO NOTHING
                     RETURNING queue_id
                     """,
                     (

@@ -77,6 +77,16 @@ DO $$ BEGIN
     ALTER TABLE noetl.event ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
 EXCEPTION WHEN others THEN NULL; END $$;
 
+-- Add indexes for common event queries
+CREATE INDEX IF NOT EXISTS idx_event_execution_id ON noetl.event (execution_id);
+CREATE INDEX IF NOT EXISTS idx_event_catalog_id ON noetl.event (catalog_id);
+CREATE INDEX IF NOT EXISTS idx_event_type ON noetl.event (event_type);
+CREATE INDEX IF NOT EXISTS idx_event_status ON noetl.event (status);
+CREATE INDEX IF NOT EXISTS idx_event_created_at ON noetl.event (created_at);
+CREATE INDEX IF NOT EXISTS idx_event_node_name ON noetl.event (node_name);
+CREATE INDEX IF NOT EXISTS idx_event_parent_event_id ON noetl.event (parent_event_id);
+CREATE INDEX IF NOT EXISTS idx_event_parent_execution_id ON noetl.event (parent_execution_id);
+
 -- Workflow/workbook/transition
 CREATE TABLE IF NOT EXISTS noetl.workflow (
     execution_id BIGINT,

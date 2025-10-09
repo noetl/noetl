@@ -11,6 +11,12 @@ logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 router = APIRouter(tags=["Queue"])
 
+def normalize_execution_id(execution_id: str | int) -> int:
+    """Normalize execution_id to integer for consistent database usage."""
+    if isinstance(execution_id, int):
+        return execution_id
+    return snowflake_id_to_int(execution_id)
+
 async def get_catalog_id_from_execution(execution_id: int) -> int:
     """Get catalog_id from the first event of an execution."""
     async with get_async_db_connection() as conn:
@@ -47,7 +53,7 @@ async def heartbeat_job(queue_id: int, request: Request):riority?, max_attempts?
             raise HTTPException(status_code=400, detail="execution_id, node_id and action are required")
 
         # Convert execution_id from string to int for database storage
-        execution_id_int = snowflake_id_to_int(execution_id)
+        execution_id_int = normalize_execution_id(execution_id)
         
         # Get catalog_id from the execution's first event
         catalog_id = await get_catalog_id_from_execution(execution_id_int)

@@ -18,17 +18,18 @@ class BrokerService:
     def __init__(self) -> None:
         pass
 
-    async def analyze_execution(self, execution_id: str | int) -> None:
+    async def analyze_execution(self, execution_id: str | int, trigger_event_id: str | None = None) -> None:
         try:
             # Import from the canonical server API package to avoid aliasing issues
             from noetl.api.routers.event import evaluate_broker_for_execution
-            await evaluate_broker_for_execution(str(execution_id))
+            await evaluate_broker_for_execution(str(execution_id), trigger_event_id=trigger_event_id)
         except Exception:
             logger.debug("BROKER_SERVICE: analyze_execution failed", exc_info=True)
 
     def on_event_persisted(self, event_data: Dict[str, Any]) -> None:
         try:
             execution_id = event_data.get("execution_id")
+            event_id = event_data.get("event_id")
             if not execution_id:
                 return
             # If we received a loop_completed marker, enqueue a result aggregation job for this step
@@ -112,12 +113,12 @@ class BrokerService:
             try:
                 loop = _asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(self.analyze_execution(str(execution_id)))
+                    loop.create_task(self.analyze_execution(str(execution_id), trigger_event_id=str(event_id) if event_id else None))
                 else:
-                    loop.run_until_complete(self.analyze_execution(str(execution_id)))
+                    loop.run_until_complete(self.analyze_execution(str(execution_id), trigger_event_id=str(event_id) if event_id else None))
             except RuntimeError:
                 try:
-                    _asyncio.run(self.analyze_execution(str(execution_id)))
+                    _asyncio.run(self.analyze_execution(str(execution_id), trigger_event_id=str(event_id) if event_id else None))
                 except Exception:
                     logger.debug("BROKER_SERVICE: asyncio.run failed", exc_info=True)
         except Exception:
