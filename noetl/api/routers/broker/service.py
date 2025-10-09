@@ -39,10 +39,12 @@ class BrokerService:
                     step_name = event_data.get('node_name') or event_data.get('step_name')
                     ctx = event_data.get('context') or event_data.get('input_context') or {}
                     if step_name:
-                        from noetl.core.common import get_pgdb_connection
+                        from noetl.core.common import get_pgdb_connection, snowflake_id_to_int, normalize_execution_id_for_db
                         import json as _json
                         with get_pgdb_connection() as _conn:
                             with _conn.cursor() as _cur:
+                                # Convert execution_id to int for database operations
+                                execution_id_int = normalize_execution_id_for_db(execution_id)
                                 # Avoid duplicates: check if a queued/leased/done result_aggregation job exists for this step
                                 _cur.execute(
                                     """
@@ -52,7 +54,7 @@ class BrokerService:
                                       AND (context::jsonb ->> 'step_name') = %s
                                       AND status IN ('queued','leased','done')
                                     """,
-                                    (execution_id, step_name)
+                                    (execution_id_int, step_name)
                                 )
                                 _row = _cur.fetchone()
                                 # Also ensure no final aggregated action_completed exists already
@@ -65,7 +67,7 @@ class BrokerService:
                                       AND context::text LIKE '%%loop_completed%%'
                                       AND context::text LIKE '%%true%%'
                                     """,
-                                    (execution_id, step_name)
+                                    (execution_id_int, step_name)
                                 )
                                 _logrow = _cur.fetchone()
                                 if (not _row or int(_row[0]) == 0) and (not _logrow or int(_logrow[0]) == 0):
@@ -73,7 +75,7 @@ class BrokerService:
                                     ic = {"step_name": step_name, "loop_step_name": step_name, "total_iterations": (ctx.get('total_iterations') if isinstance(ctx, dict) else None)}
                                     
                                     # Get catalog_id from execution's first event
-                                    _cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (execution_id,))
+                                    _cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (execution_id_int,))
                                     catalog_row = _cur.fetchone()
                                     if not catalog_row:
                                         raise ValueError(f"No catalog_id found for execution {execution_id}")
@@ -86,7 +88,7 @@ class BrokerService:
                                         ON CONFLICT (execution_id, node_id) DO NOTHING
                                         RETURNING queue_id
                                         """,
-                                        (execution_id, catalog_id, f"{execution_id}-result-agg-{step_name}", _json.dumps(action), _json.dumps(ic), 5, 3)
+                                        (execution_id_int, catalog_id, f"{execution_id}-result-agg-{step_name}", _json.dumps(action), _json.dumps(ic), 5, 3)
                                     )
                                     _conn.commit()
                                     logger.info(f"BROKER_SERVICE: Enqueued result_aggregation job for {execution_id}/{step_name}")
@@ -94,7 +96,8 @@ class BrokerService:
                 logger.debug("BROKER_SERVICE: failed to enqueue result aggregation job", exc_info=True)
             # If execution already completed, skip further analysis
             try:
-                from noetl.core.common import get_pgdb_connection as _get_conn
+                from noetl.core.common import get_pgdb_connection as _get_conn, normalize_execution_id_for_db as _norm_exec_id
+                execution_id_int = _norm_exec_id(execution_id)
                 with _get_conn() as __conn:
                     with __conn.cursor() as __cur:
                         __cur.execute(
@@ -103,7 +106,7 @@ class BrokerService:
                             WHERE execution_id = %s AND event_type = 'execution_completed'
                             LIMIT 1
                             """,
-                            (execution_id,)
+                            (execution_id_int,)
                         )
                         if __cur.fetchone():
                             return
