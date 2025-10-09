@@ -222,6 +222,7 @@ def deregister_worker_pool_from_env() -> None:
                     logger.info(f"Found worker name from file: {file_name}")
                     name = file_name
                 except Exception:
+                    logger.warning("Failed to read worker name from file")
                     pass
 
         if not name and os.path.exists('/tmp/noetl_worker_pool_name'):
