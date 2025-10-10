@@ -1,0 +1,39 @@
+# This defines which mode is used to run NoETL
+# Possible values: server, worker
+mode: worker
+replicaCount: 1
+image:
+  repository: local/noetl
+  tag: ""
+  pullPolicy: IfNotPresent
+container:
+  command: ["noetl"]
+  args: ["worker", "start"]
+nameOverride: "noetl"
+serviceAccount:
+  create: false
+service:
+  enabled: false
+additionalNodePort:
+  enabled: false
+ingress:
+  enabled: false
+requests:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+livenessProbe: {}
+readinessProbe: {}
+autoscaling:
+  enabled: false
+secrets:
+  postgresPassword: ""
+  noetlPassword: ""
+configMapData:
+  NOETL_RUN_MODE: "worker"
+  NOETL_SERVER_URL: "http://server-noetl.noetl.svc.cluster.local:8082"
+  NOETL_WORKER_POOL_RUNTIME: "cpu"
+  NOETL_WORKER_POOL_NAME: "worker-cpu-01-k8s"

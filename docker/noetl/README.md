@@ -29,5 +29,7 @@ Official guide is [here](https://docs.github.com/en/packages/working-with-a-gith
 
 ## Build and push multi-platform image
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 --progress plain --push --tag ghcr.io/noetl/noetl:v1.0.0 --file docker/noetl/dev/Dockerfile .
+docker buildx build --push --platform linux/amd64,linux/arm64 --no-cache \
+--progress plain --tag ghcr.io/noetl/noetl:v1.0.0 \
+--file docker/noetl/dev/Dockerfile .
 ```

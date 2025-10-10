@@ -139,19 +139,28 @@ tasks:
         sh: cat .noetl_last_build_tag.txt
     cmds:
       - kubectl config use-context kind-noetl
-      - yq -i ".image.tag = \"$IMAGE_TAG\"" ci/noetl/kind-values.yaml
+      - yq -i ".image.tag = \"$IMAGE_TAG\"" ci/noetl/values-server.yaml
+      - yq -i ".image.tag = \"$IMAGE_TAG\"" ci/noetl/values-worker.yaml
       - |
-        helm upgrade --install noetl oci://ghcr.io/noetl/noetl-helm:0.1.0 \
-          --namespace noetl --create-namespace --values ci/noetl/kind-values.yaml \
-          --set secrets.postgresPassword="demo"  --set secrets.noetlPassword="noetl"
-      - yq -i ".image.tag = \"\"" ci/noetl/kind-values.yaml
+        helm upgrade --install server oci://ghcr.io/noetl/noetl-helm:0.1.1 \
+          --namespace noetl --create-namespace --values ci/noetl/values-server.yaml \
+          --set secrets.postgresPassword="demo"  --set secrets.noetlPassword="noetl" \
+          --wait
+      - |
+        helm upgrade --install worker oci://ghcr.io/noetl/noetl-helm:0.1.1 \
+          --namespace noetl --values ci/noetl/values-worker.yaml \
+          --set secrets.postgresPassword="demo"  --set secrets.noetlPassword="noetl" \
+          --wait
+      - yq -i ".image.tag = \"\"" ci/noetl/values-server.yaml
+      - yq -i ".image.tag = \"\"" ci/noetl/values-worker.yaml
 
   remove-noetl:
     desc: Remove noetl from the noetl kind cluster
     aliases: [rn]
     cmds:
       - kubectl config use-context kind-noetl
-      - helm uninstall noetl -n noetl --wait
+      - helm uninstall worker -n noetl --wait
+      - helm uninstall server -n noetl --wait
 
   clear-docker-images:
     desc: Clear all {{ .REGISTRY }}/{{ .IMAGE_NAME }} docker images
