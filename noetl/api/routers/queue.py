@@ -3,13 +3,32 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
-from noetl.core.common import get_async_db_connection, snowflake_id_to_int, convert_snowflake_ids_for_api
+from noetl.core.common import get_async_db_connection, snowflake_id_to_int, convert_snowflake_ids_for_api, normalize_execution_id_for_db
 from noetl.core.logger import setup_logger
 
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 router = APIRouter(tags=["Queue"])
+
+def normalize_execution_id(execution_id: str | int) -> int:
+    """
+    Normalize execution_id to integer for consistent database usage.
+    
+    This helper ensures all execution_id values are converted from Snowflake ID strings
+    to integers before being used in SQL parameters, preventing catalog_id lookup failures
+    and queue insert issues.
+    
+    Args:
+        execution_id: String or integer Snowflake ID
+        
+    Returns:
+        Integer representation of the execution_id
+        
+    Raises:
+        ValueError: If execution_id cannot be converted to a valid integer
+    """
+    return normalize_execution_id_for_db(execution_id)
 
 async def get_catalog_id_from_execution(execution_id: int) -> int:
     """Get catalog_id from the first event of an execution."""
@@ -47,7 +66,7 @@ async def heartbeat_job(queue_id: int, request: Request):riority?, max_attempts?
             raise HTTPException(status_code=400, detail="execution_id, node_id and action are required")
 
         # Convert execution_id from string to int for database storage
-        execution_id_int = snowflake_id_to_int(execution_id)
+        execution_id_int = normalize_execution_id(execution_id)
         
         # Get catalog_id from the execution's first event
         catalog_id = await get_catalog_id_from_execution(execution_id_int)
