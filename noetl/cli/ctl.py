@@ -8,7 +8,7 @@ import requests
 import signal
 import time
 import asyncio
-from noetl.worker import ScalableQueueWorkerPool
+from noetl.worker import ScalableQueueWorkerPool, on_worker_terminate
 from noetl.core.common import DateTimeEncoder
 from noetl.core.logger import setup_logger
 from noetl.core.dsl.schema import DatabaseSchema
@@ -66,6 +66,7 @@ def start_worker_service(
 
         def _signal_handler(sig: int) -> None:
             logger.info(f"Worker pool received signal {sig}; shutting down")
+            on_worker_terminate(sig)
             asyncio.create_task(pool.stop())
 
         for sig in (signal.SIGTERM, signal.SIGINT):

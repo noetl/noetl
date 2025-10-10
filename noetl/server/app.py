@@ -343,7 +343,11 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 except Exception as outer_e:
                     logger.error(f"Runtime sweeper loop error: {outer_e}")
                     logger.exception("Sweeper loop exception details:")
-                await asyncio.sleep(sweep_interval)
+                try:
+                    await asyncio.sleep(sweep_interval)
+                except asyncio.CancelledError:
+                    logger.info("Runtime sweeper task cancelled; exiting")
+                    break
 
         sweeper_task: Optional[asyncio.Task] = None
         try:
