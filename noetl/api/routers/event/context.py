@@ -91,7 +91,7 @@ async def render_context(request: Request):
                     """
                     SELECT context, meta FROM event
                     WHERE execution_id = %s
-                    ORDER BY timestamp ASC
+                    ORDER BY created_at ASC
                     LIMIT 1
                     """,
                     (execution_id,)
@@ -108,9 +108,9 @@ async def render_context(request: Request):
                         metadata = row.get("meta") or {}
                     playbook_path = (context.get('path') or
                                      (metadata.get('playbook_path') if isinstance(metadata, dict) else None) or
-                                     (metadata.get('resource_path') if isinstance(metadata, dict) else None))
+                                     (metadata.get('path') if isinstance(metadata, dict) else None))
                     playbook_version = (context.get('version') or
-                                        (metadata.get('resource_version') if isinstance(metadata, dict) else None))
+                                        (metadata.get('version') if isinstance(metadata, dict) else None))
 
         if playbook_path:
             try:

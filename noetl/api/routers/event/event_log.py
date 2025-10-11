@@ -15,7 +15,7 @@ class EventLog:
                     """
                     SELECT status FROM noetl.event
                     WHERE execution_id = %s
-                    ORDER BY timestamp
+                    ORDER BY created_at
                     """,
                     (execution_id,),
                 )
@@ -29,7 +29,7 @@ class EventLog:
                     """
                     SELECT context FROM noetl.event
                     WHERE execution_id = %s
-                    ORDER BY timestamp ASC
+                    ORDER BY created_at ASC
                     LIMIT 1
                     """,
                     (execution_id,),
@@ -44,7 +44,7 @@ class EventLog:
                     """
                     SELECT node_name, result FROM noetl.event
                     WHERE execution_id = %s AND result IS NOT NULL AND result != '{}' AND result != 'null'
-                    ORDER BY timestamp ASC
+                    ORDER BY created_at ASC
                     """,
                     (execution_id,),
                 )
@@ -97,7 +97,7 @@ class EventLog:
                       AND event_type = 'action_completed'
                       AND node_name = %s
                       AND result IS NOT NULL AND result != '{}' AND result != 'null'
-                    ORDER BY timestamp ASC
+                    ORDER BY created_at ASC
                     """,
                     (execution_id, step_name),
                 )
@@ -156,7 +156,7 @@ class EventLog:
                     SELECT result FROM noetl.event
                     WHERE execution_id = %s
                       AND result IS NOT NULL AND result != '{}' AND result != 'null'
-                    ORDER BY timestamp DESC
+                    ORDER BY created_at DESC
                     LIMIT 1
                     """,
                     (execution_id,),
@@ -170,6 +170,7 @@ class EventLog:
         event_id: Any,
         parent_event_id: Any,
         parent_execution_id: Any,
+        catalog_id: Any,
         event_type: Any,
         node_id: Any,
         node_name: Any,
@@ -181,9 +182,6 @@ class EventLog:
         metadata_json: Any,
         error_text: Any,
         trace_component_json: Any,
-        loop_id: Any,
-        loop_name: Any,
-        iterator_json: Any,
         current_index: Any,
         current_item_json: Any,
         stack_trace: Any = None,
@@ -195,15 +193,13 @@ class EventLog:
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
-                        execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type,
+                        execution_id, event_id, parent_event_id, parent_execution_id, catalog_id, created_at, event_type,
                         node_id, node_name, node_type, status, duration, context, result,
-                        meta, error, trace_component, loop_id, loop_name, iterator,
-                        current_index, current_item, stack_trace
+                        meta, error, trace_component, current_index, current_item, stack_trace
                     ) VALUES (
-                        %s, %s, %s, %s, CURRENT_TIMESTAMP, %s,
+                        %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s,
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s::jsonb,
-                        %s, %s::jsonb, %s
+                        %s::jsonb, %s, %s, %s, %s::jsonb, %s
                     )
                     ON CONFLICT (execution_id, event_id) DO NOTHING
                     """,
@@ -212,6 +208,7 @@ class EventLog:
                         event_id,
                         parent_event_id,
                         parent_execution_id,
+                        catalog_id,
                         event_type,
                         node_id,
                         node_name,
@@ -223,9 +220,6 @@ class EventLog:
                         metadata_json,
                         error_text,
                         trace_component_json,
-                        loop_id,
-                        loop_name,
-                        iterator_json,
                         current_index, 
                         current_item_json,
                         stack_trace,

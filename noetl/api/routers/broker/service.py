@@ -18,17 +18,18 @@ class BrokerService:
     def __init__(self) -> None:
         pass
 
-    async def analyze_execution(self, execution_id: str | int) -> None:
+    async def analyze_execution(self, execution_id: str | int, trigger_event_id: str | None = None) -> None:
         try:
             # Import from the canonical server API package to avoid aliasing issues
             from noetl.api.routers.event import evaluate_broker_for_execution
-            await evaluate_broker_for_execution(str(execution_id))
+            await evaluate_broker_for_execution(str(execution_id), trigger_event_id=trigger_event_id)
         except Exception:
             logger.debug("BROKER_SERVICE: analyze_execution failed", exc_info=True)
 
     def on_event_persisted(self, event_data: Dict[str, Any]) -> None:
         try:
             execution_id = event_data.get("execution_id")
+            event_id = event_data.get("event_id")
             if not execution_id:
                 return
             # If we received a loop_completed marker, enqueue a result aggregation job for this step
@@ -38,10 +39,12 @@ class BrokerService:
                     step_name = event_data.get('node_name') or event_data.get('step_name')
                     ctx = event_data.get('context') or event_data.get('input_context') or {}
                     if step_name:
-                        from noetl.core.common import get_pgdb_connection
+                        from noetl.core.common import get_pgdb_connection, snowflake_id_to_int, normalize_execution_id_for_db
                         import json as _json
                         with get_pgdb_connection() as _conn:
                             with _conn.cursor() as _cur:
+                                # Convert execution_id to int for database operations
+                                execution_id_int = normalize_execution_id_for_db(execution_id)
                                 # Avoid duplicates: check if a queued/leased/done result_aggregation job exists for this step
                                 _cur.execute(
                                     """
@@ -51,7 +54,7 @@ class BrokerService:
                                       AND (context::jsonb ->> 'step_name') = %s
                                       AND status IN ('queued','leased','done')
                                     """,
-                                    (execution_id, step_name)
+                                    (execution_id_int, step_name)
                                 )
                                 _row = _cur.fetchone()
                                 # Also ensure no final aggregated action_completed exists already
@@ -64,20 +67,28 @@ class BrokerService:
                                       AND context::text LIKE '%%loop_completed%%'
                                       AND context::text LIKE '%%true%%'
                                     """,
-                                    (execution_id, step_name)
+                                    (execution_id_int, step_name)
                                 )
                                 _logrow = _cur.fetchone()
                                 if (not _row or int(_row[0]) == 0) and (not _logrow or int(_logrow[0]) == 0):
                                     action = {"type": "result_aggregation"}
                                     ic = {"step_name": step_name, "loop_step_name": step_name, "total_iterations": (ctx.get('total_iterations') if isinstance(ctx, dict) else None)}
+                                    
+                                    # Get catalog_id from execution's first event
+                                    _cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (execution_id_int,))
+                                    catalog_row = _cur.fetchone()
+                                    if not catalog_row:
+                                        raise ValueError(f"No catalog_id found for execution {execution_id}")
+                                    catalog_id = catalog_row[0]
+                                    
                                     _cur.execute(
                                         """
-                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
+                                        INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
                                         ON CONFLICT (execution_id, node_id) DO NOTHING
-                                        RETURNING id
+                                        RETURNING queue_id
                                         """,
-                                        (execution_id, f"{execution_id}-result-agg-{step_name}", _json.dumps(action), _json.dumps(ic), 5, 3)
+                                        (execution_id_int, catalog_id, f"{execution_id}-result-agg-{step_name}", _json.dumps(action), _json.dumps(ic), 5, 3)
                                     )
                                     _conn.commit()
                                     logger.info(f"BROKER_SERVICE: Enqueued result_aggregation job for {execution_id}/{step_name}")
@@ -85,7 +96,8 @@ class BrokerService:
                 logger.debug("BROKER_SERVICE: failed to enqueue result aggregation job", exc_info=True)
             # If execution already completed, skip further analysis
             try:
-                from noetl.core.common import get_pgdb_connection as _get_conn
+                from noetl.core.common import get_pgdb_connection as _get_conn, normalize_execution_id_for_db as _norm_exec_id
+                execution_id_int = _norm_exec_id(execution_id)
                 with _get_conn() as __conn:
                     with __conn.cursor() as __cur:
                         __cur.execute(
@@ -94,7 +106,7 @@ class BrokerService:
                             WHERE execution_id = %s AND event_type = 'execution_completed'
                             LIMIT 1
                             """,
-                            (execution_id,)
+                            (execution_id_int,)
                         )
                         if __cur.fetchone():
                             return
@@ -104,12 +116,12 @@ class BrokerService:
             try:
                 loop = _asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(self.analyze_execution(str(execution_id)))
+                    loop.create_task(self.analyze_execution(str(execution_id), trigger_event_id=str(event_id) if event_id else None))
                 else:
-                    loop.run_until_complete(self.analyze_execution(str(execution_id)))
+                    loop.run_until_complete(self.analyze_execution(str(execution_id), trigger_event_id=str(event_id) if event_id else None))
             except RuntimeError:
                 try:
-                    _asyncio.run(self.analyze_execution(str(execution_id)))
+                    _asyncio.run(self.analyze_execution(str(execution_id), trigger_event_id=str(event_id) if event_id else None))
                 except Exception:
                     logger.debug("BROKER_SERVICE: asyncio.run failed", exc_info=True)
         except Exception:

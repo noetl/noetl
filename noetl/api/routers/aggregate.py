@@ -44,7 +44,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                       AND current_index IS NOT NULL
                       AND NOT (result::text LIKE '%%"skipped": true%%')
                       AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                    ORDER BY current_index, timestamp
+                    ORDER BY current_index, created_at
                     """,
                     (execution_id, step_name)
                 )
@@ -81,7 +81,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
                       AND result IS NOT NULL AND result != '{}' 
                       AND NOT (result::text LIKE '%%"skipped": true%%')
                       AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                    ORDER BY timestamp
+                    ORDER BY created_at
                     """,
                     (execution_id, step_name, f"{execution_id}-step-%-iter-%")
                 )

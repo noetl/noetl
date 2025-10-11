@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from noetl.core.common import get_async_db_connection, convert_snowflake_ids_for_api, snowflake_id_to_int
+from noetl.core.status import normalize_status
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -88,10 +89,10 @@ async def get_execution_summary(request: Request, execution_id: str):
                 async with conn2.cursor(row_factory=dict_row) as cur3:
                     await cur3.execute(
                         """
-                        SELECT node_name, error, timestamp
+                        SELECT node_name, error, created_at
                         FROM noetl.event
                         WHERE execution_id = %s AND event_type = 'action_error'
-                        ORDER BY timestamp DESC
+                        ORDER BY created_at DESC
                         LIMIT 3
                         """,
                         (execution_id,)
@@ -154,32 +155,47 @@ async def get_execution(execution_id: str):
                 detail=f"Execution '{execution_id}' not found."
             )
 
+        # Get the first event for playbook path information (execution_start event)
+        first_event = events.get("events", [])[0] if events.get("events") else None
+        
+        # Get the latest event for status and result information
         latest_event = None
         for event in events.get("events", []):
             if not latest_event or (event.get("timestamp", "") > latest_event.get("timestamp", "")):
                 latest_event = event
 
-        if not latest_event:
+        if not latest_event or not first_event:
             raise HTTPException(
                 status_code=404,
                 detail=f"No events found for execution '{execution_id}'."
             )
 
-        metadata = latest_event.get("metadata", {})
-        context = latest_event.get("context", {})
-        result = latest_event.get("result", {})
-
-        playbook_id = metadata.get('resource_path', context.get('path', ''))
+        # Get playbook path from first event (execution_start)
+        first_metadata = first_event.get("metadata", {})
+        first_context = first_event.get("context", {})
+        playbook_id = first_metadata.get('path', first_context.get('path', ''))
         playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
 
+        # Get status and result from latest event
+        result = latest_event.get("result", {})
+
         raw_status = latest_event.get("status", "")
-        status = event_service._normalize_status(raw_status)
+        # Handle status normalization for existing data
+        if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+            status = raw_status
+        else:
+            try:
+                status = normalize_status(raw_status)
+                logger.warning(f"Found non-normalized status '{raw_status}' in execution {execution_id}. This should be fixed in the source.")
+            except ValueError:
+                logger.error(f"Invalid status '{raw_status}' in execution {execution_id}. Defaulting to 'PENDING'.")
+                status = 'PENDING'
 
         timestamps = [event.get("timestamp", "") for event in events.get("events", []) if event.get("timestamp")]
         timestamps.sort()
 
         start_time = timestamps[0] if timestamps else None
-        end_time = timestamps[-1] if timestamps and status in ['completed', 'failed'] else None
+        end_time = timestamps[-1] if timestamps and status in ['COMPLETED', 'FAILED'] else None
 
         duration = None
         if start_time and end_time:
@@ -190,12 +206,21 @@ async def get_execution(execution_id: str):
             except Exception as e:
                 logger.error(f"Error calculating duration: {e}")
 
-        if status in ['completed', 'failed']:
+        if status in ['COMPLETED', 'FAILED']:
             progress = 100
-        elif status == 'running':
-            normalized_statuses = [event_service._normalize_status(e.get('status')) for e in events.get('events', [])]
+        elif status in ['STARTED', 'RUNNING']:
+            normalized_statuses = []
+            for e in events.get('events', []):
+                event_status = e.get('status')
+                if event_status and event_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                    normalized_statuses.append(event_status)
+                else:
+                    try:
+                        normalized_statuses.append(normalize_status(event_status))
+                    except ValueError:
+                        normalized_statuses.append('PENDING')
             total = len(normalized_statuses)
-            done = sum(1 for s in normalized_statuses if s in {'completed', 'failed'})
+            done = sum(1 for s in normalized_statuses if s in {'COMPLETED', 'FAILED'})
             progress = int((done / total) * 100) if total else 0
         else:
             progress = 0

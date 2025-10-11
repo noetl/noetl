@@ -308,7 +308,7 @@ const Catalog: React.FC = () => {
                       <Space direction="horizontal" size="large">
                         <Text type="secondary">Path: {playbook.id}</Text>
                         <Text type="secondary">
-                          Version: {playbook.resource_version}
+                          Version: {playbook.version}
                         </Text>
                         <Text type="secondary">
                           Tasks: {playbook.tasks_count}
@@ -348,7 +348,7 @@ const Catalog: React.FC = () => {
                       onClick={() =>
                         handleViewPayload(
                           playbook.id,
-                          playbook.resource_version,
+                          playbook.version.toString(),
                         )
                       }
                     >

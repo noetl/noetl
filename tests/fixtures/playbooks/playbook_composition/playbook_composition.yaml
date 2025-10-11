@@ -6,6 +6,7 @@ metadata:
   path: tests/fixtures/playbooks/playbook_composition/playbook_composition
 
 workload:
+  pg_auth: pg_k8s
   message: "Playbook composition with iterator validation"
   users:
     - name: "Alice"
@@ -38,7 +39,7 @@ workflow:
   - step: setup_storage
     desc: "Ensure results table exists"
     type: postgres
-    auth: pg_k8s
+    auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS public.user_profile_results (
         id TEXT PRIMARY KEY,
@@ -61,7 +62,7 @@ workflow:
       # Provide an explicit task identifier so nested playbook propagates correct parent_step
       task: process_users
       type: playbook
-      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml
+      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
       return_step: finalize_result
       data:
         user_data: "{{ user }}"
@@ -74,7 +75,7 @@ workflow:
           profile_score: "{{ this.profile_score or 0.0 }}"
           score_category: "{{ this.score_category or 'unknown' }}"
         storage: postgres
-        auth: pg_k8s
+        auth: "{{ workload.pg_auth }}"
         table: public.user_profile_results
         mode: upsert
         key: id

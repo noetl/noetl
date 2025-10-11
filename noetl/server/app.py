@@ -1,3 +1,8 @@
+from noetl.core.config import get_settings
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
 import os
 import json
 import yaml
@@ -22,14 +27,9 @@ from noetl.core.common import deep_merge, get_pgdb_connection, get_db_connection
 from noetl.core.logger import setup_logger
 from noetl.api.routers.broker import Broker, execute_playbook_via_broker
 from noetl.api.routers import router as api_router
+from noetl.server.middleware import catch_exceptions_middleware
 logger = setup_logger(__name__, include_location=True)
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
-from noetl.core.config import get_settings
-import time
 
 router = APIRouter()
 router.include_router(api_router)
@@ -59,7 +59,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     # Simple in-process metrics without external deps
     _process_start_time = time.time()
     _request_count_key = "noetl_request_total"
-    _metrics_counters: Dict[str, int] = { _request_count_key: 0 }
+    _metrics_counters: Dict[str, int] = {_request_count_key: 0}
 
     def register_server_directly() -> None:
         from noetl.core.common import get_db_connection, get_snowflake_id
@@ -103,15 +103,15 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             with conn.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                    INSERT INTO runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
                     VALUES (%s, %s, 'server_api', %s, 'ready', %s, NULL, %s, now(), now(), now())
-                    ON CONFLICT (component_type, name)
+                    ON CONFLICT (kind, name)
                     DO UPDATE SET
-                        base_url = EXCLUDED.base_url,
+                        uri = EXCLUDED.uri,
                         status = EXCLUDED.status,
                         labels = EXCLUDED.labels,
                         runtime = EXCLUDED.runtime,
-                        last_heartbeat = now(),
+                        heartbeat = now(),
                         updated_at = now()
                     """,
                     (rid, name, server_url, labels_json, runtime_json)
@@ -141,7 +141,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                         """
                         UPDATE runtime
                         SET status = 'offline', updated_at = now()
-                        WHERE component_type = 'server_api' AND name = %s
+                        WHERE kind = 'server_api' AND name = %s
                         """,
                         (name,)
                     )
@@ -174,13 +174,19 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
         async def _report_server_metrics(component_name: str):
             """Report server metrics periodically."""
+            # Check if metrics are disabled
+            metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+            if metrics_disabled:
+                logger.debug(f"Server metric reporting disabled for {component_name}")
+                return
+
             try:
                 import httpx
                 from ..api.routers.metrics import collect_system_metrics
-                
+
                 # Collect system metrics
                 metrics_data = collect_system_metrics()
-                
+
                 # Add server-specific metrics
                 try:
                     # Number of connected workers
@@ -189,13 +195,13 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             await cur.execute(
                                 """
                                 SELECT COUNT(*) FROM runtime 
-                                WHERE component_type IN ('worker_pool', 'queue_worker') 
+                                WHERE kind IN ('worker_pool', 'queue_worker') 
                                 AND status = 'ready'
                                 """
                             )
                             row = await cur.fetchone()
                             worker_count = row[0] if row else 0
-                            
+
                             await cur.execute(
                                 """
                                 SELECT COUNT(*) FROM queue 
@@ -204,7 +210,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             )
                             row = await cur.fetchone()
                             queue_size = row[0] if row else 0
-                    
+
                     metrics_data.extend([
                         {
                             "metric_name": "noetl_server_active_workers",
@@ -214,7 +220,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             "unit": "workers"
                         },
                         {
-                            "metric_name": "noetl_server_queue_size", 
+                            "metric_name": "noetl_server_queue_size",
                             "metric_type": "gauge",
                             "metric_value": queue_size,
                             "help_text": "Current queue size",
@@ -223,11 +229,11 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                     ])
                 except Exception as e:
                     logger.debug(f"Failed to collect server-specific metrics: {e}")
-                
+
                 # Report via self-report endpoint
                 payload = {
                     "component_name": component_name,
-                    "component_type": "server_api",
+                    "kind": "server_api",
                     "metrics": [
                         {
                             "metric_name": m.metric_name if hasattr(m, 'metric_name') else m.get("metric_name", ""),
@@ -244,23 +250,23 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                         } for m in metrics_data
                     ]
                 }
-                
+
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.post(f"{server_url}/metrics/report", json=payload)
                     if resp.status_code != 200:
                         logger.debug(f"Server metrics report failed {resp.status_code}: {resp.text}")
-                        
+
             except Exception as e:
                 logger.debug(f"Failed to report server metrics: {e}")
 
         async def _runtime_sweeper():
             last_metrics_time = 0.0
             metrics_interval = float(os.environ.get("NOETL_SERVER_METRICS_INTERVAL", "60"))
-            
+
             while not stop_event.is_set():
                 try:
                     current_time = time.time()
-                    
+
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
                             # Mark stale (non-offline) runtimes offline
@@ -268,23 +274,26 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                                 await cur.execute(
                                     """
                                     UPDATE runtime SET status = 'offline', updated_at = now()
-                                    WHERE status != 'offline' AND last_heartbeat < (now() - interval '%s seconds')
+                                    WHERE status != 'offline' AND heartbeat < (now() - make_interval(secs => %s))
                                     """,
                                     (offline_after,)
                                 )
                             except Exception as e:
-                                logger.debug(f"Runtime offline sweep failed: {e}")
+                                logger.error(f"Runtime offline sweep failed: {e}")
+                                logger.exception("Sweep offline exception details:")
 
                             # Server heartbeat
                             try:
+                                logger.info(f"About to update server heartbeat for {server_name}")
                                 await cur.execute(
                                     """
                                     UPDATE runtime 
-                                    SET last_heartbeat = now(), updated_at = now(), status = 'ready'
-                                    WHERE component_type = 'server_api' AND name = %s
+                                    SET heartbeat = now(), updated_at = now(), status = 'ready'
+                                    WHERE kind = 'server_api' AND name = %s
                                     """,
                                     (server_name,)
                                 )
+                                logger.info(f"Server heartbeat updated for {server_name}, rows affected: {cur.rowcount}")
                                 if cur.rowcount == 0 and auto_recreate_runtime:
                                     logger.info("Server runtime row missing; auto recreating")
                                     import datetime as _dt
@@ -301,25 +310,28 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
                                     await cur.execute(
                                         """
-                                        INSERT INTO runtime (runtime_id, name, component_type, base_url, status, labels, capacity, runtime, last_heartbeat, created_at, updated_at)
+                                        INSERT INTO runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
                                         VALUES (%s, %s, 'server_api', %s, 'ready', NULL, NULL, %s::jsonb, now(), now(), now())
-                                        ON CONFLICT (component_type, name)
+                                        ON CONFLICT (kind, name)
                                         DO UPDATE SET
-                                            base_url = EXCLUDED.base_url,
+                                            uri = EXCLUDED.uri,
                                             status = EXCLUDED.status,
                                             runtime = EXCLUDED.runtime,
-                                            last_heartbeat = now(),
+                                            heartbeat = now(),
                                             updated_at = now()
                                         """,
                                         (rid, server_name, server_url, runtime_payload)
                                     )
                             except Exception as e:
-                                logger.debug(f"Server heartbeat refresh failed: {e}")
+                                logger.error(f"Server heartbeat refresh failed: {e}")
+                                logger.exception("Heartbeat exception details:")
                             try:
                                 await conn.commit()
-                            except Exception:
-                                pass
-                    
+                                logger.info(f"Runtime sweeper transaction committed successfully")
+                            except Exception as e:
+                                logger.error(f"Runtime sweeper commit failed: {e}")
+                                logger.exception("Commit failure details:")
+
                     # Report server metrics periodically
                     if current_time - last_metrics_time >= metrics_interval:
                         try:
@@ -327,16 +339,24 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             last_metrics_time = current_time
                         except Exception as e:
                             logger.debug(f"Server metrics reporting failed: {e}")
-                            
+
                 except Exception as outer_e:
-                    logger.debug(f"Runtime sweeper loop error: {outer_e}")
-                await asyncio.sleep(sweep_interval)
+                    logger.error(f"Runtime sweeper loop error: {outer_e}")
+                    logger.exception("Sweeper loop exception details:")
+                try:
+                    await asyncio.sleep(sweep_interval)
+                except asyncio.CancelledError:
+                    logger.info("Runtime sweeper task cancelled; exiting")
+                    break
 
         sweeper_task: Optional[asyncio.Task] = None
         try:
+            logger.info("Starting runtime sweeper background task...")
             sweeper_task = asyncio.create_task(_runtime_sweeper())
+            logger.info("Runtime sweeper background task started successfully")
         except Exception as e:
-            logger.debug(f"Failed to start runtime sweeper: {e}")
+            logger.error(f"Failed to start runtime sweeper: {e}")
+            logger.exception("Runtime sweeper startup exception details:")
 
         yield
         # Shutdown
@@ -346,12 +366,14 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 sweeper_task.cancel()
                 with contextlib.suppress(Exception):
                     await sweeper_task
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Critical error during sweeper task shutdown: {e}")
+                logger.exception("Sweeper shutdown exception details:")
         try:
             deregister_server_directly()
         except Exception as e:
-            logger.debug(f"Server deregistration failed during shutdown: {e}")
+            logger.error(f"Server deregistration failed during shutdown: {e}")
+            # Don't pass this silently - log but continue shutdown
 
     settings = get_settings()
 
@@ -369,6 +391,8 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.middleware('http')(catch_exceptions_middleware)
 
     # Simple request counter middleware (exclude /metrics to avoid recursion)
     @app.middleware("http")
@@ -407,6 +431,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         lines.append("# HELP noetl_info Build and server info")
         lines.append("# TYPE noetl_info gauge")
         # Escape backslashes and quotes in labels if any
+
         def _esc(s: str) -> str:
             return str(s).replace("\\", "\\\\").replace("\"", "\\\"")
         lines.append(f"noetl_info{{version=\"{_esc(ver)}\",name=\"{_esc(name)}\"}} 1")

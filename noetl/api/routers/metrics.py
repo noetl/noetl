@@ -115,13 +115,13 @@ async def report_metrics(payload: MetricsPayload, request: Request):
                         """
                         INSERT INTO noetl.metric 
                         (metric_id, runtime_id, metric_name, metric_type, metric_value, 
-                         labels, help_text, unit, timestamp, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                         labels, help_text, unit, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             metric_id, runtime_id, metric.metric_name, 
                             metric.metric_type, metric.metric_value,
-                            labels_json, metric.help_text, metric.unit, timestamp
+                            labels_json, metric.help_text, metric.unit, created_at
                         )
                     )
                     inserted_count += 1
@@ -179,11 +179,11 @@ async def query_metrics(
             params.append(metric_type)
         
         if start_time:
-            where_clauses.append("m.timestamp >= %s")
+            where_clauses.append("m.created_at >= %s")
             params.append(start_time)
         
         if end_time:
-            where_clauses.append("m.timestamp <= %s")
+            where_clauses.append("m.created_at <= %s")
             params.append(end_time)
         
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
@@ -196,7 +196,7 @@ async def query_metrics(
             FROM noetl.metric m
             JOIN noetl.runtime r ON m.runtime_id = r.runtime_id
             WHERE {where_sql}
-            ORDER BY m.timestamp DESC
+            ORDER BY m.created_at DESC
             LIMIT %s
         """
         params.append(limit)
@@ -270,8 +270,8 @@ async def prometheus_metrics(
                 FROM noetl.metric m
                 JOIN noetl.runtime r ON m.runtime_id = r.runtime_id
                 WHERE {where_sql}
-                  AND m.timestamp >= now() - interval '5 minutes'
-                ORDER BY m.runtime_id, m.metric_name, m.labels, m.timestamp DESC
+                  AND m.created_at >= now() - interval '5 minutes'
+                ORDER BY m.runtime_id, m.metric_name, m.labels, m.created_at DESC
             )
             SELECT * FROM recent_metrics
             ORDER BY metric_name, component_name
@@ -500,13 +500,13 @@ async def self_report_metrics(component_name: Optional[str] = None):
                         """
                         INSERT INTO noetl.metric 
                         (metric_id, runtime_id, metric_name, metric_type, metric_value, 
-                         labels, help_text, unit, timestamp, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                         labels, help_text, unit, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             metric_id, runtime_id, metric.metric_name,
                             metric.metric_type, metric.metric_value,
-                            labels_json, metric.help_text, metric.unit, timestamp
+                            labels_json, metric.help_text, metric.unit, created_at
                         )
                     )
                     inserted_count += 1

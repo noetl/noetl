@@ -206,7 +206,7 @@ The metrics can be visualized in Grafana using VictoriaMetrics as data source:
 Run the integration test to verify metrics functionality:
 
 ```bash
-cd /Users/kadyapam/projects/noetl/noetl
+cd .
 python test_metrics_integration.py
 ```
 

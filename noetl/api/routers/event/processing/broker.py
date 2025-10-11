@@ -132,7 +132,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                             """
                             SELECT context FROM noetl.event
                             WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
-                            ORDER BY timestamp DESC LIMIT 1
+                            ORDER BY created_at DESC LIMIT 1
                             """,
                             (execution_id,)
                         )
@@ -199,7 +199,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         next_step_name = first
                                     elif isinstance(first, dict):
                                         next_step_name = first.get('step') or first.get('name')
-                                        # Build transition payload with precedence: input > payload > with
+                                        # Build transition payload with precedence: input > payload > with > data
                                         merged = {}
                                         try:
                                             w = first.get('with') if isinstance(first.get('with'), dict) else None
@@ -219,6 +219,13 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                                 merged.update(i)
                                         except Exception:
                                             pass
+                                        try:
+                                            # IMPORTANT: Also check for 'data' attribute in next step transition
+                                            d = first.get('data') if isinstance(first.get('data'), dict) else None
+                                            if d:
+                                                merged['data'] = d
+                                        except Exception:
+                                            pass
                                         next_with = merged
                             
                             if next_step_name and next_step_name in by_name:
@@ -231,9 +238,16 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to finalize non-actionable step", exc_info=True)
                                     return
                                 # Build task for actionable step
+                                step_type = step_def.get('type') or 'python'
+                                
+                                # If step has a save block but type is not 'save', treat it as a save task
+                                # This ensures save blocks are handled by the save plugin
+                                if step_def.get('save') and step_type not in {'save', 'http', 'python', 'duckdb', 'postgres', 'secrets', 'workbook', 'playbook', 'iterator'}:
+                                    step_type = 'save'
+                                
                                 task = {
                                     'name': next_step_name,
-                                    'type': step_def.get('type') or 'python',
+                                    'type': step_type,
                                 }
                                 for fld in (
                                     'task','run','code','command','commands','sql',
@@ -396,14 +410,26 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     # Encode and enqueue task
                                     encoded = encode_task_for_queue(task)
                                     
+                                    # Get catalog_id from execution's first event
+                                    await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
+                                    catalog_row = await cur.fetchone()
+                                    if not catalog_row:
+                                        raise ValueError(f"No catalog_id found for execution {execution_id}")
+                                    catalog_id = catalog_row[0]
+                                    
+                                    # Add catalog_id to context for worker
+                                    ctx['catalog_id'] = catalog_id
+                                    
                                     await cur.execute(
                                         """
-                                        INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                                        RETURNING id
+                                        INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                                        ON CONFLICT (execution_id, node_id) DO NOTHING
+                                        RETURNING queue_id
                                         """,
                                         (
                                             snowflake_id_to_int(execution_id),
+                                            catalog_id,
                                             f"{execution_id}:{next_step_name}",
                                             json.dumps(encoded),
                                             json.dumps(ctx),
@@ -492,10 +518,8 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                 'path': pb_path,
                 'version': pb_ver or 'latest',
                 iterator: item,  # Set the iterator variable (e.g., city_item)
-                '_loop': {
-                    'loop_id': f"{execution_id}:{step_name}",
-                    'loop_name': step_name,
-                    'iterator': iterator,
+                '_iterator': {
+                    'collection': iterator,
                     'current_index': idx,
                     'current_item': item,
                     'items_count': count,
@@ -514,6 +538,19 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                     ctx['_meta'] = meta
             except Exception:
                 pass
+
+            # Get catalog_id from execution's first event and add to context
+            try:
+                await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
+                catalog_row = await cur.fetchone()
+                if catalog_row:
+                    catalog_id = catalog_row[0]
+                    ctx['catalog_id'] = catalog_id
+                else:
+                    raise ValueError(f"No catalog_id found for execution {execution_id}")
+            except Exception as e:
+                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Failed to get catalog_id for loop item {idx}: {e}")
+                continue
 
             # Priority: sequential mode uses index-based priority, async mode uses same priority
             priority = 5 - idx if loop_mode == 'sequential' else 5
@@ -537,21 +574,26 @@ async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, 
                     'iterator': iterator,
                     'current_index': idx,
                     'current_item': item,
-                    'loop_id': f"{execution_id}:{step_name}",
-                    'loop_name': step_name,
                 })
             except Exception:
                 logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit loop_iteration", exc_info=True)
 
             try:
+                # catalog_id is already in context, use it for queue insert
+                catalog_id = ctx.get('catalog_id')
+                if not catalog_id:
+                    raise ValueError(f"No catalog_id available for execution {execution_id}")
+                
                 await cur.execute(
                     """
-                    INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                    RETURNING id
+                    INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                    ON CONFLICT (execution_id, node_id) DO NOTHING
+                    RETURNING queue_id
                     """,
                     (
                         snowflake_id_to_int(execution_id),
+                        catalog_id,
                         f"{execution_id}:{step_name}:{idx}",
                         json.dumps(encoded_task),
                         json.dumps(ctx),
@@ -581,7 +623,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
     try:
         async with get_async_db_connection() as conn:
             async with conn.cursor() as cur:
-                # Fetch recently completed non-loop steps (no loop_id)
+                # Fetch recently completed non-loop steps  
                 # Include both action_completed and step_result events to handle workbook steps
                 await cur.execute(
                     """
@@ -589,7 +631,6 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                     FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type IN ('action_completed', 'step_result')
-                      AND (loop_id IS NULL OR loop_id = '')
                 """,
                     (execution_id,)
                 )
@@ -632,7 +673,7 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
                     """
                     SELECT meta, context FROM noetl.event
                     WHERE execution_id = %s AND event_type IN ('execution_start','execution_started')
-                    ORDER BY timestamp ASC
+                    ORDER BY created_at ASC
                     LIMIT 1
                     """,
                     (execution_id,)
@@ -720,6 +761,11 @@ def _is_actionable_step(step_def: dict) -> bool:
         t = str((step_def or {}).get('type') or '').lower()
         if not t:
             return False
+        
+        # Check if step has a save block - if so, it's actionable regardless of type
+        if step_def.get('save'):
+            return True
+            
         # Include 'save' so save steps run on workers
         if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','iterator'}:
             # For python, require code in step_def

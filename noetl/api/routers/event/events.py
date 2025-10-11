@@ -18,11 +18,16 @@ async def create_event(
     request: Request,
     background_tasks: BackgroundTasks
 ):
+    """
+    Create a new event.
+    """
     try:
         from .service import get_event_service
         from .processing import evaluate_broker_for_execution, _evaluate_broker_for_execution, _check_distributed_loop_completion
-        
+        import json
         body = await request.json()
+
+        logger.info(f"POST /events called with body: {json.dumps(body, indent=2, default=str)}")
         
         # Debug all incoming events
         if body.get('event_type') in ['execution_completed', 'execution_complete']:
@@ -74,7 +79,7 @@ async def create_event(
                     if parent_step:
                         logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
                         print(f"completion handler: about to extract result for {exec_id}")
-                    
+
                     # Extract result from the event
                     child_result = body.get('result')
                     print(f"completion handler: child_result from body = {child_result}")
@@ -98,7 +103,7 @@ async def create_event(
                                           AND result != '{}'
                                           AND NOT (result::text LIKE '%%"skipped": true%%')
                                           AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                                        ORDER BY timestamp DESC
+                                        ORDER BY created_at DESC
                                         LIMIT 1
                                         """,
                                         (exec_id, step_name)
@@ -138,7 +143,7 @@ async def create_event(
                                       AND event_type = 'loop_iteration'
                                       AND node_name = %s
                                       AND context LIKE %s
-                                    ORDER BY timestamp DESC
+                                    ORDER BY created_at DESC
                                     LIMIT 1
                                     """,
                                     (parent_execution_id, parent_step, f'%"child_execution_id": "{exec_id}"%')
@@ -201,7 +206,8 @@ async def create_event(
             except Exception as e:
                 print(f"completion handler: Exception in completion handler: {e}")
                 logger.debug("Failed to handle execution_completed event", exc_info=True)
-        
+        # execution_id = result.get("execution_id") or body.get("execution_id")
+        # asyncio.create_task(evaluate_broker_for_execution(execution_id))
         try:
             execution_id = result.get("execution_id") or body.get("execution_id")
             if execution_id:

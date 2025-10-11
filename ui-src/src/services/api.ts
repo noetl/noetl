@@ -172,7 +172,7 @@ class APIService {
   async executePlaybookWithPayload(
     requestBody: any,
   ): Promise<{ execution_id: string }> {
-    const response = await apiClient.post("/agent/execute", requestBody);
+    const response = await apiClient.post("/execute", requestBody);
     return response.data;
   }
 
@@ -182,10 +182,10 @@ class APIService {
 
   async getPlaybookContent(id: string): Promise<string | undefined> {
     try {
-      const respPath = await apiClient.get(`/catalog/resource?resource_path=${encodeURIComponent(id)}`);
-      if (respPath?.data?.[0]?.content) return respPath.data[0].content as string;
+      const response = await apiClient.get(`/catalog/playbooks/${encodeURIComponent(id)}/content`);
+      return response.data.content as string;
     } catch (e) {
-      console.warn("API call failed, attempting fallback for testing:", e);
+      console.warn("API call failed for playbook content:", e);
     }
   }
 

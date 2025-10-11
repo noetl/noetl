@@ -8,7 +8,7 @@ import requests
 import signal
 import time
 import asyncio
-from noetl.worker import ScalableQueueWorkerPool
+from noetl.worker import ScalableQueueWorkerPool, on_worker_terminate
 from noetl.core.common import DateTimeEncoder
 from noetl.core.logger import setup_logger
 from noetl.core.dsl.schema import DatabaseSchema
@@ -42,7 +42,7 @@ def start_worker_service(
     core_config._settings = None
     core_config._ENV_LOADED = False
     
-    get_settings(reload=True)
+    # get_settings(reload=True)
 
     if not os.environ.get("NOETL_WORKER_POOL_RUNTIME"):
         os.environ["NOETL_WORKER_POOL_RUNTIME"] = "cpu"
@@ -66,6 +66,7 @@ def start_worker_service(
 
         def _signal_handler(sig: int) -> None:
             logger.info(f"Worker pool received signal {sig}; shutting down")
+            on_worker_terminate(sig)
             asyncio.create_task(pool.stop())
 
         for sig in (signal.SIGTERM, signal.SIGINT):
@@ -314,27 +315,18 @@ def start_server(
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
     access_log_env = os.environ.get("NOETL_ACCESS_LOG", "false").strip().lower()
     access_log = access_log_env in ("1","true","yes","y","on")
-    if workers and workers > 1:
-        uvicorn.run(
-            "noetl.server:create_app",
-            factory=True,
-            host=host,
-            port=port,
-            workers=workers,
-            reload=reload,
-            log_level=log_level,
-            access_log=access_log,
-        )
-    else:
-        uvicorn.run(
-            "noetl.server:create_app",
-            factory=True,
-            host=host,
-            port=port,
-            reload=reload,
-            log_level=log_level,
-            access_log=access_log,
-        )
+    uvicorn.run(
+        "noetl.server:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        workers=workers if workers and workers > 1 else None,
+        reload=reload,
+        log_level=log_level,
+        access_log=access_log,
+        lifespan="on",
+        timeout_graceful_shutdown=10
+    )
 
 
 def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
@@ -348,7 +340,9 @@ def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_lev
             "--bind", f"{host}:{port}",
             "--workers", str(workers),
             "--worker-class", "uvicorn.workers.UvicornWorker",
-            "--log-level", log_level
+            "--log-level", log_level,
+            "--graceful-timeout", "5",
+            "--timeout", "10",
         ]
 
         if reload:
@@ -1106,8 +1100,8 @@ def register_playbook(
         if response.status_code == 200:
             result = response.json()
             logger.info(f"Playbook registered successfully: {result}")
-            logger.info(f"Resource path: {result.get('resource_path')}")
-            logger.info(f"Resource version: {result.get('resource_version')}")
+            logger.info(f"Resource path: {result.get('path')}")
+            logger.info(f"Resource version: {result.get('version')}")
         else:
             logger.error(f"Failed to register playbook: {response.status_code}")
             logger.error(f"Response: {response.text}")

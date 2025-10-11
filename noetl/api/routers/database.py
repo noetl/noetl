@@ -2,8 +2,10 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from noetl.core.common import get_async_db_connection
+from noetl.core.logger import setup_logger
 from psycopg.rows import dict_row
 
+logger = setup_logger(__name__)
 router = APIRouter()
 
 
@@ -35,8 +37,10 @@ async def execute_postgres(request: Request, query: str | None = None, query_bas
                         result = None
                 try:
                     await conn.commit()
-                except Exception:
-                    pass
+                    logger.debug("Database API transaction committed successfully")
+                except Exception as e:
+                    logger.error(f"Database API commit failed: {e}")
+                    raise
         return JSONResponse(content={"status": "ok", "result": result})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)

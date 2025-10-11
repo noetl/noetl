@@ -263,7 +263,7 @@ def test_list_playbooks():
 
         test_playbook_found = False
         for playbook in playbooks:
-            if playbook.get("resource_path") == "test_playbook":
+            if playbook.get("path") == "test_playbook":
                 test_playbook_found = True
                 logger.info("Test playbooks found in catalog")
                 break
@@ -290,8 +290,8 @@ def test_execute_playbook():
     playbooks = response.json().get("entries", [])
     test_playbook_version = None
     for playbook in playbooks:
-        if playbook.get("resource_path") == "test_playbook":
-            test_playbook_version = playbook.get("resource_version")
+        if playbook.get("path") == "test_playbook":
+            test_playbook_version = playbook.get("version")
             break
 
     if not test_playbook_version:
@@ -334,8 +334,8 @@ def test_execute_playbook_async():
     playbooks = response.json().get("entries", [])
     test_playbook_version = None
     for playbook in playbooks:
-        if playbook.get("resource_path") == "test_playbook":
-            test_playbook_version = playbook.get("resource_version")
+        if playbook.get("path") == "test_playbook":
+            test_playbook_version = playbook.get("version")
             break
 
     if not test_playbook_version:
@@ -397,8 +397,8 @@ def test_get_event_by_query_param():
     playbooks = response.json().get("entries", [])
     test_playbook_version = None
     for playbook in playbooks:
-        if playbook.get("resource_path") == "test_playbook":
-            test_playbook_version = playbook.get("resource_version")
+        if playbook.get("path") == "test_playbook":
+            test_playbook_version = playbook.get("version")
             break
 
     if not test_playbook_version:
@@ -544,7 +544,7 @@ steps:
         self.assertIn('resource_path', result)
         self.assertIn('resource_version', result)
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['resource_path'], 'test_integration_playbook')
+        self.assertEqual(result['path'], 'test_path')
 
     def test_catalog_list_entries(self):
         """Test listing catalog entries"""
@@ -614,7 +614,7 @@ steps:
         result = self.catalog_service.fetch_entry('some/path/to/filename.yaml', '0.1.0')
 
         self.assertIsNotNone(result)
-        self.assertEqual(result['resource_path'], 'filename.yaml')
+        self.assertEqual(result['path'], 'filename')
         self.assertEqual(result['resource_version'], '0.1.0')
 
     def test_catalog_error_handling(self):

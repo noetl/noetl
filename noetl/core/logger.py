@@ -161,18 +161,32 @@ class CustomFormatter(logging.Formatter):
 
     def format(self, record):
         level_name = LOG_SEVERITY.get(record.levelname, record.levelname)
-        level_color = LOG_COLORS.get(record.levelname, "")
+        with_color = False
+        if with_color:
+            level_color = LOG_COLORS.get(record.levelname, "")
+            if hasattr(record, "scope"):
+                scope_highlight = f"\033[32m{record.scope}\033[0m"
+            else:
+                scope_highlight = ""
+            location = ""
+            if self.include_location and hasattr(record, "module") and hasattr(record, "funcName") and hasattr(record, "lineno"):
+                location = f"\033[1;33m({record.module}:{record.funcName}:{record.lineno})\033[0m"
 
-        if hasattr(record, "scope"):
-            scope_highlight = f"\033[32m{record.scope}\033[0m"
+            metadata_line = f"{level_color}[{level_name}]{RESET_COLOR} {scope_highlight} {location}".strip()
         else:
-            scope_highlight = ""
-        location = ""
-        if self.include_location and hasattr(record, "module") and hasattr(record, "funcName") and hasattr(record,
-                                                                                                           "lineno"):
-            location = f"\033[1;33m({record.module}:{record.funcName}:{record.lineno})\033[0m"
+            if hasattr(record, "scope"):
+                scope_highlight = f"{record.scope}"
+            else:
+                scope_highlight = ""
+            location = ""
+            if self.include_location and hasattr(record, "module") and hasattr(record, "funcName") and hasattr(record, "lineno"):
+                location = f"({record.module}:{record.funcName}:{record.lineno})"
 
-        metadata_line = f"{level_color}[{level_name}]{RESET_COLOR} {scope_highlight} {location}".strip()
+            vs_code_navigation = f"{record.pathname}:{record.lineno}"
+            
+            location = f"{vs_code_navigation}\n{location}"
+
+            metadata_line = f"[{level_name}] {scope_highlight} {location}".strip()
 
         if isinstance(record.msg, (dict, list)):
             message = str(record.msg)

@@ -203,7 +203,7 @@ async def _process_loop_completion_status(conn, cur, event_service, parent_execu
         WHERE execution_id = %s 
           AND event_type = 'end_loop'
           AND node_name = %s
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         LIMIT 1
         """,
         (parent_execution_id, loop_step_name)
@@ -285,7 +285,7 @@ async def _process_loop_completion_status(conn, cur, event_service, parent_execu
 async def _process_direct_loop_completion(conn, cur, event_service, parent_execution_id: str, loop_step_name: str) -> None:
     """Fallback: finalize loops whose iterations ran within the same execution (no child executions).
 
-    Uses loop metadata (loop_id, loop_name, current_index) to determine completion and aggregate results.
+    Uses iterator metadata (current_index, current_item) to determine completion and aggregate results.
     Idempotent: skips if a final loop completion event already exists.
     """
     # Idempotency: skip if final completion already present for this loop
@@ -329,23 +329,22 @@ async def _process_direct_loop_completion(conn, cur, event_service, parent_execu
     if total_iterations <= 0:
         return
 
-    # Fetch per-iteration results using loop metadata fields
+    # Fetch per-iteration results using node_name instead of removed loop fields
     try:
         await cur.execute(
             """
-            SELECT result, current_index, timestamp
+            SELECT result, current_index, created_at
             FROM noetl.event
             WHERE execution_id = %s
-              AND loop_name = %s
+              AND node_name = %s
               AND event_type IN ('result','action_completed')
               AND lower(status) IN ('completed','success')
               AND result IS NOT NULL 
               AND result != '{}'
-              AND loop_id IS NOT NULL
               AND current_index IS NOT NULL
               AND NOT (result::text LIKE '%%"skipped": true%%')
               AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-            ORDER BY current_index, timestamp
+            ORDER BY current_index, created_at
             """,
             (parent_execution_id, loop_step_name)
         )
@@ -399,7 +398,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
           AND lower(status) IN ('completed','success')
           AND result IS NOT NULL
           AND result != '{}'
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         LIMIT 1
         """,
         (child_exec_id,)
@@ -426,7 +425,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
           AND result != '{}'
           AND NOT (result::text LIKE '%%"skipped": true%%')
           AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         """,
         (child_exec_id,)
     )
@@ -456,7 +455,7 @@ async def _get_child_execution_result(cur, child_exec_id: str) -> Any:
           AND result != '{}'
           AND NOT (result::text LIKE '%%"skipped": true%%')
           AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         LIMIT 1
         """,
         (child_exec_id,)
@@ -539,10 +538,7 @@ async def _emit_loop_completion_events(event_service, parent_execution_id: str,
             'loop_completed': True,
             'total_iterations': len(final_results),
             'aggregated_results': final_results
-        },
-        # Add loop metadata for final aggregation event
-        'loop_id': f"{parent_execution_id}:{loop_step_name}",
-        'loop_name': loop_step_name
+        }
     }
     await event_service.emit(loop_final_data)
     
@@ -585,10 +581,7 @@ async def _emit_loop_completion_events(event_service, parent_execution_id: str,
             'loop_completed': True,
             'total_iterations': len(final_results),
             'aggregated_results': final_results
-        },
-        # Add loop metadata
-        'loop_id': f"{parent_execution_id}:{loop_step_name}",
-        'loop_name': loop_step_name
+        }
     })
     
     # Do not emit step_completed here; let broker progression handle it idempotently
@@ -607,13 +600,16 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
     """Enqueue an aggregation job for the completed loop."""
     
     try:
+        from noetl.core.common import normalize_execution_id_for_db
+        parent_execution_id_int = normalize_execution_id_for_db(parent_execution_id)
+        
         agg_node_id = f"{parent_execution_id}:{loop_step_name}:aggregate"
         await cur.execute(
             """
             SELECT COUNT(*) FROM noetl.queue
             WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased')
             """,
-            (parent_execution_id, agg_node_id)
+            (parent_execution_id_int, agg_node_id)
         )
         _agg_cntrow = await cur.fetchone()
         _agg_already = bool(_agg_cntrow and int(_agg_cntrow[0]) > 0)
@@ -630,7 +626,7 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
                 """
                 SELECT event_id FROM noetl.event
                 WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
-                ORDER BY timestamp
+                ORDER BY created_at
                 """,
                 (parent_execution_id, loop_step_name)
             )
@@ -658,14 +654,22 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
                 'iteration_event_ids': iter_event_ids
             }
         }
+        # Get catalog_id from execution's first event
+        await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id_int,))
+        catalog_row = await cur.fetchone()
+        if not catalog_row:
+            raise ValueError(f"No catalog_id found for execution {parent_execution_id}")
+        catalog_id = catalog_row[0]
+        
         await cur.execute(
             """
-            INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-            VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-            RETURNING id
+            INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+            RETURNING queue_id
             """,
             (
-                parent_execution_id,
+                parent_execution_id_int,
+                catalog_id,
                 agg_node_id,
                 json.dumps(agg_encoded),
                 json.dumps(agg_ctx),
@@ -690,7 +694,7 @@ async def _enqueue_next_workflow_steps(conn, cur, parent_execution_id: str, loop
                 """
                 SELECT context, meta FROM noetl.event
                 WHERE execution_id = %s
-                ORDER BY timestamp ASC
+                ORDER BY created_at ASC
                 LIMIT 1
                 """,
                 (parent_execution_id,)
@@ -758,13 +762,16 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
     """Enqueue a specific next step in the workflow."""
     
     try:
+        from noetl.core.common import normalize_execution_id_for_db
+        parent_execution_id_int = normalize_execution_id_for_db(parent_execution_id)
+        
         # Avoid duplicate enqueues: check if a job for this next step is already pending
         await cur.execute(
             """
             SELECT COUNT(*) FROM noetl.queue
             WHERE execution_id = %s AND node_id = %s AND status IN ('queued','leased')
             """,
-            (parent_execution_id, f"{parent_execution_id}:{next_step_name}")
+            (parent_execution_id_int, f"{parent_execution_id}:{next_step_name}")
         )
         _cntrow = await cur.fetchone()
         _already = bool(_cntrow and int(_cntrow[0]) > 0)
@@ -779,7 +786,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                       AND node_name = %s
                       AND event_type IN ('action_started','action_completed')
                     """,
-                    (parent_execution_id, next_step_name)
+                    (parent_execution_id_int, next_step_name)
                 )
                 _evtrow = await cur.fetchone()
                 _already = bool(_evtrow and int(_evtrow[0]) > 0)
@@ -802,6 +809,25 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     t = str((sd or {}).get('type') or '').lower()
                     if not t:
                         return False
+                    
+                    # Check if step has a save block - if so, it's actionable regardless of type
+                    save_block = sd.get('save')
+                    if save_block:
+                        # Also check if save block has nested storage.type that should override step type
+                        storage = save_block.get('storage')
+                        if isinstance(storage, dict) and 'type' in storage:
+                            # Nested structure: storage.type indicates the action type to use
+                            storage_type = storage.get('type', '').strip().lower()
+                            if storage_type in {'http', 'python', 'duckdb', 'postgres', 'secrets'}:
+                                # Override type with storage.type for execution
+                                t = storage_type
+                        elif isinstance(storage, str):
+                            # Flat structure: use storage value as action type if it's a known action type
+                            storage_type = storage.strip().lower()
+                            if storage_type in {'http', 'python', 'duckdb', 'postgres', 'secrets'}:
+                                t = storage_type
+                        return True
+                        
                     # Include 'save' so save steps run on workers (iterator is the only loop type)
                     if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','iterator'}:
                         if t == 'python':
@@ -821,9 +847,15 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     # Defer loop expansion to the normal broker path to avoid undefined variable issues here.
                     # The standard enqueue below will handle loop steps via evaluate_broker_for_execution.
                     pass
+                # Determine task type, treating steps with save blocks as save tasks
+                step_type = step_def.get('type') or 'python'
+                # If step has a save block but type is not 'save', treat it as a save task
+                if step_def.get('save') and step_type not in {'save', 'http', 'python', 'duckdb', 'postgres', 'secrets', 'workbook', 'playbook', 'iterator'}:
+                    step_type = 'save'
+                
                 task_def = {
                     'name': next_step_name,
-                    'type': step_def.get('type') or 'python',
+                    'type': step_type,
                 }
                 for _fld in (
                     'task','code','command','commands','sql',
@@ -897,7 +929,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                     """
                     SELECT context FROM noetl.event
                     WHERE execution_id = %s::bigint AND event_type IN ('execution_start','execution_started')
-                    ORDER BY timestamp ASC LIMIT 1
+                    ORDER BY created_at ASC LIMIT 1
                     """,
                     (parent_execution_id,)
                 )
@@ -947,14 +979,22 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
             except Exception:
                 pass
             
+            # Get catalog_id from parent execution's first event
+            await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (parent_execution_id_int,))
+            catalog_row = await cur.fetchone()
+            if not catalog_row:
+                raise ValueError(f"No catalog_id found for execution {parent_execution_id}")
+            catalog_id = catalog_row[0]
+            
             await cur.execute(
                 """
-                INSERT INTO noetl.queue (execution_id, node_id, action, context, priority, max_attempts, available_at)
-                VALUES (%s, %s, %s, %s::jsonb, %s, %s, now())
-                RETURNING id
+                INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                RETURNING queue_id
                 """,
                 (
-                    parent_execution_id,
+                    parent_execution_id_int,
+                    catalog_id,
                     f"{parent_execution_id}:{next_step_name}",
                     json.dumps(encoded),
                     json.dumps(job_ctx),

@@ -11,9 +11,7 @@ tasks:
         set -e
 
         ports=(54321 3000 9428 8082)
-        echo "Root password may be requested for: sudo lsof -nP -iTCP -sTCP:LISTEN"
-        echo ""
-        output=$(sudo lsof -nP -iTCP -sTCP:LISTEN)
+        output=$(lsof -nP -iTCP -sTCP:LISTEN)
 
         error=0
         for port in "${ports[@]}"; do

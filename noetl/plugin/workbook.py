@@ -24,7 +24,7 @@ async def execute_workbook_task(
     Execute a workbook task by looking up the action in the workbook section.
     
     Args:
-        task_config: Task configuration containing 'task' name to lookup
+        task_config: Task configuration containing 'name' attribute to lookup
         context: Execution context (should contain workload with path/version)
         jinja_env: Jinja2 environment for template rendering
         task_with: Additional parameters from 'with' clause
@@ -33,9 +33,9 @@ async def execute_workbook_task(
     Returns:
         Task execution result
     """
-    task_name = task_config.get('task')
+    task_name = task_config.get('name')  # Look for 'name' attribute in YAML
     if not task_name:
-        raise ValueError("Workbook task must specify a 'task' name to lookup")
+        raise ValueError("Workbook task must specify a 'name' attribute to lookup")
     
     logger.info(f"WORKBOOK: Looking up task '{task_name}' in workbook")
     
