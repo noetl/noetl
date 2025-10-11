@@ -22,5 +22,21 @@
         "PYTHONPATH": "${workspaceFolder}/noetl;${workspaceFolder}/tests"
     },
     "python.terminal.activateEnvInCurrentTerminal": true,
-    "python.envFile": "${workspaceFolder}/.env"
+    "python.envFile": "${workspaceFolder}/.env",
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.autopep8",
+        "editor.formatOnSave": true,
+        "editor.rulers": [
+            {
+                "column": 200,
+                "color": "#00ff22"
+            }
+        ]
+    },
+    "autopep8.args": [
+        "--max-line-length=200"
+    ],
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
 }

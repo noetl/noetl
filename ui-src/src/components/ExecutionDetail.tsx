@@ -290,7 +290,11 @@ const ExecutionDetail: React.FC = () => {
       dataIndex: "status",
       key: "status",
       render: (status: string) => (
-        <Tag color={status === "success" ? "green" : "red"}>{status}</Tag>
+        <Tag color={status.toLowerCase() === "completed"
+          ? "green"
+          : status.toLowerCase() === "failed"
+            ? "red"
+            : "blue"}>{status}</Tag>
       ),
     },
     {
@@ -339,9 +343,9 @@ const ExecutionDetail: React.FC = () => {
               <Text className="execution-detail-label">Status</Text>
               <Tag
                 color={
-                  execution.status === "completed"
+                  execution.status.toLowerCase() === "completed"
                     ? "green"
-                    : execution.status === "failed"
+                    : execution.status.toLowerCase() === "failed"
                       ? "red"
                       : "blue"
                 }
