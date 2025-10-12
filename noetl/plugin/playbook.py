@@ -4,10 +4,6 @@ Playbook action executor for NoETL jobs.
 
 import uuid
 import datetime
-import json
-import importlib
-import os
-import yaml
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
@@ -228,7 +224,7 @@ workflow:
         # Execute the playbook (support loop expansion when provided)
         try:
             # Dynamic import to avoid circular dependency
-            from noetl.api.routers.broker.execute import execute_playbook_via_broker
+            from noetl.server.api.broker import execute_playbook_via_broker
 
             # Legacy loop support has been removed. Enforce the new iterator task wrapper.
             if isinstance(task_config.get('loop'), dict):

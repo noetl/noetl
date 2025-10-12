@@ -617,7 +617,7 @@ async def _enqueue_aggregation_job(conn, cur, parent_execution_id: str, loop_ste
         _agg_already = False
         
     if not _agg_already:
-        from noetl.api.routers.broker.endpoint import encode_task_for_queue as _encode_task
+        from noetl.server.api.broker.endpoint import encode_task_for_queue as _encode_task
         
         # Collect iteration event IDs for context
         iter_event_ids = []
@@ -720,7 +720,7 @@ async def _enqueue_next_workflow_steps(conn, cur, parent_execution_id: str, loop
         
         if playbook_path:
             try:
-                from noetl.api.routers.catalog import get_catalog_service
+                from noetl.server.api.catalog import get_catalog_service
                 catalog = get_catalog_service()
                 entry = await catalog.fetch_entry(playbook_path, playbook_version or '')
                 if entry and entry.get('content'):
@@ -795,7 +795,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 _already = _already
         
         if not _already:
-            from noetl.api.routers.broker.endpoint import encode_task_for_queue as _encode_task
+            from noetl.server.api.broker.endpoint import encode_task_for_queue as _encode_task
             
             # Build task definition for next step
             task_def = {}
@@ -952,7 +952,7 @@ async def _enqueue_next_step(conn, cur, parent_execution_id: str, next_step_name
                 'version': 'latest'
             }
             try:
-                from noetl.api.routers.event.event_log import EventLog
+                from noetl.server.api.event.event_log import EventLog
                 dao = EventLog()
                 node_results_map = await dao.get_all_node_results(parent_execution_id)
                 if isinstance(node_results_map, dict):

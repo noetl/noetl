@@ -1,26 +1,17 @@
-from noetl.api.routers.catalog.schema import (
+from noetl.server.api.catalog.schema import (
     PlaybookResourceResponse,
-    CatalogEntryResponse,
     CatalogListResponse,
     PlaybookSummaryResponse,
     transform,
 )
 from .service import CatalogService, get_catalog_service
-from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, Depends, Request, Query, HTTPException, BackgroundTasks
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
-import base64
 import json
 import yaml
-from datetime import datetime
-from psycopg.types.json import Json
-from psycopg.rows import dict_row
 from noetl.core.common import (
-    deep_merge,
-    get_pgdb_connection,
     get_async_db_connection,
-    get_snowflake_id_str,
-    get_snowflake_id,
 )
 from noetl.core.logger import setup_logger
 

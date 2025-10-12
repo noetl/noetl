@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 
 def test_queue_routes_registered():
-    from noetl.api.routers import queue
+    from noetl.server.api import queue
     app = FastAPI()
     app.include_router(queue.router, prefix="/api")
 

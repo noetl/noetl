@@ -7,7 +7,7 @@ import json
 from typing import Any
 from noetl.core.common import get_async_db_connection
 from noetl.core.logger import setup_logger
-from noetl.api.routers.event.event_log import EventLog
+from noetl.server.api.event.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
 

@@ -1,4 +1,4 @@
-from noetl.api.routers.event.control.step import _choose_next
+from noetl.server.api.event.control.step import _choose_next
 
 
 def test_next_prefers_data_overlay_when_present():

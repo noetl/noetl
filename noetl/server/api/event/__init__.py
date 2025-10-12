@@ -14,7 +14,6 @@ from .processing import (
     check_and_process_completed_child_executions,
     _check_distributed_loop_completion,
 )
-from ..broker import encode_task_for_queue
 
 # Create main router that includes all sub-routers
 router = APIRouter()
@@ -33,6 +32,4 @@ __all__ = [
     'check_and_process_completed_loops',
     'check_and_process_completed_child_executions',
     '_check_distributed_loop_completion',
-    # Helpers
-    'encode_task_for_queue',
 ]

@@ -1,4 +1,11 @@
 """
+NoETL API package - Top-level API routers and schemas.
+
+Refactored from noetl.server.api to provide better organization
+and separation of concerns.
+"""
+
+"""
 NoETL API Routers - All FastAPI router definitions.
 """
 
@@ -6,18 +13,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 # Import routers from local modules
-from . import queue
-from . import event
-from . import catalog
-from . import credential
-from . import database
-from . import runtime
-from . import dashboard
-from . import system
-from . import aggregate
-from . import broker
-from . import metrics
-from . import execution
+from . import execution, credential, queue, aggregate, catalog, runtime, event, dashboard, system, metrics, broker, \
+    database
 
 router = APIRouter()
 
@@ -40,8 +37,8 @@ router.include_router(metrics.router)
 router.include_router(execution.router)
 
 __all__ = [
-    "router", 
-    "queue", "event", "catalog", "credential", 
-    "database", "runtime", "dashboard", "system", 
+    "router",
+    "queue", "event", "catalog", "credential",
+    "database", "runtime", "dashboard", "system",
     "aggregate", "broker", "metrics", "execution"
 ]

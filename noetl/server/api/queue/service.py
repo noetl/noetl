@@ -277,7 +277,7 @@ class QueueService:
         if parent_execution_id and parent_step and parent_execution_id != exec_id:
             logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
             try:
-                from noetl.api.routers.event import get_event_service
+                from noetl.server.api.event import get_event_service
                 
                 async with get_async_db_connection() as conn:
                     async with conn.cursor() as cur:
@@ -537,7 +537,7 @@ class QueueService:
             already_final = (row_final[0] if row_final else 0) > 0
             
             if expected > 0 and done >= expected and not already_final:
-                from noetl.api.routers.event import get_event_service
+                from noetl.server.api.event import get_event_service
                 
                 # Collect results from each iteration
                 await cur.execute(
@@ -647,7 +647,7 @@ class QueueService:
                 
                 # Trigger broker for parent
                 try:
-                    from noetl.api.routers.event import evaluate_broker_for_execution
+                    from noetl.server.api.event import evaluate_broker_for_execution
                     if asyncio.get_event_loop().is_running():
                         asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
                     else:
@@ -664,7 +664,7 @@ class QueueService:
     ):
         """Schedule broker evaluation for execution(s)."""
         try:
-            from noetl.api.routers.event import evaluate_broker_for_execution
+            from noetl.server.api.event import evaluate_broker_for_execution
             
             if asyncio.get_event_loop().is_running():
                 asyncio.create_task(evaluate_broker_for_execution(exec_id))

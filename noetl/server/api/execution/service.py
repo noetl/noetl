@@ -10,9 +10,8 @@ from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException
 from noetl.core.logger import setup_logger
 from noetl.core.common import get_async_db_connection
-from noetl.api.routers.broker import execute_playbook_via_broker
-from noetl.api.routers.catalog import get_playbook_entry_from_catalog
-from .schema import ExecutionRequest, ExecutionResponse, ExecutionType
+from noetl.server.api.broker import execute_playbook_via_broker
+from .schema import ExecutionRequest, ExecutionResponse
 
 logger = setup_logger(__name__, include_location=True)
 
