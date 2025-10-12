@@ -1,0 +1,42 @@
+version: '3.45'
+
+tasks:
+# === Kind Kubernetes Cluster ===
+  kind:local:cluster-create:
+    desc: Create noetl kind cluster
+    aliases: [kcc, kind-create-cluster]
+    cmds:
+      - kind create cluster --config=ci/kind/config.yaml
+
+  kind:local:cluster-delete:
+    desc: Delete noetl kind cluster
+    aliases: [kdc, kind-delete-cluster]
+    cmds:
+      - kind delete cluster --name=noetl
+
+  kind:local:clusters-list:
+    desc: Show all kind clusters
+    aliases: [kgc, kind-get-clustes]
+    cmds:
+      - kind get clusters
+
+  kubectl:local:context-set-kind:
+    desc: Set kubectl context to kind-noetl cluster
+    aliases: [ksck, kubectl-set-context-kind]
+    cmds:
+      - kubectl config use-context kind-noetl
+  
+  kind:local:image-load:
+    desc: Load noetl image to the noetl kind cluster
+    aliases: [lni, load-noetl-image]
+    env:
+      IMAGE_TAG:
+        sh: cat .noetl_last_build_tag.txt
+    cmds:
+      - kind load docker-image $REGISTRY/$IMAGE_NAME:$IMAGE_TAG --name noetl
+
+  kind:k8s:images-list:
+    desc: Show images inside of the noetl kind cluster
+    aliases: [ski, show-kind-images]
+    cmds:
+      - docker exec -it noetl-control-plane crictl images

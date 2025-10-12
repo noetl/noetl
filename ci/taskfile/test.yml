@@ -1,0 +1,377 @@
+version: '3.45'
+
+# NoETL Test Task Automation
+# ===========================
+# Key workflows:
+# - setup-test-environment: Register all credentials and test playbooks (one-time setup)
+# - register-all-test-playbooks: Register all test playbooks from fixtures directory  
+# - test-create-tables: Create database tables required for save storage tests
+# - test-*-full: Complete test workflows including setup, table creation, and execution
+# - test-save-storage-all: Run complete save storage test suite with optimized setup
+env:
+  NOETL_HOST: localhost
+  NOETL_PORT: 8082
+
+tasks:
+  # === Test Tasks ===
+  playbook:k8s:register:control-flow-workbook:
+    desc: Register control flow workbook playbook
+    aliases: [trcfw, test-register-control-flow-workbook]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:control-flow-workbook:
+    desc: Execute control flow workbook test
+    aliases: [tecfw, test-execute-control-flow-workbook]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/control_flow_workbook" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:control-flow-workbook:
+    desc: Full control flow workbook test
+    aliases: [tcfwf, test-control-flow-workbook-full]
+    cmds:
+      - task: test:k8s:setup-environment
+      - sleep 2
+      - task: playbook:k8s:execute:control-flow-workbook
+
+  test:k8s:cluster-health:
+    desc: Check cluster health and endpoints
+    aliases: [tch, test-cluster-health]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Checking NoETL server health ==="
+      - curl -f http://localhost:8082/api/health || echo "NoETL server not ready"
+      - echo "\n=== Checking PostgreSQL connection ==="
+      - kubectl exec deployment/postgres -n postgres -- pg_isready -h localhost -p 5432 -U demo
+      - echo "\n=== Checking services ==="
+      - kubectl get svc -A | grep -E "noetl|postgres"
+
+  test:local:create-tables:
+    desc: Create database tables for save storage tests
+    aliases: [tctl, test-create-tables-local]
+    cmds:
+      - |
+        set -e
+        echo "=== Creating database tables for save storage tests (local) ==="
+        
+        # Check if local server is running
+        if ! curl -s -m 2 -f "http://localhost:8083/health" >/dev/null 2>&1; then
+          echo "ERROR: NoETL server is not running on port 8083"
+          echo "Please start the server first with: task noetl:local-server-debug"
+          exit 1
+        fi
+        
+        if [ -x ".venv/bin/noetl" ]; then
+          cli=".venv/bin/noetl"
+        else
+          cli="noetl"
+        fi
+        
+        echo "Executing create_tables playbook with local postgres credentials..."
+        $cli execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" \
+          --host localhost --port 8083 \
+          --payload '{"pg_auth": "pg_local"}' --merge --json
+        echo "✓ Database tables created successfully"
+
+  test:local:execute:
+    desc: Execute a test playbook with local postgres credentials
+    aliases: [tel, test-execute-local]
+    vars:
+      PLAYBOOK: "{{ or .PLAYBOOK \"\" }}"
+    cmds:
+      - |
+        set -e
+        playbook="{{.PLAYBOOK}}"
+        if [ -z "$playbook" ]; then
+          echo "ERROR: PLAYBOOK parameter is required"
+          echo "Usage: task test:execute-local PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test"
+          exit 1
+        fi
+        
+        # Check if local server is running
+        if ! curl -s -m 2 -f "http://localhost:8083/health" >/dev/null 2>&1; then
+          echo "ERROR: NoETL server is not running on port 8083"
+          echo "Please start the server first with: task noetl:local-server-debug"
+          exit 1
+        fi
+        
+        if [ -x ".venv/bin/noetl" ]; then
+          cli=".venv/bin/noetl"
+        else
+          cli="noetl"
+        fi
+        
+        echo "Executing playbook: $playbook (with local postgres credentials)"
+        $cli execute playbook "$playbook" \
+          --host localhost --port 8083 \
+          --payload '{"pg_auth": "pg_local"}' --merge --json
+
+
+  test:k8s:register-credentials:
+    desc: Register test credentials
+    aliases: [rtc, register-test-credentials]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Registering pg_k8s credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_k8s.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_k8s.json
+        fi
+      - echo "\n=== Registering gcs_hmac_local credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json
+        fi
+      - echo "\n=== Registering pg_local credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json
+        fi
+      - echo "\n=== Test credentials registered successfully ==="
+
+  test:k8s:register-playbooks:
+    desc: Register all test playbooks
+    aliases: [rtp, register-test-playbooks]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Registering all test playbooks ==="
+      - ./register_test_playbooks.sh {{ .NOETL_HOST }} {{ .NOETL_PORT }}
+      - echo "=== All test playbooks registered successfully ==="
+
+  test:k8s:setup-environment:
+  # before run we need go to https://console.cloud.google.com/security/secret-manager/secret/gcs_hmac_local/versions?project=noetl-demo-19700101
+  # copy and paste to tests/fixtures/credentials/gcs_hmac_local.json the values for key_id and secret
+    desc: Complete test environment setup
+    aliases: [ste, setup-test-environment]
+    cmds:
+      - echo "=== Setting up complete test environment ==="
+      - task: test:k8s:register-credentials
+      - sleep 2
+      - task: test:k8s:register-playbooks
+      - echo "=== Test environment setup completed ==="
+
+  playbook:k8s:register:http-duckdb-postgres:
+    desc: Register HTTP DuckDB Postgres playbook
+    aliases: [trhdp, test-register-http-duckdb-postgres]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:http-duckdb-postgres:
+    desc: Execute HTTP DuckDB Postgres test
+    aliases: [tehdp, test-execute-http-duckdb-postgres]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/http_duckdb_postgres" -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:http-duckdb-postgres:
+    desc: Full HTTP DuckDB Postgres test
+    aliases: [thdpf, test-http-duckdb-postgres-full]
+    cmds:
+      - task: test:k8s:setup-environment
+      - sleep 2
+      - task: playbook:k8s:execute:http-duckdb-postgres
+
+  playbook:k8s:register:playbook-composition:
+    desc: Register playbook composition test
+    aliases: [trpc, test-register-playbook-composition]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/playbook_composition/playbook_composition.yaml -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:playbook-composition:
+    desc: Execute playbook composition test on Kubernetes cluster
+    aliases: [tepc, test-execute-playbook-composition]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/playbook_composition/playbook_composition"-host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:playbook-composition:
+    desc: Full playbook composition test
+    aliases: [tpcf, test-playbook-composition-full]
+    cmds:
+      - task: test:k8s:register-credentials
+      - sleep 2
+      - task: playbook:k8s:register:playbook-composition
+      - sleep 2
+      - task: playbook:k8s:execute:playbook-composition
+
+  playbook:k8s:register:hello-world:
+    desc: Register hello world playbook
+    aliases: [trhw]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:hello-world:
+    desc: Execute hello world test on Kubernetes cluster
+    aliases: [tehw]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/hello_world" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:hello-world:
+    desc: Full hello world test
+    aliases: [thwf]
+    cmds:
+      - task: playbook:k8s:register:hello-world
+      - sleep 2
+      - task: playbook:k8s:execute:hello-world
+
+  # === Save Storage Test Tasks ===
+  test:k8s:create-tables:
+    desc: Create database tables for save storage tests
+    aliases: [tct]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Creating database tables for save storage tests ==="
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} --json
+      - sleep 10
+      - echo "=== Database tables created successfully ==="
+
+  playbook:k8s:register:save-simple:
+    desc: Register save storage simple test playbook
+    aliases: [trsss]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_simple_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:save-simple:
+    desc: Execute save storage simple test on Kubernetes cluster
+    aliases: [tesss]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_simple_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:save-simple:
+    desc: Full save storage simple test
+    aliases: [tsssf]
+    cmds:
+      - task: test:k8s:setup-environment
+      - sleep 2
+      - task: test:k8s:create-tables
+      - sleep 5
+      - task: playbook:k8s:execute:save-simple
+
+  # === Save Storage Delegation Test ===
+  playbook:k8s:register:save-delegation:
+    desc: Register save storage delegation test playbook
+    aliases: [trsdt]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_delegation_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:save-delegation:
+    desc: Execute save storage delegation test on Kubernetes cluster
+    aliases: [tesdt]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_delegation_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:save-delegation:
+    desc: Full save storage delegation test
+    aliases: [tsdtf]
+    cmds:
+      - task: test:k8s:setup-environment
+      - sleep 2
+      - task: test:k8s:create-tables
+      - sleep 5
+      - task: playbook:k8s:execute:save-delegation
+      - sleep 2
+      - task: playbook:k8s:execute:save-simple
+
+  playbook:k8s:register:save-comprehensive:
+    desc: Register save storage complete test playbook
+    aliases: [trsct, test-register-save-comprehensive-test]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_all_storage_types.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:save-comprehensive:
+    desc: Execute save storage complete test
+    aliases: [tesct]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_all_storage_types" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:save-comprehensive:
+    desc: Full save storage complete test
+    aliases: [tsctf]
+    cmds:
+      - task: test:k8s:setup-environment
+      - sleep 2
+      - task: test:k8s:create-tables
+      - sleep 5
+      - task: playbook:k8s:execute:save-comprehensive
+
+  playbook:k8s:register:save-edge-cases:
+    desc: Register save storage edge cases test playbook
+    aliases: [trsec]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_edge_cases.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
+
+  playbook:k8s:execute:save-edge-cases:
+    desc: Execute save storage edge cases test on Kubernetes cluster
+    aliases: [tesec]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_edge_cases" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
+
+  playbook:k8s:full:save-edge-cases:
+    desc: Full save storage edge cases test
+    aliases: [tsecf]
+    cmds:
+      - task: test:k8s:setup-environment
+      - sleep 2
+      - task: test:k8s:create-tables
+      - sleep 5
+      - task: playbook:k8s:execute:save-edge-cases
+
+  test:k8s:save-storage-all:
+    desc: Run all save storage tests (simple, complete, edge cases)
+    aliases: [tssall]
+    cmds:
+      - echo "=== Running Save Storage Test Suite ==="
+      - task: test:k8s:setup-environment
+      - sleep 2
+      - task: test:k8s:create-tables
+      - sleep 5
+      - echo "=== Running save storage simple test ==="
+      - task: playbook:k8s:execute:save-simple
+      - sleep 5
+      - echo "=== Running save storage comprehensive test ==="
+      - task: playbook:k8s:execute:save-comprehensive
+      - sleep 5
+      - echo "=== Running save storage edge cases test ==="
+      - task: playbook:k8s:execute:save-edge-cases
+      - echo "=== Save Storage Test Suite Completed ==="
+
+  test:k8s:validate-save-storage:
+    desc: Validate save storage test environment
+    aliases: [vsst]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Running Save Storage Test Validation ==="
+      - tests/fixtures/playbooks/save_storage_test/validate_tests.sh validate
+      - echo "=== Save Storage Test Validation Completed ==="
