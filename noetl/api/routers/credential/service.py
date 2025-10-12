@@ -7,7 +7,7 @@ Handles:
 - GCP token generation
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional
 from fastapi import HTTPException
 from psycopg.types.json import Json
 from noetl.core.common import get_async_db_connection
@@ -48,7 +48,7 @@ class CredentialService:
             raise HTTPException(status_code=400, detail="'data' is required")
         
         # Encrypt data payload
-        from noetl.secret import encrypt_json
+        from noetl.core.secret import encrypt_json
         try:
             enc = encrypt_json(request.data)
         except Exception as e:
@@ -245,7 +245,7 @@ class CredentialService:
                     
                     if include_data:
                         try:
-                            from noetl.secret import decrypt_json
+                            from noetl.core.secret import decrypt_json
                             response.data = decrypt_json(row[3])
                         except Exception as dec_err:
                             logger.error(f"Failed to decrypt credential: {dec_err}")
@@ -306,7 +306,7 @@ class CredentialService:
                                 _row = await _cur.fetchone()
                             
                             if _row:
-                                from noetl.secret import decrypt_json
+                                from noetl.core.secret import decrypt_json
                                 try:
                                     credentials_info = decrypt_json(_row[0])
                                 except Exception as _dec_err:
@@ -320,7 +320,7 @@ class CredentialService:
         
         # Generate token
         try:
-            from noetl.secret import obtain_gcp_token
+            from noetl.core.secret import obtain_gcp_token
             
             async def _issue_token():
                 return await asyncio.to_thread(
@@ -354,7 +354,7 @@ class CredentialService:
                         "scopes": result.get("scopes"),
                     }
                     
-                    from noetl.secret import encrypt_json
+                    from noetl.core.secret import encrypt_json
                     enc = encrypt_json(token_payload)
                     
                     async with get_async_db_connection() as conn2:
