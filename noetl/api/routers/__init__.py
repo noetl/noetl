@@ -17,6 +17,7 @@ from . import system
 from . import aggregate
 from . import broker
 from . import metrics
+from . import execution
 
 router = APIRouter()
 
@@ -36,10 +37,11 @@ router.include_router(queue.router)
 router.include_router(aggregate.router)
 router.include_router(broker.router)
 router.include_router(metrics.router)
+router.include_router(execution.router)
 
 __all__ = [
     "router", 
     "queue", "event", "catalog", "credential", 
     "database", "runtime", "dashboard", "system", 
-    "aggregate", "broker", "metrics"
+    "aggregate", "broker", "metrics", "execution"
 ]
