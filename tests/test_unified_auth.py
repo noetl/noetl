@@ -1,7 +1,7 @@
 """
 Unit tests for the unified authentication system in NoETL.
 
-Tests the _auth.py module functions and integration with plugins.
+Tests the auth package functions and integration with plugins.
 """
 
 import pytest
@@ -10,7 +10,7 @@ import copy
 from unittest.mock import Mock, patch, MagicMock
 from jinja2 import Environment
 
-from noetl.plugin._auth import (
+from noetl.plugin.auth import (
     resolve_auth_map,
     get_postgres_auth,
     build_http_headers,
@@ -170,7 +170,7 @@ class TestLegacyConversion:
 class TestAuthResolution:
     """Test auth resolution functionality."""
     
-    @patch('noetl.plugin._auth.fetch_credential_by_key')
+    @patch('noetl.plugin.auth.resolver.fetch_credential_by_key')
     def test_resolve_unified_auth_postgres(self, mock_fetch, jinja_env, sample_context, mock_credential_store):
         """Test resolving unified auth for postgres."""
         mock_fetch.return_value = mock_credential_store['pg_local']
@@ -193,7 +193,7 @@ class TestAuthResolution:
         assert resolved['pg']['db_user'] == 'testuser'
         assert resolved['pg']['secret_name'] == 'pg'
     
-    @patch('noetl.plugin._auth.fetch_credential_by_key')
+    @patch('noetl.plugin.auth.resolver.fetch_credential_by_key')
     def test_resolve_unified_auth_hmac(self, mock_fetch, jinja_env, sample_context, mock_credential_store):
         """Test resolving unified auth for HMAC credentials."""
         mock_fetch.return_value = mock_credential_store['gcs_hmac_local']
@@ -218,7 +218,7 @@ class TestAuthResolution:
         assert resolved['gcs']['secret_key'] == 'supersecret'
         assert resolved['gcs']['scope'] == 'gs://test-bucket'
     
-    @patch('noetl.plugin._auth._fetch_secret_manager_value')
+    @patch('noetl.plugin.auth.resolver.fetch_secret_manager_value')
     def test_resolve_auth_secret_manager(self, mock_fetch_secret, jinja_env, sample_context):
         """Test resolving auth from secret manager."""
         mock_fetch_secret.return_value = 'secret-token-value'
@@ -608,7 +608,7 @@ class TestEnvironmentIntegration:
     """Test environment variable integration."""
     
     @patch.dict(os.environ, {'NOETL_SECRET_API_TOKEN': 'env-token-value'})
-    @patch('noetl.plugin._auth._fetch_secret_manager_value')
+    @patch('noetl.plugin.auth.resolver.fetch_secret_manager_value')
     def test_secret_manager_env_fallback(self, mock_fetch, jinja_env, sample_context):
         """Test secret manager falling back to environment variables."""
         # Mock the actual secret manager call to simulate the environment fallback
