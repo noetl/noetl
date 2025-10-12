@@ -713,19 +713,19 @@ def manage_catalog(
                         for step_name, step_result in execution_result.items()
                     )
 
-                    print("\n" + "="*80)
-                    print("EXECUTION REPORT")
-                    print("="*80)
-                    print(f"{resource_type.capitalize()} Path: {path}")
-                    print(f"Version: {version or 'latest'}")
-                    print(f"Execution ID: {result.get('execution_id')}")
+                    logger.info("\n" + "="*80)
+                    logger.info("EXECUTION REPORT")
+                    logger.info("="*80)
+                    logger.info(f"{resource_type.capitalize()} Path: {path}")
+                    logger.info(f"Version: {version or 'latest'}")
+                    logger.info(f"Execution ID: {result.get('execution_id')}")
 
                     if any_errors:
-                        print(f"Status: FAILED")
+                        logger.info(f"Status: FAILED")
                     else:
-                        print(f"Status: SUCCESS")
+                        logger.info(f"Status: SUCCESS")
 
-                    print("-"*80)
+                    logger.info("-"*80)
 
                     step_count = 0
                     success_count = 0
@@ -764,9 +764,9 @@ def manage_catalog(
                                         command_details.append(f"{key}: {msg}")
 
                                 if command_details:
-                                    print(f"{step_name}: SUCCESS ({len(command_details)} commands)")
+                                    logger.info(f"{step_name}: SUCCESS ({len(command_details)} commands)")
                                 else:
-                                    print(f"{step_name}: SUCCESS")
+                                    logger.info(f"{step_name}: SUCCESS")
                             elif status == 'error':
                                 error_count += 1
                                 error_details = []
@@ -777,29 +777,29 @@ def manage_catalog(
                                             error_details.append(f"{key}: {error_msg}")
 
                                 if error_details:
-                                    print(f"{step_name}: ERROR - {'; '.join(error_details)}")
+                                    logger.info(f"{step_name}: ERROR - {'; '.join(error_details)}")
                                 else:
                                     error_msg = step_result.get('error', 'Unknown error')
-                                    print(f"{step_name}: ERROR - {error_msg}")
+                                    logger.info(f"{step_name}: ERROR - {error_msg}")
                             elif status == 'skipped':
                                 skipped_count += 1
-                                print(f"{step_name}: SKIPPED")
+                                logger.info(f"{step_name}: SKIPPED")
                             elif status == 'partial':
                                 success_count += 1
-                                print(f"{step_name}: PARTIAL SUCCESS")
+                                logger.info(f"{step_name}: PARTIAL SUCCESS")
                             else:
                                 success_count += 1
-                                print(f"{step_name}: COMPLETED with unclear status")
+                                logger.info(f"{step_name}: COMPLETED with unclear status")
                         else:
                             success_count += 1
-                            print(f"{step_name}: SUCCESS")
+                            logger.info(f"{step_name}: SUCCESS")
 
-                    print("-"*80)
-                    print(f"Total Steps: {step_count}")
-                    print(f"Successful: {success_count}")
-                    print(f"Failed: {error_count}")
-                    print(f"Skipped: {skipped_count}")
-                    print("="*80)
+                    logger.info("-"*80)
+                    logger.info(f"Total Steps: {step_count}")
+                    logger.info(f"Successful: {success_count}")
+                    logger.info(f"Failed: {error_count}")
+                    logger.info(f"Skipped: {skipped_count}")
+                    logger.info("="*80)
                 elif not result.get("execution_id"):
                     logger.error(f"Execution failed: {result.get('error')}")
                     raise typer.Exit(code=1)
@@ -827,13 +827,13 @@ def manage_catalog(
                 entries = result.get("entries", [])
 
                 if not entries:
-                    print(f"No {resource_type}s found in catalog.")
+                    logger.info(f"No {resource_type}s found in catalog.")
                     return
 
-                print(f"\n{resource_type.upper()}S IN CATALOG:")
-                print("="*80)
-                print(f"{'PATH':<40} {'VERSION':<10} {'TYPE':<15} {'TIMESTAMP':<15}")
-                print("-"*80)
+                logger.info(f"\n{resource_type.upper()}S IN CATALOG:")
+                logger.info("="*80)
+                logger.info(f"{'PATH':<40} {'VERSION':<10} {'TYPE':<15} {'TIMESTAMP':<15}")
+                logger.info("-"*80)
 
                 for entry in entries:
                     path = entry.get('resource_path', 'Unknown')
@@ -842,9 +842,9 @@ def manage_catalog(
                     timestamp = entry.get('timestamp', 'Unknown')
                     if isinstance(timestamp, str) and 'T' in timestamp:
                         timestamp = timestamp.split('T')[0]
-                    print(f"{path:<40} {version:<10} {res_type:<15} {timestamp:<15}")
-                print("="*80)
-                print(f"Total: {len(entries)} {resource_type}(s)")
+                    logger.info(f"{path:<40} {version:<10} {res_type:<15} {timestamp:<15}")
+                logger.info("="*80)
+                logger.info(f"Total: {len(entries)} {resource_type}(s)")
 
             else:
                 logger.error(f"Failed to list {resource_type}s: {response.status_code}")
@@ -1009,6 +1009,7 @@ def execute_playbook_by_name(
                 raise typer.Exit(code=1)
 
         url = f"http://{host}:{port}/api/executions/run"
+        logger.info(f"POST {url}")
         body = {"playbook_id": playbook_id, "parameters": parameters, "merge": merge}
         if not json_only:
             typer.echo(f"POST {url}")
