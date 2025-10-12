@@ -381,3 +381,9 @@ tasks:
       - echo "=== Running Save Storage Test Validation ==="
       - tests/fixtures/playbooks/save_storage_test/validate_tests.sh validate
       - echo "=== Save Storage Test Validation Completed ==="
+
+  test:local:save_all_storage_types:
+    desc: Validate save storage test environment
+    cmds:
+      - echo "=== Running Save Storage Test Validation ==="
+      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_all_storage_types" --port 8083
