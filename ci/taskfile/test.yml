@@ -75,25 +75,31 @@ tasks:
           --payload '{"pg_auth": "pg_local"}' --merge --json
         echo "✓ Database tables created successfully"
 
-  test:local:execute:
+  playbook:local:execute:
     desc: Execute a test playbook with local postgres credentials
     aliases: [tel, test-execute-local]
     vars:
       PLAYBOOK: "{{ or .PLAYBOOK \"\" }}"
+      HOST: "{{ or .HOST \"localhost\" }}"
+      PORT: "{{ or .PORT \"8083\" }}"
     cmds:
       - |
         set -e
         playbook="{{.PLAYBOOK}}"
+        host="{{.HOST}}"
+        port="{{.PORT}}"
+        
         if [ -z "$playbook" ]; then
           echo "ERROR: PLAYBOOK parameter is required"
-          echo "Usage: task test:execute-local PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test"
+          echo "Usage: task playbook:local:execute PLAYBOOK=tests/fixtures/playbooks/save_storage_test/save_simple_test [HOST=localhost] [PORT=8083]"
           exit 1
         fi
         
-        # Check if local server is running
-        if ! curl -s -m 2 -f "http://localhost:8083/health" >/dev/null 2>&1; then
-          echo "ERROR: NoETL server is not running on port 8083"
-          echo "Please start the server first with: task noetl:local-server-debug"
+        # Check if server is running
+        echo "Checking if NoETL server is running on $host:$port..."
+        if ! curl -s -m 2 -f "http://$host:$port/health" >/dev/null 2>&1; then
+          echo "ERROR: NoETL server is not running on $host:$port"
+          echo "Please start the server first"
           exit 1
         fi
         
@@ -103,9 +109,9 @@ tasks:
           cli="noetl"
         fi
         
-        echo "Executing playbook: $playbook (with local postgres credentials)"
+        echo "Executing playbook: $playbook on $host:$port (with local postgres credentials)"
         $cli execute playbook "$playbook" \
-          --host localhost --port 8083 \
+          --host "$host" --port "$port" \
           --payload '{"pg_auth": "pg_local"}' --merge --json
 
 
