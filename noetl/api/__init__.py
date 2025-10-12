@@ -5,7 +5,7 @@ Refactored from noetl.server.api to provide better organization
 and separation of concerns.
 """
 
-from . import routers, schemas
+from . import routers
 from .routers import router  # Main router aggregating all sub-routers
 
-__all__ = ["routers", "schemas", "router"]
+__all__ = ["routers", "router"]
