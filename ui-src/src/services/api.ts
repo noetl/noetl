@@ -140,7 +140,9 @@ class APIService {
     id: string,
     data: Partial<PlaybookData>,
   ): Promise<PlaybookData> {
-    const response = await apiClient.put(`/catalog/playbooks/${id}`, data);
+    const response = await apiClient.put(`/catalog/playbook`, data, {
+      params: { playbook_id: id },
+    });
     return response.data;
   }
 
@@ -182,7 +184,9 @@ class APIService {
 
   async getPlaybookContent(id: string): Promise<string | undefined> {
     try {
-      const response = await apiClient.get(`/catalog/playbooks/${encodeURIComponent(id)}/content`);
+      const response = await apiClient.get(`/catalog/playbook/content`, {
+        params: { playbook_id: id },
+      });
       return response.data.content as string;
     } catch (e) {
       console.warn("API call failed for playbook content:", e);
@@ -190,7 +194,9 @@ class APIService {
   }
 
   async savePlaybookContent(id: string, content: string): Promise<void> {
-    await apiClient.put(`/catalog/playbooks/${id}/content`, { content });
+    await apiClient.put(`/catalog/playbook/content`, { content }, {
+      params: { playbook_id: id },
+    });
   }
 
   async validatePlaybook(
@@ -204,7 +210,8 @@ class APIService {
 
   async searchPlaybooks(query: string): Promise<PlaybookData[]> {
     const response = await apiClient.get(
-      `/catalog/playbooks/search?q=${encodeURIComponent(query)}`,
+      `/catalog/playbooks/search`,
+      { params: { q: query } }
     );
     return response.data;
   }

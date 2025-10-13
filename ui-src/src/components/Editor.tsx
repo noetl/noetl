@@ -310,7 +310,7 @@ tasks:
                 type="default"
                 icon={<NodeIndexOutlined />}
                 onClick={handleShowWorkflow}
-                disabled={!content.trim()}
+                disabled={!content?.trim()}
                 title="Show workflow visualization"
               >
                 Show Workflow
