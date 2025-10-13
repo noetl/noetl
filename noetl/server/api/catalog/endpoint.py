@@ -164,42 +164,7 @@ async def get_catalog_playbooks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse, tags=["Catalog"])
-async def get_catalog_playbook(
-    playbook_id: str,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
-    version: Optional[str] = None
-):
-    """Get playbook by ID, optionally by version"""
-    try:
-        logger.info(f"Received playbook_id: '{playbook_id}'")
-        # Accept any path structure - no prefix validation required
-
-        if not version:
-            version = await catalog_service.get_latest_version(playbook_id)
-
-        entry = await catalog_service.fetch_entry(playbook_id, version)
-        if not entry:
-            raise HTTPException(
-                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
-
-        try:
-            content = entry.get('content') or ''
-            if isinstance(content, bytes):
-                content = content.decode('utf-8', errors='ignore')
-            entry['payload'] = yaml.safe_load(content) or {}
-        except Exception:
-            pass
-
-        return entry
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting playbook: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse, tags=["Catalog"])
+@router.get("/catalog/playbook/content", response_class=JSONResponse, tags=["Catalog"])
 async def get_catalog_playbook_content(
     playbook_id: str,
     request: Request,
@@ -235,8 +200,41 @@ async def get_catalog_playbook_content(
         logger.error(f"Error getting playbook content: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/catalog/playbook", response_class=JSONResponse, tags=["Catalog"])
+async def get_catalog_playbook(
+    playbook_id: str,
+    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
+    version: Optional[str] = None
+):
+    """Get playbook by ID, optionally by version"""
+    try:
+        logger.info(f"Received playbook_id: '{playbook_id}'")
+        # Accept any path structure - no prefix validation required
 
-@router.put("/catalog/playbooks/{playbook_id:path}/content", response_class=JSONResponse, tags=["Catalog"])
+        if not version:
+            version = await catalog_service.get_latest_version(playbook_id)
+
+        entry = await catalog_service.fetch_entry(playbook_id, version)
+        if not entry:
+            raise HTTPException(
+                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
+
+        try:
+            content = entry.get('content') or ''
+            if isinstance(content, bytes):
+                content = content.decode('utf-8', errors='ignore')
+            entry['payload'] = yaml.safe_load(content) or {}
+        except Exception:
+            pass
+
+        return entry
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting playbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/catalog/playbook/content", response_class=JSONResponse, tags=["Catalog"])
 async def save_catalog_playbook_content(
     playbook_id: str,
     request: Request,
@@ -280,7 +278,7 @@ async def save_catalog_playbook_content(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/catalog/playbooks/{playbook_id:path}", response_class=JSONResponse, tags=["Catalog"])
+@router.get("/catalog/playbook/fallback", response_class=JSONResponse, tags=["Catalog"])
 async def get_catalog_playbook_fallback(
     playbook_id: str,
     catalog_service: CatalogService = Depends(get_catalog_service_dependency),

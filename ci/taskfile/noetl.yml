@@ -33,7 +33,7 @@ tasks:
     vars:
       CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:
-      - task: noetl:docker:image-build
+      - task: docker:local:noetl-image-build
       - task: noetl:k8s:remove
       - task: kind:local:image-load
       - task: noetl:k8s:deploy
@@ -458,6 +458,64 @@ tasks:
           
           # Check if server is running (check base URL without /api)
           base_url="http://localhost:8083"
+          if command -v curl >/dev/null 2>&1; then
+            if ! curl -s -m 2 -f "$base_url/health" >/dev/null 2>&1; then
+              echo "WARNING: NoETL server not responding at $base_url"
+              echo "Make sure to start the server first with: task noetl:local-server-debug"
+            else
+              echo "✓ NoETL server is running at $base_url"
+            fi
+          fi
+        fi
+
+        export VITE_API_BASE_URL="$api_url"
+        echo "Launching UI with VITE_API_BASE_URL=$VITE_API_BASE_URL"
+        npm run dev
+
+  noetl:k8s:ui-local-start:
+    desc: Start the NoETL UI locally (Vite dev server) and auto-connect to local API
+    aliases: [ui, ui-start, ui-dev]
+    dir: ui-src
+    cmds:
+      - |
+        set -e
+        echo "Starting NoETL UI (Vite)"
+
+        # Quick sanity check: verify we're in the UI folder
+        if [ ! -f package.json ]; then
+          echo "package.json not found in $(pwd). Are you missing the ui-src folder?"
+          echo "Expected to run in noetl/ui-src."
+          exit 1
+        fi
+
+        # Install deps if missing
+        if [ ! -d node_modules ]; then
+          echo "node_modules not found; installing dependencies"
+          if ! command -v npm >/dev/null 2>&1; then
+            echo "npm is not installed. Please install Node.js and npm."
+            exit 1
+          fi
+          echo "npm version: $(npm --version 2>/dev/null || echo unknown)"
+          if [ -f package-lock.json ]; then
+            echo "Using package-lock.json -> running: npm ci"
+            npm ci
+          else
+            echo "No package-lock.json -> running: npm install"
+            npm install
+          fi
+        fi
+
+        # Determine API base URL - always use local server on port 8082
+        if [ -n "$VITE_API_BASE_URL" ]; then
+          api_url="$VITE_API_BASE_URL"
+          echo "Using VITE_API_BASE_URL from env: $api_url"
+        else
+          # Use local server on port 8082 with /api prefix
+          api_url="http://localhost:8082/api"
+          echo "Using local NoETL server: $api_url"
+          
+          # Check if server is running (check base URL without /api)
+          base_url="http://localhost:8082"
           if command -v curl >/dev/null 2>&1; then
             if ! curl -s -m 2 -f "$base_url/health" >/dev/null 2>&1; then
               echo "WARNING: NoETL server not responding at $base_url"
