@@ -21,6 +21,7 @@ from .playbook import execute_playbook_task
 from .workbook import execute_workbook_task
 from .save import execute_save_task
 from .iterator import execute_loop_task as execute_iterator_task
+from .result import process_loop_aggregation_job
 
 # Import MCP-compliant tools
 from .tool import execute_task, execute_task_resolved, report_event, sql_split
@@ -48,6 +49,7 @@ __all__ = [
     'execute_workbook_task',
     'execute_save_task',
     'execute_iterator_task',
+    'process_loop_aggregation_job',
     'get_duckdb_connection',
     'report_event',
     'sql_split',
