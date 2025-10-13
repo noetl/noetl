@@ -1,11 +1,9 @@
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest import mock
-from unittest.mock import AsyncMock, patch
+
 
 def test_postgres_execute_requires_query_or_procedure():
-    from noetl.api.routers import database
+    from noetl.server.api import database
     app = FastAPI()
     app.include_router(database.router, prefix="/api")
     client = TestClient(app)

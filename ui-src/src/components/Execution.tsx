@@ -245,17 +245,13 @@ const Execution: React.FC = () => {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case "running":
-        return "processing";
+    switch (status?.toLowerCase()) {
       case "completed":
-        return "success";
+        return "green";
       case "failed":
-        return "error";
-      case "pending":
-        return "default";
+        return "red";
       default:
-        return "default";
+        return "blue";
     }
   };
 

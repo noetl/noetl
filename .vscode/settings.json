@@ -3,6 +3,17 @@
         ".github/ai-instructions.md"
     ],
     "github.copilot.editor.enableCodeActions": true,
+    "github.copilot.chat.localeOverride": "en",
+    "github.copilot.advanced": {
+        "length": 500,
+        "temperature": "",
+        "top_p": "",
+        "stop": {
+            "python": ["\n\n\n"],
+            "javascript": ["\n\n\n"],
+            "typescript": ["\n\n\n"]
+        }
+    },
     "python.testing.unittestArgs": [
         "-v",
         "-s",
@@ -22,5 +33,22 @@
         "PYTHONPATH": "${workspaceFolder}/noetl;${workspaceFolder}/tests"
     },
     "python.terminal.activateEnvInCurrentTerminal": true,
-    "python.envFile": "${workspaceFolder}/.env"
+    "python.envFile": "${workspaceFolder}/.env",
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.python",
+        "editor.formatOnSave": true,
+        "editor.rulers": [
+            {
+                "column": 200,
+                "color": "#00ff22"
+            }
+        ]
+    },
+    "autopep8.args": [
+        "--max-line-length=200"
+    ],
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "makefile.configureOnOpen": false,
 }

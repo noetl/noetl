@@ -24,10 +24,10 @@ register_playbook() {
     echo "Registering: $relative_path"
     
     if .venv/bin/noetl register "$playbook_path" --host "$HOST" --port "$PORT" 2>/dev/null; then
-        echo "  ✅ SUCCESS"
+        echo "  SUCCESS"
         ((success_count++))
     else
-        echo "  ❌ ERROR"
+        echo "  ERROR"
         ((error_count++))
     fi
     
@@ -49,9 +49,9 @@ echo "  Errors: $error_count"
 echo "========================================="
 
 if [ $error_count -eq 0 ]; then
-    echo "🎉 All playbooks registered successfully!"
+    echo "All playbooks registered successfully!"
     exit 0
 else
-    echo "⚠️  Some playbooks failed to register."
+    echo "WARNING: Some playbooks failed to register."
     exit 1
 fi

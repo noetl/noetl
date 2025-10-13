@@ -1,42 +1,30 @@
+from noetl.core.config import get_settings
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
 import os
 import json
-import yaml
-import tempfile
-import os
-import json
-import yaml
-import tempfile
 import contextlib
-import psycopg
-import base64
 import socket
 import time
 import datetime
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List
+from datetime import datetime
+from typing import Dict, Optional
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
-from fastapi.responses import JSONResponse
-from psycopg.rows import dict_row
-from noetl.core.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection, get_snowflake_id
+from fastapi import APIRouter
+from noetl.core.common import get_async_db_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
-from noetl.api.routers.broker import Broker, execute_playbook_via_broker
-from noetl.api.routers import router as api_router
+from noetl.server.api import router as api_router
+from noetl.server.middleware import catch_exceptions_middleware
 logger = setup_logger(__name__, include_location=True)
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
-from noetl.core.config import get_settings
-import time
 
 router = APIRouter()
 router.include_router(api_router)
 
 
 def create_app() -> FastAPI:
-    from noetl.core.config import _settings
     import noetl.core.config as core_config
     core_config._settings = None
     core_config._ENV_LOADED = False
@@ -59,7 +47,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
     # Simple in-process metrics without external deps
     _process_start_time = time.time()
     _request_count_key = "noetl_request_total"
-    _metrics_counters: Dict[str, int] = { _request_count_key: 0 }
+    _metrics_counters: Dict[str, int] = {_request_count_key: 0}
 
     def register_server_directly() -> None:
         from noetl.core.common import get_db_connection, get_snowflake_id
@@ -179,14 +167,14 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             if metrics_disabled:
                 logger.debug(f"Server metric reporting disabled for {component_name}")
                 return
-            
+
             try:
                 import httpx
-                from ..api.routers.metrics import collect_system_metrics
-                
+                from noetl.server.api.metrics import collect_system_metrics
+
                 # Collect system metrics
                 metrics_data = collect_system_metrics()
-                
+
                 # Add server-specific metrics
                 try:
                     # Number of connected workers
@@ -201,7 +189,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             )
                             row = await cur.fetchone()
                             worker_count = row[0] if row else 0
-                            
+
                             await cur.execute(
                                 """
                                 SELECT COUNT(*) FROM queue 
@@ -210,7 +198,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             )
                             row = await cur.fetchone()
                             queue_size = row[0] if row else 0
-                    
+
                     metrics_data.extend([
                         {
                             "metric_name": "noetl_server_active_workers",
@@ -220,7 +208,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             "unit": "workers"
                         },
                         {
-                            "metric_name": "noetl_server_queue_size", 
+                            "metric_name": "noetl_server_queue_size",
                             "metric_type": "gauge",
                             "metric_value": queue_size,
                             "help_text": "Current queue size",
@@ -229,7 +217,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                     ])
                 except Exception as e:
                     logger.debug(f"Failed to collect server-specific metrics: {e}")
-                
+
                 # Report via self-report endpoint
                 payload = {
                     "component_name": component_name,
@@ -250,23 +238,23 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                         } for m in metrics_data
                     ]
                 }
-                
+
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.post(f"{server_url}/metrics/report", json=payload)
                     if resp.status_code != 200:
                         logger.debug(f"Server metrics report failed {resp.status_code}: {resp.text}")
-                        
+
             except Exception as e:
                 logger.debug(f"Failed to report server metrics: {e}")
 
         async def _runtime_sweeper():
             last_metrics_time = 0.0
             metrics_interval = float(os.environ.get("NOETL_SERVER_METRICS_INTERVAL", "60"))
-            
+
             while not stop_event.is_set():
                 try:
                     current_time = time.time()
-                    
+
                     async with get_async_db_connection() as conn:
                         async with conn.cursor() as cur:
                             # Mark stale (non-offline) runtimes offline
@@ -331,7 +319,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             except Exception as e:
                                 logger.error(f"Runtime sweeper commit failed: {e}")
                                 logger.exception("Commit failure details:")
-                    
+
                     # Report server metrics periodically
                     if current_time - last_metrics_time >= metrics_interval:
                         try:
@@ -339,11 +327,15 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                             last_metrics_time = current_time
                         except Exception as e:
                             logger.debug(f"Server metrics reporting failed: {e}")
-                            
+
                 except Exception as outer_e:
                     logger.error(f"Runtime sweeper loop error: {outer_e}")
                     logger.exception("Sweeper loop exception details:")
-                await asyncio.sleep(sweep_interval)
+                try:
+                    await asyncio.sleep(sweep_interval)
+                except asyncio.CancelledError:
+                    logger.info("Runtime sweeper task cancelled; exiting")
+                    break
 
         sweeper_task: Optional[asyncio.Task] = None
         try:
@@ -388,6 +380,8 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.middleware('http')(catch_exceptions_middleware)
+
     # Simple request counter middleware (exclude /metrics to avoid recursion)
     @app.middleware("http")
     async def _count_requests(request, call_next):
@@ -425,6 +419,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
         lines.append("# HELP noetl_info Build and server info")
         lines.append("# TYPE noetl_info gauge")
         # Escape backslashes and quotes in labels if any
+
         def _esc(s: str) -> str:
             return str(s).replace("\\", "\\\\").replace("\"", "\\\"")
         lines.append(f"noetl_info{{version=\"{_esc(ver)}\",name=\"{_esc(name)}\"}} 1")

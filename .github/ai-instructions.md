@@ -132,4 +132,18 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - Docker: Containerized with environment-based configuration
 - Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics)
 
+## Writing Style Guidelines
+
+**Prohibited Words and Phrases:**
+- Never use "comprehensive" - use specific, descriptive alternatives like "complete", "full", "detailed", "thorough"
+- Never use "ensure" - use direct action words like "verify", "check", "validate", "confirm", "guarantee"
+- Never use emojis in any scripts, documentation, code comments, or task descriptions
+- Prefer concise, clear descriptions over verbose explanations
+
+**Examples:**
+- ❌ "Comprehensive test suite that ensures all functionality works"
+- ✅ "Complete test suite that validates all functionality"
+- ❌ "Deploy comprehensive monitoring stack 🚀"  
+- ✅ "Deploy complete monitoring stack"
+
 When working with this codebase, prioritize understanding the event-driven execution model and the playbook → events → worker execution flow. The architecture is designed for distributed execution with careful state management through Postgres system state storage.

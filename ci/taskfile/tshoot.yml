@@ -1,9 +1,9 @@
 version: '3.45'
 
 tasks:
-  check-ports:
+  tshoot:local:check-ports:
     desc: "Check if required ports are free (54321, 3000, 9428, 8082)"
-    aliases: [p]
+    aliases: [p, check-ports]
     silent: true
     cmds:
       - |
@@ -16,10 +16,10 @@ tasks:
         error=0
         for port in "${ports[@]}"; do
             if echo "$output" | grep -q ":$port "; then
-                echo "❌ ERROR: Port $port is already LISTENING (busy)"
+                echo "ERROR: Port $port is already LISTENING (busy)"
                 error=1
             else
-                echo "✅ Port $port is free"
+                echo "Port $port is free"
             fi
         done
 

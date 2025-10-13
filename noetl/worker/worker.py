@@ -10,7 +10,7 @@ import socket
 import contextlib
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
-
+import sys
 from jinja2 import Environment, StrictUndefined, BaseLoader
 
 from noetl.core.common import convert_snowflake_ids_for_api, get_async_db_connection
@@ -265,7 +265,7 @@ def deregister_worker_pool_from_env() -> None:
         logger.error(f"Worker deregister general error: {e}")
 
 
-def _on_worker_terminate(signum, frame):
+def on_worker_terminate(signum):
     logger.info(f"Worker pool process received signal {signum}")
     try:
         retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
@@ -282,19 +282,7 @@ def _on_worker_terminate(signum, frame):
                 time.sleep(backoff_base * (2 ** (attempt - 1)))
     finally:
         logger.info("Worker termination signal handler completed")
-
-
-try:
-    signal.signal(signal.SIGTERM, _on_worker_terminate)
-    signal.signal(signal.SIGINT, _on_worker_terminate)
-except Exception as e:
-    logger.error(f"Failed to register signal handlers: {e}")
-    logger.exception("Signal handler registration failed:")
-    # This is a critical failure - signal handlers are essential for graceful shutdown
-    import sys
-    logger.critical("Exiting due to signal handler registration failure")
-    sys.exit(1)
-
+        sys.exit(1)
 
 def _get_server_url() -> str:
     return _normalize_server_url(os.environ.get("NOETL_SERVER_URL", "http://localhost:8082"), ensure_api=True)
