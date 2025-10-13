@@ -1,5 +1,5 @@
 import React from 'react';
-import { NodeTypeDef } from '../../nodeTypes/NodeType';
+import { NodeTypeDef } from '../../nodeTypes';
 
 const DefaultEditor: React.FC = () => (
     <div className="node-editor default-editor">

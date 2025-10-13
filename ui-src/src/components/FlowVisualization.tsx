@@ -22,7 +22,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
-import { nodeTypes, orderedNodeTypes } from './nodeTypes';
+import { nodeTypes, orderedNodeTypes } from './nodeTypes'; // consolidated single source
 import { EditableTaskNode, TaskNode } from "./types";
 // @ts-ignore
 import yaml from 'js-yaml';
@@ -74,7 +74,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const [hasChanges, setHasChanges] = useState(false);
 
   // Provide nodeTypes directly (already a stable object export)
-  const customNodeTypes = useMemo(() => nodeTypes, []);
+  // React Flow expects a mapping of type -> React component receiving {id, data, ...}; our adapted components satisfy this
+  const customNodeTypes = useMemo(() => nodeTypes as any, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),

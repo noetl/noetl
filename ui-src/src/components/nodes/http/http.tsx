@@ -1,4 +1,5 @@
 import { memo, useState, useEffect, useCallback } from 'react';
+import { NodeComponentProps, NodeMeta } from '../../nodeTypes';
 import { Handle, Position } from '@xyflow/react';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
 import { EditOutlined } from '@ant-design/icons';
@@ -12,11 +13,8 @@ interface HttpConfigDraft {
     timeout: string | number | '';
 }
 
-function HttpNode({ data }: any) {
-    const task = data?.task || {};
-    const onEdit = data?.onEdit;
-    const readOnly = data?.readOnly;
-    const cfg = task.config || {};
+function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
+    const cfg = args || {};
 
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState<HttpConfigDraft>(() => ({
@@ -34,7 +32,7 @@ function HttpNode({ data }: any) {
 
     // Re-sync draft when task updates externally (after save elsewhere)
     useEffect(() => {
-        const newCfg = task.config || {};
+        const newCfg = args || {};
         setDraft({
             method: (newCfg.method || 'GET').toUpperCase(),
             url: newCfg.url || '',
@@ -44,12 +42,12 @@ function HttpNode({ data }: any) {
             timeout: newCfg.timeout ?? ''
         });
         try { setHeaderInput(newCfg.headers && Object.keys(newCfg.headers).length ? JSON.stringify(newCfg.headers, null, 2) : ''); } catch { setHeaderInput(''); }
-    }, [task.config]);
+    }, [args]);
 
     const openEditor = useCallback(() => {
         if (readOnly) return;
         // fresh copy each open
-        const current = task.config || {};
+        const current = args || {};
         setDraft({
             method: (current.method || 'GET').toUpperCase(),
             url: current.url || '',
@@ -61,7 +59,7 @@ function HttpNode({ data }: any) {
         try { setHeaderInput(current.headers && Object.keys(current.headers).length ? JSON.stringify(current.headers, null, 2) : ''); } catch { setHeaderInput(''); }
         setHeaderError(null);
         setModalOpen(true);
-    }, [task.config, readOnly]);
+    }, [args, readOnly]);
 
     const commit = useCallback(() => {
         if (readOnly || !onEdit) { setModalOpen(false); return; }
@@ -102,7 +100,7 @@ function HttpNode({ data }: any) {
     };
 
     const summaryUrl: string = (() => {
-        const u = (task.config?.url || '').trim();
+        const u = (args?.url || '').trim();
         if (!u) return '';
         if (u.length < 34) return u;
         return u.slice(0, 31) + '…';
@@ -134,7 +132,7 @@ function HttpNode({ data }: any) {
             <div style={{ fontSize: 11, wordBreak: 'break-all', lineHeight: 1.3 }}>
                 {summaryUrl || <span style={{ opacity: 0.5 }}>(no url)</span>}
             </div>
-            <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{(task.config?.method || 'GET').toUpperCase()}</div>
+            <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{(args?.method || 'GET').toUpperCase()}</div>
             {!readOnly && <div style={{ fontSize: 9, opacity: 0.55, marginTop: 4 }}>double-click or edit icon</div>}
 
             <Modal
@@ -211,3 +209,11 @@ function HttpNode({ data }: any) {
 }
 
 export default memo(HttpNode);
+
+export const httpMeta: NodeMeta = {
+    type: 'http',
+    icon: '🌐',
+    label: 'HTTP',
+    color: '#1890ff',
+    description: 'HTTP request step'
+};

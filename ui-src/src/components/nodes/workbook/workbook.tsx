@@ -1,10 +1,10 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
+import { NodeMeta, NodeComponentProps } from '../../nodeTypes';
 
-// Minimal visual workbook node – mirrors the simple example structure
-function WorkbookNode({ data }: any) {
-    const task = data?.task || {};
-    const cfg = task.config || {};
+// Minimal visual workbook node using standardized NodeComponentProps
+function WorkbookNode({ task, args }: NodeComponentProps) {
+    const cfg = args || {};
     return (
         <div style={{ padding: 8, border: '1px solid #ff6b35', borderRadius: 8, fontSize: 12, background: '#fff' }}>
             <Handle type="target" position={Position.Left} />
@@ -17,3 +17,11 @@ function WorkbookNode({ data }: any) {
 }
 
 export default memo(WorkbookNode);
+
+export const workbookMeta: NodeMeta = {
+    type: 'workbook',
+    icon: '📊',
+    label: 'Workbook',
+    color: '#ff6b35',
+    description: 'Workbook execution step'
+};

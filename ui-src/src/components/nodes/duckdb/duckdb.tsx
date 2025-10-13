@@ -1,9 +1,9 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
+import { NodeMeta, NodeComponentProps } from '../../nodeTypes';
 
-function DuckDbNode({ data }: any) {
-    const task = data?.task || {};
-    const cfg = task.config || {};
+function DuckDbNode({ task, args }: NodeComponentProps) {
+    const cfg = args || {};
     const sqlPreview = (cfg.sql || '').toString();
     return (
         <div style={{ padding: 8, border: '1px solid #8c61ff', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
@@ -15,3 +15,11 @@ function DuckDbNode({ data }: any) {
     );
 }
 export default memo(DuckDbNode);
+
+export const duckdbMeta: NodeMeta = {
+    type: 'duckdb',
+    icon: '🦆',
+    label: 'DuckDB',
+    color: '#8c61ff',
+    description: 'Run DuckDB SQL'
+};

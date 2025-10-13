@@ -1,9 +1,9 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
+import { NodeMeta, NodeComponentProps } from '../../nodeTypes';
 
-function PostgresNode({ data }: any) {
-    const task = data?.task || {};
-    const cfg = task.config || {};
+function PostgresNode({ task, args }: NodeComponentProps) {
+    const cfg = args || {};
     const sqlPreview = (cfg.sql || '').toString();
     return (
         <div style={{ padding: 8, border: '1px solid #336791', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
@@ -15,3 +15,11 @@ function PostgresNode({ data }: any) {
     );
 }
 export default memo(PostgresNode);
+
+export const postgresMeta: NodeMeta = {
+    type: 'postgres',
+    icon: '🐘',
+    label: 'Postgres',
+    color: '#336791',
+    description: 'Run Postgres SQL'
+};

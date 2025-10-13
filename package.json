@@ -2,6 +2,7 @@
   "dependencies": {
     "@types/js-yaml": "^4.0.9",
     "@xyflow/react": "^12.8.2",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "react-error-boundary": "^6.0.0"
   }
 }

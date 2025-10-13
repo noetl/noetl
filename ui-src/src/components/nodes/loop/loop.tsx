@@ -1,9 +1,9 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
+import { NodeMeta, NodeComponentProps } from '../../nodeTypes';
 
-function LoopNode({ data }: any) {
-    const task = data?.task || {};
-    const cfg = task.config || {};
+function LoopNode({ task, args }: NodeComponentProps) {
+    const cfg = args || {};
     return (
         <div style={{ padding: 8, border: '1px solid #faad14', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
             <Handle type="target" position={Position.Left} />
@@ -15,3 +15,11 @@ function LoopNode({ data }: any) {
     );
 }
 export default memo(LoopNode);
+
+export const loopMeta: NodeMeta = {
+    type: 'loop',
+    icon: '🔁',
+    label: 'Loop',
+    color: '#faad14',
+    description: 'Iterate over a collection'
+};
