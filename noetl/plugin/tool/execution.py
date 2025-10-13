@@ -48,7 +48,7 @@ def execute_task(
     from ..python import execute_python_task
     from ..duckdb import execute_duckdb_task
     from ..postgres import execute_postgres_task
-    from ..secrets import execute_secrets_task
+    from ..secret import execute_secrets_task
     from ..playbook import execute_playbook_task
     from ..workbook import execute_workbook_task
     from ..save import execute_save_task
