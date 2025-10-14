@@ -1,0 +1,47 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: retry_simple_config
+  path: tests/retry/simple_config
+  description: Test simplified retry configuration options
+
+workload:
+  test_url: https://httpbin.org/get
+  
+workflow:
+  - step: boolean_retry
+    desc: Simple boolean retry (uses defaults)
+    type: http
+    method: GET
+    url: "{{ workload.test_url }}"
+    retry: true
+    next:
+      - step: integer_retry
+        
+  - step: integer_retry
+    desc: Integer retry (max attempts only)
+    type: http
+    method: GET
+    url: "{{ workload.test_url }}"
+    retry: 5
+    next:
+      - step: full_config_retry
+      
+  - step: full_config_retry
+    desc: Full configuration retry
+    type: http
+    method: GET
+    url: "{{ workload.test_url }}"
+    retry:
+      max_attempts: 3
+      initial_delay: 0.5
+      backoff_multiplier: 2.0
+      max_delay: 10.0
+      jitter: true
+      retry_when: "{{ status_code >= 500 }}"
+      stop_when: "{{ status_code == 200 }}"
+    next:
+      - step: end
+        
+  - step: end
+    desc: End workflow

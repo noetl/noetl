@@ -1,0 +1,29 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: postgres_retry_connection
+  path: tests/retry/postgres_connection
+  description: Test Postgres retry on connection or query errors
+
+workload:
+  query: SELECT 1 as test_value
+  
+workflow:
+  - step: start
+    desc: Execute query with retry on errors
+    type: postgres
+    auth:
+      type: postgres
+      credential: test_postgres
+    query: "{{ workload.query }}"
+    retry:
+      max_attempts: 3
+      initial_delay: 1.0
+      backoff_multiplier: 2.0
+      # Retry on any error or when success is false
+      retry_when: "{{ error != None or success == False }}"
+    next:
+      - step: end
+        
+  - step: end
+    desc: End workflow

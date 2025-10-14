@@ -387,3 +387,100 @@ tasks:
     cmds:
       - echo "=== Running Save Storage Test Validation ==="
       - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_all_storage_types" --port 8083
+
+  # === Retry Test Tasks ===
+  
+  playbook:local:register-retry-tests:
+    desc: Register all retry test playbooks
+    aliases: [trrt, test-register-retry-tests]
+    cmds:
+      - |
+        set -e
+        echo "=== Registering retry test playbooks ==="
+        
+        if [ -x ".venv/bin/noetl" ]; then
+          cli=".venv/bin/noetl"
+        else
+          cli="noetl"
+        fi
+        
+        # Register each retry test playbook
+        echo "Registering HTTP retry status code test..."
+        $cli register tests/fixtures/playbooks/retry_test/http_retry_status_code.yaml --host localhost --port 8083
+        
+        echo "Registering HTTP retry with stop condition test..."
+        $cli register tests/fixtures/playbooks/retry_test/http_retry_with_stop.yaml --host localhost --port 8083
+        
+        echo "Registering Python exception retry test..."
+        $cli register tests/fixtures/playbooks/retry_test/python_retry_exception.yaml --host localhost --port 8083
+        
+        echo "Registering DuckDB query retry test..."
+        $cli register tests/fixtures/playbooks/retry_test/duckdb_retry_query.yaml --host localhost --port 8083
+        
+        echo "Registering simple retry config test..."
+        $cli register tests/fixtures/playbooks/retry_test/retry_simple_config.yaml --host localhost --port 8083
+        
+        echo "✓ All retry test playbooks registered successfully"
+
+  playbook:local:execute:retry-http-status:
+    desc: Execute HTTP retry status code test
+    aliases: [terhs, test-execute-retry-http-status]
+    cmds:
+      - |
+        set -e
+        echo "=== Executing HTTP retry status code test ==="
+        task playbook:local:execute PLAYBOOK=tests/retry/http_status_code
+
+  playbook:local:execute:retry-http-stop:
+    desc: Execute HTTP retry with stop condition test
+    aliases: [terhs, test-execute-retry-http-stop]
+    cmds:
+      - |
+        set -e
+        echo "=== Executing HTTP retry with stop condition test ==="
+        task playbook:local:execute PLAYBOOK=tests/retry/http_stop_condition
+
+  playbook:local:execute:retry-python-exception:
+    desc: Execute Python exception retry test
+    aliases: [terpe, test-execute-retry-python-exception]
+    cmds:
+      - |
+        set -e
+        echo "=== Executing Python exception retry test ==="
+        task playbook:local:execute PLAYBOOK=tests/retry/python_exception
+
+  playbook:local:execute:retry-duckdb:
+    desc: Execute DuckDB query retry test
+    aliases: [terd, test-execute-retry-duckdb]
+    cmds:
+      - |
+        set -e
+        echo "=== Executing DuckDB query retry test ==="
+        task playbook:local:execute PLAYBOOK=tests/retry/duckdb_query
+
+  playbook:local:execute:retry-simple-config:
+    desc: Execute simple retry config test
+    aliases: [tersc, test-execute-retry-simple-config]
+    cmds:
+      - |
+        set -e
+        echo "=== Executing simple retry config test ==="
+        task playbook:local:execute PLAYBOOK=tests/retry/simple_config
+
+  test:local:retry-all:
+    desc: Run all retry tests
+    aliases: [tra, test-retry-all]
+    cmds:
+      - task: noetl:local:setup-test-environment
+      - task: playbook:local:register-retry-tests
+      - echo "\n=== Running HTTP status code retry test ==="
+      - task: playbook:local:execute:retry-http-status
+      - echo "\n=== Running HTTP stop condition retry test ==="
+      - task: playbook:local:execute:retry-http-stop
+      - echo "\n=== Running Python exception retry test ==="
+      - task: playbook:local:execute:retry-python-exception
+      - echo "\n=== Running DuckDB retry test ==="
+      - task: playbook:local:execute:retry-duckdb
+      - echo "\n=== Running simple config retry test ==="
+      - task: playbook:local:execute:retry-simple-config
+      - echo "\n=== All retry tests completed ==="

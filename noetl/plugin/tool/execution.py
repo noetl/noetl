@@ -10,38 +10,22 @@ from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
 from noetl.core.logger import setup_logger
+from .retry import execute_with_retry
 
 logger = setup_logger(__name__, include_location=True)
 
 
-def execute_task(
+def _execute_task_without_retry(
     task_config: Dict[str, Any],
-    task_name: str,
     context: Dict[str, Any],
     jinja_env: Environment,
-    task_with: Optional[Dict[str, Any]] = None,
-    log_event_callback: Optional[Callable] = None
+    task_with: Dict[str, Any],
+    log_event_callback: Optional[Callable]
 ) -> Dict[str, Any]:
     """
-    Execute a task based on its type.
+    Internal function to execute a task without retry logic.
     
-    This is the main entry point for task execution. It routes tasks to the
-    appropriate plugin implementation based on the task type (http, python,
-    duckdb, postgres, secrets, playbook, workbook, iterator, save).
-
-    Args:
-        task_config: The task configuration dictionary
-        task_name: Name of the task
-        context: Execution context
-        jinja_env: Jinja2 environment for template rendering
-        task_with: Additional parameters from 'with' clause
-        log_event_callback: Optional callback for logging events
-
-    Returns:
-        Task execution result
-
-    Raises:
-        ValueError: If task type is unknown or not supported
+    This function is wrapped by execute_task which adds retry functionality.
     """
     # Import plugin executors here to avoid circular imports
     from ..http import execute_http_task
@@ -57,35 +41,79 @@ def execute_task(
     raw_type = task_config.get('type', task_config.get('action', 'unknown'))
     task_type = str(raw_type).strip().lower()
 
-    logger.debug(f"Executing task '{task_name}' of type '{task_type}'")
+    logger.debug(f"Executing task of type '{task_type}'")
 
     # Dispatch to appropriate action handler
     if task_type == 'http':
-        return execute_http_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_http_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'python':
-        return execute_python_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_python_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'duckdb':
-        return execute_duckdb_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_duckdb_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'postgres':
-        return execute_postgres_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_postgres_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'secrets':
         # For secrets, we need to get the secret_manager from context or somewhere
         secret_manager = context.get('secret_manager')
-        return execute_secrets_task(task_config, context, secret_manager, task_with or {}, log_event_callback)
+        return execute_secrets_task(task_config, context, secret_manager, task_with, log_event_callback)
     elif task_type == 'playbook':
-        return execute_playbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_playbook_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'workbook':
         # Workbook tasks need async execution for catalog access
         return _execute_workbook_async(execute_workbook_task, task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'save':
-        return execute_save_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_save_task(task_config, context, jinja_env, task_with, log_event_callback)
     elif task_type == 'iterator':
-        return execute_iterator_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_iterator_task(task_config, context, jinja_env, task_with, log_event_callback)
     else:
         raise ValueError(
             f"Unknown task type '{raw_type}'. "
             f"Available types: http, python, duckdb, postgres, secrets, playbook, workbook, iterator, save"
         )
+
+
+def execute_task(
+    task_config: Dict[str, Any],
+    task_name: str,
+    context: Dict[str, Any],
+    jinja_env: Environment,
+    task_with: Optional[Dict[str, Any]] = None,
+    log_event_callback: Optional[Callable] = None
+) -> Dict[str, Any]:
+    """
+    Execute a task based on its type with retry logic.
+    
+    This is the main entry point for task execution. It routes tasks to the
+    appropriate plugin implementation based on the task type (http, python,
+    duckdb, postgres, secrets, playbook, workbook, iterator, save).
+    
+    If the task configuration includes a 'retry' section, the task will be
+    automatically retried according to the retry policy.
+
+    Args:
+        task_config: The task configuration dictionary
+        task_name: Name of the task
+        context: Execution context
+        jinja_env: Jinja2 environment for template rendering
+        task_with: Additional parameters from 'with' clause
+        log_event_callback: Optional callback for logging events
+
+    Returns:
+        Task execution result
+
+    Raises:
+        ValueError: If task type is unknown or not supported
+    """
+    # Wrap the task execution with retry logic
+    return execute_with_retry(
+        _execute_task_without_retry,
+        task_config,
+        task_name,
+        context,
+        jinja_env,
+        task_with,
+        log_event_callback
+    )
 
 
 def _execute_workbook_async(

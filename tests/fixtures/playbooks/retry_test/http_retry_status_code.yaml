@@ -1,0 +1,28 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: http_retry_status_code
+  path: tests/retry/http_status_code
+  description: Test HTTP retry based on status code condition
+
+workload:
+  test_url: https://httpbin.org/status/503
+  
+workflow:
+  - step: start
+    desc: Fetch URL that returns 503 and retry on 5xx status codes
+    type: http
+    method: GET
+    url: "{{ workload.test_url }}"
+    retry:
+      max_attempts: 3
+      initial_delay: 0.5
+      backoff_multiplier: 2.0
+      max_delay: 5.0
+      # Retry on server errors (5xx status codes)
+      retry_when: "{{ status_code >= 500 and status_code < 600 }}"
+    next:
+      - step: end
+        
+  - step: end
+    desc: End workflow

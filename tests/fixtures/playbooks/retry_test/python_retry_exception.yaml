@@ -1,0 +1,41 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: python_retry_exception
+  path: tests/retry/python_exception
+  description: Test Python task retry on exception
+
+workload:
+  max_value: 10
+  
+workflow:
+  - step: start
+    desc: Run Python code that fails initially then succeeds
+    type: python
+    code: |
+      import random
+      
+      def main(input_data):
+          # Simulate random failures for testing retry
+          rand_val = random.randint(1, 100)
+          
+          if rand_val < 70:  # 70% chance of failure
+              raise Exception(f"Random failure (value: {rand_val})")
+          
+          return {
+              'success': True,
+              'message': f'Success after retry (value: {rand_val})',
+              'data': {'value': rand_val}
+          }
+    retry:
+      max_attempts: 5
+      initial_delay: 0.2
+      backoff_multiplier: 1.5
+      max_delay: 2.0
+      # Retry when there's an error
+      retry_when: "{{ error != None }}"
+    next:
+      - step: end
+        
+  - step: end
+    desc: End workflow
