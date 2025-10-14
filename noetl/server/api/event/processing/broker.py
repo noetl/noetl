@@ -191,42 +191,50 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                             next_with = {}
                             
                             if start_step:
+                                # Normalize start step: ensure it has type 'start' if no type specified
+                                # This makes it explicit that it's a control flow router
+                                if not start_step.get('type'):
+                                    start_step['type'] = 'start'
+                                
+                                # Start step is ALWAYS a router, never actionable
+                                # Even if someone incorrectly adds an action type, we treat it as a router
+                                # Find next actionable step from start's next field
                                 nxt_list = start_step.get('next') or []
                                 if isinstance(nxt_list, list) and nxt_list:
-                                    # Simple logic: take first item for now
-                                    first = nxt_list[0] or {}
-                                    if isinstance(first, str):
-                                        next_step_name = first
-                                    elif isinstance(first, dict):
-                                        next_step_name = first.get('step') or first.get('name')
-                                        # Build transition payload with precedence: input > payload > with > data
-                                        merged = {}
-                                        try:
-                                            w = first.get('with') if isinstance(first.get('with'), dict) else None
-                                            if w:
-                                                merged.update(w)
-                                        except Exception:
-                                            pass
-                                        try:
-                                            p = first.get('payload') if isinstance(first.get('payload'), dict) else None
-                                            if p:
-                                                merged.update(p)
-                                        except Exception:
-                                            pass
-                                        try:
-                                            i = first.get('input') if isinstance(first.get('input'), dict) else None
-                                            if i:
-                                                merged.update(i)
-                                        except Exception:
-                                            pass
-                                        try:
-                                            # IMPORTANT: Also check for 'data' attribute in next step transition
-                                            d = first.get('data') if isinstance(first.get('data'), dict) else None
-                                            if d:
-                                                merged['data'] = d
-                                        except Exception:
-                                            pass
-                                        next_with = merged
+                                        # Simple logic: take first item for now
+                                        first = nxt_list[0] or {}
+                                        if isinstance(first, str):
+                                            next_step_name = first
+                                        elif isinstance(first, dict):
+                                            next_step_name = first.get('step') or first.get('name')
+                                            # Build transition payload with precedence: input > payload > with > data
+                                            merged = {}
+                                            try:
+                                                w = first.get('with') if isinstance(first.get('with'), dict) else None
+                                                if w:
+                                                    merged.update(w)
+                                            except Exception:
+                                                pass
+                                            try:
+                                                p = first.get('payload') if isinstance(first.get('payload'), dict) else None
+                                                if p:
+                                                    merged.update(p)
+                                            except Exception:
+                                                pass
+                                            try:
+                                                i = first.get('input') if isinstance(first.get('input'), dict) else None
+                                                if i:
+                                                    merged.update(i)
+                                            except Exception:
+                                                pass
+                                            try:
+                                                # IMPORTANT: Also check for 'data' attribute in next step transition
+                                                d = first.get('data') if isinstance(first.get('data'), dict) else None
+                                                if d:
+                                                    merged['data'] = d
+                                            except Exception:
+                                                pass
+                                            next_with = merged
                             
                             if next_step_name and next_step_name in by_name:
                                 step_def = by_name[next_step_name]
@@ -257,7 +265,9 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     # unified payload fields (prefer input/payload over legacy with later)
                                     'input','payload','with','auth',
                                     'data',  # some steps embed data payloads directly
-                                    'resource_path','content','path','loop','save','credential','credentials'
+                                    'resource_path','content','path','loop','save','credential','credentials',
+                                    # retry configuration
+                                    'retry'
                                 ):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)
@@ -410,6 +420,16 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     # Encode and enqueue task
                                     encoded = encode_task_for_queue(task)
                                     
+                                    # Extract max_attempts from retry config
+                                    max_attempts = 3  # default
+                                    retry_config = task.get('retry')
+                                    if isinstance(retry_config, bool):
+                                        max_attempts = 3 if retry_config else 1
+                                    elif isinstance(retry_config, int):
+                                        max_attempts = retry_config
+                                    elif isinstance(retry_config, dict):
+                                        max_attempts = retry_config.get('max_attempts', 3)
+                                    
                                     # Get catalog_id from execution's first event
                                     await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
                                     catalog_row = await cur.fetchone()
@@ -434,7 +454,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                             json.dumps(encoded),
                                             json.dumps(ctx),
                                             5,
-                                            3,
+                                            max_attempts,
                                         )
                                     )
                                     await conn.commit()
@@ -757,7 +777,18 @@ async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | Non
 
 
 def _is_actionable_step(step_def: dict) -> bool:
+    """
+    Determine if a step is actionable (should be executed by a worker).
+    
+    Steps named 'start' or 'end' are NEVER actionable - they are control flow routers.
+    Even if someone incorrectly adds a type to them, we treat them as routers.
+    """
     try:
+        # Check step name first - 'start' and 'end' are always control flow routers
+        step_name = str((step_def or {}).get('step') or (step_def or {}).get('name') or '').lower()
+        if step_name in {'start', 'end'}:
+            return False
+        
         t = str((step_def or {}).get('type') or '').lower()
         if not t:
             return False
