@@ -12,6 +12,7 @@ class AuthType(Enum):
     POSTGRES = "postgres"
     MYSQL = "mysql"
     SQLITE = "sqlite"
+    SNOWFLAKE = "snowflake"
     GCS = "gcs"
     GCS_HMAC = "gcs_hmac"
     S3 = "s3"

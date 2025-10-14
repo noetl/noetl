@@ -1,0 +1,101 @@
+---
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: duckdb_snowflake_join
+  path: examples/duckdb_snowflake_join
+  description: |
+    Join data from Snowflake with local DuckDB tables.
+    
+    Demonstrates:
+    - Combining Snowflake and local data
+    - Using DuckDB for cross-source analytics
+    - Materialized view patterns
+    - Performance optimization with local caching
+
+workload:
+  snowflake_cred: snowflake_test
+  local_db_path: /tmp/duckdb_local.db
+  cache_table: snowflake_cache
+
+workflow:
+  - step: start
+    desc: Cache Snowflake data locally in DuckDB
+    type: duckdb
+    auth:
+      sf_conn:
+        type: snowflake
+        credential: "{{ workload.snowflake_cred }}"
+    with:
+      database: "{{ workload.local_db_path }}"
+      commands: |
+        -- Install Snowflake extension
+        INSTALL snowflake FROM community;
+        LOAD snowflake;
+        
+        -- Cache Snowflake dimension table locally
+        CREATE TABLE IF NOT EXISTS {{ workload.cache_table }} AS
+        SELECT 
+          product_id,
+          product_name,
+          category,
+          price,
+          CURRENT_TIMESTAMP as cached_at
+        FROM sf_conn.ANALYTICS_DB.PUBLIC.PRODUCTS;
+        
+        -- Verify cache
+        SELECT 
+          category,
+          COUNT(*) as product_count,
+          AVG(price) as avg_price
+        FROM {{ workload.cache_table }}
+        GROUP BY category;
+    next:
+      - step: join_with_local
+
+  - step: join_with_local
+    desc: Join cached Snowflake data with local tables
+    type: duckdb
+    with:
+      database: "{{ workload.local_db_path }}"
+      commands: |
+        -- Create sample local transaction data
+        CREATE TEMP TABLE local_transactions AS
+        SELECT 
+          ROW_NUMBER() OVER () as txn_id,
+          (RANDOM() * 1000)::INTEGER as product_id,
+          (RANDOM() * 500 + 10)::DECIMAL(10,2) as sale_amount,
+          CURRENT_DATE - (RANDOM() * 30)::INTEGER as txn_date
+        FROM generate_series(1, 1000);
+        
+        -- Join local transactions with cached Snowflake product data
+        SELECT 
+          t.txn_id,
+          t.txn_date,
+          p.product_name,
+          p.category,
+          t.sale_amount,
+          p.price as list_price,
+          (t.sale_amount - p.price) as profit_margin
+        FROM local_transactions t
+        INNER JOIN {{ workload.cache_table }} p
+          ON t.product_id = p.product_id
+        ORDER BY profit_margin DESC
+        LIMIT 20;
+        
+        -- Summary by category
+        SELECT 
+          p.category,
+          COUNT(*) as transaction_count,
+          SUM(t.sale_amount) as total_sales,
+          AVG(t.sale_amount - p.price) as avg_profit
+        FROM local_transactions t
+        INNER JOIN {{ workload.cache_table }} p
+          ON t.product_id = p.product_id
+        GROUP BY p.category
+        ORDER BY total_sales DESC;
+    next:
+      - step: end
+
+  - step: end
+    desc: Cross-source join completed
