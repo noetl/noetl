@@ -16,6 +16,7 @@ from .http import execute_http_task
 from .python import execute_python_task
 from .duckdb import execute_duckdb_task, get_duckdb_connection
 from .postgres import execute_postgres_task
+from .snowflake import execute_snowflake_task
 from .secret import execute_secrets_task
 from .playbook import execute_playbook_task
 from .workbook import execute_workbook_task
@@ -32,6 +33,7 @@ REGISTRY = {
     "http": http,
     "postgres": postgres,
     "duckdb": duckdb,
+    "snowflake": snowflake,
     "python": python,
 }
 
@@ -44,6 +46,7 @@ __all__ = [
     'execute_python_task',
     'execute_duckdb_task',
     'execute_postgres_task',
+    'execute_snowflake_task',
     'execute_secrets_task',
     'execute_playbook_task',
     'execute_workbook_task',

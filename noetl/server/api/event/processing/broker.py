@@ -253,7 +253,7 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                 
                                 # If step has a save block but type is not 'save', treat it as a save task
                                 # This ensures save blocks are handled by the save plugin
-                                if step_def.get('save') and step_type not in {'save', 'http', 'python', 'duckdb', 'postgres', 'secrets', 'workbook', 'playbook', 'iterator'}:
+                                if step_def.get('save') and step_type not in {'save', 'http', 'python', 'duckdb', 'postgres', 'snowflake', 'secrets', 'workbook', 'playbook', 'iterator'}:
                                     step_type = 'save'
                                 
                                 task = {
@@ -813,7 +813,7 @@ def _is_actionable_step(step_def: dict) -> bool:
             return True
             
         # Include 'save' so save steps run on workers
-        if t in {'http','python','duckdb','postgres','secrets','workbook','playbook','save','iterator'}:
+        if t in {'http','python','duckdb','postgres','snowflake','secrets','workbook','playbook','save','iterator'}:
             # For python, require code in step_def
             if t == 'python':
                 c = step_def.get('code') or step_def.get('code_b64') or step_def.get('code_base64')
