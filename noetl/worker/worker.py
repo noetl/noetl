@@ -370,7 +370,8 @@ class QueueWorker:
         self, 
         queue_id: int, 
         should_retry: bool = False, 
-        retry_delay_seconds: int = 60
+        retry_delay_seconds: int = 60,
+        job: Optional[Dict[str, Any]] = None
     ) -> None:
         """
         Mark job as failed with retry policy.
@@ -379,6 +380,7 @@ class QueueWorker:
             queue_id: Queue ID
             should_retry: Whether to retry the job based on retry policy evaluation
             retry_delay_seconds: Delay before retry in seconds
+            job: Job dictionary for emitting retry event
         """
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -389,6 +391,45 @@ class QueueWorker:
                         "retry_delay_seconds": retry_delay_seconds
                     }
                 )
+                
+            # Emit action_retry event if retrying
+            if should_retry and job:
+                try:
+                    execution_id = job.get("execution_id")
+                    node_id = job.get("node_id")
+                    context = job.get("context") or {}
+                    if isinstance(context, str):
+                        import json
+                        try:
+                            context = json.loads(context)
+                        except:
+                            context = {}
+                    
+                    # Get attempts from job or queue
+                    attempts = job.get("attempts", 0)
+                    max_attempts = job.get("max_attempts", 3)
+                    
+                    retry_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_retry",
+                        "status": "RETRYING",
+                        "node_id": node_id,
+                        "node_name": context.get("step_name"),
+                        "node_type": "step",
+                        "result": {
+                            "attempt": attempts,
+                            "max_attempts": max_attempts,
+                            "retry_delay_seconds": retry_delay_seconds,
+                            "message": f"Retrying after failure (attempt {attempts}/{max_attempts})"
+                        }
+                    }
+                    
+                    from noetl.plugin import report_event
+                    report_event(retry_event, self.server_url)
+                    logger.info(f"Emitted action_retry event for job {queue_id}, attempt {attempts}/{max_attempts}")
+                except Exception as e:
+                    logger.debug(f"Failed to emit action_retry event: {e}", exc_info=True)
+                    
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to mark job %s failed", queue_id, exc_info=True)
 
@@ -444,13 +485,17 @@ class QueueWorker:
                 return (False, 60)
             
             # Get current attempt info
-            attempt_number = job.get('attempts', 0) + 1
+            current_attempts = job.get('attempts', 0)
             max_attempts = job.get('max_attempts', retry_config.get('max_attempts', 3))
             
             # Check if we've exceeded max attempts
-            if attempt_number >= max_attempts:
-                logger.info(f"Max retry attempts ({max_attempts}) reached for job {job.get('queue_id')}")
+            # Don't retry if we've already used all attempts
+            if current_attempts >= max_attempts:
+                logger.info(f"Max retry attempts ({max_attempts}) reached for job {job.get('queue_id')} (current attempts: {current_attempts})")
                 return (False, 60)
+            
+            # Next attempt number for logging and delay calculation
+            attempt_number = current_attempts + 1
             
             # Import retry policy evaluator
             from noetl.plugin.tool.retry import RetryPolicy
@@ -951,7 +996,7 @@ class QueueWorker:
             
             # Evaluate retry policy if configured in the job
             should_retry, retry_delay = await self._evaluate_retry_policy(job, exc)
-            await self._fail_job(job["queue_id"], should_retry, retry_delay)
+            await self._fail_job(job["queue_id"], should_retry, retry_delay, job)
 
     # ------------------------------------------------------------------
     async def _report_simple_worker_metrics(self) -> None:

@@ -156,7 +156,7 @@ class QueueService:
                     """
                     WITH cte AS (
                       SELECT queue_id FROM noetl.queue
-                      WHERE status='queued' AND (available_at IS NULL OR available_at <= now())
+                      WHERE status IN ('queued', 'retry') AND (available_at IS NULL OR available_at <= now())
                       ORDER BY priority DESC, queue_id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
@@ -723,8 +723,9 @@ class QueueService:
                         (queue_id,)
                     )
                 else:
+                    # Set status to 'retry' (not 'queued') to distinguish retry attempts from initial queue
                     await cur.execute(
-                        "UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id",
+                        "UPDATE noetl.queue SET status='retry', available_at = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id",
                         (str(retry_delay_seconds), queue_id)
                     )
                 await cur.fetchone()
@@ -856,7 +857,7 @@ class QueueService:
                     """
                     WITH cte AS (
                       SELECT id FROM noetl.queue
-                      WHERE status='queued' AND available_at <= now()
+                      WHERE status IN ('queued', 'retry') AND available_at <= now()
                       ORDER BY priority DESC, id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1

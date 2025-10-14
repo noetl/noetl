@@ -70,8 +70,9 @@ class RetryPolicy:
             True if task should be retried, False otherwise
         """
         # Check max attempts
-        if attempt >= self.max_attempts:
-            logger.info(f"Max retry attempts ({self.max_attempts}) reached")
+        # attempt represents the NEXT attempt number, so we check if it would exceed max
+        if attempt > self.max_attempts:
+            logger.info(f"Max retry attempts ({self.max_attempts}) reached (next attempt would be {attempt})")
             return False
             
         # Build context for expression evaluation

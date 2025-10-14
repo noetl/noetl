@@ -191,50 +191,53 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                             next_with = {}
                             
                             if start_step:
-                                # Normalize start step: ensure it has type 'start' if no type specified
-                                # This makes it explicit that it's a control flow router
+                                # Normalize start step: if no type specified, make it explicit 'start' router
                                 if not start_step.get('type'):
                                     start_step['type'] = 'start'
                                 
-                                # Start step is ALWAYS a router, never actionable
-                                # Even if someone incorrectly adds an action type, we treat it as a router
-                                # Find next actionable step from start's next field
-                                nxt_list = start_step.get('next') or []
-                                if isinstance(nxt_list, list) and nxt_list:
-                                        # Simple logic: take first item for now
-                                        first = nxt_list[0] or {}
-                                        if isinstance(first, str):
-                                            next_step_name = first
-                                        elif isinstance(first, dict):
-                                            next_step_name = first.get('step') or first.get('name')
-                                            # Build transition payload with precedence: input > payload > with > data
-                                            merged = {}
-                                            try:
-                                                w = first.get('with') if isinstance(first.get('with'), dict) else None
-                                                if w:
-                                                    merged.update(w)
-                                            except Exception:
-                                                pass
-                                            try:
-                                                p = first.get('payload') if isinstance(first.get('payload'), dict) else None
-                                                if p:
-                                                    merged.update(p)
-                                            except Exception:
-                                                pass
-                                            try:
-                                                i = first.get('input') if isinstance(first.get('input'), dict) else None
-                                                if i:
-                                                    merged.update(i)
-                                            except Exception:
-                                                pass
-                                            try:
-                                                # IMPORTANT: Also check for 'data' attribute in next step transition
-                                                d = first.get('data') if isinstance(first.get('data'), dict) else None
-                                                if d:
-                                                    merged['data'] = d
-                                            except Exception:
-                                                pass
-                                            next_with = merged
+                                # Check if start step is actionable (has real action type like python, http, etc)
+                                if _is_actionable_step(start_step):
+                                    # Start step has action type - it should be executed first
+                                    next_step_name = 'start'
+                                    next_with = {}
+                                else:
+                                    # Start step is a router - find next actionable step from start's next field
+                                    nxt_list = start_step.get('next') or []
+                                    if isinstance(nxt_list, list) and nxt_list:
+                                            # Simple logic: take first item for now
+                                            first = nxt_list[0] or {}
+                                            if isinstance(first, str):
+                                                next_step_name = first
+                                            elif isinstance(first, dict):
+                                                next_step_name = first.get('step') or first.get('name')
+                                                # Build transition payload with precedence: input > payload > with > data
+                                                merged = {}
+                                                try:
+                                                    w = first.get('with') if isinstance(first.get('with'), dict) else None
+                                                    if w:
+                                                        merged.update(w)
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    p = first.get('payload') if isinstance(first.get('payload'), dict) else None
+                                                    if p:
+                                                        merged.update(p)
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    i = first.get('input') if isinstance(first.get('input'), dict) else None
+                                                    if i:
+                                                        merged.update(i)
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    # IMPORTANT: Also check for 'data' attribute in next step transition
+                                                    d = first.get('data') if isinstance(first.get('data'), dict) else None
+                                                    if d:
+                                                        merged['data'] = d
+                                                except Exception:
+                                                    pass
+                                                next_with = merged
                             
                             if next_step_name and next_step_name in by_name:
                                 step_def = by_name[next_step_name]
@@ -780,18 +783,30 @@ def _is_actionable_step(step_def: dict) -> bool:
     """
     Determine if a step is actionable (should be executed by a worker).
     
-    Steps named 'start' or 'end' are NEVER actionable - they are control flow routers.
-    Even if someone incorrectly adds a type to them, we treat them as routers.
+    Steps named 'start' or 'end' are control flow routers BY DEFAULT (no action type).
+    BUT if they have an explicit action type, they ARE actionable and must be executed.
+    
+    Rules:
+    - step "start" with NO type → router only (not actionable)
+    - step "start" with action type → ACTIONABLE, execute then route via 'next'
+    - step "end" with NO type → aggregator/router (not actionable)
+    - step "end" with action type → ACTIONABLE, execute then complete
     """
     try:
-        # Check step name first - 'start' and 'end' are always control flow routers
         step_name = str((step_def or {}).get('step') or (step_def or {}).get('name') or '').lower()
-        if step_name in {'start', 'end'}:
-            return False
-        
         t = str((step_def or {}).get('type') or '').lower()
+        
+        # If no type specified, not actionable
         if not t:
             return False
+        
+        # Special handling for 'start' and 'end' steps
+        if step_name in {'start', 'end'}:
+            # If type is explicitly 'start', 'end', or 'route' → control flow router (not actionable)
+            if t in {'start', 'end', 'route'}:
+                return False
+            # Otherwise, if they have a real action type, they ARE actionable
+            # Fall through to normal action type checking
         
         # Check if step has a save block - if so, it's actionable regardless of type
         if step_def.get('save'):
