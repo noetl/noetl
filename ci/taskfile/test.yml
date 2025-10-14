@@ -471,7 +471,7 @@ tasks:
     desc: Run all retry tests
     aliases: [tra, test-retry-all]
     cmds:
-      - task: noetl:local:setup-test-environment
+      - task: noetl:local:reset
       - task: playbook:local:register-retry-tests
       - echo "\n=== Running HTTP status code retry test ==="
       - task: playbook:local:execute:retry-http-status

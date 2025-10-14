@@ -558,6 +558,11 @@ class QueueWorker:
             if not catalog_id:
                 logger.warning(f"WORKER: catalog_id is missing for job {job.get('id')} execution {execution_id}. Events may fail to be recorded.")
 
+            # Extract retry metadata from queue entry
+            attempt_number = job.get('attempts', 0) + 1  # Current attempt (1-indexed)
+            max_attempts = job.get('max_attempts', 1)
+            is_retry = attempt_number > 1
+            
             start_event = {
                 "execution_id": execution_id,
                 "catalog_id": catalog_id,
@@ -566,7 +571,15 @@ class QueueWorker:
                 "node_id": node_id,
                 "node_name": task_name,
                 "node_type": node_type_val,
-                "context": {"work": context, "task": action_cfg},
+                "context": {
+                    "work": context,
+                    "task": action_cfg,
+                    "retry": {
+                        "attempt": attempt_number,
+                        "max_attempts": max_attempts,
+                        "is_retry": is_retry
+                    }
+                },
                 "trace_component": {"worker_raw_context": raw_context},
                 
             }
