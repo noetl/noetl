@@ -1,0 +1,50 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_end_with_action
+  path: tests/control-flow/end_with_action
+  description: Test end step with action type that aggregates and executes cleanup
+
+workload:
+  cleanup_required: true
+  
+workflow:
+  - step: start
+    desc: Entry point router
+    next:
+      - step: process_data
+  
+  - step: process_data
+    desc: Process data
+    type: python
+    code: |
+      def main(input_data):
+          return {
+              'status': 'success',
+              'data': {
+                  'records_processed': 100,
+                  'temp_table': 'temp_session_12345'
+              }
+          }
+    next:
+      - step: end
+        data:
+          temp_table: "{{ process_data.data.temp_table }}"
+          cleanup_required: "{{ workload.cleanup_required }}"
+        
+  - step: end
+    desc: End step with cleanup action
+    type: python
+    code: |
+      def main(input_data):
+          temp_table = input_data.get('temp_table', 'unknown')
+          cleanup = input_data.get('cleanup_required', False)
+          
+          return {
+              'status': 'completed',
+              'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
+              'data': {
+                  'cleaned_up': cleanup,
+                  'table': temp_table
+              }
+          }

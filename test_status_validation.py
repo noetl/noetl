@@ -90,7 +90,7 @@ def test_event_service_integration():
     print("\nTesting EventService integration...")
     
     try:
-        from noetl.api.routers.event.service import EventService
+        from noetl.server.api.event import EventService
         
         # This should work with valid status
         event_service = EventService()

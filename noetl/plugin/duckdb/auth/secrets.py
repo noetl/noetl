@@ -72,6 +72,8 @@ def _generate_single_secret(alias: str, auth_item: Any) -> str:
             return _generate_gcs_secret(alias, config)
         elif auth_type == "postgres":
             return _generate_postgres_secret(alias, config)
+        elif auth_type == "snowflake":
+            return _generate_snowflake_secret(alias, config)
         elif auth_type == "s3":
             return _generate_s3_secret(alias, config)
         else:
@@ -152,6 +154,55 @@ def _generate_postgres_secret(alias: str, config: Dict[str, Any]) -> str:
     
     if sslmode:
         parts.append(f"SSLMODE '{escape_sql(sslmode)}'")
+    
+    stmt = (
+        f"CREATE OR REPLACE SECRET {alias} (\n"
+        f"  {',\n  '.join(parts)}\n"
+        f");"
+    )
+    
+    return stmt
+
+
+def _generate_snowflake_secret(alias: str, config: Dict[str, Any]) -> str:
+    """
+    Generate Snowflake DuckDB secret.
+    
+    Args:
+        alias: Secret alias
+        config: Snowflake credential configuration
+        
+    Returns:
+        CREATE SECRET statement for Snowflake
+    """
+    account = config.get("account") or config.get("sf_account")
+    user = config.get("user") or config.get("username") or config.get("sf_user")
+    password = config.get("password") or config.get("sf_password")
+    database = config.get("database") or config.get("sf_database")
+    schema = config.get("schema") or config.get("sf_schema", "PUBLIC")
+    warehouse = config.get("warehouse") or config.get("sf_warehouse")
+    role = config.get("role") or config.get("sf_role")
+    
+    # Validate required fields
+    for field_name, value in [("account", account), ("user", user), ("password", password)]:
+        if not value:
+            raise AuthenticationError(f"Snowflake secret '{alias}' missing required field: {field_name}")
+    
+    parts = [
+        "TYPE snowflake",
+        f"ACCOUNT '{escape_sql(account)}'",
+        f"USER '{escape_sql(user)}'",
+        f"PASSWORD '{escape_sql(password)}'"
+    ]
+    
+    if database:
+        parts.append(f"DATABASE '{escape_sql(database)}'")
+    if schema:
+        parts.append(f"SCHEMA '{escape_sql(schema)}'")
+    if warehouse:
+        parts.append(f"WAREHOUSE '{escape_sql(warehouse)}'")
+    if role:
+        parts.append(f"ROLE '{escape_sql(role)}'")
     
     stmt = (
         f"CREATE OR REPLACE SECRET {alias} (\n"

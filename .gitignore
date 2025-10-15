@@ -26,6 +26,7 @@ data/noetldb/
 .env.tradetrend
 examples/tradetrend
 .*
+!.dockerignore
 # Virtual environments
 publish_env/
 test_env/

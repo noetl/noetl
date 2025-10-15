@@ -1,0 +1,52 @@
+.idea
+.venv
+*.iml
+*.pyc
+target
+secrets
+.classpath
+.settings
+.project
+.pydevproject
+.DS_Store
+*.log
+clusterManagement/out
+clusterManagement/clients
+build/
+dist/
+logs/
+*.egg-info/
+.env.prod
+.env.local
+.secrets/
+node_modules/
+data/noetldb/
+.vscode/
+.vscode-test/
+.env.tradetrend
+examples/tradetrend
+.*
+# Virtual environments
+publish_env/
+test_env/
+*.venv/
+venv/
+env/
+.vscode/launch.json
+# Terraform
+.terraform*
+/.vscode/
+/status.json.clean
+/status.json
+/tests/fixtures/credentials/gcs_hmac_local.json
+
+# --- Docker ---
+# Ignore local build tag
+.noetl_last_build_tag.txt
+
+# --- Kind ---
+# Ignore folder with postgres data
+ci/kind/cache
+
+.git
+__pycache__

@@ -5,173 +5,173 @@ env:
   IMAGE_NAME: "noetl"
 
 tasks:
-  add-metrics-server-helm-repo:
+  monitoring:k8s:add-metrics-server-helm-repo:
     desc: Add Metircs Server helm repository
     cmds:
       - helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
       - helm repo update
 
-  deploy-metrics-server:
+  monitoring:k8s:deploy-metrics-server:
     desc: Deploy Metrics Server
     aliases: [dm]
     cmds:
-      - kubectl config use-context kind-noetl 
+      - task: kubectl:local:context-set-kind
       - |
         helm upgrade --install metrics-server metrics-server/metrics-server \
           --values ci/vmstack/mericsserver-values.yaml --version 3.13.0 \
           --namespace metrics-server --create-namespace \
           --wait --wait-for-jobs
 
-  remove-metrics-server:
+  monitoring:k8s:remove-metrics-server:
     desc: Remove Metrics Server
     aliases: [rm]
     cmds:
-      - kubectl config use-context kind-noetl 
+      - task: kubectl:local:context-set-kind
       - helm uninstall metrics-server -n metrics-server
 
-  add-victoriametrics-helm-repo:
+  monitoring:k8s:add-victoriametrics-helm-repo:
     desc: Add VictoriaMetrics helm repository
     cmds:
       - helm repo add vm https://victoriametrics.github.io/helm-charts/
       - helm repo update
 
-  deploy-vmstack-operator:
+  monitoring:k8s:deploy-vmstack-operator:
     desc: Deploy VictoriaMetrics operator
     aliases: [do]
     cmds:
-      - kubectl config use-context kind-noetl 
+      - task: kubectl:local:context-set-kind
       - |
         helm upgrade --install vmoperator vm/victoria-metrics-operator \
           --values ci/vmstack/vmoperator-values.yaml --version 0.54.0 \
           --namespace vmoperator --create-namespace \
           --wait --wait-for-jobs
 
-  remove-vmstack-operator:
+  monitoring:k8s:remove-vmstack-operator:
     desc: Remove VictoriaMetrics operator
     aliases: [ro]
     cmds:
-      - kubectl config use-context kind-noetl 
+      - task: kubectl:local:context-set-kind
       - helm uninstall vmoperator -n vmoperator
 
-  deploy-vmstack:
+  monitoring:k8s:deploy-vmstack:
     desc:  Deploy VictoriaMetrics stack
     aliases: [ds]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - |
         helm upgrade --install vmstack vm/victoria-metrics-k8s-stack \
           --values ci/vmstack/vmstack-values.yaml --version 0.60.1 \
           --namespace vmstack --create-namespace \
           --wait --wait-for-jobs
 
-  remove-vmstack:
+  monitoring:k8s:remove-vmstack:
     desc:  Remove VictoriaMetrics stack
     aliases: [rs]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - helm uninstall vmstack -n vmstack
 
-  deploy-vmlogs:
+  monitoring:k8s:deploy-vmlogs:
     desc: Deploy VictoriaLogs
     aliases: [dl]
     cmds:
-      - kubectl config use-context kind-noetl 
+      - task: kubectl:local:context-set-kind
       - |
         helm upgrade --install vmlogs vm/victoria-logs-single \
           --values ci/vmstack/vmlogs-values.yaml --version 0.11.11 \
           --namespace vmlogs --create-namespace \
           --wait --wait-for-jobs
 
-  remove-vmlogs:
+  monitoring:k8s:remove-vmlogs:
     desc:  Remove VictoriaLogs
     aliases: [rl]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - helm uninstall vmlogs -n vmlogs
 
-  add-vector-helm-repo:
+  monitoring:k8s:add-vector-helm-repo:
     desc: Add Vector helm repository
     cmds:
       - helm repo add vector https://helm.vector.dev
       - helm repo update
 
-  deploy-vector:
+  monitoring:k8s:deploy-vector:
     desc: Deploy Victor
     aliases: [dv]
     cmds:
-      - kubectl config use-context kind-noetl 
+      - task: kubectl:local:context-set-kind
       - |
         helm upgrade --install vector vector/vector \
           --values ci/vmstack/vector-values.yaml --version 0.46.0 \
           --namespace vector --create-namespace \
           --wait --wait-for-jobs
 
-  remove-vector:
+  monitoring:k8s:remove-vector:
     desc:  Remove Vector
     aliases: [rv]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - helm uninstall vector -n vector
 
-  deploy-exporter:
+  monitoring:k8s:deploy-exporter:
     desc: Deploy postgres-exporter and vmscrape
     aliases: [de]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - kubectl apply -f ci/manifests/postgres-exporter/namespace/namespace.yaml
       - sleep 2
       - kubectl apply -f ci/manifests/postgres-exporter
 
-  remove-exporter:
+  monitoring:k8s:remove-exporter:
     desc: Remove postgres-exporter and vmscrape
     aliases: [re]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - kubectl delete -f ci/manifests/postgres-exporter/
 
-  deploy-noetl-scrape:
+  monitoring:k8s:deploy-noetl-scrape:
     desc: Deploy VMServiceScrape for noetl
     aliases: [dns]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - kubectl apply -f ci/manifests/noetl-scrape/namespace/namespace.yaml
       - sleep 2
       - kubectl apply -f ci/manifests/noetl-scrape/
 
-  remove-noetl-scrape:
+  monitoring:k8s:remove-noetl-scrape:
     desc: Remove VMServiceScrape for noetl
     aliases: [rns]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - kubectl delete -f ci/manifests/noetl-scrape/
 
-  deploy-dashboards:
+  monitoring:k8s:deploy-dashboards:
     desc: Deploy noetl and postgres Grafana dashboards
     aliases: [dd]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - kubectl apply -f ci/manifests/grafana-dashboards
 
-  remove-dashboards:
+  monitoring:k8s:remove-dashboards:
     desc: Remove noetl and postgres Grafana dashboards
     aliases: [rd]
     cmds:
-      - kubectl config use-context kind-noetl
+      - task: kubectl:local:context-set-kind
       - kubectl delete -f ci/manifests/grafana-dashboards
 
 # === Combined Tasks ===
-  deploy-monitoring:
+  monitoring:k8s:deploy:
     desc: Deploy Metrics Server, Victoria Metrics operator and stack
     aliases: [dmon]
     cmds:
-      - task: add-metrics-server-helm-repo
-      - task: add-victoriametrics-helm-repo
-      - task: add-vector-helm-repo
-      - task: deploy-metrics-server
-      - task: deploy-vmstack-operator
-      - task: deploy-vmstack
-      - task: deploy-vmlogs
-      - task: deploy-vector
-      - task: deploy-exporter
-      - task: deploy-noetl-scrape
-      - task: deploy-dashboards
+      - task: monitoring:k8s:add-metrics-server-helm-repo
+      - task: monitoring:k8s:add-victoriametrics-helm-repo
+      - task: monitoring:k8s:add-vector-helm-repo
+      - task: monitoring:k8s:deploy-metrics-server
+      - task: monitoring:k8s:deploy-vmstack-operator
+      - task: monitoring:k8s:deploy-vmstack
+      - task: monitoring:k8s:deploy-vmlogs
+      - task: monitoring:k8s:deploy-vector
+      - task: monitoring:k8s:deploy-exporter
+      - task: monitoring:k8s:deploy-noetl-scrape
+      - task: monitoring:k8s:deploy-dashboards

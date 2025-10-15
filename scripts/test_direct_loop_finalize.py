@@ -1,9 +1,9 @@
 import asyncio
 import sys
 
-from noetl.api.routers.event.processing.loop_completion import _process_direct_loop_completion
+from noetl.server.api.event.processing import _process_direct_loop_completion
 from noetl.core.common import get_async_db_connection
-from noetl.api.routers.event.service import get_event_service
+from noetl.server.api.event import get_event_service
 
 
 async def main(execution_id: str, step_name: str) -> None:

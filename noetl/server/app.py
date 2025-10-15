@@ -5,28 +5,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 import os
 import json
-import yaml
-import tempfile
-import os
-import json
-import yaml
-import tempfile
 import contextlib
-import psycopg
-import base64
 import socket
 import time
 import datetime
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List
+from datetime import datetime
+from typing import Dict, Optional
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
-from fastapi.responses import JSONResponse
-from psycopg.rows import dict_row
-from noetl.core.common import deep_merge, get_pgdb_connection, get_db_connection, get_async_db_connection, get_snowflake_id
+from fastapi import APIRouter
+from noetl.core.common import get_async_db_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
-from noetl.api.routers.broker import Broker, execute_playbook_via_broker
-from noetl.api.routers import router as api_router
+from noetl.server.api import router as api_router
 from noetl.server.middleware import catch_exceptions_middleware
 logger = setup_logger(__name__, include_location=True)
 
@@ -36,7 +25,6 @@ router.include_router(api_router)
 
 
 def create_app() -> FastAPI:
-    from noetl.core.config import _settings
     import noetl.core.config as core_config
     core_config._settings = None
     core_config._ENV_LOADED = False
@@ -182,7 +170,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
             try:
                 import httpx
-                from ..api.routers.metrics import collect_system_metrics
+                from noetl.server.api.metrics import collect_system_metrics
 
                 # Collect system metrics
                 metrics_data = collect_system_metrics()

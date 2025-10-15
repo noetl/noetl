@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from noetl.api.routers.event.context import router as context_router
+from noetl.server.api.event.context import router as context_router
 
 
 def _create_client():

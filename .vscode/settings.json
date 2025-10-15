@@ -3,6 +3,17 @@
         ".github/ai-instructions.md"
     ],
     "github.copilot.editor.enableCodeActions": true,
+    "github.copilot.chat.localeOverride": "en",
+    "github.copilot.advanced": {
+        "length": 500,
+        "temperature": "",
+        "top_p": "",
+        "stop": {
+            "python": ["\n\n\n"],
+            "javascript": ["\n\n\n"],
+            "typescript": ["\n\n\n"]
+        }
+    },
     "python.testing.unittestArgs": [
         "-v",
         "-s",
@@ -24,7 +35,7 @@
     "python.terminal.activateEnvInCurrentTerminal": true,
     "python.envFile": "${workspaceFolder}/.env",
     "[python]": {
-        "editor.defaultFormatter": "ms-python.autopep8",
+        "editor.defaultFormatter": "ms-python.python",
         "editor.formatOnSave": true,
         "editor.rulers": [
             {
@@ -39,4 +50,5 @@
     "python.testing.pytestArgs": [
         "tests"
     ],
+    "makefile.configureOnOpen": false,
 }

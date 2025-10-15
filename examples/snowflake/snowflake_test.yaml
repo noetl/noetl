@@ -1,0 +1,263 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: snowflake_test
+  path: examples/snowflake_test
+  description: Test Snowflake integration with NoETL
+
+workload:
+  job_id: '{{ job.uuid }}'
+  test_data:
+    name: Test User
+    email: test@example.com
+    score: 95
+
+workflow:
+  - step: start
+    desc: Start Snowflake Test Workflow
+    next:
+      - step: setup_database
+  
+  - step: setup_database
+    desc: Create test database and schema
+    type: snowflake
+    auth:
+      sf:
+        type: snowflake
+        key: sf_test
+    command: |
+      -- Create database if not exists
+      CREATE DATABASE IF NOT EXISTS NOETL_TEST;
+      
+      -- Use the database
+      USE DATABASE NOETL_TEST;
+      
+      -- Create schema
+      CREATE SCHEMA IF NOT EXISTS TESTING;
+      
+      -- Use schema
+      USE SCHEMA TESTING;
+      
+      -- Show current context
+      SELECT CURRENT_DATABASE() as database_name, 
+             CURRENT_SCHEMA() as schema_name,
+             CURRENT_WAREHOUSE() as warehouse_name;
+    next:
+      - step: create_table
+  
+  - step: create_table
+    desc: Create test table with various data types
+    type: snowflake
+    auth:
+      sf:
+        type: snowflake
+        key: sf_test
+    with:
+      database: NOETL_TEST
+      schema: TESTING
+    command: |
+      -- Drop table if exists
+      DROP TABLE IF EXISTS test_users;
+      
+      -- Create table with various Snowflake data types
+      CREATE TABLE test_users (
+        id NUMBER AUTOINCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        score NUMBER(5,2),
+        metadata VARIANT,
+        tags ARRAY,
+        created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+      );
+      
+      -- Show table structure
+      DESCRIBE TABLE test_users;
+    next:
+      - step: insert_data
+  
+  - step: insert_data
+    desc: Insert test data with VARIANT and ARRAY types
+    type: snowflake
+    auth:
+      sf:
+        type: snowflake
+        key: sf_test
+    with:
+      database: NOETL_TEST
+      schema: TESTING
+    data:
+      test_data: '{{ workload.test_data }}'
+    command: |
+      -- Insert data using parameters
+      INSERT INTO test_users (name, email, score, metadata, tags)
+      VALUES (
+        '{{ test_data.name }}',
+        '{{ test_data.email }}',
+        {{ test_data.score }},
+        PARSE_JSON('{"age": 30, "active": true, "department": "Engineering"}'),
+        ARRAY_CONSTRUCT('test', 'example', 'snowflake')
+      );
+      
+      -- Insert more test data
+      INSERT INTO test_users (name, email, score, metadata, tags)
+      VALUES (
+        'Jane Smith',
+        'jane.smith@example.com',
+        87.5,
+        PARSE_JSON('{"age": 28, "active": true, "department": "Sales"}'),
+        ARRAY_CONSTRUCT('sales', 'active')
+      );
+      
+      INSERT INTO test_users (name, email, score, metadata, tags)
+      VALUES (
+        'Bob Johnson',
+        'bob.johnson@example.com',
+        92.0,
+        PARSE_JSON('{"age": 35, "active": false, "department": "Engineering"}'),
+        ARRAY_CONSTRUCT('engineering', 'archived')
+      );
+      
+      -- Show inserted data
+      SELECT * FROM test_users;
+    next:
+      - step: query_data
+  
+  - step: query_data
+    desc: Query data with JSON and array operations
+    type: snowflake
+    auth:
+      sf:
+        type: snowflake
+        key: sf_test
+    with:
+      database: NOETL_TEST
+      schema: TESTING
+    command: |
+      -- Query all data
+      SELECT 
+        id,
+        name,
+        email,
+        score,
+        metadata,
+        tags,
+        TO_VARCHAR(created_at) as created_at
+      FROM test_users
+      ORDER BY id;
+      
+      -- Query with JSON field extraction
+      SELECT 
+        id,
+        name,
+        email,
+        metadata:age::INTEGER as age,
+        metadata:department::STRING as department,
+        metadata:active::BOOLEAN as is_active
+      FROM test_users
+      WHERE metadata:active = true;
+      
+      -- Query with array operations
+      SELECT 
+        id,
+        name,
+        ARRAY_SIZE(tags) as tag_count,
+        tags[0]::STRING as first_tag
+      FROM test_users;
+      
+      -- Aggregate query
+      SELECT 
+        metadata:department::STRING as department,
+        COUNT(*) as user_count,
+        AVG(score) as avg_score,
+        MAX(score) as max_score
+      FROM test_users
+      GROUP BY metadata:department::STRING
+      ORDER BY user_count DESC;
+    next:
+      - step: update_data
+  
+  - step: update_data
+    desc: Update records and modify JSON data
+    type: snowflake
+    auth:
+      sf:
+        type: snowflake
+        key: sf_test
+    with:
+      database: NOETL_TEST
+      schema: TESTING
+    command: |
+      -- Update score
+      UPDATE test_users
+      SET score = score + 5
+      WHERE metadata:active = true;
+      
+      -- Update JSON field
+      UPDATE test_users
+      SET metadata = OBJECT_INSERT(metadata, 'updated', true)
+      WHERE id = 1;
+      
+      -- Show updated data
+      SELECT 
+        id,
+        name,
+        score,
+        metadata
+      FROM test_users
+      ORDER BY id;
+    next:
+      - step: test_warehouse
+  
+  - step: test_warehouse
+    desc: Test warehouse operations
+    type: snowflake
+    auth:
+      sf:
+        type: snowflake
+        key: sf_test
+    with:
+      database: NOETL_TEST
+      schema: TESTING
+    command: |
+      -- Show warehouse information
+      SHOW WAREHOUSES LIKE 'COMPUTE_WH';
+      
+      -- Show current warehouse status
+      SELECT 
+        CURRENT_WAREHOUSE() as warehouse,
+        CURRENT_DATABASE() as database,
+        CURRENT_SCHEMA() as schema,
+        CURRENT_ROLE() as role,
+        CURRENT_USER() as user;
+    next:
+      - step: cleanup
+  
+  - step: cleanup
+    desc: Optional cleanup (comment out if you want to keep data)
+    type: snowflake
+    auth:
+      sf:
+        type: snowflake
+        key: sf_test
+    with:
+      database: NOETL_TEST
+      schema: TESTING
+    command: |
+      -- Drop table
+      -- DROP TABLE IF EXISTS test_users;
+      
+      -- Show remaining tables
+      SHOW TABLES IN SCHEMA NOETL_TEST.TESTING;
+    next:
+      - step: end
+  
+  - step: end
+    desc: Workflow completed
+    type: python
+    code: |
+      def main(input_data):
+          return {
+              'status': 'completed',
+              'message': 'Snowflake test workflow completed successfully',
+              'job_id': input_data.get('job_id', 'N/A')
+          }

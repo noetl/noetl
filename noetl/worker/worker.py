@@ -366,13 +366,188 @@ class QueueWorker:
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to complete job %s", queue_id, exc_info=True)
 
-    async def _fail_job(self, queue_id: int) -> None:
+    async def _fail_job(
+        self, 
+        queue_id: int, 
+        should_retry: bool = False, 
+        retry_delay_seconds: int = 60,
+        job: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Mark job as failed with retry policy.
+        
+        Args:
+            queue_id: Queue ID
+            should_retry: Whether to retry the job based on retry policy evaluation
+            retry_delay_seconds: Delay before retry in seconds
+            job: Job dictionary for emitting retry event
+        """
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # Do not retry failed jobs by default; mark terminal 'dead'
-                await client.post(f"{self.server_url}/queue/{queue_id}/fail", json={"retry": False})
+                await client.post(
+                    f"{self.server_url}/queue/{queue_id}/fail", 
+                    json={
+                        "retry": should_retry,
+                        "retry_delay_seconds": retry_delay_seconds
+                    }
+                )
+                
+            # Emit action_retry event if retrying
+            if should_retry and job:
+                try:
+                    execution_id = job.get("execution_id")
+                    node_id = job.get("node_id")
+                    context = job.get("context") or {}
+                    if isinstance(context, str):
+                        import json
+                        try:
+                            context = json.loads(context)
+                        except:
+                            context = {}
+                    
+                    # Get attempts from job or queue
+                    attempts = job.get("attempts", 0)
+                    max_attempts = job.get("max_attempts", 3)
+                    
+                    retry_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_retry",
+                        "status": "RETRYING",
+                        "node_id": node_id,
+                        "node_name": context.get("step_name"),
+                        "node_type": "step",
+                        "result": {
+                            "attempt": attempts,
+                            "max_attempts": max_attempts,
+                            "retry_delay_seconds": retry_delay_seconds,
+                            "message": f"Retrying after failure (attempt {attempts}/{max_attempts})"
+                        }
+                    }
+                    
+                    from noetl.plugin import report_event
+                    report_event(retry_event, self.server_url)
+                    logger.info(f"Emitted action_retry event for job {queue_id}, attempt {attempts}/{max_attempts}")
+                except Exception as e:
+                    logger.debug(f"Failed to emit action_retry event: {e}", exc_info=True)
+                    
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to mark job %s failed", queue_id, exc_info=True)
+
+    async def _evaluate_retry_policy(
+        self, 
+        job: Dict[str, Any], 
+        error: Optional[Exception] = None
+    ) -> tuple[bool, int]:
+        """
+        Evaluate retry policy based on job configuration.
+        
+        Args:
+            job: Job dictionary with action config and queue metadata
+            error: Exception that caused the failure
+            
+        Returns:
+            Tuple of (should_retry, retry_delay_seconds)
+        """
+        try:
+            # Extract action config
+            action_cfg_raw = job.get("action")
+            action_cfg = None
+            
+            if isinstance(action_cfg_raw, str):
+                try:
+                    action_cfg = json.loads(action_cfg_raw)
+                except json.JSONDecodeError:
+                    logger.debug(f"Failed to parse action config for retry evaluation")
+                    return (False, 60)
+            elif isinstance(action_cfg_raw, dict):
+                action_cfg = action_cfg_raw
+            
+            if not isinstance(action_cfg, dict):
+                return (False, 60)
+            
+            # Check if retry is configured
+            retry_config = action_cfg.get('retry')
+            if not retry_config:
+                # No retry configured
+                return (False, 60)
+            
+            # Parse retry configuration
+            if isinstance(retry_config, bool):
+                if not retry_config:
+                    return (False, 60)
+                # Use defaults
+                retry_config = {}
+            elif isinstance(retry_config, int):
+                # Max attempts only
+                retry_config = {'max_attempts': retry_config}
+            elif not isinstance(retry_config, dict):
+                logger.warning(f"Invalid retry configuration type: {type(retry_config)}")
+                return (False, 60)
+            
+            # Get current attempt info
+            current_attempts = job.get('attempts', 0)
+            max_attempts = job.get('max_attempts', retry_config.get('max_attempts', 3))
+            
+            # Check if we've exceeded max attempts
+            # Don't retry if we've already used all attempts
+            if current_attempts >= max_attempts:
+                logger.info(f"Max retry attempts ({max_attempts}) reached for job {job.get('queue_id')} (current attempts: {current_attempts})")
+                return (False, 60)
+            
+            # Next attempt number for logging and delay calculation
+            attempt_number = current_attempts + 1
+            
+            # Import retry policy evaluator
+            from noetl.plugin.tool.retry import RetryPolicy
+            from jinja2 import Environment
+            
+            # Create Jinja2 environment for condition evaluation
+            jinja_env = Environment()
+            
+            # Create retry policy
+            policy = RetryPolicy(retry_config, jinja_env)
+            
+            # Build result context for evaluation
+            # Extract any result data from job context
+            context = job.get('context') or job.get('input_context') or {}
+            if isinstance(context, str):
+                try:
+                    context = json.loads(context)
+                except:
+                    context = {}
+            
+            result = {
+                'error': str(error) if error else None,
+                'success': False,
+                'status': 'error',
+                'data': context.get('result') if isinstance(context, dict) else None
+            }
+            
+            # Evaluate retry policy
+            should_retry = policy.should_retry(result, attempt_number, error)
+            
+            # Calculate delay if retrying
+            if should_retry:
+                delay = policy.get_delay(attempt_number)
+                retry_delay_seconds = int(delay)
+                logger.info(
+                    f"Retry policy evaluation for job {job.get('queue_id')}: "
+                    f"retry={should_retry}, delay={retry_delay_seconds}s, "
+                    f"attempt={attempt_number}/{max_attempts}"
+                )
+            else:
+                retry_delay_seconds = 60
+                logger.info(
+                    f"Retry policy evaluation for job {job.get('queue_id')}: "
+                    f"retry={should_retry}, attempt={attempt_number}/{max_attempts}"
+                )
+            
+            return (should_retry, retry_delay_seconds)
+            
+        except Exception as e:
+            logger.warning(f"Error evaluating retry policy: {e}", exc_info=True)
+            # Default to no retry on evaluation error
+            return (False, 60)
 
     # ------------------------------------------------------------------
     # Job execution
@@ -558,6 +733,11 @@ class QueueWorker:
             if not catalog_id:
                 logger.warning(f"WORKER: catalog_id is missing for job {job.get('id')} execution {execution_id}. Events may fail to be recorded.")
 
+            # Extract retry metadata from queue entry
+            attempt_number = job.get('attempts', 0) + 1  # Current attempt (1-indexed)
+            max_attempts = job.get('max_attempts', 1)
+            is_retry = attempt_number > 1
+            
             start_event = {
                 "execution_id": execution_id,
                 "catalog_id": catalog_id,
@@ -566,7 +746,15 @@ class QueueWorker:
                 "node_id": node_id,
                 "node_name": task_name,
                 "node_type": node_type_val,
-                "context": {"work": context, "task": action_cfg},
+                "context": {
+                    "work": context,
+                    "task": action_cfg,
+                    "retry": {
+                        "attempt": attempt_number,
+                        "max_attempts": max_attempts,
+                        "is_retry": is_retry
+                    }
+                },
                 "trace_component": {"worker_raw_context": raw_context},
                 
             }
@@ -805,7 +993,10 @@ class QueueWorker:
             await self._complete_job(job["queue_id"])
         except Exception as exc:
             logger.exception("Error executing job %s: %s", job.get("queue_id"), exc)
-            await self._fail_job(job["queue_id"])
+            
+            # Evaluate retry policy if configured in the job
+            should_retry, retry_delay = await self._evaluate_retry_policy(job, exc)
+            await self._fail_job(job["queue_id"], should_retry, retry_delay, job)
 
     # ------------------------------------------------------------------
     async def _report_simple_worker_metrics(self) -> None:

@@ -476,11 +476,10 @@ NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for det
 
 ## For UI developers
 
-- `make install-dev`
-- `docker compose up database -d`
-- `./start_server.sh`
-- `make register-examples`
-- check __API_BASE_URL__ in vite.config.js for actual noetl base url
+- `uv pip install --editable .`
+- `task kind:local:cluster-delete`
+- `task dev:k8s:bootstrap`
+- `task test:k8s:setup-environment`
+- `task noetl:local:ui-dev-start`
 - `cd ui-src`
-- `npm run dev`
 - before commit in ui use `npx prettier  . --write`

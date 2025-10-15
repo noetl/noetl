@@ -1,0 +1,29 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: http_retry_with_stop
+  path: tests/retry/http_stop_condition
+  description: Test HTTP retry with stop condition when successful
+
+workload:
+  test_url: https://httpbin.org/get
+  
+workflow:
+  - step: start
+    desc: Fetch URL and stop retrying when status is 200
+    type: http
+    method: GET
+    url: "{{ workload.test_url }}"
+    retry:
+      max_attempts: 3
+      initial_delay: 0.5
+      backoff_multiplier: 1.5
+      # Retry on any non-200 status
+      retry_when: "{{ status_code != 200 }}"
+      # Stop retrying when we get 200
+      stop_when: "{{ status_code == 200 }}"
+    next:
+      - step: end
+        
+  - step: end
+    desc: End workflow

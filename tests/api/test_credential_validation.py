@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from noetl.api.routers import credential
+from noetl.server.api import credential
 
 
 def _create_client():

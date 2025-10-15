@@ -17,6 +17,7 @@ AUTH_TYPE_EXTENSIONS = {
     AuthType.POSTGRES: ['postgres'],
     AuthType.MYSQL: ['mysql'],
     AuthType.SQLITE: [],  # Built-in
+    AuthType.SNOWFLAKE: ['snowflake'],
     AuthType.GCS: ['httpfs'],
     AuthType.GCS_HMAC: ['httpfs'],
     AuthType.S3: ['httpfs'],
@@ -98,7 +99,7 @@ def install_and_load_extensions(connection, extensions: Set[str]) -> List[str]:
     
     if failed:
         # Only raise error for critical extensions
-        critical_failed = [ext for ext in failed if ext in {'postgres', 'mysql', 'httpfs'}]
+        critical_failed = [ext for ext in failed if ext in {'postgres', 'mysql', 'snowflake', 'httpfs'}]
         if critical_failed:
             raise ExtensionError(f"Failed to install critical extensions: {critical_failed}")
         else:
@@ -129,6 +130,10 @@ def install_database_extensions(connection, db_type: str) -> bool:
             logger.info("Installing and loading MySQL extension")
             connection.execute("INSTALL mysql;")
             connection.execute("LOAD mysql;")
+        elif db_type == 'snowflake':
+            logger.info("Installing and loading Snowflake extension")
+            connection.execute("INSTALL snowflake FROM community;")
+            connection.execute("LOAD snowflake;")
         elif db_type == 'sqlite':
             logger.info("SQLite support is built-in to DuckDB, no extension needed")
         else:

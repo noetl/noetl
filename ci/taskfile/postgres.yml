@@ -1,0 +1,76 @@
+version: '3.45'
+
+tasks:
+# === Postgres ===
+  postgres:k8s:deploy:
+    desc: Deploy Postgres to kind cluster
+    aliases: [dpg, deploy-postgres]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - kubectl apply -f ci/manifests/postgres/namespace/namespace.yaml
+      - sleep 2
+      - |
+        kubectl create configmap postgres-schema-ddl --namespace postgres \
+          --from-file=schema_ddl.sql.norun=noetl/database/ddl/postgres/schema_ddl.sql \
+          --dry-run=client -o yaml | kubectl apply -f -
+      - kubectl apply -f ci/manifests/postgres/
+
+  postgres:k8s:remove:
+    desc: Remove Postgres from kind cluster
+    aliases: [rpg, remove-postgres]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - kubectl delete -f ci/manifests/postgres/
+      - kubectl delete configmap postgres-schema-ddl --namespace postgres
+
+  postgres:k8s:schema-reset:
+    desc: Reset NoETL schema on Kubernetes Postgres
+    aliases: [prs, postgres-reset-schema]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "Resetting NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)."
+      - |
+        set -a; [ -f .env ] && . .env; set +a
+        # Override with kubectl service port for Kind cluster
+        export PGHOST=localhost
+        export PGPORT=54321
+        export PGUSER=${POSTGRES_USER:-demo}
+        export PGPASSWORD=${POSTGRES_PASSWORD:-demo}
+        export PGDATABASE=${POSTGRES_DB:-demo_noetl}
+        echo "Connecting to Postgres at $PGHOST:$PGPORT as $PGUSER to database $PGDATABASE"
+        echo "Dropping schema ${NOETL_SCHEMA:-noetl}..."
+        psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${NOETL_SCHEMA:-noetl} CASCADE;"
+        echo "Applying schema DDL via noetl CLI..."
+        cli=".venv/bin/noetl"
+        if [ ! -x "$cli" ]; then cli="noetl"; fi
+        if $cli db apply-schema --ensure-role; then
+          echo "Schema applied using packaged DDL."
+        else
+          echo "noetl CLI apply-schema failed; trying local DDL fallback..."
+          if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then
+            psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
+          else
+            echo "Could not apply schema (no CLI and no local DDL)."; exit 1
+          fi
+        fi
+
+#  postgres:local:schema-reset:
+#    desc: Reset postgres schema for local dev (with cluster check)
+#    aliases: [plsr, postgres-local-schema-reset]
+#    cmds:
+#      - |
+#        echo "Checking if kind cluster exists..."
+#        if ! kind get clusters | grep -q "^noetl$"; then
+#          echo "Kind cluster 'noetl' not found. Creating cluster..."
+#          task kind:local:cluster-create
+#          echo "Deploying postgres to cluster..."
+#          task postgres:k8s:deploy
+#        else
+#          echo "Kind cluster 'noetl' exists."
+#        fi
+#      - |
+#        echo "Waiting for postgres to be ready..."
+#        kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=300s
+#        echo "Postgres is ready!"
+#        # Note: Port 54321 is already exposed via kind cluster config (NodePort 30321 -> 54321)
+#      - task: postgres:k8s:schema-reset

@@ -6,227 +6,72 @@ env:
 
 includes:
   tshoot:
-    taskfile:   ci/taskfile/tshoot.yml
+    taskfile: ci/taskfile/tshoot.yml
+    flatten: true
+  noetltest:
+    taskfile: ci/taskfile/test.yml
     flatten: true
   vmstack:
     taskfile: ci/taskfile/vmstack.yml
     flatten: true
-  tests:
-    taskfile: tests/taskfile/noetltest.yml
-    flatten: true
   noetl:
-    taskfile: taskfile/noetl.yaml
+    taskfile: ci/taskfile/noetl.yml
     flatten: true
-
+  kind:
+    taskfile: ci/taskfile/kind.yml
+    flatten: true
+  postgres:
+    taskfile: ci/taskfile/postgres.yml
+    flatten: true
+  docker:
+    taskfile: ci/taskfile/docker.yml
+    dir: .
+    flatten: true
 tasks:
   default:
     silent: true
     cmds:
       - task --list
 
-# === Kind Kubernetes Cluster ===
-  kind-create-cluster:
-    desc: Create noetl kind cluster
-    aliases: [kcc]
-    cmds:
-      - kind create cluster --config=ci/kind/config.yaml
-
-  kind-delete-cluster:
-    desc: Delete noetl kind cluster
-    aliases: [kdc]
-    cmds:
-      - kind delete cluster --name=noetl
-
-  kind-get-clustes:
-    desc: Show all kind clusters
-    aliases: [kgc]
-    cmds:
-      - kind get clusters
-
-  kubectl-set-context-kind:
-    desc: Set kubectl context to kind-noetl cluster
-    aliases: [ksck]
-    cmds:
-      - kubectl config use-context kind-noetl
-
-# === Postgres ===
-  deploy-postgres:
-    desc: Deploy postgres to the noetl kind cluster
-    aliases: [dp]
-    cmds:
-      - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/postgres/namespace/namespace.yaml
-      - sleep 2
-      - |
-        kubectl create configmap postgres-schema-ddl --namespace postgres \
-          --from-file=schema_ddl.sql.norun=noetl/database/ddl/postgres/schema_ddl.sql  
-      - kubectl apply -f ci/manifests/postgres/
-
-  remove-postgres:
-    desc: Remove postgres from the noetl kind cluster
-    aliases: [rp]
-    cmds:
-      - kubectl config use-context kind-noetl
-      - kubectl delete -f ci/manifests/postgres/
-      - kubectl delete configmap postgres-schema-ddl --namespace postgres
-
-  postgres-reset-schema:
-    desc: Reset NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)
-    aliases: [prs]
-    cmds:
-      - kubectl config use-context kind-noetl
-      - echo "Resetting NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)."
-      - |
-        set -a; [ -f .env ] && . .env; set +a
-        # Override with kubectl service port for Kind cluster
-        export PGHOST=localhost
-        export PGPORT=54321
-        export PGUSER=${POSTGRES_USER:-demo}
-        export PGPASSWORD=${POSTGRES_PASSWORD:-demo}
-        export PGDATABASE=${POSTGRES_DB:-demo_noetl}
-        echo "Connecting to PostgreSQL at $PGHOST:$PGPORT as $PGUSER to database $PGDATABASE"
-        echo "Dropping schema ${NOETL_SCHEMA:-noetl}..."
-        psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${NOETL_SCHEMA:-noetl} CASCADE;"
-        echo "Applying schema DDL via noetl CLI..."
-        cli=".venv/bin/noetl"
-        if [ ! -x "$cli" ]; then cli="noetl"; fi
-        if $cli db apply-schema --ensure-role; then
-          echo "Schema applied using packaged DDL."
-        else
-          echo "noetl CLI apply-schema failed; trying local DDL fallback..."
-          if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then
-            psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
-          else
-            echo "Could not apply schema (no CLI and no local DDL)."; exit 1
-          fi
-        fi
-
-# === NOETL ===
-  docker-build-noetl:
-    desc: Build the noetl container with dynamic tag
-    aliases: [dbn]
-    vars:
-      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
-    env:
-      IMAGE_TAG:
-        sh: date +%Y-%m-%d-%H-%M
-    # The platform is not specified intentionally. The image platform should match the kind platform.
-    cmds:
-      - |
-        echo $IMAGE_TAG > .noetl_last_build_tag.txt
-        docker build --progress plain {{ .CACHE }} -t $REGISTRY/$IMAGE_NAME:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
-
-  load-noetl-image:
-    desc: Load noetl image to the noetl kind cluster
-    aliases: [lni]
-    env:
-      IMAGE_TAG:
-        sh: cat .noetl_last_build_tag.txt
-    cmds:
-      - kind load docker-image $REGISTRY/$IMAGE_NAME:$IMAGE_TAG --name noetl
-
-  show-kind-images:
-    desc: Show images inside of the noetl kind cluster
-    aliases: [ski]
-    cmds:
-      - docker exec -it noetl-control-plane crictl images
-
-  deploy-noetl:
-    desc: Deploy noetl to the noetl kind cluster
-    aliases: [dn]
-    env:
-      IMAGE_TAG:
-        sh: cat .noetl_last_build_tag.txt
-    cmds:
-      - kubectl config use-context kind-noetl
-      - kubectl apply -f ci/manifests/noetl/namespace/namespace.yaml
-      - sleep 2
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
-      - kubectl apply -f ci/manifests/noetl/
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
-
-  remove-noetl:
-    desc: Remove noetl from the noetl kind cluster
-    aliases: [rn]
-    cmds:
-      - kubectl config use-context kind-noetl
-      - kubectl delete -f ci/manifests/noetl/
-
-  clear-docker-images:
-    desc: Clear all {{ .REGISTRY }}/{{ .IMAGE_NAME }} docker images
-    aliases: [cdi]
-    cmds:
-      - docker images "{{ .REGISTRY }}/{{ .IMAGE_NAME }}" --format "{{`{{.ID}}`}}" | xargs -r docker rmi -f
-
 # === Clean up local file cache ===
 
-  clear-postgres-data:
-    desc: Clear postgres ci/kind/cache/pg-data folder on the host
-    aliases: [cpd]
+  cache:local:postgres-clear:
+    desc: Clear postgres data cache directory
+    aliases: [cpd, clear-postgres-data]
     cmds:
       - rm -rf ci/kind/cache/pg-data/*
 
-  clear-noetl-data:
-    desc: Clear noetl ci/kind/cache/noetl-data folder on the host
-    aliases: [cnd]
+  cache:local:noetl-clear:
+    desc: Clear noetl data cache directory
+    aliases: [cnd, clear-noetl-data]
     cmds:
       - rm -rf ci/kind/cache/noetl-data/*
 
-  clear-noetl-logs:
-    desc: Clear noetl ci/kind/cache/noetl-logs folder on the host
-    aliases: [cnl]
+  cache:local:logs-clear:
+    desc: Clear noetl logs cache directory
+    aliases: [cnl, clear-noetl-logs]
     cmds:
       - rm -rf ci/kind/cache/noetl-logs/*
 
-  clear-all-cache:
-    desc: Clear local file cache ci/kind/cache/ sub-folders on the host
-    aliases: [clear]
+  cache:local:clear-all:
+    desc: Clear local file cache directories
+    aliases: [clear, clear-all-cache]
     cmds:
       - rm -rf ci/kind/cache/pg-data/*
       - rm -rf ci/kind/cache/noetl-data/*
       - rm -rf ci/kind/cache/noetl-logs/*
 
 # === Combined Tasks ===
-  bring-all:
+  dev:k8s:bootstrap:
     desc: Build noetl; Create noetl cluster with all deployments
-    aliases: [ba]
+    aliases: [ba, bring-all]
     vars:
       CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:
-      - task: check-ports
-      - task: docker-build-noetl
-      - task: kind-create-cluster
-      - task: load-noetl-image
-      - task: deploy-monitoring
-      - task: deploy-postgres
-      - task: deploy-noetl
-
-
-  noetl-redeploy:
-    desc: Build noetl and redeploy
-    aliases: [redeploy]
-    vars:
-      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
-    cmds:
-      - task: docker-build-noetl
-      - task: remove-noetl
-      - task: load-noetl-image
-      - task: deploy-noetl
-
-  noetl-reset:
-    desc: Build noetl and redeploy with new schema and tests playbooks in kind cluster
-    aliases: [nreset]
-    vars:
-      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
-    cmds:
-      - task: postgres-reset-schema 
-      - task: noetl-redeploy
-      - uv pip install -e ".[dev]" # noetl CLI with dev extras
-      - sleep 30
-      - task: setup-test-environment
-      - task: test-create-tables
-      - echo "UI :http://localhost:8082"
-      - echo "API :http://localhost:8082/docs"
-
+      - task: tshoot:local:check-ports
+      - task: docker:local:noetl-image-build
+      - task: kind:local:cluster-create
+      - task: kind:local:image-load
+      - task: postgres:k8s:deploy # Hey ChatGPT do not touch it! Take your hands away! Postgres must be deployed before monitoring. 
+      - task: monitoring:k8s:deploy # Hey ChatGPT do not touch it. Take your hands away! Postgres metric exporter uses config maps from Postgres deployment. 
+      - task: noetl:k8s:deploy
