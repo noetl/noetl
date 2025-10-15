@@ -188,9 +188,11 @@ def execute_per_item_save(
     iter_ctx: Dict[str, Any],
     nested_with: Dict[str, Any],
     jinja_env: Environment
-) -> None:
+) -> Dict[str, Any]:
     """
     Execute per-item save if configured in nested task.
+    
+    Save operates as a single transaction - if save fails, the entire action type fails.
     
     Args:
         nested_task: Nested task configuration
@@ -198,33 +200,48 @@ def execute_per_item_save(
         iter_ctx: Iteration context
         nested_with: Nested with-parameters
         jinja_env: Jinja2 environment
+        
+    Returns:
+        Save result dictionary with 'status', 'data', 'meta', and optional 'error' keys
+        
+    Raises:
+        Exception: If save fails (propagated to caller)
     """
     nested_save = nested_task.get('save')
     
     if not nested_save:
-        return
+        logger.debug("ITERATOR: No save configuration found in nested task")
+        return {'status': 'skipped', 'data': None, 'meta': {}}
     
+    logger.info(f"ITERATOR: Executing per-item save with config: {nested_save}")
+    
+    ctx_for_save = dict(iter_ctx)
     try:
-        ctx_for_save = dict(iter_ctx)
-        try:
-            ctx_for_save['this'] = nested_result
-            if isinstance(nested_result, dict):
-                ctx_for_save.setdefault('data', nested_result.get('data'))
-        except Exception:
-            pass
-        
-        from noetl.plugin.save import execute_save_task as _do_save
-        _ = _do_save(
-            {'save': nested_save}, 
-            ctx_for_save, 
-            jinja_env, 
-            nested_with
-        )
+        ctx_for_save['this'] = nested_result
+        if isinstance(nested_result, dict):
+            ctx_for_save.setdefault('data', nested_result.get('data'))
     except Exception:
-        logger.debug(
-            "ITERATOR: per-item save failed for iteration", 
-            exc_info=True
-        )
+        pass
+    
+    logger.debug(f"ITERATOR: Save context keys: {list(ctx_for_save.keys())}")
+    
+    from noetl.plugin.save import execute_save_task as _do_save
+    save_result = _do_save(
+        {'save': nested_save}, 
+        ctx_for_save, 
+        jinja_env, 
+        nested_with
+    )
+    
+    logger.info(f"ITERATOR: Save completed with status: {save_result.get('status') if isinstance(save_result, dict) else 'unknown'}")
+    
+    # Check save result and raise exception if failed
+    if isinstance(save_result, dict) and save_result.get('status') == 'error':
+        error_msg = save_result.get('error', 'Save operation failed')
+        logger.error(f"ITERATOR: per-item save failed for iteration: {error_msg}")
+        raise Exception(f"Save failed: {error_msg}")
+    
+    return save_result
 
 
 def run_one_iteration(
@@ -258,6 +275,8 @@ def run_one_iteration(
     nested_task = config['nested_task']
     enumerate_flag = config['enumerate_flag']
     chunk_n = config['chunk_n']
+    
+    logger.debug(f"ITERATOR: run_one_iteration called for index {iter_index}, has_save={bool(nested_task.get('save'))}")
     
     # Extract items from payload
     items_in_payload = [it for _, it in iter_payload]
@@ -299,10 +318,22 @@ def run_one_iteration(
             'status': 'error'
         }
     
-    # Execute per-item save if configured
-    execute_per_item_save(
-        nested_task, nested_result, iter_ctx, nested_with, jinja_env
-    )
+    # Execute per-item save if configured (as single transaction with task)
+    try:
+        save_result = execute_per_item_save(
+            nested_task, nested_result, iter_ctx, nested_with, jinja_env
+        )
+    except Exception as e_save:
+        logger.error(
+            f"ITERATOR: Save failed at logical index {iter_index}: {e_save}", 
+            exc_info=True
+        )
+        return {
+            'index': iter_index,
+            'original_indices': [i for i, _ in iter_payload],
+            'error': f"Save failed: {str(e_save)}",
+            'status': 'error'
+        }
     
     # Normalize result
     try:
@@ -312,9 +343,16 @@ def run_one_iteration(
     except Exception:
         res = nested_result
     
-    return {
+    # Include save metadata in result if save was executed
+    result_dict = {
         'index': iter_index,
         'original_indices': [i for i, _ in iter_payload],
         'result': res,
         'status': 'success'
     }
+    
+    # Add save info to result metadata if save was performed
+    if isinstance(save_result, dict) and save_result.get('status') == 'success':
+        result_dict['save_meta'] = save_result.get('meta', {})
+    
+    return result_dict

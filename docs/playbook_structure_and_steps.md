@@ -143,7 +143,27 @@ workbook:
 
 ## Save Blocks
 
-To persist results, attach a `save` block. It dispatches the step output to another action type (e.g., Postgres, HTTP).
+To persist results, attach a `save` block. It dispatches the step output to another storage action type (e.g., Postgres, DuckDB, HTTP).
+
+**Important**: Save operates as a single transaction - if the save operation fails, the entire action type reports failure.
+
+### New Structure (Recommended)
+
+```yaml
+save:
+  type: postgres
+  data:
+    id: "{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}"
+    execution_id: "{{ execution_id }}"
+    city: "{{ city.name }}"
+    payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
+  auth: "{{ workload.pg_auth }}"
+  table: public.weather_http_raw
+  mode: upsert
+  key: id
+```
+
+### Legacy Structure (Still Supported)
 
 ```yaml
 save:
@@ -156,6 +176,13 @@ save:
     id: "{{ execution_id }}:{{ city.name }}"
     payload: "{{ result.payload }}"
 ```
+
+### Key Points
+
+- The `save` block defines a single storage object with `type` (or `storage` for legacy)
+- Save failures cause the entire action type to fail, ensuring data consistency
+- Use `this.data` to reference the current action's result in template expressions
+- Supported storage types: `postgres`, `duckdb`, `http`, `python`
 
 ## Checklist
 
