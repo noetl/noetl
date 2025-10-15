@@ -274,6 +274,18 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                 ):
                                     if step_def.get(fld) is not None:
                                         task[fld] = step_def.get(fld)
+                                # Special handling for workbook steps: preserve the referenced workbook action name
+                                # Steps declare the target workbook action via `task` (preferred) or `name` (legacy).
+                                # The broker uses `name` to carry the workflow step id (e.g., 'eval_flag'),
+                                # so ensure the workbook action reference is available under `task` for workers.
+                                if step_type == 'workbook':
+                                    try:
+                                        if 'task' not in task:
+                                            ref = step_def.get('task') or step_def.get('name')
+                                            if ref:
+                                                task['task'] = ref
+                                    except Exception:
+                                        pass
                                 # Merge transition payload: support new data overlay and legacy input/payload/with
                                 if next_with:
                                     try:
