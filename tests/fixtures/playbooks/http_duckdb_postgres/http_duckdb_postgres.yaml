@@ -42,7 +42,7 @@ workflow:
     );
   next:
   - step: http_loop
-    data:
+    args:
       cities: '{{ workload.cities }}'
 - step: http_loop
   desc: Fetch hourly temperatures for each city and save raw rows
@@ -52,7 +52,7 @@ workflow:
   mode: async
   task:
     type: http
-    data:
+    args:
       latitude: '{{ city.lat }}'
       longitude: '{{ city.lon }}'
       hourly: temperature_2m
@@ -71,8 +71,8 @@ workflow:
         - data.elapsed
         - data.payload
     save:
-      type: postgres
-      data:
+      storage: postgres
+      args:
         id: '{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}'
         execution_id: '{{ execution_id }}'
         iter_index: '{{ http_loop.result_index }}'
@@ -87,7 +87,7 @@ workflow:
   next:
   - step: aggregate_with_duckdb
 - step: aggregate_with_duckdb
-  data:
+  args:
     require_cloud_output: true
   desc: Read Postgres rows in DuckDB, aggregate, write to GCS using unified auth dictionary
   type: duckdb
@@ -95,7 +95,7 @@ workflow:
     pg_db:
       source: credential
       type: postgres
-      key: pg_k8s
+      key: "{{ workload.pg_auth }}"
     gcs_secret:
       source: credential
       type: hmac

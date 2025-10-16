@@ -257,6 +257,13 @@ def handle_postgres_storage(
     Returns:
         Save result envelope with status, data, and meta
     """
+    logger.critical("=" * 80)
+    logger.critical("SAVE.POSTGRES: handle_postgres_storage CALLED")
+    logger.critical(f"SAVE.POSTGRES: table={table}, mode={mode}")
+    logger.critical(f"SAVE.POSTGRES: credential_ref={credential_ref}")
+    logger.critical(f"SAVE.POSTGRES: rendered_data={rendered_data}")
+    logger.critical("=" * 80)
+    
     # Resolve credential alias if provided (best-effort)
     spec = resolve_credential(credential_ref, spec)
     
