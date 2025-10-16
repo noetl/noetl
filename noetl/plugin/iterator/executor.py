@@ -75,9 +75,24 @@ def execute_loop_task(
         - data: List of iteration results (if success)
         - error: Error message (if error)
     """
+    logger.critical("=" * 80)
+    logger.critical("ITERATOR.EXECUTOR: execute_loop_task CALLED")
+    logger.critical(f"ITERATOR.EXECUTOR: task_config keys: {list(task_config.keys()) if isinstance(task_config, dict) else 'not dict'}")
+    logger.critical(f"ITERATOR.EXECUTOR: task_config.get('task'): {task_config.get('task')}")
+    logger.critical("=" * 80)
+    
     task_id = str(uuid.uuid4())
     task_name = task_config.get('name') or task_config.get('task') or 'iterator'
     start_time = datetime.datetime.now()
+    
+    # Emit explicit iterator_started event
+    if log_event_callback:
+        log_event_callback(
+            'iterator_started', task_id, task_name, 'iterator',
+            'in_progress', 0, context, None,
+            {'task_config': task_config},
+            None
+        )
     
     try:
         # Step 1: Extract configuration
@@ -161,7 +176,7 @@ def execute_loop_task(
                 future_to_idx = {
                     pool.submit(
                         run_one_iteration, idx, payload, context, 
-                        task_config, config, jinja_env
+                        task_config, config, jinja_env, log_event_callback
                     ): idx
                     for idx, payload in enumerate(batches)
                 }
@@ -197,7 +212,7 @@ def execute_loop_task(
             # Sequential execution
             for idx, payload in enumerate(batches):
                 rec = run_one_iteration(
-                    idx, payload, context, task_config, config, jinja_env
+                    idx, payload, context, task_config, config, jinja_env, log_event_callback
                 )
                 if rec.get('status') == 'error':
                     errors.append({

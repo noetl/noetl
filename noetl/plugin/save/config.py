@@ -105,11 +105,12 @@ def extract_save_config(
     kind, storage_config = parse_storage_config(storage_value)
     
     # Get save configuration attributes
-    # Prefer nested storage.data over top-level data for nested structure
-    if isinstance(storage_value, dict) and 'data' in storage_value:
-        data_spec = storage_value.get('data')
+    # Prefer nested storage.data/args over top-level data/args for nested structure
+    # Support both 'data' and 'args' for flexibility
+    if isinstance(storage_value, dict):
+        data_spec = storage_value.get('data') or storage_value.get('args')
     else:
-        data_spec = payload.get('data')
+        data_spec = payload.get('data') or payload.get('args')
     
     # Statement can come from nested storage or top-level
     if isinstance(storage_value, dict) and 'statement' in storage_value:

@@ -318,150 +318,99 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
                                     task = _normalize_step(task)
                                 except Exception:
                                     pass
-                                # Check if this step has a loop
-                                loop_cfg = task.get('loop') or {}
-                                has_loop = bool(loop_cfg.get('in'))
-                                if has_loop:
-                                    # Legacy loop support removed — require iterator step usage.
-                                    logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Step '{next_step_name}' uses legacy 'loop' config; wrap the nested action in a 'type: iterator' step with 'collection' and 'element'")
-                                    try:
-                                        await cur.execute(
-                                            """
-                                            SELECT 1 FROM noetl.event
-                                            WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
-                                            LIMIT 1
-                                            """,
-                                            (execution_id, next_step_name)
-                                        )
-                                        if await cur.fetchone():
-                                            logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Loop '{next_step_name}' already initialized; skipping duplicate setup")
-                                        else:
-                                            # Emit a step_started event for loop step (marker for UI/control), only if not already emitted
-                                            try:
-                                                await cur.execute(
-                                                    """
-                                                    SELECT 1 FROM noetl.event
-                                                    WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
-                                                    LIMIT 1
-                                                    """,
-                                                    (execution_id, next_step_name)
-                                                )
-                                                exists = await cur.fetchone() is not None
-                                            except Exception:
-                                                exists = False
-                                            if not exists:
-                                                try:
-                                                    await get_event_service().emit({
-                                                        'execution_id': execution_id,
-                                                        'event_type': 'step_started',
-                                                        'node_name': next_step_name,
-                                                        'node_type': 'step',
-                                                        'status': 'RUNNING',
-                                                        'context': {
-                                                            'path': pb_path,
-                                                            'version': pb_ver or 'latest',
-                                                            'step_name': next_step_name,
-                                                        }
-                                                    })
-                                                except Exception:
-                                                    logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit step_started for loop step", exc_info=True)
-                                            # Loop processing: expand items and create individual tasks
-                                            await _handle_loop_step(cur, conn, execution_id, next_step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with, trigger_event_id)
-                                    except Exception:
-                                        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Loop initialization idempotency check failed", exc_info=True)
-                                else:
-                                    # Non-loop step: single task
-                                    # Create execution context
-                                    ctx = {
-                                        'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {},
-                                        'step_name': next_step_name,
-                                        'path': pb_path,
-                                        'version': pb_ver or 'latest',
-                                    }
-                                    if next_with:
-                                        ctx.update(next_with)
-                                    # Attach trigger metadata for worker lineage
-                                    try:
-                                        if trigger_event_id:
-                                            ctx['_meta'] = {'parent_event_id': str(trigger_event_id)}
-                                    except Exception:
-                                        pass
-                                    
-                                    # Emit a step_started event for this non-loop step (only once)
-                                    try:
-                                        await cur.execute(
-                                            """
-                                            SELECT 1 FROM noetl.event
-                                            WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
-                                            LIMIT 1
-                                            """,
-                                            (execution_id, next_step_name)
-                                        )
-                                        exists = await cur.fetchone() is not None
-                                    except Exception:
-                                        exists = False
-                                    if not exists:
-                                        try:
-                                            await get_event_service().emit({
-                                                'execution_id': execution_id,
-                                                'event_type': 'step_started',
-                                                'node_name': next_step_name,
-                                                'node_type': 'step',
-                                                'status': 'RUNNING',
-                                                'context': ctx
-                                            })
-                                        except Exception:
-                                            logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit step_started for non-loop step", exc_info=True)
-
-                                    # Debug visibility: log keys for iterator tasks
-                                    try:
-                                        if (task.get('type') or '').lower() == 'iterator':
-                                            logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: iterator step '{next_step_name}' task keys={list(task.keys())} collection={task.get('collection')} element={task.get('element')}")
-                                    except Exception:
-                                        pass
-
-                                    # Encode and enqueue task
-                                    encoded = encode_task_for_queue(task)
-                                    
-                                    # Extract max_attempts from retry config
-                                    max_attempts = 3  # default
-                                    retry_config = task.get('retry')
-                                    if isinstance(retry_config, bool):
-                                        max_attempts = 3 if retry_config else 1
-                                    elif isinstance(retry_config, int):
-                                        max_attempts = retry_config
-                                    elif isinstance(retry_config, dict):
-                                        max_attempts = retry_config.get('max_attempts', 3)
-                                    
-                                    # Get catalog_id from execution's first event
-                                    await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
-                                    catalog_row = await cur.fetchone()
-                                    if not catalog_row:
-                                        raise ValueError(f"No catalog_id found for execution {execution_id}")
-                                    catalog_id = catalog_row[0]
-                                    
-                                    # Add catalog_id to context for worker
-                                    ctx['catalog_id'] = catalog_id
-                                    
+                                
+                                # All steps (including iterator) are now queued as tasks for workers
+                                # Create execution context
+                                ctx = {
+                                    'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {},
+                                    'step_name': next_step_name,
+                                    'path': pb_path,
+                                    'version': pb_ver or 'latest',
+                                }
+                                if next_with:
+                                    ctx.update(next_with)
+                                # Attach trigger metadata for worker lineage
+                                try:
+                                    if trigger_event_id:
+                                        ctx['_meta'] = {'parent_event_id': str(trigger_event_id)}
+                                except Exception:
+                                    pass
+                                
+                                # Emit a step_started event (only once)
+                                try:
                                     await cur.execute(
                                         """
-                                        INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
-                                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
-                                        ON CONFLICT (execution_id, node_id) DO NOTHING
-                                        RETURNING queue_id
+                                        SELECT 1 FROM noetl.event
+                                        WHERE execution_id = %s AND node_name = %s AND event_type = 'step_started'
+                                        LIMIT 1
                                         """,
-                                        (
-                                            snowflake_id_to_int(execution_id),
-                                            catalog_id,
-                                            f"{execution_id}:{next_step_name}",
-                                            json.dumps(encoded),
-                                            json.dumps(ctx),
-                                            5,
-                                            max_attempts,
-                                        )
+                                        (execution_id, next_step_name)
                                     )
-                                    await conn.commit()
-                                    logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued single step '{next_step_name}' for execution {execution_id}")
+                                    exists = await cur.fetchone() is not None
+                                except Exception:
+                                    exists = False
+                                if not exists:
+                                    try:
+                                        await get_event_service().emit({
+                                            'execution_id': execution_id,
+                                            'event_type': 'step_started',
+                                            'node_name': next_step_name,
+                                            'node_type': 'step',
+                                            'status': 'RUNNING',
+                                            'context': ctx
+                                        })
+                                    except Exception:
+                                        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit step_started", exc_info=True)
+
+                                # Debug visibility: log keys for iterator tasks
+                                try:
+                                    if (task.get('type') or '').lower() == 'iterator':
+                                        logger.debug(f"EVALUATE_BROKER_FOR_EXECUTION: iterator step '{next_step_name}' task keys={list(task.keys())} collection={task.get('collection')} element={task.get('element')}")
+                                except Exception:
+                                    pass
+
+                                # Encode and enqueue task
+                                encoded = encode_task_for_queue(task)
+                                
+                                # Extract max_attempts from retry config
+                                max_attempts = 3  # default
+                                retry_config = task.get('retry')
+                                if isinstance(retry_config, bool):
+                                    max_attempts = 3 if retry_config else 1
+                                elif isinstance(retry_config, int):
+                                    max_attempts = retry_config
+                                elif isinstance(retry_config, dict):
+                                    max_attempts = retry_config.get('max_attempts', 3)
+                                
+                                # Get catalog_id from execution's first event
+                                await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
+                                catalog_row = await cur.fetchone()
+                                if not catalog_row:
+                                    raise ValueError(f"No catalog_id found for execution {execution_id}")
+                                catalog_id = catalog_row[0]
+                                
+                                # Add catalog_id to context for worker
+                                ctx['catalog_id'] = catalog_id
+                                
+                                await cur.execute(
+                                    """
+                                    INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
+                                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
+                                    ON CONFLICT (execution_id, node_id) DO NOTHING
+                                    RETURNING queue_id
+                                    """,
+                                    (
+                                        snowflake_id_to_int(execution_id),
+                                        catalog_id,
+                                        f"{execution_id}:{next_step_name}",
+                                        json.dumps(encoded),
+                                        json.dumps(ctx),
+                                        5,
+                                        max_attempts,
+                                    )
+                                )
+                                await conn.commit()
+                                logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued step '{next_step_name}' for execution {execution_id}")
                             else:
                                 logger.warning(f"EVALUATE_BROKER_FOR_EXECUTION: No valid first step found for {execution_id}")
                         else:
@@ -472,167 +421,6 @@ async def _handle_initial_dispatch(execution_id: str, get_async_db_connection, t
     except Exception as e:
         logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed: {e}")
         logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Initial dispatch failed", exc_info=True)
-
-
-async def _handle_loop_step(cur, conn, execution_id, step_name, task, loop_cfg, pb_path, pb_ver, workload_ctx, next_with, trigger_event_id: str | None = None):
-    """Handle loop step by expanding items and creating individual tasks."""
-    
-    try:
-        from noetl.core.dsl.render import render_template
-        from jinja2 import Environment, StrictUndefined
-        from noetl.server.api.broker import encode_task_for_queue
-        
-        jenv = Environment(undefined=StrictUndefined)
-        iterator = loop_cfg.get('iterator') or 'item'
-        items_tmpl = loop_cfg.get('in')
-        loop_mode = loop_cfg.get('mode') or 'async'
-        
-        # Build rendering context
-        items_ctx = {
-            'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {}
-        }
-        
-        # Include variables passed via 'with' from previous step
-        if next_with:
-            try:
-                rendered_next_with = render_template(jenv, next_with, items_ctx)
-                if isinstance(rendered_next_with, dict):
-                    items_ctx.update(rendered_next_with)
-                else:
-                    items_ctx.update(next_with)
-            except Exception:
-                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render next_with; using raw values", exc_info=True)
-                items_ctx.update(next_with)
-        
-        # Render loop items
-        items = []
-        try:
-            rendered_items = render_template(jenv, items_tmpl, items_ctx)
-            if isinstance(rendered_items, list):
-                items = rendered_items
-            elif rendered_items is not None:
-                items = [rendered_items]
-        except Exception:
-            logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to render loop items; defaulting to empty list", exc_info=True)
-            items = []
-        
-        count = len(items)
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Processing loop '{step_name}' over {count} items (iterator={iterator}, mode={loop_mode}) for execution {execution_id}")
-        
-        # Remove loop config from task for workers
-        task_loop_free = dict(task)
-        task_loop_free.pop('loop', None)
-
-        # If loop defines an item-level save, propagate it into the per-iteration task
-        # so the worker performs an inline save after executing the action.
-        try:
-            loop_save = loop_cfg.get('save') if isinstance(loop_cfg, dict) else None
-            if isinstance(loop_save, dict) and not task_loop_free.get('save'):
-                task_loop_free['save'] = loop_save
-        except Exception:
-            pass
-        encoded_task = encode_task_for_queue(task_loop_free)
-        
-        # Process each loop item
-        for idx, item in enumerate(items):
-            ctx = {
-                'workload': (workload_ctx.get('workload') if isinstance(workload_ctx, dict) else None) or {},
-                'step_name': step_name,
-                'path': pb_path,
-                'version': pb_ver or 'latest',
-                iterator: item,  # Set the iterator variable (e.g., city_item)
-                '_iterator': {
-                    'collection': iterator,
-                    'current_index': idx,
-                    'current_item': item,
-                    'items_count': count,
-                },
-            }
-            if next_with:
-                try:
-                    ctx.update(next_with)
-                except Exception:
-                    pass
-            # Attach trigger metadata
-            try:
-                if trigger_event_id:
-                    meta = ctx.get('_meta') or {}
-                    meta['parent_event_id'] = str(trigger_event_id)
-                    ctx['_meta'] = meta
-            except Exception:
-                pass
-
-            # Get catalog_id from execution's first event and add to context
-            try:
-                await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1", (snowflake_id_to_int(execution_id),))
-                catalog_row = await cur.fetchone()
-                if catalog_row:
-                    catalog_id = catalog_row[0]
-                    ctx['catalog_id'] = catalog_id
-                else:
-                    raise ValueError(f"No catalog_id found for execution {execution_id}")
-            except Exception as e:
-                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Failed to get catalog_id for loop item {idx}: {e}")
-                continue
-
-            # Priority: sequential mode uses index-based priority, async mode uses same priority
-            priority = 5 - idx if loop_mode == 'sequential' else 5
-
-            # Emit loop_iteration event for observability and loop trackers
-            try:
-                await get_event_service().emit({
-                    'execution_id': execution_id,
-                    'event_type': 'loop_iteration',
-                    'node_name': step_name,
-                    'node_type': 'loop',
-                    'status': 'RUNNING',
-                    'context': {
-                        'index': idx,
-                        'item': item,
-                        'iterator': iterator,
-                        'path': pb_path,
-                        'version': pb_ver or 'latest',
-                        '_meta': {'parent_event_id': str(trigger_event_id)} if trigger_event_id else {},
-                    },
-                    'iterator': iterator,
-                    'current_index': idx,
-                    'current_item': item,
-                })
-            except Exception:
-                logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Failed to emit loop_iteration", exc_info=True)
-
-            try:
-                # catalog_id is already in context, use it for queue insert
-                catalog_id = ctx.get('catalog_id')
-                if not catalog_id:
-                    raise ValueError(f"No catalog_id available for execution {execution_id}")
-                
-                await cur.execute(
-                    """
-                    INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now())
-                    ON CONFLICT (execution_id, node_id) DO NOTHING
-                    RETURNING queue_id
-                    """,
-                    (
-                        snowflake_id_to_int(execution_id),
-                        catalog_id,
-                        f"{execution_id}:{step_name}:{idx}",
-                        json.dumps(encoded_task),
-                        json.dumps(ctx),
-                        priority,
-                        3,
-                    )
-                )
-            except Exception as e:
-                logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Queue insert failed for loop item {idx} of step '{step_name}': {e}")
-        
-        await conn.commit()
-        logger.info(f"EVALUATE_BROKER_FOR_EXECUTION: Enqueued {count} loop jobs for step '{step_name}' (mode: {loop_mode}) in execution {execution_id}")
-        
-    except Exception as e:
-        logger.error(f"EVALUATE_BROKER_FOR_EXECUTION: Loop processing failed for step '{step_name}': {e}")
-        logger.debug("EVALUATE_BROKER_FOR_EXECUTION: Loop processing failed", exc_info=True)
 
 
 async def _advance_non_loop_steps(execution_id: str, trigger_event_id: str | None = None) -> None:
