@@ -88,16 +88,22 @@ async def dispatch_first_step(execution_id: str) -> None:
                 )
                 return
             
-            # Get catalog_id
+            # Get catalog_id and requestor_info from execution_start event
             await cur.execute(
-                "SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1",
+                "SELECT catalog_id, meta FROM noetl.event WHERE execution_id = %s AND event_type = 'execution_start' ORDER BY created_at LIMIT 1",
                 (snowflake_id_to_int(execution_id),)
             )
             row = await cur.fetchone()
             catalog_id = row[0] if row else None
+            meta = row[1] if row and len(row) > 1 else None
             
             if not catalog_id:
                 raise ValueError(f"No catalog_id found for execution {execution_id}")
+            
+            # Extract requestor_info from meta
+            requestor_info = None
+            if meta and isinstance(meta, dict):
+                requestor_info = meta.get('requestor')
             
             # Build context
             ctx = {
@@ -109,6 +115,12 @@ async def dispatch_first_step(execution_id: str) -> None:
             }
             if transition_data:
                 ctx.update(transition_data)
+            
+            # Add requestor info to context metadata
+            if requestor_info:
+                if '_meta' not in ctx:
+                    ctx['_meta'] = {}
+                ctx['_meta']['requestor'] = requestor_info
             
             # Emit step_started
             await emit_step_started(execution_id, first_step_name, ctx)

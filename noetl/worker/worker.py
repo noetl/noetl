@@ -765,7 +765,15 @@ class QueueWorker:
             
             from noetl.plugin import report_event
             start_event = self._validate_event_status(start_event)
-            report_event(start_event, self.server_url)
+            start_response = report_event(start_event, self.server_url)
+            
+            # Capture the action_started event_id for use as parent in step_result
+            action_started_event_id = None
+            try:
+                if isinstance(start_response, dict):
+                    action_started_event_id = start_response.get('event_id')
+            except Exception:
+                pass
 
             try:
                 # Normalize payloads: canonical 'data' with legacy aliases
@@ -943,7 +951,13 @@ class QueueWorker:
                         }
                         if loop_meta:
                             step_result_event.update(loop_meta)
-                        if parent_event_id:
+                        
+                        # FIX: Use action_started event_id as parent, not context parent_event_id
+                        # The context parent_event_id might incorrectly point to next step's step_started
+                        if action_started_event_id:
+                            step_result_event["parent_event_id"] = action_started_event_id
+                        elif parent_event_id:
+                            # Fallback to context parent_event_id for iterator/nested cases
                             step_result_event["parent_event_id"] = parent_event_id
                         
                         from noetl.plugin import report_event

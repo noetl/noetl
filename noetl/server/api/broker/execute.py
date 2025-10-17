@@ -29,6 +29,7 @@ def execute_playbook_via_broker(
     parent_execution_id: Optional[str] = None,
     parent_event_id: Optional[str] = None,
     parent_step: Optional[str] = None,
+    requestor_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Event-sourced kickoff of a playbook execution without directly using Worker.
@@ -367,6 +368,15 @@ def execute_playbook_via_broker(
                 import asyncio as _asyncio
                 if _asyncio.get_event_loop().is_running():
                     # within async server context
+                    meta = {
+                        'path': playbook_path,
+                        'version': playbook_version,
+                        'parent_execution_id': parent_execution_id,
+                        'parent_step': parent_step,
+                    }
+                    if requestor_info:
+                        meta['requestor'] = requestor_info
+                    
                     payload = {
                         'event_type': 'execution_start',
                         'execution_id': execution_id,
@@ -375,7 +385,7 @@ def execute_playbook_via_broker(
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                         'context': ctx,
-                        'meta': {'path': playbook_path, 'version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                        'meta': meta,
                     }
                     if parent_event_id:
                         payload['parent_event_id'] = parent_event_id
@@ -384,6 +394,15 @@ def execute_playbook_via_broker(
                     _asyncio.create_task(es.emit(payload))
                 else:
                     # best-effort synchronous run
+                    meta = {
+                        'path': playbook_path,
+                        'version': playbook_version,
+                        'parent_execution_id': parent_execution_id,
+                        'parent_step': parent_step,
+                    }
+                    if requestor_info:
+                        meta['requestor'] = requestor_info
+                    
                     payload = {
                         'event_type': 'execution_start',
                         'execution_id': execution_id,
@@ -392,7 +411,7 @@ def execute_playbook_via_broker(
                         'node_type': 'playbook',
                         'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                         'context': ctx,
-                        'meta': {'path': playbook_path, 'version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                        'meta': meta,
                     }
                     if parent_event_id:
                         payload['parent_event_id'] = parent_event_id
@@ -404,6 +423,15 @@ def execute_playbook_via_broker(
                 server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
                 if not server_url.endswith('/api'):
                     server_url = server_url + '/api'
+                meta = {
+                    'path': playbook_path,
+                    'version': playbook_version,
+                    'parent_execution_id': parent_execution_id,
+                    'parent_step': parent_step,
+                }
+                if requestor_info:
+                    meta['requestor'] = requestor_info
+                
                 report_event({
                     'event_type': 'execution_start',
                     'execution_id': execution_id,
@@ -412,7 +440,7 @@ def execute_playbook_via_broker(
                     'node_type': 'playbook',
                     'node_name': playbook_path.split('/')[-1] if playbook_path else 'playbook',
                     'context': ctx,
-                    'meta': {'path': playbook_path, 'version': playbook_version, 'parent_execution_id': parent_execution_id, 'parent_step': parent_step},
+                    'meta': meta,
                 }, server_url)
         except Exception as e_evt:
             logger.warning(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Failed to persist execution_start event: {e_evt}")

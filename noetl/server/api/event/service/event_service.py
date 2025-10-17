@@ -1064,6 +1064,11 @@ class EventService:
             first_context = first_event.get("context", {})
             playbook_id = first_metadata.get('path', first_context.get('path', ''))
             playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+            
+            # Get requestor info from execution_start event's meta
+            requestor_info = None
+            if first_metadata and isinstance(first_metadata, dict):
+                requestor_info = first_metadata.get('requestor')
 
             # Get status and result from latest event
             result = latest_event.get("result", {})
@@ -1114,7 +1119,7 @@ class EventService:
             else:
                 progress = 0
 
-            return {
+            execution_detail = {
                 "id": execution_id,
                 "playbook_id": playbook_id,
                 "playbook_name": playbook_name,
@@ -1127,6 +1132,12 @@ class EventService:
                 "error": latest_event.get("error"),
                 "events": events.get("events", [])
             }
+            
+            # Add requestor info if available
+            if requestor_info:
+                execution_detail["requestor"] = requestor_info
+            
+            return execution_detail
         except Exception as e:
             logger.exception(f"Error getting execution detail: {e}")
             raise

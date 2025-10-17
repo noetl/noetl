@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from noetl.core.logger import setup_logger
 from .schema import ExecutionRequest, ExecutionResponse
 from .service import execute_request
@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.post("/executions/run", response_model=ExecutionResponse)
-async def execute_playbook(payload: ExecutionRequest):
+async def execute_playbook(request: Request, payload: ExecutionRequest):
     """
     Execute a playbook/tool/model using unified request schema.
     
@@ -43,8 +43,15 @@ async def execute_playbook(payload: ExecutionRequest):
     playbooks, tools, and models with a unified interface.
     """
     try:
+        # Capture requestor details from HTTP request
+        requestor_info = {
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+            "timestamp": None,  # Will be set during execution
+        }
+        
         logger.debug(f"EXECUTE: Received request: {payload.model_dump()}")
-        return await execute_request(payload)
+        return await execute_request(payload, requestor_info)
     except HTTPException:
         raise
     except Exception as e:
@@ -53,7 +60,7 @@ async def execute_playbook(payload: ExecutionRequest):
 
 
 @router.post("/execute", response_model=ExecutionResponse)
-async def execute_playbook_by_path_version(payload: ExecutionRequest):
+async def execute_playbook_by_path_version(request: Request, payload: ExecutionRequest):
     """
     Execute a playbook/tool/model using unified request schema (alias for /executions/run).
     
@@ -90,8 +97,15 @@ async def execute_playbook_by_path_version(payload: ExecutionRequest):
     playbooks, tools, and models with a unified interface.
     """
     try:
+        # Capture requestor details from HTTP request
+        requestor_info = {
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+            "timestamp": None,  # Will be set during execution
+        }
+        
         logger.debug(f"EXECUTE: Received request: {payload.model_dump()}")
-        return await execute_request(payload)
+        return await execute_request(payload, requestor_info)
     except HTTPException:
         raise
     except Exception as e:
