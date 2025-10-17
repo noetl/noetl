@@ -1,6 +1,7 @@
 """
-Workflow database management functions.
-Handles populating workflow, transition, and workbook tables.
+Workflow table population.
+
+Populates workflow tracking tables for execution monitoring.
 """
 
 import json
@@ -10,33 +11,37 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
-async def populate_workflow_tables(cursor, execution_id: str, playbook_path: str, playbook: Dict[str, Any]) -> None:
+async def populate_workflow_tables(
+    cursor, execution_id: str, playbook_path: str, playbook: Dict[str, Any]
+) -> None:
     """
-    Populate workflow, transition, and workbook tables for the given execution.
+    Populate workflow, transition, and workbook tables.
     
     Args:
         cursor: Database cursor
-        execution_id: Execution ID 
-        playbook_path: Path to the playbook
+        execution_id: Execution ID
+        playbook_path: Playbook path
         playbook: Parsed playbook content
     """
     try:
-        # Get workflow steps
         workflow_steps = playbook.get('workflow', []) or playbook.get('steps', [])
         if not workflow_steps:
             return
-            
+        
         # Insert workflow steps
         for step in workflow_steps:
             step_name = step.get('step') or step.get('name')
             if not step_name:
                 continue
-                
+            
             step_id = step.get('id') or step_name
             description = step.get('description')
+            
             await cursor.execute(
                 """
-                INSERT INTO noetl.workflow (execution_id, step_id, step_name, step_type, description, raw_config)
+                INSERT INTO noetl.workflow (
+                    execution_id, step_id, step_name, step_type, description, raw_config
+                )
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (execution_id, step_id) DO NOTHING
                 """,
@@ -50,11 +55,11 @@ async def populate_workflow_tables(cursor, execution_id: str, playbook_path: str
                 )
             )
             
-            # Insert transitions for this step
+            # Insert transitions
             next_steps = step.get('next', [])
             if not isinstance(next_steps, list):
                 next_steps = [next_steps] if next_steps else []
-                
+            
             for next_def in next_steps:
                 if isinstance(next_def, dict):
                     next_step_name = next_def.get('step') or next_def.get('name')
@@ -68,11 +73,12 @@ async def populate_workflow_tables(cursor, execution_id: str, playbook_path: str
                     continue
                 
                 if next_step_name:
-                    # Ensure condition is a non-null string because it's part of the transition PK
                     condition_value = condition or ""
                     await cursor.execute(
                         """
-                        INSERT INTO noetl.transition (execution_id, from_step, to_step, condition, with_params)
+                        INSERT INTO noetl.transition (
+                            execution_id, from_step, to_step, condition, with_params
+                        )
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (execution_id, from_step, to_step, condition) DO NOTHING
                         """,
@@ -85,30 +91,24 @@ async def populate_workflow_tables(cursor, execution_id: str, playbook_path: str
                         )
                     )
         
-        # Insert workbook rows for workbook-type steps (align with schema 5 columns)
+        # Insert workbook rows
         for step in workflow_steps:
             st_type = str(step.get('type') or '').lower()
             if st_type != 'workbook':
                 continue
+            
             step_name = step.get('step') or step.get('name') or ''
             task_name = step.get('task') or step.get('name') or ''
             raw = json.dumps(step)
+            
             await cursor.execute(
                 """
                 INSERT INTO noetl.workbook
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (execution_id, task_id) DO NOTHING
                 """,
-                (
-                    execution_id,
-                    playbook_path or '',
-                    step_name,
-                    task_name,
-                    raw,
-                )
+                (execution_id, task_name, step_name, st_type, raw)
             )
-        
+            
     except Exception as e:
-        logger.error(f"Error populating workflow tables for {execution_id}: {e}")
-        # Re-raise to allow outer logic to rollback aborted transaction before continuing
-        raise
+        logger.warning(f"WORKFLOW: Failed to populate tables: {e}", exc_info=True)

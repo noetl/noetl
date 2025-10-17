@@ -577,9 +577,9 @@ class EventService:
                           pass
 
                       await conn.commit()
-                      # Control dispatcher: route event to specialized controllers (best-effort)
+                      # Orchestration dispatcher: route event for workflow orchestration (best-effort)
                       try:
-                          from .control import route_event
+                          from .dispatcher import route_event
                           event_data['trigger_event_id'] = event_id
                           await route_event(event_data)
                       except Exception:
@@ -722,15 +722,15 @@ class EventService:
                                         
                                         logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
                                         
-                                        logger.info(f"COMPLETION_HANDLER: Calling distributed loop completion check for parent {parent_execution_id} step {parent_step}")
+                                        logger.info(f"COMPLETION_HANDLER: Calling iterator completion check for parent {parent_execution_id} step {parent_step}")
                                         
-                                        # Check if this completes a distributed loop
+                                        # Check if this completes an iterator
                                         try:
-                                            from .processing import _check_distributed_loop_completion
-                                            await _check_distributed_loop_completion(parent_execution_id, parent_step)
-                                            logger.info(f"COMPLETION_HANDLER: Distributed loop completion check completed for parent {parent_execution_id} step {parent_step}")
+                                            from .iterators import check_iterator_completions
+                                            await check_iterator_completions(parent_execution_id)
+                                            logger.info(f"COMPLETION_HANDLER: Iterator completion check completed for parent {parent_execution_id} step {parent_step}")
                                         except Exception as e:
-                                            logger.error(f"COMPLETION_HANDLER: Error in distributed loop completion check: {e}", exc_info=True)
+                                            logger.error(f"COMPLETION_HANDLER: Error in iterator completion check: {e}", exc_info=True)
                                         
                             except Exception as e:
                                 logger.error(f"COMPLETION_HANDLER: Error processing child completion: {e}", exc_info=True)
@@ -747,21 +747,21 @@ class EventService:
 
             try:
                 evt_l = (str(event_type) if event_type is not None else '').lower()
-                # Re-evaluate broker on key lifecycle events, including task completion/errors (legacy fast path)
+                # Re-evaluate orchestration on key lifecycle events, including task completion/errors (legacy fast path)
                 if evt_l in {"execution_start", "action_completed", "action_error", "task_completed", "task_error", "loop_iteration", "loop_completed", "result"}:
-                    logger.info(f"EVENT_EMIT: Triggering broker evaluation for execution {execution_id} due to event_type: {evt_l}")
+                    logger.info(f"EVENT_EMIT: Triggering orchestration evaluation for execution {execution_id} due to event_type: {evt_l}")
                     try:
                         import asyncio
-                        from .processing import evaluate_broker_for_execution
+                        from .core import evaluate_execution
                         if asyncio.get_event_loop().is_running():
-                            asyncio.create_task(evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id)))
+                            asyncio.create_task(evaluate_execution(execution_id, trigger_event_id=str(event_id)))
                         else:
-                            await evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id))
+                            await evaluate_execution(execution_id, trigger_event_id=str(event_id))
                     except RuntimeError:
-                        from .processing import evaluate_broker_for_execution
-                        await evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id))
+                        from .core import evaluate_execution
+                        await evaluate_execution(execution_id, trigger_event_id=str(event_id))
             except Exception:
-                logger.debug("Failed to schedule broker evaluation from emit", exc_info=True)
+                logger.debug("Failed to schedule orchestration evaluation from emit", exc_info=True)
 
             return event_data
 
@@ -944,6 +944,203 @@ class EventService:
         except Exception as e:
             logger.exception(f"Error in get_event: {e}")
             return None
+
+    async def get_execution_summary(self, execution_id: str) -> Dict[str, Any]:
+        """
+        Get execution summary with event counts, skipped count, and recent errors.
+        
+        Args:
+            execution_id: Execution ID to summarize
+            
+        Returns:
+            Dictionary with execution_id, counts, skipped, and errors
+        """
+        try:
+            counts = {}
+            errors = []
+            skipped = 0
+            
+            async with get_async_db_connection() as conn:
+                # Get event type counts
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT event_type, COUNT(*)
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                        GROUP BY event_type
+                        """,
+                        (execution_id,)
+                    )
+                    rows = await cur.fetchall()
+                    for et, c in rows:
+                        counts[str(et)] = int(c)
+
+                # Count skipped from action_completed payloads
+                async with conn.cursor() as cur2:
+                    await cur2.execute(
+                        """
+                        SELECT result FROM noetl.event
+                        WHERE execution_id = %s AND event_type = 'action_completed'
+                        """,
+                        (execution_id,)
+                    )
+                    rows2 = await cur2.fetchall()
+                    for (out,) in rows2:
+                        try:
+                            data = json.loads(out) if isinstance(out, str) else out
+                            if isinstance(data, dict) and data.get('skipped') is True:
+                                skipped += 1
+                        except Exception:
+                            pass
+
+                # Last 3 errors
+                async with conn.cursor(row_factory=dict_row) as cur3:
+                    await cur3.execute(
+                        """
+                        SELECT node_name, error, created_at
+                        FROM noetl.event
+                        WHERE execution_id = %s AND event_type = 'action_error'
+                        ORDER BY created_at DESC
+                        LIMIT 3
+                        """,
+                        (execution_id,)
+                    )
+                    errors = await cur3.fetchall() or []
+                    # Serialize datetimes for JSON
+                    for e in errors:
+                        if isinstance(e, dict):
+                            ts = e.get('created_at')
+                            if ts and hasattr(ts, 'isoformat'):
+                                e['created_at'] = ts.isoformat()
+
+            return {
+                "execution_id": execution_id,
+                "counts": counts,
+                "skipped": skipped,
+                "errors": errors,
+            }
+        except Exception as e:
+            logger.exception(f"Error getting execution summary: {e}")
+            raise
+
+    async def get_execution_detail(self, execution_id: str) -> Dict[str, Any]:
+        """
+        Get full execution detail with calculated metadata (status, progress, duration).
+        
+        Args:
+            execution_id: Execution ID
+            
+        Returns:
+            Dictionary with execution metadata and events
+        """
+        try:
+            from noetl.core.status import normalize_status
+            from datetime import datetime
+            
+            # Convert to int for database query
+            from noetl.core.common import snowflake_id_to_int
+            execution_id_int = snowflake_id_to_int(execution_id)
+            
+            events = await self.get_events_by_execution_id(execution_id_int)
+
+            if not events:
+                return None
+
+            # Get the first event for playbook path information (execution_start event)
+            first_event = events.get("events", [])[0] if events.get("events") else None
+            
+            # Get the latest event for status and result information
+            latest_event = None
+            for event in events.get("events", []):
+                if not latest_event or (event.get("timestamp", "") > latest_event.get("timestamp", "")):
+                    latest_event = event
+
+            if not latest_event or not first_event:
+                return None
+
+            # Get playbook path from first event (execution_start)
+            first_metadata = first_event.get("metadata", {})
+            first_context = first_event.get("context", {})
+            playbook_id = first_metadata.get('path', first_context.get('path', ''))
+            playbook_name = playbook_id.split('/')[-1] if playbook_id else 'Unknown'
+            
+            # Get requestor info from execution_start event's meta
+            requestor_info = None
+            if first_metadata and isinstance(first_metadata, dict):
+                requestor_info = first_metadata.get('requestor')
+
+            # Get status and result from latest event
+            result = latest_event.get("result", {})
+
+            raw_status = latest_event.get("status", "")
+            # Handle status normalization for existing data
+            if raw_status and raw_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                status = raw_status
+            else:
+                try:
+                    status = normalize_status(raw_status)
+                    logger.warning(f"Found non-normalized status '{raw_status}' in execution {execution_id}. This should be fixed in the source.")
+                except ValueError:
+                    logger.error(f"Invalid status '{raw_status}' in execution {execution_id}. Defaulting to 'PENDING'.")
+                    status = 'PENDING'
+
+            timestamps = [event.get("timestamp", "") for event in events.get("events", []) if event.get("timestamp")]
+            timestamps.sort()
+
+            start_time = timestamps[0] if timestamps else None
+            end_time = timestamps[-1] if timestamps and status in ['COMPLETED', 'FAILED'] else None
+
+            duration = None
+            if start_time and end_time:
+                try:
+                    start_dt = datetime.fromisoformat(start_time)
+                    end_dt = datetime.fromisoformat(end_time)
+                    duration = (end_dt - start_dt).total_seconds()
+                except Exception as e:
+                    logger.error(f"Error calculating duration: {e}")
+
+            if status in ['COMPLETED', 'FAILED']:
+                progress = 100
+            elif status in ['STARTED', 'RUNNING']:
+                normalized_statuses = []
+                for e in events.get('events', []):
+                    event_status = e.get('status')
+                    if event_status and event_status in {'STARTED', 'RUNNING', 'PAUSED', 'PENDING', 'FAILED', 'COMPLETED'}:
+                        normalized_statuses.append(event_status)
+                    else:
+                        try:
+                            normalized_statuses.append(normalize_status(event_status))
+                        except ValueError:
+                            normalized_statuses.append('PENDING')
+                total = len(normalized_statuses)
+                done = sum(1 for s in normalized_statuses if s in {'COMPLETED', 'FAILED'})
+                progress = int((done / total) * 100) if total else 0
+            else:
+                progress = 0
+
+            execution_detail = {
+                "id": execution_id,
+                "playbook_id": playbook_id,
+                "playbook_name": playbook_name,
+                "status": status,
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration": duration,
+                "progress": progress,
+                "result": result,
+                "error": latest_event.get("error"),
+                "events": events.get("events", [])
+            }
+            
+            # Add requestor info if available
+            if requestor_info:
+                execution_detail["requestor"] = requestor_info
+            
+            return execution_detail
+        except Exception as e:
+            logger.exception(f"Error getting execution detail: {e}")
+            raise
 
 
 def get_event_service() -> EventService:

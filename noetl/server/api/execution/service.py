@@ -183,12 +183,13 @@ class ExecutionService:
         )
     
     @staticmethod
-    async def execute(request: ExecutionRequest) -> ExecutionResponse:
+    async def execute(request: ExecutionRequest, requestor_info: Optional[Dict[str, Any]] = None) -> ExecutionResponse:
         """
         Execute a playbook/tool/model based on the request.
         
         Args:
             request: Validated execution request
+            requestor_info: Optional requestor details (IP, user agent, etc.)
         
         Returns:
             ExecutionResponse with execution details
@@ -197,6 +198,11 @@ class ExecutionService:
             HTTPException: If execution fails
         """
         try:
+            # Add timestamp to requestor info
+            from datetime import datetime
+            if requestor_info:
+                requestor_info['timestamp'] = datetime.utcnow().isoformat()
+            
             # Resolve catalog entry
             path, version, content, catalog_id = await ExecutionService.resolve_catalog_entry(request)
             logger.info(
@@ -231,7 +237,8 @@ class ExecutionService:
                 merge=merge,
                 parent_execution_id=parent_execution_id,
                 parent_event_id=parent_event_id,
-                parent_step=parent_step
+                parent_step=parent_step,
+                requestor_info=requestor_info
             )
             
             # Persist workload record for server-side tracking
@@ -291,14 +298,15 @@ class ExecutionService:
             logger.warning(f"Failed to persist workload for execution {execution_id}: {e}")
 
 
-async def execute_request(request: ExecutionRequest) -> ExecutionResponse:
+async def execute_request(request: ExecutionRequest, requestor_info: Optional[Dict[str, Any]] = None) -> ExecutionResponse:
     """
     Main entry point for execution service.
     
     Args:
         request: Validated execution request
+        requestor_info: Optional requestor details (IP, user agent, etc.)
     
     Returns:
         ExecutionResponse with execution details
     """
-    return await ExecutionService.execute(request)
+    return await ExecutionService.execute(request, requestor_info)
