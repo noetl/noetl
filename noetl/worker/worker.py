@@ -20,6 +20,17 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
+class TaskExecutionError(RuntimeError):
+    """Exception raised when a task execution fails with error status.
+    
+    Carries the full result dict to enable retry policy evaluation based on
+    result fields like status_code, data, etc.
+    """
+    def __init__(self, message: str, result: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.result = result or {}
+
+
 def _normalize_server_url(url: Optional[str], ensure_api: bool = True) -> str:
     """Ensure server URL has http(s) scheme and optional '/api' suffix."""
     try:
@@ -430,8 +441,8 @@ class QueueWorker:
                 except Exception as e:
                     logger.debug(f"Failed to emit action_retry event: {e}", exc_info=True)
                     
-        except Exception:  # pragma: no cover - network best effort
-            logger.debug("Failed to mark job %s failed", queue_id, exc_info=True)
+        except Exception as e:  # pragma: no cover - network best effort
+            logger.warning(f"Failed to mark job {queue_id} failed: {e}", exc_info=True)
 
     async def _evaluate_retry_policy(
         self, 
@@ -508,20 +519,31 @@ class QueueWorker:
             policy = RetryPolicy(retry_config, jinja_env)
             
             # Build result context for evaluation
-            # Extract any result data from job context
-            context = job.get('context') or job.get('input_context') or {}
-            if isinstance(context, str):
-                try:
-                    context = json.loads(context)
-                except:
-                    context = {}
+            # Extract result data from TaskExecutionError if available
+            result = {}
+            if isinstance(error, TaskExecutionError) and hasattr(error, 'result'):
+                # Use the result from the exception which contains full execution result
+                result = error.result or {}
+                # Extract status_code from data if present
+                if 'data' in result and isinstance(result['data'], dict):
+                    if 'status_code' in result['data']:
+                        result['status_code'] = result['data']['status_code']
             
-            result = {
-                'error': str(error) if error else None,
-                'success': False,
-                'status': 'error',
-                'data': context.get('result') if isinstance(context, dict) else None
-            }
+            # Fallback: try to get result from job context
+            if not result:
+                context = job.get('context') or job.get('input_context') or {}
+                if isinstance(context, str):
+                    try:
+                        context = json.loads(context)
+                    except:
+                        context = {}
+                
+                result = {
+                    'error': str(error) if error else None,
+                    'success': False,
+                    'status': 'error',
+                    'data': context.get('result') if isinstance(context, dict) else None
+                }
             
             # Evaluate retry policy
             should_retry = policy.should_retry(result, attempt_number, error)
@@ -912,7 +934,7 @@ class QueueWorker:
                     error_event = self._validate_event_status(error_event)
                     report_event(error_event, self.server_url)
                     emitted_error = True
-                    raise RuntimeError(err_msg or "Task returned error status")
+                    raise TaskExecutionError(err_msg or "Task returned error status", result=result)
                 else:
                     complete_event = {
                         "execution_id": execution_id,

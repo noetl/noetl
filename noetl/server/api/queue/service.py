@@ -698,16 +698,21 @@ class QueueService:
         Returns:
             FailResponse with status
         """
+        job_is_dead = False
+        job_info = None
+        
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                # Get job info including execution context
                 await cur.execute(
-                    "SELECT attempts, max_attempts FROM noetl.queue WHERE queue_id = %s",
+                    "SELECT queue_id, execution_id, node_id, attempts, max_attempts, context, catalog_id FROM noetl.queue WHERE queue_id = %s",
                     (queue_id,)
                 )
                 row = await cur.fetchone()
                 if not row:
                     raise ValueError("job not found")
                 
+                job_info = row
                 attempts = row.get("attempts", 0)
                 max_attempts = row.get("max_attempts", 5)
                 
@@ -717,11 +722,13 @@ class QueueService:
                         "UPDATE noetl.queue SET status='dead' WHERE queue_id = %s RETURNING queue_id",
                         (queue_id,)
                     )
+                    job_is_dead = True
                 elif attempts >= max_attempts:
                     await cur.execute(
                         "UPDATE noetl.queue SET status='dead' WHERE queue_id = %s RETURNING queue_id",
                         (queue_id,)
                     )
+                    job_is_dead = True
                 else:
                     # Set status to 'retry' (not 'queued') to distinguish retry attempts from initial queue
                     await cur.execute(
@@ -731,7 +738,104 @@ class QueueService:
                 await cur.fetchone()
                 await conn.commit()
         
+        # Emit failure events if job is permanently dead
+        if job_is_dead and job_info:
+            logger.info(f"Job {queue_id} is dead, emitting final failure events")
+            try:
+                await QueueService._emit_final_failure_events(job_info)
+            except Exception as e:
+                logger.warning(f"Failed to emit final failure events for job {queue_id}: {e}", exc_info=True)
+        
         return FailResponse(status="ok", id=queue_id)
+    
+    @staticmethod
+    async def _emit_final_failure_events(job_info: Dict[str, Any]) -> None:
+        """
+        Emit step_failed and execution_failed events when a job permanently fails.
+        
+        Args:
+            job_info: Job dictionary with execution_id, node_id, context, etc.
+        """
+        try:
+            from noetl.server.api.event import get_event_service
+            import json
+            
+            execution_id = job_info.get("execution_id")
+            node_id = job_info.get("node_id")
+            catalog_id = job_info.get("catalog_id")
+            context = job_info.get("context") or {}
+            
+            if isinstance(context, str):
+                try:
+                    context = json.loads(context)
+                except:
+                    context = {}
+            
+            step_name = context.get("step_name", "unknown")
+            
+            # Get the last action_error event for this step to extract error details
+            last_error = None
+            last_error_result = None
+            
+            try:
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute(
+                            """
+                            SELECT error, result, traceback 
+                            FROM noetl.event 
+                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_error'
+                            ORDER BY created_at DESC 
+                            LIMIT 1
+                            """,
+                            (execution_id, step_name)
+                        )
+                        error_row = await cur.fetchone()
+                        if error_row:
+                            last_error = error_row.get("error") or "Task failed after all retry attempts"
+                            last_error_result = error_row.get("result")
+            except Exception as e:
+                logger.warning(f"Failed to fetch last error for step {step_name}: {e}")
+                last_error = "Task failed after all retry attempts"
+            
+            if not last_error:
+                last_error = "Task failed after all retry attempts"
+            
+            # Emit step_failed event
+            event_service = get_event_service()
+            step_failed_payload = {
+                "execution_id": execution_id,
+                "catalog_id": catalog_id,
+                "event_type": "step_failed",
+                "status": "FAILED",
+                "node_id": node_id,
+                "node_name": step_name,
+                "node_type": "step",
+                "error": last_error,
+                "result": last_error_result or {},
+            }
+            
+            await event_service.emit(step_failed_payload)
+            logger.info(f"Emitted step_failed event for step '{step_name}' in execution {execution_id}")
+            
+            # Emit execution_failed event
+            execution_failed_payload = {
+                "execution_id": execution_id,
+                "catalog_id": catalog_id,
+                "event_type": "execution_failed",
+                "status": "FAILED",
+                "node_id": execution_id,
+                "node_name": step_name,
+                "node_type": "execution",
+                "error": f"Execution failed at step '{step_name}': {last_error}",
+                "result": {"failed_step": step_name, "reason": last_error},
+            }
+            
+            await event_service.emit(execution_failed_payload)
+            logger.info(f"Emitted execution_failed event for execution {execution_id}")
+        except Exception as e:
+            logger.error(f"Error in _emit_final_failure_events: {e}", exc_info=True)
+            raise
     
     @staticmethod
     async def heartbeat_job(
