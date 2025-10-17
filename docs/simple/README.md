@@ -20,6 +20,8 @@ Quick navigation:
   - DuckDB: ./steps/duckdb.md
   - Postgres: ./steps/postgres.md
   - Saving results: ./steps/save.md
+  - Playbook composition: ./steps/playbook.md
+  - Retry policy: ./steps/retry.md
 
 Examples referenced in this guide:
 - Minimal HTTP loop with Python aggregation: tests/fixtures/playbooks/loop_http_test.yaml

@@ -67,3 +67,16 @@ Usage patterns
 Tips
 - Keep code side-effect free; use dedicated steps for I/O.
 - Raise ValueError with clear messages for invalid inputs to produce useful logs.
+
+Retry
+- Add a `retry` block when code may raise intermittent exceptions (network calls, random test failures).
+- Context vars: `error`, `attempt`, `max_attempts`, plus any partial `data` if produced before exception handling.
+```yaml
+retry:
+  max_attempts: 5
+  initial_delay: 0.2
+  backoff_multiplier: 1.5
+  max_delay: 2.0
+  retry_when: "{{ error != None }}"
+```
+Use `stop_when` if you detect a stable success condition distinct from error absence.
