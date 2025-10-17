@@ -13,9 +13,9 @@ workflow:
     desc: Run Python code that fails initially then succeeds
     type: python
     code: |
-      import random
       
       def main(input_data):
+          import random
           # Simulate random failures for testing retry
           rand_val = random.randint(1, 100)
           
