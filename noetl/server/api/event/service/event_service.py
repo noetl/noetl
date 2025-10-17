@@ -577,9 +577,9 @@ class EventService:
                           pass
 
                       await conn.commit()
-                      # Control dispatcher: route event to specialized controllers (best-effort)
+                      # Orchestration dispatcher: route event for workflow orchestration (best-effort)
                       try:
-                          from .control import route_event
+                          from .dispatcher import route_event
                           event_data['trigger_event_id'] = event_id
                           await route_event(event_data)
                       except Exception:
@@ -722,15 +722,15 @@ class EventService:
                                         
                                         logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
                                         
-                                        logger.info(f"COMPLETION_HANDLER: Calling distributed loop completion check for parent {parent_execution_id} step {parent_step}")
+                                        logger.info(f"COMPLETION_HANDLER: Calling iterator completion check for parent {parent_execution_id} step {parent_step}")
                                         
-                                        # Check if this completes a distributed loop
+                                        # Check if this completes an iterator
                                         try:
-                                            from .processing import _check_distributed_loop_completion
-                                            await _check_distributed_loop_completion(parent_execution_id, parent_step)
-                                            logger.info(f"COMPLETION_HANDLER: Distributed loop completion check completed for parent {parent_execution_id} step {parent_step}")
+                                            from .iterators import check_iterator_completions
+                                            await check_iterator_completions(parent_execution_id)
+                                            logger.info(f"COMPLETION_HANDLER: Iterator completion check completed for parent {parent_execution_id} step {parent_step}")
                                         except Exception as e:
-                                            logger.error(f"COMPLETION_HANDLER: Error in distributed loop completion check: {e}", exc_info=True)
+                                            logger.error(f"COMPLETION_HANDLER: Error in iterator completion check: {e}", exc_info=True)
                                         
                             except Exception as e:
                                 logger.error(f"COMPLETION_HANDLER: Error processing child completion: {e}", exc_info=True)
@@ -747,21 +747,21 @@ class EventService:
 
             try:
                 evt_l = (str(event_type) if event_type is not None else '').lower()
-                # Re-evaluate broker on key lifecycle events, including task completion/errors (legacy fast path)
+                # Re-evaluate orchestration on key lifecycle events, including task completion/errors (legacy fast path)
                 if evt_l in {"execution_start", "action_completed", "action_error", "task_completed", "task_error", "loop_iteration", "loop_completed", "result"}:
-                    logger.info(f"EVENT_EMIT: Triggering broker evaluation for execution {execution_id} due to event_type: {evt_l}")
+                    logger.info(f"EVENT_EMIT: Triggering orchestration evaluation for execution {execution_id} due to event_type: {evt_l}")
                     try:
                         import asyncio
-                        from .processing import evaluate_broker_for_execution
+                        from .core import evaluate_execution
                         if asyncio.get_event_loop().is_running():
-                            asyncio.create_task(evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id)))
+                            asyncio.create_task(evaluate_execution(execution_id, trigger_event_id=str(event_id)))
                         else:
-                            await evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id))
+                            await evaluate_execution(execution_id, trigger_event_id=str(event_id))
                     except RuntimeError:
-                        from .processing import evaluate_broker_for_execution
-                        await evaluate_broker_for_execution(execution_id, trigger_event_id=str(event_id))
+                        from .core import evaluate_execution
+                        await evaluate_execution(execution_id, trigger_event_id=str(event_id))
             except Exception:
-                logger.debug("Failed to schedule broker evaluation from emit", exc_info=True)
+                logger.debug("Failed to schedule orchestration evaluation from emit", exc_info=True)
 
             return event_data
 

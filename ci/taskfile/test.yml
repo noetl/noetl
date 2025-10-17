@@ -176,73 +176,8 @@ tasks:
       - task: test:k8s:register-playbooks
       - echo "=== Test environment setup completed ==="
 
-  playbook:k8s:register-http-duckdb-postgres:
-    desc: Register HTTP DuckDB Postgres playbook
-    aliases: [trhdp, test-register-http-duckdb-postgres]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/http_duckdb_postgres/http_duckdb_postgres.yaml -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
 
-  playbook:k8s:execute-http-duckdb-postgres:
-    desc: Execute HTTP DuckDB Postgres test
-    aliases: [tehdp, test-execute-http-duckdb-postgres]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/http_duckdb_postgres" -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
 
-  playbook:k8s:full-http-duckdb-postgres:
-    desc: Full HTTP DuckDB Postgres test
-    aliases: [thdpf, test-http-duckdb-postgres-full]
-    cmds:
-      - task: test:k8s:setup-environment
-      - sleep 2
-      - task: playbook:k8s:execute:http-duckdb-postgres
-
-  playbook:k8s:register-playbook-composition:
-    desc: Register playbook composition test
-    aliases: [trpc, test-register-playbook-composition]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/playbook_composition/playbook_composition.yaml -host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
-
-  playbook:k8s:execute-playbook-composition:
-    desc: Execute playbook composition test on Kubernetes cluster
-    aliases: [tepc, test-execute-playbook-composition]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/playbook_composition/playbook_composition"-host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
-
-  playbook:k8s:full-playbook-composition:
-    desc: Full playbook composition test
-    aliases: [tpcf, test-playbook-composition-full]
-    cmds:
-      - task: test:k8s:register-credentials
-      - sleep 2
-      - task: playbook:k8s:register:playbook-composition
-      - sleep 2
-      - task: playbook:k8s:execute:playbook-composition
-
-  playbook:k8s:register-hello-world:
-    desc: Register hello world playbook
-    aliases: [trhw]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
-
-  playbook:k8s:execute-hello-world:
-    desc: Execute hello world test on Kubernetes cluster
-    aliases: [tehw]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/hello_world" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
-
-  playbook:k8s:full-hello-world:
-    desc: Full hello world test
-    aliases: [thwf]
-    cmds:
-      - task: playbook:k8s:register:hello-world
-      - sleep 2
-      - task: playbook:k8s:execute:hello-world
 
   # === Save Storage Test Tasks ===
   test:k8s:create-tables:
@@ -255,123 +190,8 @@ tasks:
       - sleep 10
       - echo "=== Database tables created successfully ==="
 
-  playbook:k8s:register-save-simple:
-    desc: Register save storage simple test playbook
-    aliases: [trsss]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_simple_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
 
-  playbook:k8s:execute-save-simple:
-    desc: Execute save storage simple test on Kubernetes cluster
-    aliases: [tesss]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_simple_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
 
-  playbook:k8s:full-save-simple:
-    desc: Full save storage simple test
-    aliases: [tsssf]
-    cmds:
-      - task: test:k8s:setup-environment
-      - sleep 2
-      - task: test:k8s:create-tables
-      - sleep 5
-      - task: playbook:k8s:execute:save-simple
-
-  # === Save Storage Delegation Test ===
-  playbook:k8s:register-save-delegation:
-    desc: Register save storage delegation test playbook
-    aliases: [trsdt]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_delegation_test.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
-
-  playbook:k8s:execute-save-delegation:
-    desc: Execute save storage delegation test on Kubernetes cluster
-    aliases: [tesdt]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_delegation_test" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
-
-  playbook:k8s:full-save-delegation:
-    desc: Full save storage delegation test
-    aliases: [tsdtf]
-    cmds:
-      - task: test:k8s:setup-environment
-      - sleep 2
-      - task: test:k8s:create-tables
-      - sleep 5
-      - task: playbook:k8s:execute-save-delegation
-      - sleep 2
-      - task: playbook:k8s:execute-save-simple
-
-  playbook:k8s:register-save-comprehensive:
-    desc: Register save storage complete test playbook
-    aliases: [trsct, test-register-save-comprehensive-test]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_all_storage_types.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
-
-  playbook:k8s:execute-save-comprehensive:
-    desc: Execute save storage complete test
-    aliases: [tesct]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_all_storage_types" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
-
-  playbook:k8s:full-save-comprehensive:
-    desc: Full save storage complete test
-    aliases: [tsctf]
-    cmds:
-      - task: test:k8s:setup-environment
-      - sleep 2
-      - task: test:k8s:create-tables
-      - sleep 5
-      - task: playbook:k8s:execute-save-comprehensive
-
-  playbook:k8s:register-save-edge-cases:
-    desc: Register save storage edge cases test playbook
-    aliases: [trsec]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/save_storage_test/save_edge_cases.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
-
-  playbook:k8s:execute-save-edge-cases:
-    desc: Execute save storage edge cases test on Kubernetes cluster
-    aliases: [tesec]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_edge_cases" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
-
-  playbook:k8s:full-save-edge-cases:
-    desc: Full save storage edge cases test
-    aliases: [tsecf]
-    cmds:
-      - task: test:k8s:setup-environment
-      - sleep 2
-      - task: test:k8s:create-tables
-      - sleep 5
-      - task: playbook:k8s:execute-save-edge-cases
-
-  test:k8s:save-storage-all:
-    desc: Run all save storage tests (simple, complete, edge cases)
-    aliases: [tssall]
-    cmds:
-      - echo "=== Running Save Storage Test Suite ==="
-      - task: test:k8s:setup-environment
-      - sleep 2
-      - task: test:k8s:create-tables
-      - sleep 5
-      - echo "=== Running save storage simple test ==="
-      - task: playbook:k8s:execute-save-simple
-      - sleep 5
-      - echo "=== Running save storage comprehensive test ==="
-      - task: playbook:k8s:execute-save-comprehensive
-      - sleep 5
-      - echo "=== Running save storage edge cases test ==="
-      - task: playbook:k8s:execute-save-edge-cases
-      - echo "=== Save Storage Test Suite Completed ==="
 
   test:k8s:validate-save-storage:
     desc: Validate save storage test environment
@@ -381,12 +201,6 @@ tasks:
       - echo "=== Running Save Storage Test Validation ==="
       - tests/fixtures/playbooks/save_storage_test/validate_tests.sh validate
       - echo "=== Save Storage Test Validation Completed ==="
-
-  test:local:save-all-storage-types:
-    desc: Validate save storage test environment
-    cmds:
-      - echo "=== Running Save Storage Test Validation ==="
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/save_all_storage_types" --port 8083
 
   # === Retry Test Tasks ===
   
@@ -422,50 +236,8 @@ tasks:
         
         echo "✓ All retry test playbooks registered successfully"
 
-  playbook:local:execute-retry-http-status:
-    desc: Execute HTTP retry status code test
-    aliases: [terhs, test-execute-retry-http-status]
-    cmds:
-      - |
-        set -e
-        echo "=== Executing HTTP retry status code test ==="
-        task playbook:local:execute PLAYBOOK=tests/retry/http_status_code
 
-  playbook:local:execute-retry-http-stop:
-    desc: Execute HTTP retry with stop condition test
-    aliases: [terhs, test-execute-retry-http-stop]
-    cmds:
-      - |
-        set -e
-        echo "=== Executing HTTP retry with stop condition test ==="
-        task playbook:local:execute PLAYBOOK=tests/retry/http_stop_condition
 
-  playbook:local:execute-retry-python-exception:
-    desc: Execute Python exception retry test
-    aliases: [terpe, test-execute-retry-python-exception]
-    cmds:
-      - |
-        set -e
-        echo "=== Executing Python exception retry test ==="
-        task playbook:local:execute PLAYBOOK=tests/retry/python_exception
-
-  playbook:local:execute-retry-duckdb:
-    desc: Execute DuckDB query retry test
-    aliases: [terd, test-execute-retry-duckdb]
-    cmds:
-      - |
-        set -e
-        echo "=== Executing DuckDB query retry test ==="
-        task playbook:local:execute PLAYBOOK=tests/retry/duckdb_query
-
-  playbook:local:execute-retry-simple-config:
-    desc: Execute simple retry config test
-    aliases: [tersc, test-execute-retry-simple-config]
-    cmds:
-      - |
-        set -e
-        echo "=== Executing simple retry config test ==="
-        task playbook:local:execute PLAYBOOK=tests/retry/simple_config
 
   test:local:retry-all:
     desc: Run all retry tests
