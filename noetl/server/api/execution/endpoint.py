@@ -3,6 +3,7 @@ from noetl.core.logger import setup_logger
 from .schema import ExecutionRequest, ExecutionResponse
 from .service import execute_request
 
+
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
@@ -96,3 +97,4 @@ async def execute_playbook_by_path_version(payload: ExecutionRequest):
     except Exception as e:
         logger.error(f"Error executing request: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
