@@ -161,6 +161,49 @@ async def _evaluate_transitions(
         if str(step_name).strip().lower() == 'end':
             from .finalize import finalize_execution
             await finalize_execution(execution_id, step_name, step_def, eval_ctx)
+            return
+        
+        # If not named 'end' but has no next transitions, implicitly transition to 'end'
+        logger.info(f"TRANSITIONS: Step '{step_name}' has no next transitions, implicitly transitioning to 'end'")
+        
+        # Check if 'end' step exists in playbook
+        end_step_def = by_name.get('end')
+        if end_step_def:
+            # Explicit 'end' step exists, process it as control flow
+            logger.info(f"TRANSITIONS: Found explicit 'end' step, processing as control flow")
+            from .finalize import finalize_control_step
+            await finalize_control_step(
+                cur, conn, execution_id, 'end', end_step_def, eval_ctx,
+                by_name, catalog_id, pb_path, pb_ver
+            )
+        else:
+            # No explicit 'end' step, check if all actionable steps are complete
+            logger.info(f"TRANSITIONS: No explicit 'end' step, checking if all steps complete")
+            
+            # Count total actionable steps in workflow
+            total_actionable = sum(1 for s in by_name.values() if _is_actionable(s))
+            
+            # Count completed steps
+            await cur.execute(
+                """
+                SELECT COUNT(DISTINCT node_name)
+                FROM noetl.event
+                WHERE execution_id = %s AND event_type = 'step_completed'
+                """,
+                (snowflake_id_to_int(execution_id),)
+            )
+            row = await cur.fetchone()
+            completed_count = row[0] if row else 0
+            
+            logger.info(f"TRANSITIONS: Completed {completed_count}/{total_actionable} actionable steps")
+            
+            # If all actionable steps are complete, finalize execution
+            if completed_count >= total_actionable:
+                logger.info(f"TRANSITIONS: All actionable steps complete, finalizing execution")
+                from .finalize import finalize_execution
+                await finalize_execution(execution_id, step_name, step_def, eval_ctx)
+            else:
+                logger.info(f"TRANSITIONS: Waiting for {total_actionable - completed_count} more steps to complete")
         
         return
     
