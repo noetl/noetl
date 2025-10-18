@@ -8,6 +8,7 @@ Main entry point for executing Snowflake tasks with:
 - Result processing
 - Event logging
 - MCP compatibility
+- Chunked data transfer between Snowflake and PostgreSQL
 """
 
 import uuid
@@ -21,6 +22,7 @@ from .auth import resolve_snowflake_auth, validate_and_render_connection_params
 from .command import escape_task_with_params, decode_base64_commands, render_and_split_commands
 from .execution import connect_to_snowflake, execute_sql_statements
 from .response import process_results, format_success_response, format_error_response, format_exception_response
+from .transfer import transfer_snowflake_to_postgres, transfer_postgres_to_snowflake
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -189,6 +191,220 @@ def execute_snowflake_task(
         if log_event_callback:
             log_event_callback(
                 'task_error', task_id, task_name, 'snowflake',
+                'error', duration, context, None,
+                {'error': str(e), 'with_params': task_with}, None
+            )
+
+        return format_exception_response(task_id, e)
+
+
+def execute_snowflake_transfer_task(
+    task_config: Dict,
+    context: Dict,
+    jinja_env: Environment,
+    task_with: Dict,
+    log_event_callback=None
+) -> Dict:
+    """
+    Execute a Snowflake data transfer task with chunked streaming.
+
+    This function enables efficient data movement between Snowflake and PostgreSQL:
+    - Snowflake to PostgreSQL transfer with configurable chunk size
+    - PostgreSQL to Snowflake transfer with configurable chunk size
+    - Multiple transfer modes: append, replace, upsert/merge
+    - Progress tracking through callback mechanism
+
+    Args:
+        task_config: The task configuration containing:
+            - transfer_direction: 'sf_to_pg' or 'pg_to_sf' (required)
+            - source_query: SQL query to fetch data from source (required)
+            - target_table: Target table name (required)
+            - chunk_size: Rows per chunk (optional, default: 1000)
+            - mode: Transfer mode - 'append', 'replace', 'upsert'/'merge' (optional, default: 'append')
+            - sf_auth: Snowflake authentication config (required)
+            - pg_auth: PostgreSQL authentication config (required)
+        context: The execution context for rendering templates
+        jinja_env: The Jinja2 environment for template rendering
+        task_with: The rendered 'with' parameters dictionary containing:
+            Snowflake connection params:
+            - sf_account, sf_user, sf_password, sf_warehouse, sf_database, sf_schema
+            PostgreSQL connection params:
+            - pg_host, pg_port, pg_user, pg_password, pg_database
+        log_event_callback: Optional callback function to log events
+
+    Returns:
+        A dictionary containing the transfer result:
+        - id: Task identifier (UUID)
+        - status: 'success' or 'error'
+        - data: Transfer statistics (rows_transferred, chunks_processed, etc.)
+        - error: Error message (on error)
+
+    Example:
+        >>> result = execute_snowflake_transfer_task(
+        ...     task_config={
+        ...         'transfer_direction': 'sf_to_pg',
+        ...         'source_query': 'SELECT * FROM my_table',
+        ...         'target_table': 'public.my_target',
+        ...         'chunk_size': 5000,
+        ...         'mode': 'append'
+        ...     },
+        ...     context={'execution_id': 'exec-123'},
+        ...     jinja_env=Environment(),
+        ...     task_with={
+        ...         'sf_account': 'xy12345.us-east-1',
+        ...         'sf_user': 'my_user',
+        ...         'sf_password': 'my_password',
+        ...         'pg_host': 'localhost',
+        ...         'pg_port': '5432',
+        ...         'pg_user': 'postgres',
+        ...         'pg_password': 'pass',
+        ...         'pg_database': 'mydb'
+        ...     }
+        ... )
+        >>> result['status']
+        'success'
+    """
+    import psycopg
+    
+    task_id = str(uuid.uuid4())
+    task_name = task_config.get('task', 'snowflake_transfer_task')
+    start_time = datetime.datetime.now()
+
+    try:
+        logger.info(f"Starting Snowflake transfer task: {task_name}")
+        
+        # Extract transfer parameters
+        transfer_direction = task_config.get('transfer_direction')
+        source_query = task_config.get('source_query')
+        target_table = task_config.get('target_table')
+        chunk_size = task_config.get('chunk_size', 1000)
+        mode = task_config.get('mode', 'append')
+        
+        if not transfer_direction or transfer_direction not in ['sf_to_pg', 'pg_to_sf']:
+            raise ValueError("transfer_direction must be 'sf_to_pg' or 'pg_to_sf'")
+        
+        if not source_query:
+            raise ValueError("source_query is required")
+        
+        if not target_table:
+            raise ValueError("target_table is required")
+        
+        logger.info(f"Transfer: {transfer_direction}, Mode: {mode}, Chunk size: {chunk_size}")
+        
+        # Resolve Snowflake authentication
+        sf_account = task_with.get('sf_account')
+        sf_user = task_with.get('sf_user')
+        sf_password = task_with.get('sf_password')
+        sf_warehouse = task_with.get('sf_warehouse', 'COMPUTE_WH')
+        sf_database = task_with.get('sf_database')
+        sf_schema = task_with.get('sf_schema', 'PUBLIC')
+        sf_role = task_with.get('sf_role')
+        
+        # Resolve PostgreSQL authentication
+        pg_host = task_with.get('pg_host', 'localhost')
+        pg_port = task_with.get('pg_port', '5432')
+        pg_user = task_with.get('pg_user')
+        pg_password = task_with.get('pg_password')
+        pg_database = task_with.get('pg_database')
+        
+        # Log task start event
+        event_id = None
+        if log_event_callback:
+            event_id = log_event_callback(
+                'task_start', task_id, task_name, 'snowflake_transfer',
+                'in_progress', 0, context, None,
+                {'with_params': task_with, 'direction': transfer_direction}, None
+            )
+        
+        # Connect to Snowflake
+        logger.info("Connecting to Snowflake...")
+        sf_conn = connect_to_snowflake(
+            account=sf_account,
+            user=sf_user,
+            password=sf_password,
+            warehouse=sf_warehouse,
+            database=sf_database,
+            schema=sf_schema,
+            role=sf_role
+        )
+        
+        # Connect to PostgreSQL
+        logger.info("Connecting to PostgreSQL...")
+        pg_conn_string = f"host={pg_host} port={pg_port} dbname={pg_database} user={pg_user} password={pg_password}"
+        pg_conn = psycopg.connect(pg_conn_string)
+        
+        # Define progress callback
+        def progress_cb(rows, total):
+            logger.info(f"Transfer progress: {rows} rows transferred")
+        
+        # Execute transfer based on direction
+        if transfer_direction == 'sf_to_pg':
+            result = transfer_snowflake_to_postgres(
+                sf_conn=sf_conn,
+                pg_conn=pg_conn,
+                source_query=source_query,
+                target_table=target_table,
+                chunk_size=chunk_size,
+                mode=mode,
+                progress_callback=progress_cb
+            )
+        else:  # pg_to_sf
+            result = transfer_postgres_to_snowflake(
+                pg_conn=pg_conn,
+                sf_conn=sf_conn,
+                source_query=source_query,
+                target_table=target_table,
+                chunk_size=chunk_size,
+                mode=mode,
+                progress_callback=progress_cb
+            )
+        
+        # Close connections
+        sf_conn.close()
+        pg_conn.close()
+        logger.info("Connections closed")
+        
+        # Calculate duration
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        # Determine task status
+        task_status = result.get('status', 'error')
+        
+        # Log completion event
+        if log_event_callback:
+            log_event_callback(
+                'task_complete' if task_status == 'success' else 'task_error',
+                task_id, task_name, 'snowflake_transfer',
+                task_status, duration, context, result,
+                {'with_params': task_with, 'direction': transfer_direction}, event_id
+            )
+        
+        # Return result
+        if task_status == 'success':
+            return {
+                'id': task_id,
+                'status': 'success',
+                'data': result
+            }
+        else:
+            return {
+                'id': task_id,
+                'status': 'error',
+                'error': result.get('error', 'Unknown transfer error'),
+                'data': result
+            }
+    
+    except Exception as e:
+        # Handle unexpected errors
+        logger.error(f"Snowflake transfer task error: {str(e)}", exc_info=True)
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        # Log error event
+        if log_event_callback:
+            log_event_callback(
+                'task_error', task_id, task_name, 'snowflake_transfer',
                 'error', duration, context, None,
                 {'error': str(e), 'with_params': task_with}, None
             )
