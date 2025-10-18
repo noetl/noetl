@@ -9,6 +9,10 @@ workload:
   test_url: https://httpbin.org/get
   
 workflow:
+  - step: start
+    desc: Fetch URL and retry on 5xx status codes
+    next:
+      - step: boolean_retry
   - step: boolean_retry
     desc: Simple boolean retry (uses defaults)
     type: http

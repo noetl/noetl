@@ -73,3 +73,15 @@ Tips
 - Prefer CREATE TABLE IF NOT EXISTS and ON CONFLICT for idempotency.
 - Keep transactions small; batch writes where practical.
 - Define and reference auth entries in the playbook header.
+
+Retry
+- Use `retry` for transient connection or lock errors.
+- Context vars: `error` (error message), `success` (bool if adapter sets), `attempt`.
+```yaml
+retry:
+  max_attempts: 3
+  initial_delay: 1.0
+  backoff_multiplier: 2.0
+  retry_when: "{{ error != None or success == False }}"
+```
+See `retry.md` for details.

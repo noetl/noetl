@@ -22,8 +22,7 @@ async def create_event(
     Create a new event.
     """
     try:
-        from .service import get_event_service
-        from .processing import evaluate_broker_for_execution, _evaluate_broker_for_execution, _check_distributed_loop_completion
+        from .service import get_event_service, evaluate_execution
         import json
         body = await request.json()
 
@@ -193,28 +192,29 @@ async def create_event(
                                     await event_service.emit(emit_data)
                                     logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id} with result: {child_result} and loop metadata: {loop_metadata}")
                         
-                        # Always check if this completes a distributed loop, regardless of whether we have results
-                        print(f"completion handler: calling distributed loop completion check for parent {parent_execution_id} step {parent_step}")
-                        logger.info(f"COMPLETION_HANDLER: Calling distributed loop completion check for parent {parent_execution_id} step {parent_step}")
+                        # Always check if this completes an iterator, regardless of whether we have results
+                        print(f"completion handler: calling iterator completion check for parent {parent_execution_id}")
+                        logger.info(f"COMPLETION_HANDLER: Calling iterator completion check for parent {parent_execution_id}")
                         try:
-                            await _check_distributed_loop_completion(parent_execution_id, parent_step)
-                            print(f"completion handler: distributed loop completion check completed for parent {parent_execution_id}")
+                            from .service.iterators import check_iterator_completions
+                            await check_iterator_completions(parent_execution_id)
+                            print(f"completion handler: iterator completion check completed for parent {parent_execution_id}")
                         except Exception as e:
-                            print(f"completion handler: error in distributed loop completion check: {e}")
-                            logger.error(f"COMPLETION_HANDLER: Error in distributed loop completion check: {e}", exc_info=True)
+                            print(f"completion handler: error in iterator completion check: {e}")
+                            logger.error(f"COMPLETION_HANDLER: Error in iterator completion check: {e}", exc_info=True)
                                 
             except Exception as e:
                 print(f"completion handler: Exception in completion handler: {e}")
                 logger.debug("Failed to handle execution_completed event", exc_info=True)
-        # execution_id = result.get("execution_id") or body.get("execution_id")
-        # asyncio.create_task(evaluate_broker_for_execution(execution_id))
+        # Trigger orchestration evaluation for this execution
         try:
             execution_id = result.get("execution_id") or body.get("execution_id")
             if execution_id:
                 try:
-                    asyncio.create_task(evaluate_broker_for_execution(execution_id))
+                    import asyncio
+                    asyncio.create_task(evaluate_execution(execution_id))
                 except Exception:
-                    background_tasks.add_task(lambda eid=execution_id: _evaluate_broker_for_execution(eid))
+                    pass  # Orchestration will be triggered by event emission
         except Exception:
             pass
         return result

@@ -92,3 +92,16 @@ Failure modes and tips
 - Timeouts or non-2xx responses fail the step; use `assert` to catch missing fields early.
 - Prefer saving a projection over entire payloads to reduce storage size.
 - Keep `endpoint` templating simple and well-quoted to avoid YAML parsing issues.
+
+Retry
+- Add a `retry:` block to handle transient HTTP errors or specific status codes.
+- Context vars available to expressions: `status_code`, `error`, `attempt`, `max_attempts`.
+- Typical pattern: retry on 5xx, stop early on 200.
+```yaml
+retry:
+  max_attempts: 3
+  initial_delay: 0.5
+  backoff_multiplier: 2.0
+  retry_when: "{{ status_code >= 500 and status_code < 600 }}"
+```
+See `retry.md` for full syntax (including `stop_when`).
