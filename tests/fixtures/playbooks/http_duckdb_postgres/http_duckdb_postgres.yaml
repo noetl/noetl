@@ -25,6 +25,7 @@ workflow:
   desc: Start pipeline
   next:
   - step: ensure_pg_table
+
 - step: ensure_pg_table
   desc: Ensure raw HTTP results table exists in Postgres
   type: postgres
@@ -44,6 +45,7 @@ workflow:
   - step: http_loop
     args:
       cities: '{{ workload.cities }}'
+
 - step: http_loop
   desc: Fetch hourly temperatures for each city and save raw rows
   type: iterator
@@ -86,6 +88,7 @@ workflow:
       key: id
   next:
   - step: aggregate_with_duckdb
+
 - step: aggregate_with_duckdb
   args:
     require_cloud_output: true
@@ -150,6 +153,7 @@ workflow:
     );
   next:
   - step: end
+
 - step: end
   desc: Finish
   type: postgres
