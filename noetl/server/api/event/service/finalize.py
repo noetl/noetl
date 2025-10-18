@@ -55,16 +55,31 @@ async def finalize_execution(
 
 async def finalize_control_step(
     cur, conn, execution_id: str, step_name: str,
-    step_def: Dict[str, Any], ctx: Dict[str, Any]
+    step_def: Dict[str, Any], ctx: Dict[str, Any], 
+    by_name: Dict[str, Any] = None, catalog_id: str = None,
+    pb_path: str = None, pb_ver: str = None
 ) -> None:
     """
     Handle non-actionable control step.
     
     Control steps don't execute on workers but may trigger execution completion.
+    For control steps with next transitions, we need to evaluate them.
     """
     logger.info(f"FINALIZE: Finalizing control step '{step_name}'")
     
     if str(step_name).strip().lower() == 'end':
         await finalize_execution(execution_id, step_name, step_def, ctx)
     else:
-        await emit_step_completed(execution_id, step_name)
+        # Emit step_completed and capture its event_id
+        step_completed_event_id = await emit_step_completed(execution_id, step_name)
+        
+        # If this control step has next transitions, evaluate them NOW
+        # This allows control flow steps like hot_path/cold_path to fan out to multiple next steps
+        if step_def.get('next') and by_name and catalog_id:
+            logger.info(f"FINALIZE: Control step '{step_name}' has next transitions, evaluating immediately")
+            from .transitions import _evaluate_transitions
+            await _evaluate_transitions(
+                cur, conn, execution_id, step_name, step_def,
+                by_name, ctx, catalog_id, pb_path, pb_ver,
+                parent_event_id_for_next_steps=step_completed_event_id
+            )

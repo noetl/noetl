@@ -14,33 +14,55 @@ from .queue import enqueue_task
 logger = setup_logger(__name__, include_location=True)
 
 
-async def process_completed_steps(execution_id: str) -> None:
+async def process_completed_steps(execution_id: str, trigger_event_id: str = None) -> None:
     """
     Process completed steps and evaluate transitions to enqueue next steps.
     
     Finds steps that have action_completed but no step_completed yet,
     then evaluates their 'next' transitions and enqueues appropriate steps.
+    
+    Args:
+        execution_id: Execution ID
+        trigger_event_id: Event ID of the triggering event (action_completed or step_result)
+                         Used as parent_event_id for step_completed events
     """
     logger.info(f"TRANSITIONS: Processing completed steps for {execution_id}")
+    logger.info(f"TRANSITIONS: ===== NEW CODE VERSION WITH DETAILED LOGGING =====")
     
     async with get_async_db_connection() as conn:
         async with conn.cursor() as cur:
+            logger.info(f"TRANSITIONS: About to execute query for execution {execution_id}")
             # Find completed steps without step_completed event
-            await cur.execute(
-                """
-                SELECT DISTINCT node_name
-                FROM noetl.event
-                WHERE execution_id = %s
-                  AND event_type IN ('action_completed', 'step_result')
-                  AND node_name NOT IN (
-                      SELECT node_name FROM noetl.event
-                      WHERE execution_id = %s AND event_type = 'step_completed'
-                  )
-                """,
-                (execution_id, execution_id)
-            )
-            rows = await cur.fetchall()
+            try:
+                await cur.execute(
+                    """
+                    SELECT DISTINCT node_name
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                      AND event_type IN ('action_completed', 'step_result')
+                      AND node_name NOT IN (
+                          SELECT node_name FROM noetl.event
+                          WHERE execution_id = %s AND event_type = 'step_completed'
+                      )
+                    """,
+                    (execution_id, execution_id)
+                )
+                logger.info(f"TRANSITIONS: Query execution completed, about to fetch")
+            except Exception as query_error:
+                logger.error(f"TRANSITIONS: QUERY EXECUTION FAILED: {query_error}", exc_info=True)
+                return
+                
+            logger.info(f"TRANSITIONS: Query executed, fetching results")
+            try:
+                rows = await cur.fetchall()
+                logger.info(f"TRANSITIONS: Fetched {len(rows)} rows")
+            except Exception as fetch_error:
+                logger.error(f"TRANSITIONS: FETCHALL FAILED: {fetch_error}", exc_info=True)
+                return
+            
             completed_steps = [r[0] for r in rows]
+            
+            logger.info(f"TRANSITIONS: Query returned {len(rows)} rows: {rows}")
             
             if not completed_steps:
                 logger.debug(f"TRANSITIONS: No new completed steps found")
@@ -80,27 +102,55 @@ async def process_completed_steps(execution_id: str) -> None:
             
             # Process each completed step
             for step_name in completed_steps:
-                # Emit step_completed
-                await emit_step_completed(execution_id, step_name)
+                logger.info(f"TRANSITIONS: Processing completed step '{step_name}'")
                 
                 step_def = by_name.get(step_name)
                 if not step_def:
                     logger.warning(f"TRANSITIONS: Step '{step_name}' not in playbook")
                     continue
                 
-                # Evaluate and enqueue transitions
-                await _evaluate_transitions(
-                    cur, conn, execution_id, step_name, step_def,
-                    by_name, eval_ctx, catalog_id, pb_path, pb_ver
+                logger.info(f"TRANSITIONS: Found step_def for '{step_name}', evaluating transitions")
+                
+                # Add current step's result as 'result' for condition evaluation
+                if step_name in eval_ctx:
+                    eval_ctx['result'] = eval_ctx[step_name]
+                    logger.info(f"TRANSITIONS: Added 'result' to context: {eval_ctx['result']}")
+                
+                # Emit step_completed FIRST and capture its event_id
+                # Use trigger_event_id as parent if available (for action_completed or step_result)
+                step_completed_event_id = await emit_step_completed(
+                    execution_id, step_name, parent_event_id=trigger_event_id
                 )
+                logger.info(f"TRANSITIONS: Emitted step_completed for '{step_name}', event_id={step_completed_event_id}")
+                
+                # Evaluate and enqueue transitions AFTER emitting step_completed
+                # Pass step_completed_event_id as parent for next steps' step_started events
+                try:
+                    await _evaluate_transitions(
+                        cur, conn, execution_id, step_name, step_def,
+                        by_name, eval_ctx, catalog_id, pb_path, pb_ver,
+                        parent_event_id_for_next_steps=step_completed_event_id
+                    )
+                    logger.info(f"TRANSITIONS: Successfully evaluated transitions for '{step_name}'")
+                except Exception as e:
+                    logger.error(f"TRANSITIONS: Failed to evaluate transitions for '{step_name}': {e}", exc_info=True)
+                    continue
+
 
 
 async def _evaluate_transitions(
     cur, conn, execution_id: str, step_name: str, step_def: Dict[str, Any],
     by_name: Dict[str, Dict], eval_ctx: Dict[str, Any], catalog_id: int,
-    pb_path: str, pb_ver: str
+    pb_path: str, pb_ver: str, parent_event_id_for_next_steps: str = None
 ) -> None:
-    """Evaluate step transitions and enqueue next steps."""
+    """
+    Evaluate step transitions and enqueue next steps.
+    
+    Args:
+        parent_event_id_for_next_steps: Parent event_id to use for step_started events of next steps.
+                                        If provided, all next steps will use this as their parent.
+                                        Typically the step_completed event_id of the current step.
+    """
     
     next_transitions = step_def.get('next', [])
     
@@ -129,9 +179,13 @@ async def _evaluate_transitions(
         
         # Evaluate condition if present
         if condition:
+            logger.info(f"TRANSITIONS: Evaluating condition '{condition}' for {step_name} -> {next_step_name}")
+            logger.info(f"TRANSITIONS: Context keys: {list(eval_ctx.keys())}")
+            logger.info(f"TRANSITIONS: Step result for '{step_name}': {eval_ctx.get(step_name)}")
             if not _evaluate_condition(condition, eval_ctx):
                 logger.debug(f"TRANSITIONS: Condition not met for {step_name} -> {next_step_name}")
                 continue
+            logger.info(f"TRANSITIONS: Condition MET for {step_name} -> {next_step_name}")
         
         # Get next step definition
         next_step_def = by_name.get(next_step_name)
@@ -144,7 +198,8 @@ async def _evaluate_transitions(
             logger.info(f"TRANSITIONS: Next step '{next_step_name}' is control flow")
             from .finalize import finalize_control_step
             await finalize_control_step(
-                cur, conn, execution_id, next_step_name, next_step_def, eval_ctx
+                cur, conn, execution_id, next_step_name, next_step_def, eval_ctx,
+                by_name, catalog_id, pb_path, pb_ver
             )
             continue
         
@@ -159,8 +214,17 @@ async def _evaluate_transitions(
         if transition_data:
             ctx.update(transition_data)
         
-        # Emit step_started
-        await emit_step_started(execution_id, next_step_name, ctx)
+        # Emit step_started with explicit parent_event_id (if provided)
+        step_started_event_id = await emit_step_started(
+            execution_id, next_step_name, ctx, parent_event_id=parent_event_id_for_next_steps
+        )
+        
+        # Pass step_started event_id as parent for action_started via noetl_meta
+        # Worker extracts parent_event_id from context['noetl_meta']['parent_event_id']
+        if step_started_event_id:
+            if 'noetl_meta' not in ctx:
+                ctx['noetl_meta'] = {}
+            ctx['noetl_meta']['parent_event_id'] = step_started_event_id
         
         # Build and enqueue task
         task = _build_task(next_step_def, next_step_name, transition_data)
@@ -231,8 +295,13 @@ def _build_task(
 ) -> Dict[str, Any]:
     """Build task from step definition."""
     
+    # For workbook steps, use the workbook action name; otherwise use step name
+    action_name = step_name
+    if step_def.get('type') == 'workbook' and step_def.get('name'):
+        action_name = step_def.get('name')
+    
     task = {
-        'name': step_name,
+        'name': action_name,
         'type': step_def.get('type') or 'python',
     }
     

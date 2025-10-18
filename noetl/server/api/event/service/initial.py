@@ -27,24 +27,27 @@ async def dispatch_first_step(execution_id: str) -> None:
     4. Emit step_started
     5. Enqueue task
     """
-    logger.info(f"INITIAL: Dispatching first step for {execution_id}")
+    logger.info(f"INITIAL: ===== DISPATCH START for {execution_id} =====")
     
     async with get_async_db_connection() as conn:
         async with conn.cursor() as cur:
             # Load playbook and context
+            logger.info(f"INITIAL: Loading playbook context")
             playbook, pb_path, pb_ver, workload = await load_playbook_context(
                 cur, execution_id
             )
             
             if not playbook:
-                logger.warning(f"INITIAL: No playbook found for {execution_id}")
+                logger.error(f"INITIAL: EARLY EXIT - No playbook found for {execution_id}")
                 return
+            logger.info(f"INITIAL: Playbook loaded: path={pb_path}, version={pb_ver}")
             
             # Get workflow steps
             steps = playbook.get('workflow') or playbook.get('steps') or []
             if not steps:
-                logger.warning(f"INITIAL: No steps found in playbook")
+                logger.error(f"INITIAL: EARLY EXIT - No steps found in playbook")
                 return
+            logger.info(f"INITIAL: Found {len(steps)} steps in workflow")
             
             # Build step index by name
             by_name = {}
@@ -52,41 +55,50 @@ async def dispatch_first_step(execution_id: str) -> None:
                 name = s.get('step') or s.get('name')
                 if name:
                     by_name[name] = s
+            logger.info(f"INITIAL: Built step index with {len(by_name)} named steps: {list(by_name.keys())}")
             
             # Populate workflow tables for tracking
             try:
                 from .workflow import populate_workflow_tables
                 await populate_workflow_tables(cur, execution_id, pb_path, playbook)
+                logger.info(f"INITIAL: Workflow tables populated")
             except Exception as e:
                 logger.warning(f"INITIAL: Failed to populate workflow tables: {e}")
             
             # Find start step
             start_step = by_name.get('start')
             if not start_step:
-                logger.warning(f"INITIAL: No 'start' step found in playbook")
+                logger.error(f"INITIAL: EARLY EXIT - No 'start' step found in playbook. Available steps: {list(by_name.keys())}")
                 return
+            logger.info(f"INITIAL: Found start step: {start_step}")
             
             # Determine first actionable step
+            logger.info(f"INITIAL: Finding first actionable step from start")
             first_step_name, transition_data = _find_first_actionable(
                 start_step, by_name
             )
             
             if not first_step_name:
-                logger.warning(f"INITIAL: No actionable step found from start")
+                logger.error(f"INITIAL: EARLY EXIT - No actionable step found from start")
                 return
+            logger.info(f"INITIAL: First actionable step: '{first_step_name}'")
             
             step_def = by_name.get(first_step_name)
             if not step_def:
-                logger.warning(f"INITIAL: Step '{first_step_name}' not found")
+                logger.error(f"INITIAL: EARLY EXIT - Step '{first_step_name}' not found in by_name index")
                 return
+            logger.info(f"INITIAL: Step definition found for '{first_step_name}': type={step_def.get('type')}")
             
             # Check if actionable
-            if not _is_actionable(step_def):
-                logger.info(f"INITIAL: Step '{first_step_name}' is control flow only")
+            is_actionable = _is_actionable(step_def)
+            logger.info(f"INITIAL: Checking if step '{first_step_name}' is actionable: {is_actionable}")
+            if not is_actionable:
+                logger.info(f"INITIAL: EARLY EXIT - Step '{first_step_name}' is control flow only, finalizing")
                 await _finalize_control_step(
                     cur, conn, execution_id, first_step_name, step_def, {}
                 )
                 return
+            logger.info(f"INITIAL: Step '{first_step_name}' is actionable, continuing")
             
             # Get catalog_id and requestor_info from execution_start event
             await cur.execute(
@@ -118,18 +130,29 @@ async def dispatch_first_step(execution_id: str) -> None:
             
             # Add requestor info to context metadata
             if requestor_info:
-                if '_meta' not in ctx:
-                    ctx['_meta'] = {}
-                ctx['_meta']['requestor'] = requestor_info
+                if 'noetl_meta' not in ctx:
+                    ctx['noetl_meta'] = {}
+                ctx['noetl_meta']['requestor'] = requestor_info
             
             # Emit step_started
+            logger.info(f"INITIAL: About to emit step_started for '{first_step_name}'")
             await emit_step_started(execution_id, first_step_name, ctx)
+            logger.info(f"INITIAL: Emitted step_started for '{first_step_name}'")
             
             # Build and enqueue task
+            logger.info(f"INITIAL: Building task for '{first_step_name}'")
             task = _build_task(step_def, first_step_name, transition_data)
-            await enqueue_task(
-                cur, conn, execution_id, first_step_name, task, ctx, catalog_id
-            )
+            logger.info(f"INITIAL: Built task: {json.dumps(task, indent=2)}")
+            
+            logger.info(f"INITIAL: About to call enqueue_task for '{first_step_name}'")
+            try:
+                await enqueue_task(
+                    cur, conn, execution_id, first_step_name, task, ctx, catalog_id
+                )
+                logger.info(f"INITIAL: Successfully called enqueue_task for '{first_step_name}'")
+            except Exception as e:
+                logger.error(f"INITIAL: enqueue_task FAILED for '{first_step_name}': {e}", exc_info=True)
+                raise
             
             logger.info(f"INITIAL: Enqueued first step '{first_step_name}'")
 
@@ -187,8 +210,13 @@ def _build_task(
 ) -> Dict[str, Any]:
     """Build task from step definition."""
     
+    # For workbook steps, use the workbook action name; otherwise use step name
+    action_name = step_name
+    if step_def.get('type') == 'workbook' and step_def.get('name'):
+        action_name = step_def.get('name')
+    
     task = {
-        'name': step_name,
+        'name': action_name,
         'type': step_def.get('type') or 'python',
     }
     

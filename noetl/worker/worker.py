@@ -708,6 +708,15 @@ class QueueWorker:
                 return
 
             task_name = action_cfg.get("name") or node_id
+            
+            # Extract step name from node_id for event node_name (orchestration)
+            # node_id format: "{execution_id}:{step_name}"
+            event_node_name = task_name  # Default to task name
+            if ":" in node_id:
+                try:
+                    event_node_name = node_id.split(":", 1)[1]
+                except Exception:
+                    pass
 
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
             try:
@@ -740,7 +749,7 @@ class QueueWorker:
             parent_event_id = None
             try:
                 if isinstance(context, dict):
-                    meta = context.get('_meta') or {}
+                    meta = context.get('noetl_meta') or {}
                     if isinstance(meta, dict):
                         peid = meta.get('parent_event_id')
                         if peid:
@@ -766,7 +775,7 @@ class QueueWorker:
                 "event_type": "action_started",
                 "status": "STARTED",
                 "node_id": node_id,
-                "node_name": task_name,
+                "node_name": event_node_name,  # Use step name for orchestration
                 "node_type": node_type_val,
                 "context": {
                     "work": context,
@@ -918,7 +927,7 @@ class QueueWorker:
                         "event_type": "action_error",
                         "status": "FAILED",
                         "node_id": node_id,
-                        "node_name": task_name,
+                        "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
                         "error": err_msg,
                         "traceback": tb_text,
@@ -942,13 +951,17 @@ class QueueWorker:
                         "event_type": "action_completed",
                         "status": "COMPLETED",
                         "node_id": node_id,
-                        "node_name": task_name,
+                        "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
                         "result": result,
                     }
                     if loop_meta:
                         complete_event.update(loop_meta)
-                    if parent_event_id:
+                    # Use action_started event_id as parent for action_completed
+                    if action_started_event_id:
+                        complete_event["parent_event_id"] = action_started_event_id
+                    elif parent_event_id:
+                        # Fallback to context parent_event_id for iterator/nested cases
                         complete_event["parent_event_id"] = parent_event_id
                     
                     from noetl.plugin import report_event
@@ -966,7 +979,7 @@ class QueueWorker:
                             "event_type": "step_result",
                             "status": "COMPLETED",
                             "node_id": node_id,
-                            "node_name": task_name,
+                            "node_name": event_node_name,  # Use step name for orchestration
                             "node_type": node_type_val,
                             "result": norm_result,
                             

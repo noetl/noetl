@@ -217,13 +217,13 @@ class EventService:
                 try:
                     meta_sources = []
                     if isinstance(context_dict, dict):
-                        meta_sources.append(context_dict.get('_meta'))
+                        meta_sources.append(context_dict.get('noetl_meta'))
                         work_ctx = context_dict.get('work')
                         if isinstance(work_ctx, dict):
-                            meta_sources.append(work_ctx.get('_meta'))
+                            meta_sources.append(work_ctx.get('noetl_meta'))
                         workload_ctx = context_dict.get('workload')
                         if isinstance(workload_ctx, dict):
-                            meta_sources.append(workload_ctx.get('_meta'))
+                            meta_sources.append(workload_ctx.get('noetl_meta'))
                     for meta in meta_sources:
                         if isinstance(meta, dict) and meta.get('parent_event_id'):
                             parent_event_id = meta.get('parent_event_id')
@@ -739,11 +739,12 @@ class EventService:
                     logger.error(f"COMPLETION_HANDLER: Error in completion handler: {e}", exc_info=True)
 
             # Notify central BrokerService that an event has been persisted (non-blocking)
-            try:
-                from noetl.server.api.broker import get_broker_service
-                get_broker_service().on_event_persisted(event_data)
-            except Exception:
-                logger.debug("Failed to notify BrokerService.on_event_persisted", exc_info=True)
+            # DISABLED: Legacy broker conflicts with new service layer orchestration
+            # try:
+            #     from noetl.server.api.broker import get_broker_service
+            #     get_broker_service().on_event_persisted(event_data)
+            # except Exception:
+            #     logger.debug("Failed to notify BrokerService.on_event_persisted", exc_info=True)
 
             try:
                 evt_l = (str(event_type) if event_type is not None else '').lower()

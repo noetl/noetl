@@ -452,13 +452,13 @@ def execute_playbook_via_broker(
             "execution_id": execution_id,
             "export_path": None,
         }
-        # Kick off broker evaluation for this execution id
+        # Kick off broker evaluation for this execution id - USE NEW SERVICE LAYER BROKER
         logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Attempting to start broker evaluation for execution_id={execution_id}")
         try:
-            from noetl.server.api.event import evaluate_broker_for_execution
+            from noetl.server.api.event.service import evaluate_execution
             import asyncio as _asyncio
 
-            logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: evaluate_broker_for_execution imported successfully")
+            logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: evaluate_execution (NEW) imported successfully")
 
             # Prefer scheduling on an existing loop; otherwise run synchronously without noisy errors
             try:
@@ -466,7 +466,7 @@ def execute_playbook_via_broker(
                 logger.info(
                     f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Async loop detected, scheduling task for execution_id={execution_id}"
                 )
-                loop.create_task(evaluate_broker_for_execution(execution_id))
+                loop.create_task(evaluate_execution(execution_id))
             except RuntimeError:
                 # No running loop in this thread (common on worker threads). Kick off evaluation in
                 # a background thread so we don't block the caller and strand leased queue jobs.
@@ -476,7 +476,7 @@ def execute_playbook_via_broker(
 
                 def _run_in_thread() -> None:
                     try:
-                        _asyncio.run(evaluate_broker_for_execution(execution_id))
+                        _asyncio.run(evaluate_execution(execution_id))
                     except Exception:
                         logger.debug(
                             "BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Background evaluation failed",

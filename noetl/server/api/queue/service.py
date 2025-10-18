@@ -254,7 +254,7 @@ class QueueService:
             try:
                 context_data = json.loads(context) if isinstance(context, str) else context
                 if isinstance(context_data, dict):
-                    meta = context_data.get('_meta', {})
+                    meta = context_data.get('noetl_meta', {})
                     parent_execution_id = meta.get('parent_execution_id')
                     parent_step = meta.get('parent_step')
                     
@@ -645,13 +645,13 @@ class QueueService:
                 except Exception:
                     logger.debug("COMPLETION_HANDLER: Failed to mark parent iterator job done", exc_info=True)
                 
-                # Trigger broker for parent
+                # Trigger broker for parent - USE NEW SERVICE LAYER BROKER
                 try:
-                    from noetl.server.api.event import evaluate_broker_for_execution
+                    from noetl.server.api.event.service import evaluate_execution
                     if asyncio.get_event_loop().is_running():
-                        asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
+                        asyncio.create_task(evaluate_execution(str(parent_execution_id)))
                     else:
-                        await evaluate_broker_for_execution(parent_execution_id)
+                        await evaluate_execution(str(parent_execution_id))
                 except Exception:
                     logger.debug("Failed to schedule broker evaluation after aggregated event", exc_info=True)
         except Exception:
@@ -662,22 +662,22 @@ class QueueService:
         exec_id: int,
         parent_execution_id: Optional[int]
     ):
-        """Schedule broker evaluation for execution(s)."""
+        """Schedule broker evaluation for execution(s) - USE NEW SERVICE LAYER BROKER."""
         try:
-            from noetl.server.api.event import evaluate_broker_for_execution
+            from noetl.server.api.event.service import evaluate_execution
             
             if asyncio.get_event_loop().is_running():
-                asyncio.create_task(evaluate_broker_for_execution(exec_id))
+                asyncio.create_task(evaluate_execution(str(exec_id)))
                 if parent_execution_id and parent_execution_id != exec_id:
-                    asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
+                    asyncio.create_task(evaluate_execution(str(parent_execution_id)))
             else:
-                await evaluate_broker_for_execution(exec_id)
+                await evaluate_execution(str(exec_id))
                 if parent_execution_id and parent_execution_id != exec_id:
-                    await evaluate_broker_for_execution(parent_execution_id)
+                    await evaluate_execution(str(parent_execution_id))
         except RuntimeError:
-            await evaluate_broker_for_execution(exec_id)
+            await evaluate_execution(str(exec_id))
             if parent_execution_id and parent_execution_id != exec_id:
-                await evaluate_broker_for_execution(parent_execution_id)
+                await evaluate_execution(str(parent_execution_id))
         except Exception:
             logger.debug("Failed to schedule evaluation from complete_job", exc_info=True)
     
