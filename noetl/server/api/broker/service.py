@@ -20,9 +20,9 @@ class BrokerService:
 
     async def analyze_execution(self, execution_id: str | int, trigger_event_id: str | None = None) -> None:
         try:
-            # Import from the canonical server API package to avoid aliasing issues
-            from noetl.server.api.event import evaluate_broker_for_execution
-            await evaluate_broker_for_execution(str(execution_id), trigger_event_id=trigger_event_id)
+            # USE NEW SERVICE LAYER BROKER
+            from noetl.server.api.event.service import evaluate_execution
+            await evaluate_execution(str(execution_id), trigger_event_id=trigger_event_id)
         except Exception:
             logger.debug("BROKER_SERVICE: analyze_execution failed", exc_info=True)
 

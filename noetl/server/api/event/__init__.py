@@ -4,7 +4,7 @@ Event API package containing logically separated modules for event management.
 
 from fastapi import APIRouter
 # broker router moved to noetl.server.api.broker
-from .context import router as context_router
+# context router moved to noetl.server.api.context
 from .events import router as events_router
 from .executions import router as executions_router
 from .service import (
@@ -17,7 +17,6 @@ from .service import (
 
 # Create main router that includes all sub-routers
 router = APIRouter()
-router.include_router(context_router)
 router.include_router(events_router)
 router.include_router(executions_router)
 

@@ -11,6 +11,11 @@ workload:
 
 workflow:
   # Test 1: Event storage (default)
+  - step: start
+    desc: "Test event storage delegation"
+    next:
+      - step: event_test
+
   - step: event_test
     desc: "Test event storage delegation"
     type: python

@@ -57,14 +57,14 @@ def extract_parent_identifiers(
     parent_meta = {}
     try:
         if isinstance(parent_context, dict):
-            parent_meta = parent_context.get('_meta') or {}
+            parent_meta = parent_context.get('noetl_meta') or {}
     except Exception:
         parent_meta = {}
     
     context_meta = {}
     try:
         if isinstance(context, dict):
-            context_meta = context.get('_meta') or {}
+            context_meta = context.get('noetl_meta') or {}
     except Exception:
         context_meta = {}
     

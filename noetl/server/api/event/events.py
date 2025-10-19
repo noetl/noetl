@@ -10,6 +10,15 @@ from noetl.core.common import convert_snowflake_ids_for_api, snowflake_id_to_int
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+logger.info("===== events.py MODULE LOADED =====")
+logger.info("events.py: About to import evaluate_execution")
+try:
+    from .service import get_event_service, evaluate_execution
+    logger.info(f"events.py: evaluate_execution imported successfully: {evaluate_execution}")
+except Exception as import_error:
+    logger.error(f"events.py: FAILED to import evaluate_execution: {import_error}", exc_info=True)
+    raise
+
 router = APIRouter()
 
 
@@ -21,8 +30,8 @@ async def create_event(
     """
     Create a new event.
     """
+    logger.info("===== CREATE_EVENT CALLED =====")
     try:
-        from .service import get_event_service, evaluate_execution
         import json
         body = await request.json()
 
@@ -207,15 +216,28 @@ async def create_event(
                 print(f"completion handler: Exception in completion handler: {e}")
                 logger.debug("Failed to handle execution_completed event", exc_info=True)
         # Trigger orchestration evaluation for this execution
+        logger.info(f"===== ORCHESTRATION TRIGGER START =====")
         try:
+            logger.info(f"result type: {type(result)}, keys: {list(result.keys()) if isinstance(result, dict) else 'NOT A DICT'}")
+            logger.info(f"body type: {type(body)}, keys: {list(body.keys()) if isinstance(body, dict) else 'NOT A DICT'}")
+            
             execution_id = result.get("execution_id") or body.get("execution_id")
+            logger.info(f"Extracted execution_id: {execution_id}")
+            
             if execution_id:
+                logger.info(f"EVENTS: About to trigger evaluate_execution for {execution_id}")
                 try:
                     import asyncio
-                    asyncio.create_task(evaluate_execution(execution_id))
-                except Exception:
+                    logger.info(f"EVENTS: evaluate_execution function: {evaluate_execution}")
+                    task = asyncio.create_task(evaluate_execution(execution_id))
+                    logger.info(f"EVENTS: Created asyncio task for evaluate_execution: {task}")
+                except Exception as eval_error:
+                    logger.error(f"EVENTS: Failed to create evaluate_execution task: {eval_error}", exc_info=True)
                     pass  # Orchestration will be triggered by event emission
-        except Exception:
+            else:
+                logger.warning("EVENTS: No execution_id found in result or body!")
+        except Exception as outer_error:
+            logger.error(f"EVENTS: Outer exception in orchestration trigger: {outer_error}", exc_info=True)
             pass
         return result
     except Exception as e:
