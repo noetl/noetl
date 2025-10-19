@@ -112,7 +112,7 @@ workflow:
           )
           
           return result
-    data:
+    args:
       execution_id: "{{ execution_id }}"
       sf_auth: "{{ workload.sf_auth }}"
       pg_auth: "{{ workload.pg_auth }}"
@@ -233,7 +233,7 @@ workflow:
           )
           
           return result
-    data:
+    args:
       execution_id: "{{ execution_id }}"
       chunk_size: "{{ workload.chunk_size }}"
       sf_account: "{{ secret.SF_ACCOUNT }}"

@@ -13,7 +13,7 @@ workflow:
     desc: "Start hello world test"
     next:
       - step: test_step
-        data:
+        args:
           message: "{{ workload.message }}"
 
   - step: test_step
@@ -32,6 +32,6 @@ workflow:
     type: end
     save:
       type: event_log
-      data:
+      args:
         status: "success"
         message: "{{ test_step.result.data.message }}"

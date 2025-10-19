@@ -80,6 +80,19 @@ async def load_playbook_context(
     except Exception:
         playbook = {}
     
+    # If workload is empty or missing the nested 'workload' key, load from catalog
+    if not workload_ctx or not workload_ctx.get('workload'):
+        logger.debug(f"Workload empty or missing nested 'workload' key, loading from catalog playbook")
+        catalog_workload = playbook.get('workload', {})
+        if catalog_workload:
+            # Build the expected structure: {"path": "...", "version": "...", "workload": {...}}
+            workload_ctx = {
+                'path': pb_path,
+                'version': pb_ver,
+                'workload': catalog_workload
+            }
+            logger.info(f"Loaded workload from catalog: {list(catalog_workload.keys()) if isinstance(catalog_workload, dict) else type(catalog_workload)}")
+    
     return playbook, pb_path, pb_ver, workload_ctx
 
 

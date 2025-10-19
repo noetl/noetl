@@ -6,7 +6,7 @@ metadata:
   
 workload:
   test_name: create_test_tables
-  pg_auth: pg_k8s
+  pg_auth: pg_local
 
 workflow:
   - step: start

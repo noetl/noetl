@@ -6,7 +6,7 @@ metadata:
   path: tests/fixtures/playbooks/playbook_composition/playbook_composition
 
 workload:
-  pg_auth: pg_k8s
+  pg_auth: pg_local
   message: "Playbook composition with iterator validation"
   users:
     - name: "Alice"
@@ -64,11 +64,11 @@ workflow:
       type: playbook
       path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
       return_step: finalize_result
-      data:
+      args:
         user_data: "{{ user }}"
         execution_context: "{{ execution_id }}"
       save:
-        data:
+        args:
           id: "{{ execution_id }}:{{ user.name }}"
           execution_id: "{{ execution_id }}"
           user_name: "{{ user.name }}"
@@ -85,7 +85,7 @@ workflow:
   - step: validate_results
     desc: "Validate all profile scores are within expected range and categories are correct"
     type: python
-    data:
+    args:
       user_results: "{{ process_users.data }}"
       expected_min_score: 0.0
       expected_max_score: 100.0
@@ -175,7 +175,7 @@ workflow:
   - step: end
     desc: "Complete profile processing pipeline"
     type: python
-    data:
+    args:
       validation_result: "{{ validate_results.data }}"
       user_count: "{{ workload.users | length }}"
     code: |

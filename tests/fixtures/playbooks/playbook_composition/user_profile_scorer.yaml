@@ -7,6 +7,15 @@ metadata:
 
 workload:
   message: "User profile scoring sub-playbook"
+  # Default test data for standalone execution
+  # When called from parent playbook, these will be overridden by the data parameter
+  user_data:
+    name: "TestUser"
+    age: 30
+    department: "Engineering"
+    years_experience: 5
+    performance_rating: 4.0
+  execution_context: "standalone_execution"
 
 # Workbook actions for calculating profile metrics
 workbook:
@@ -148,10 +157,11 @@ workflow:
   - step: extract_user_data
     desc: "Extract and validate user data from input"
     type: python
-    data:
-      input_data: "{{ workload.user_data }}"
+    args:
+      input_data: "{{ workload.user_data | tojson }}"
     code: |
       def main(input_data):
+          # Validate input is a dict
           if not isinstance(input_data, dict):
               raise ValueError(f"Expected user data dict, got {type(input_data)}")
           
@@ -174,8 +184,8 @@ workflow:
     desc: "Calculate experience-based score component"
     type: workbook
     name: calculate_experience_score
-    data:
-      years_experience: "{{ extract_user_data.data.years_experience }}"
+    args:
+      years_experience: "{{ extract_user_data.years_experience }}"
     next:
       - step: score_performance
 
@@ -183,8 +193,8 @@ workflow:
     desc: "Calculate performance-based score component"
     type: workbook
     name: calculate_performance_score
-    data:
-      performance_rating: "{{ extract_user_data.data.performance_rating }}"
+    args:
+      performance_rating: "{{ extract_user_data.performance_rating }}"
     next:
       - step: score_department
 
@@ -192,8 +202,8 @@ workflow:
     desc: "Calculate department-based score component"
     type: workbook
     name: calculate_department_score
-    data:
-      department: "{{ extract_user_data.data.department }}"
+    args:
+      department: "{{ extract_user_data.department }}"
     next:
       - step: score_age
 
@@ -201,20 +211,20 @@ workflow:
     desc: "Calculate age-based score component"
     type: workbook
     name: calculate_age_factor
-    data:
-      age: "{{ extract_user_data.data.age }}"
+    args:
+      age: "{{ extract_user_data.age }}"
     next:
       - step: compute_total_score
 
   - step: compute_total_score
     desc: "Compute weighted total profile score"
     type: python
-    data:
-      user_name: "{{ extract_user_data.data.user_name }}"
-      experience_data: "{{ score_experience.data }}"
-      performance_data: "{{ score_performance.data }}"
-      department_data: "{{ score_department.data }}"
-      age_data: "{{ score_age.data }}"
+    args:
+      user_name: "{{ extract_user_data.user_name }}"
+      experience_data: "{{ score_experience }}"
+      performance_data: "{{ score_performance }}"
+      department_data: "{{ score_department }}"
+      age_data: "{{ score_age }}"
     code: |
       def main(user_name, experience_data, performance_data, department_data, age_data):
           # Calculate weighted total score
@@ -252,18 +262,18 @@ workflow:
     desc: "Determine user category based on score and experience"
     type: workbook
     name: determine_category
-    data:
-      profile_score: "{{ compute_total_score.data.profile_score }}"
-      years_experience: "{{ extract_user_data.data.years_experience }}"
+    args:
+      profile_score: "{{ compute_total_score.profile_score }}"
+      years_experience: "{{ extract_user_data.years_experience }}"
     next:
       - step: finalize_result
 
   - step: finalize_result
     desc: "Prepare final result for parent playbook"
     type: python
-    data:
-      score_data: "{{ compute_total_score.data }}"
-      category_data: "{{ determine_score_category.data }}"
+    args:
+      score_data: "{{ compute_total_score }}"
+      category_data: "{{ determine_score_category }}"
       execution_context: "{{ workload.execution_context }}"
     code: |
       def main(score_data, category_data, execution_context):

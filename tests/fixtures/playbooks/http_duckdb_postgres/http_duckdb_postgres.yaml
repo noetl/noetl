@@ -4,9 +4,10 @@ kind: Playbook
 metadata:
   name: http_duckdb_postgres
   path: tests/fixtures/playbooks/http_duckdb_postgres   # catalog path; do not change in tests
+  pg_auth: pg_local
 
 workload:
-  pg_auth: pg_k8s
+  pg_auth: "{{ workload.pg_auth }}"
   message: HTTP -> DuckDB -> Postgres pipeline
   cities:
   - name: London

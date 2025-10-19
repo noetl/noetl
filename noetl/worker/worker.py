@@ -807,13 +807,17 @@ class QueueWorker:
                 pass
 
             try:
-                # Normalize payloads: canonical 'data' with legacy aliases
+                # Normalize payloads: canonical 'args' with legacy aliases
+                # DSL Design:
+                # - args: inputs TO a step (parameters)
+                # - data: outputs FROM a step (results, never on task config)
+                # - with/payload/input: legacy aliases for args
                 task_data = {}
                 if isinstance(action_cfg, dict):
-                    # Start from explicit data first
-                    if isinstance(action_cfg.get('data'), dict):
-                        task_data.update(action_cfg.get('data'))
-                    # Merge legacy aliases with precedence: input > payload > with
+                    # Start from explicit args first
+                    if isinstance(action_cfg.get('args'), dict):
+                        task_data.update(action_cfg.get('args'))
+                    # Merge legacy aliases with precedence: input > payload > with > data (migration)
                     try:
                         w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
                         if w:
@@ -832,6 +836,13 @@ class QueueWorker:
                             task_data = {**i, **task_data}
                     except Exception:
                         pass
+                    # Migration support: also read from 'data' if present and no 'args'
+                    # TODO: Remove after migration period
+                    try:
+                        if isinstance(action_cfg.get('data'), dict) and not action_cfg.get('args'):
+                            task_data = {**action_cfg.get('data'), **task_data}
+                    except Exception:
+                        pass
                 if not isinstance(task_data, dict):
                     task_data = {}
                 try:
@@ -843,6 +854,12 @@ class QueueWorker:
                     if isinstance(exec_ctx, dict):
                         exec_ctx['input'] = dict(task_data)
                         exec_ctx['data'] = dict(task_data)
+                except Exception:
+                    pass
+                # Flatten work.workload to top-level workload for template convenience
+                try:
+                    if isinstance(exec_ctx.get('work'), dict) and isinstance(exec_ctx['work'].get('workload'), dict):
+                        exec_ctx['workload'] = exec_ctx['work']['workload']
                 except Exception:
                     pass
                 try:

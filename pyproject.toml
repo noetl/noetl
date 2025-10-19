@@ -49,7 +49,7 @@ dependencies = [
     "boto3>=1.38.45",
     "azure-identity>=1.23.0",
     "azure-keyvault-secrets>=4.8.0",
-    "ortools>=9.10"
+    "ortools>=9.10",
 ]
 
 [project.optional-dependencies]

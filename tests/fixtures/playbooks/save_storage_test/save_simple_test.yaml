@@ -6,7 +6,7 @@ metadata:
   description: "Simple test playbook demonstrating basic save storage patterns"
 
 workload:
-  pg_auth: pg_k8s
+  pg_auth: pg_local
   test_data:
     id: 100
     name: "Simple Test Record"
@@ -30,7 +30,7 @@ workflow:
           }
     save:
       storage: event_log
-      data: "{{ result.data }}"
+      args: "{{ result.data }}"
     next:
       - step: postgres_flat_test
 
@@ -52,7 +52,7 @@ workflow:
       storage: postgres
       auth: "{{ workload.pg_auth }}"
       table: simple_test_flat
-      data:
+      args:
         test_id: "{{ result.data.record_id }}"
         test_name: "{{ result.data.description }}"
         test_value: 42
@@ -79,7 +79,7 @@ workflow:
         mode: upsert
         key: test_id
         auth: "{{ workload.pg_auth }}"
-      data:
+      args:
         test_id: "{{ result.data.nested_id }}"
         test_name: "nested_structure_test"
         test_value: "{{ workload.test_data.value }}"

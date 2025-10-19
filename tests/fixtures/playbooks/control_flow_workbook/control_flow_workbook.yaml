@@ -34,7 +34,7 @@ workflow:
     desc: "Call workbook action to compute is_hot"
     type: workbook            # must resolve to workbook entry below
     name: compute_flag        # reference by name (resolver should match workbook[].name)
-    data:
+    args:
       temperature_c: "{{ workload.temperature_c }}"
     next:
       - when: "{{ result.is_hot == true }}"

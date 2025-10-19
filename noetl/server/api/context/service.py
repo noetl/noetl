@@ -34,16 +34,40 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
     playbook_version = None
     steps = []
     
-    # Fetch workload from earliest event context
-    dao = EventLog()
-    first_ctx = await dao.get_earliest_context(execution_id)
-    if first_ctx:
-        try:
-            ctx_first = json.loads(first_ctx) if isinstance(first_ctx, str) else first_ctx
-            workload = ctx_first.get("workload", {}) if isinstance(ctx_first, dict) else {}
-        except Exception as e:
-            logger.warning(f"Failed to parse earliest context: {e}")
-            workload = {}
+    # Fetch workload from noetl.workload table (primary source of truth)
+    async with get_async_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT data FROM noetl.workload
+                WHERE execution_id = %s
+                """,
+                (execution_id,)
+            )
+            row = await cur.fetchone()
+            if row and row.get('data'):
+                try:
+                    workload_data = row['data'] if isinstance(row['data'], dict) else json.loads(row['data'])
+                    # The workload table stores: {"path": "...", "version": "...", "workload": {...}}
+                    # Extract the actual workload dict from the nested structure
+                    workload = workload_data.get("workload", {}) if isinstance(workload_data, dict) else {}
+                    logger.debug(f"Loaded workload from noetl.workload table: {list(workload.keys()) if isinstance(workload, dict) else type(workload)}")
+                except Exception as e:
+                    logger.warning(f"Failed to parse workload from noetl.workload table: {e}")
+                    workload = {}
+    
+    # Fallback: try to fetch from earliest event context if workload table had no data
+    if not workload:
+        dao = EventLog()
+        first_ctx = await dao.get_earliest_context(execution_id)
+        if first_ctx:
+            try:
+                ctx_first = json.loads(first_ctx) if isinstance(first_ctx, str) else first_ctx
+                workload = ctx_first.get("workload", {}) if isinstance(ctx_first, dict) else {}
+                logger.debug(f"Fallback: loaded workload from event context: {list(workload.keys()) if isinstance(workload, dict) else type(workload)}")
+            except Exception as e:
+                logger.warning(f"Failed to parse earliest context: {e}")
+                workload = {}
     
     # Fetch results from all completed steps
     node_results = await dao.get_all_node_results(execution_id)
@@ -266,10 +290,16 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
     from jinja2 import Environment, StrictUndefined, BaseLoader
     from noetl.core.dsl.render import render_template
     
+    print(f"!!! RENDER_TEMPLATE_OBJECT CALLED: template type={type(template)}")
+    logger.info(f"RENDER_TEMPLATE_OBJECT: template type={type(template)}, isinstance dict={isinstance(template, dict)}")
+    if isinstance(template, str):
+        logger.info(f"RENDER_TEMPLATE_OBJECT: template is string, value={template[:200]}")
+    
     env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
     
     # Handle dict templates with work/task keys specially
     if isinstance(template, dict):
+        logger.info(f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}")
         out: Dict[str, Any] = {}
         
         # Render 'work' with relaxed error handling
@@ -283,11 +313,18 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
         # Render 'task' with strict mode
         if 'task' in template:
             task_tpl = template.get('task')
+            logger.info(f"RENDER_TASK_DEBUG: About to render task template: {task_tpl}")
+            logger.info(f"RENDER_TASK_DEBUG: Context keys available: {list(context.keys())}")
+            logger.info(f"RENDER_TASK_DEBUG: Workload in context: {'workload' in context}")
+            if 'workload' in context:
+                logger.info(f"RENDER_TASK_DEBUG: Workload value: {context['workload']}")
             try:
                 # Strict rendering keeps unresolved variables for worker-side rendering
                 task_rendered = render_template(env, task_tpl, context, rules=None, strict_keys=True)
+                logger.info(f"RENDER_TASK_DEBUG: Task rendered successfully: {task_rendered}")
             except Exception as e:
                 logger.warning(f"Failed to render task section: {e}")
+                logger.warning(f"RENDER_TASK_DEBUG: Exception type: {type(e).__name__}")
                 task_rendered = task_tpl
             
             # Parse JSON strings for convenience
