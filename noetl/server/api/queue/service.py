@@ -156,7 +156,7 @@ class QueueService:
                     """
                     WITH cte AS (
                       SELECT queue_id FROM noetl.queue
-                      WHERE status='queued' AND (available_at IS NULL OR available_at <= now())
+                      WHERE status IN ('queued', 'retry') AND (available_at IS NULL OR available_at <= now())
                       ORDER BY priority DESC, queue_id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
@@ -254,7 +254,7 @@ class QueueService:
             try:
                 context_data = json.loads(context) if isinstance(context, str) else context
                 if isinstance(context_data, dict):
-                    meta = context_data.get('_meta', {})
+                    meta = context_data.get('noetl_meta', {})
                     parent_execution_id = meta.get('parent_execution_id')
                     parent_step = meta.get('parent_step')
                     
@@ -645,13 +645,13 @@ class QueueService:
                 except Exception:
                     logger.debug("COMPLETION_HANDLER: Failed to mark parent iterator job done", exc_info=True)
                 
-                # Trigger broker for parent
+                # Trigger broker for parent - USE NEW SERVICE LAYER BROKER
                 try:
-                    from noetl.server.api.event import evaluate_broker_for_execution
+                    from noetl.server.api.event.service import evaluate_execution
                     if asyncio.get_event_loop().is_running():
-                        asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
+                        asyncio.create_task(evaluate_execution(str(parent_execution_id)))
                     else:
-                        await evaluate_broker_for_execution(parent_execution_id)
+                        await evaluate_execution(str(parent_execution_id))
                 except Exception:
                     logger.debug("Failed to schedule broker evaluation after aggregated event", exc_info=True)
         except Exception:
@@ -662,22 +662,22 @@ class QueueService:
         exec_id: int,
         parent_execution_id: Optional[int]
     ):
-        """Schedule broker evaluation for execution(s)."""
+        """Schedule broker evaluation for execution(s) - USE NEW SERVICE LAYER BROKER."""
         try:
-            from noetl.server.api.event import evaluate_broker_for_execution
+            from noetl.server.api.event.service import evaluate_execution
             
             if asyncio.get_event_loop().is_running():
-                asyncio.create_task(evaluate_broker_for_execution(exec_id))
+                asyncio.create_task(evaluate_execution(str(exec_id)))
                 if parent_execution_id and parent_execution_id != exec_id:
-                    asyncio.create_task(evaluate_broker_for_execution(parent_execution_id))
+                    asyncio.create_task(evaluate_execution(str(parent_execution_id)))
             else:
-                await evaluate_broker_for_execution(exec_id)
+                await evaluate_execution(str(exec_id))
                 if parent_execution_id and parent_execution_id != exec_id:
-                    await evaluate_broker_for_execution(parent_execution_id)
+                    await evaluate_execution(str(parent_execution_id))
         except RuntimeError:
-            await evaluate_broker_for_execution(exec_id)
+            await evaluate_execution(str(exec_id))
             if parent_execution_id and parent_execution_id != exec_id:
-                await evaluate_broker_for_execution(parent_execution_id)
+                await evaluate_execution(str(parent_execution_id))
         except Exception:
             logger.debug("Failed to schedule evaluation from complete_job", exc_info=True)
     
@@ -698,16 +698,21 @@ class QueueService:
         Returns:
             FailResponse with status
         """
+        job_is_dead = False
+        job_info = None
+        
         async with get_async_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                # Get job info including execution context
                 await cur.execute(
-                    "SELECT attempts, max_attempts FROM noetl.queue WHERE queue_id = %s",
+                    "SELECT queue_id, execution_id, node_id, attempts, max_attempts, context, catalog_id FROM noetl.queue WHERE queue_id = %s",
                     (queue_id,)
                 )
                 row = await cur.fetchone()
                 if not row:
                     raise ValueError("job not found")
                 
+                job_info = row
                 attempts = row.get("attempts", 0)
                 max_attempts = row.get("max_attempts", 5)
                 
@@ -717,20 +722,120 @@ class QueueService:
                         "UPDATE noetl.queue SET status='dead' WHERE queue_id = %s RETURNING queue_id",
                         (queue_id,)
                     )
+                    job_is_dead = True
                 elif attempts >= max_attempts:
                     await cur.execute(
                         "UPDATE noetl.queue SET status='dead' WHERE queue_id = %s RETURNING queue_id",
                         (queue_id,)
                     )
+                    job_is_dead = True
                 else:
+                    # Set status to 'retry' (not 'queued') to distinguish retry attempts from initial queue
                     await cur.execute(
-                        "UPDATE noetl.queue SET status='queued', available_at = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id",
+                        "UPDATE noetl.queue SET status='retry', available_at = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id",
                         (str(retry_delay_seconds), queue_id)
                     )
                 await cur.fetchone()
                 await conn.commit()
         
+        # Emit failure events if job is permanently dead
+        if job_is_dead and job_info:
+            logger.info(f"Job {queue_id} is dead, emitting final failure events")
+            try:
+                await QueueService._emit_final_failure_events(job_info)
+            except Exception as e:
+                logger.warning(f"Failed to emit final failure events for job {queue_id}: {e}", exc_info=True)
+        
         return FailResponse(status="ok", id=queue_id)
+    
+    @staticmethod
+    async def _emit_final_failure_events(job_info: Dict[str, Any]) -> None:
+        """
+        Emit step_failed and execution_failed events when a job permanently fails.
+        
+        Args:
+            job_info: Job dictionary with execution_id, node_id, context, etc.
+        """
+        try:
+            from noetl.server.api.event import get_event_service
+            import json
+            
+            execution_id = job_info.get("execution_id")
+            node_id = job_info.get("node_id")
+            catalog_id = job_info.get("catalog_id")
+            context = job_info.get("context") or {}
+            
+            if isinstance(context, str):
+                try:
+                    context = json.loads(context)
+                except:
+                    context = {}
+            
+            step_name = context.get("step_name", "unknown")
+            
+            # Get the last action_error event for this step to extract error details
+            last_error = None
+            last_error_result = None
+            
+            try:
+                async with get_async_db_connection() as conn:
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute(
+                            """
+                            SELECT error, result, traceback 
+                            FROM noetl.event 
+                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_error'
+                            ORDER BY created_at DESC 
+                            LIMIT 1
+                            """,
+                            (execution_id, step_name)
+                        )
+                        error_row = await cur.fetchone()
+                        if error_row:
+                            last_error = error_row.get("error") or "Task failed after all retry attempts"
+                            last_error_result = error_row.get("result")
+            except Exception as e:
+                logger.warning(f"Failed to fetch last error for step {step_name}: {e}")
+                last_error = "Task failed after all retry attempts"
+            
+            if not last_error:
+                last_error = "Task failed after all retry attempts"
+            
+            # Emit step_failed event
+            event_service = get_event_service()
+            step_failed_payload = {
+                "execution_id": execution_id,
+                "catalog_id": catalog_id,
+                "event_type": "step_failed",
+                "status": "FAILED",
+                "node_id": node_id,
+                "node_name": step_name,
+                "node_type": "step",
+                "error": last_error,
+                "result": last_error_result or {},
+            }
+            
+            await event_service.emit(step_failed_payload)
+            logger.info(f"Emitted step_failed event for step '{step_name}' in execution {execution_id}")
+            
+            # Emit execution_failed event
+            execution_failed_payload = {
+                "execution_id": execution_id,
+                "catalog_id": catalog_id,
+                "event_type": "execution_failed",
+                "status": "FAILED",
+                "node_id": execution_id,
+                "node_name": step_name,
+                "node_type": "execution",
+                "error": f"Execution failed at step '{step_name}': {last_error}",
+                "result": {"failed_step": step_name, "reason": last_error},
+            }
+            
+            await event_service.emit(execution_failed_payload)
+            logger.info(f"Emitted execution_failed event for execution {execution_id}")
+        except Exception as e:
+            logger.error(f"Error in _emit_final_failure_events: {e}", exc_info=True)
+            raise
     
     @staticmethod
     async def heartbeat_job(
@@ -856,7 +961,7 @@ class QueueService:
                     """
                     WITH cte AS (
                       SELECT id FROM noetl.queue
-                      WHERE status='queued' AND available_at <= now()
+                      WHERE status IN ('queued', 'retry') AND available_at <= now()
                       ORDER BY priority DESC, id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1

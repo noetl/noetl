@@ -28,6 +28,9 @@ def execute_task(
     This is the main entry point for task execution. It routes tasks to the
     appropriate plugin implementation based on the task type (http, python,
     duckdb, postgres, secrets, playbook, workbook, iterator, save).
+    
+    Retry logic is handled server-side through the event queue system.
+    Workers execute tasks without retry awareness and report results via events.
 
     Args:
         task_config: The task configuration dictionary
@@ -48,6 +51,8 @@ def execute_task(
     from ..python import execute_python_task
     from ..duckdb import execute_duckdb_task
     from ..postgres import execute_postgres_task
+    from ..snowflake import execute_snowflake_task
+    from ..snowflake_transfer import execute_snowflake_transfer_action
     from ..secret import execute_secrets_task
     from ..playbook import execute_playbook_task
     from ..workbook import execute_workbook_task
@@ -68,6 +73,10 @@ def execute_task(
         return execute_duckdb_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
     elif task_type == 'postgres':
         return execute_postgres_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+    elif task_type == 'snowflake':
+        return execute_snowflake_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+    elif task_type == 'snowflake_transfer':
+        return execute_snowflake_transfer_action(task_config, context, jinja_env, task_with or {}, log_event_callback)
     elif task_type == 'secrets':
         # For secrets, we need to get the secret_manager from context or somewhere
         secret_manager = context.get('secret_manager')
@@ -84,7 +93,7 @@ def execute_task(
     else:
         raise ValueError(
             f"Unknown task type '{raw_type}'. "
-            f"Available types: http, python, duckdb, postgres, secrets, playbook, workbook, iterator, save"
+            f"Available types: http, python, duckdb, postgres, snowflake, snowflake_transfer, secrets, playbook, workbook, iterator, save"
         )
 
 

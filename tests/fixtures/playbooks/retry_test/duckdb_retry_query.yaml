@@ -1,0 +1,26 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: duckdb_retry_query
+  path: tests/retry/duckdb_query
+  description: Test DuckDB retry on query failures
+
+workload:
+  test_query: SELECT 42 as answer, 'success' as status
+  
+workflow:
+  - step: start
+    desc: Execute DuckDB query with retry
+    type: duckdb
+    query: "{{ workload.test_query }}"
+    retry:
+      max_attempts: 3
+      initial_delay: 0.5
+      backoff_multiplier: 1.5
+      # Retry on errors
+      retry_when: "{{ error != None }}"
+    next:
+      - step: end
+        
+  - step: end
+    desc: End workflow

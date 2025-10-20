@@ -4,9 +4,10 @@ kind: Playbook
 metadata:
   name: http_duckdb_postgres
   path: tests/fixtures/playbooks/http_duckdb_postgres   # catalog path; do not change in tests
+  pg_auth: pg_local
 
 workload:
-  pg_auth: pg_k8s
+  pg_auth: "{{ workload.pg_auth }}"
   message: HTTP -> DuckDB -> Postgres pipeline
   cities:
   - name: London
@@ -25,6 +26,7 @@ workflow:
   desc: Start pipeline
   next:
   - step: ensure_pg_table
+
 - step: ensure_pg_table
   desc: Ensure raw HTTP results table exists in Postgres
   type: postgres
@@ -42,8 +44,9 @@ workflow:
     );
   next:
   - step: http_loop
-    data:
+    args:
       cities: '{{ workload.cities }}'
+
 - step: http_loop
   desc: Fetch hourly temperatures for each city and save raw rows
   type: iterator
@@ -52,7 +55,7 @@ workflow:
   mode: async
   task:
     type: http
-    data:
+    args:
       latitude: '{{ city.lat }}'
       longitude: '{{ city.lon }}'
       hourly: temperature_2m
@@ -71,24 +74,24 @@ workflow:
         - data.elapsed
         - data.payload
     save:
-      storage:
-        type: postgres
-        data:
-          id: '{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}'
-          execution_id: '{{ execution_id }}'
-          iter_index: '{{ http_loop.result_index }}'
-          city: '{{ city.name }}'
-          url: "{{ this.data.url if this is defined and this.data is defined else '' }}"
-          elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
-          payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
-        auth: "{{ workload.pg_auth }}"
-        table: public.weather_http_raw
-        mode: upsert
-        key: id
+      storage: postgres
+      args:
+        id: '{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}'
+        execution_id: '{{ execution_id }}'
+        iter_index: '{{ http_loop.result_index }}'
+        city: '{{ city.name }}'
+        url: "{{ this.data.url if this is defined and this.data is defined else '' }}"
+        elapsed: "{{ (this.data.elapsed | default(0)) if this is defined and this.data is defined else 0 }}"
+        payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
+      auth: "{{ workload.pg_auth }}"
+      table: public.weather_http_raw
+      mode: upsert
+      key: id
   next:
   - step: aggregate_with_duckdb
+
 - step: aggregate_with_duckdb
-  data:
+  args:
     require_cloud_output: true
   desc: Read Postgres rows in DuckDB, aggregate, write to GCS using unified auth dictionary
   type: duckdb
@@ -96,7 +99,7 @@ workflow:
     pg_db:
       source: credential
       type: postgres
-      key: pg_k8s
+      key: "{{ workload.pg_auth }}"
     gcs_secret:
       source: credential
       type: hmac
@@ -151,6 +154,7 @@ workflow:
     );
   next:
   - step: end
+
 - step: end
   desc: Finish
   type: postgres

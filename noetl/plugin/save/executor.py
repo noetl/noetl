@@ -72,11 +72,16 @@ def execute_save_task(
         - meta: Metadata about storage operation
         - error: Error message (if error)
     """
+    logger.critical("SAVE.EXECUTOR: execute_save_task CALLED")
+    logger.critical(f"SAVE.EXECUTOR: task_config={task_config}")
+    
     try:
         # Step 1: Extract save configuration
         config = extract_save_config(task_config)
         
         kind = config['kind']
+        logger.critical(f"SAVE.EXECUTOR: Extracted save config with kind={kind}")
+        logger.critical(f"SAVE.EXECUTOR: Full config={config}")
         storage_config = config['storage_config']
         data_spec = config['data_spec']
         statement = config['statement']
@@ -135,6 +140,7 @@ def execute_save_task(
         
         # Chain to the appropriate action plugin based on storage type
         if kind == 'postgres':
+            logger.info(f"SAVE.EXECUTOR: Delegating to postgres handler with table={table}, mode={mode}")
             return handle_postgres_storage(
                 storage_config, rendered_data, rendered_params, statement,
                 table, mode, key_cols, auth_config, credential_ref, spec,

@@ -1,0 +1,44 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_start_with_action
+  path: tests/control-flow/start_with_action
+  description: Test start step with action type that executes then routes
+
+workload:
+  test_value: "hello"
+  
+workflow:
+  - step: start
+    desc: Start step with Python action - should execute first
+    type: python
+    code: |
+      def main(input_data):
+          return {
+              'status': 'success',
+              'message': 'Start step executed with action type',
+              'data': {'executed': True, 'input': input_data}
+          }
+    next:
+      - step: process
+        args:
+          from_start: "{{ start.data.executed }}"
+  
+  - step: process
+    desc: Process step - executed after start
+    type: python
+    code: |
+      def main(input_data):
+          return {
+              'status': 'success',
+              'message': 'Process step executed',
+              'data': {
+                  'from_start': input_data.get('from_start'),
+                  'processed': True
+              }
+          }
+    next:
+      - step: end
+        
+  - step: end
+    desc: End step - aggregator (no action type)

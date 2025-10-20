@@ -40,6 +40,7 @@ dependencies = [
     "lark>=1.2.2",
     "duckdb>=1.3.0",
     "duckdb-engine>=0.17.0",
+    "snowflake-connector-python>=4.0.0",
     "polars[pyarrow]>=1.30.0",
     "networkx>=3.5",
     "pydot>=4.0.1",
@@ -48,7 +49,7 @@ dependencies = [
     "boto3>=1.38.45",
     "azure-identity>=1.23.0",
     "azure-keyvault-secrets>=4.8.0",
-    "ortools>=9.10"
+    "ortools>=9.10",
 ]
 
 [project.optional-dependencies]

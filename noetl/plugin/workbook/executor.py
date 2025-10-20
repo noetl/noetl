@@ -39,6 +39,10 @@ def build_action_config(
     if task_with:
         action_with.update(task_with)
     
+    logger.info(f"WORKBOOK.BUILD_CONFIG: action_with before merge = {target_action.get('with', {})}")
+    logger.info(f"WORKBOOK.BUILD_CONFIG: task_with from step = {task_with}")
+    logger.info(f"WORKBOOK.BUILD_CONFIG: action_with after merge = {action_with}")
+    
     # Create task config for the actual action type
     action_config = {
         'type': target_action.get('type'),
@@ -88,9 +92,10 @@ async def execute_workbook_task(
         ValueError: If task_name not provided, path not in context, 
                    playbook not found, or workbook action not found
     """
-    task_name = task_config.get('name')
+    # Prefer explicit 'task' reference to workbook action; fall back to 'name' for legacy compatibility
+    task_name = task_config.get('task') or task_config.get('name')
     if not task_name:
-        raise ValueError("Workbook task must specify a 'name' attribute to lookup")
+        raise ValueError("Workbook task must specify a 'task' (or legacy 'name') attribute to lookup")
     
     logger.info(f"WORKBOOK: Looking up task '{task_name}' in workbook")
     

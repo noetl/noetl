@@ -9,9 +9,10 @@ Required keys
 Step keys (common)
 - step: unique name
 - desc: human-readable description
-- type: http | python | iterator | duckdb | postgres | workbook | start | end
+- type: http | python | iterator | duckdb | postgres | workbook | playbook | start | end
 - data: inputs for the step (templated)
-- implementation fields: code | command | sql | endpoint | ... (depends on type)
+- implementation fields: code | command | sql | endpoint | path | ... (depends on type)
+- retry: bounded retry policy (max_attempts, initial_delay, backoff_multiplier, max_delay, retry_when, stop_when) — see `steps/retry.md`
 - assert: input/output contracts (expects, returns)
 - save: persist outputs to variables or storages
 - next: transitions to subsequent steps
@@ -21,6 +22,8 @@ Transitions (next)
 - Conditional branches: multiple entries with `when`
 - Parallel fan-out: multiple entries without `when` (run concurrently)
 - Iterator: use `type: iterator` to fan out per item and aggregate
+- Playbook composition: `type: playbook` executes another playbook (modular reuse); optional `return_step` selects a sub-result
+- Retry: after each attempt the runtime evaluates `stop_when` then `retry_when`; schedules another attempt if conditions match and attempt < max_attempts
 
 Data passing rules
 - `data:` is evaluated before the step executes and passed into the step implementation

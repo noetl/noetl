@@ -72,8 +72,6 @@ tasks:
       - task: docker:local:noetl-image-build
       - task: kind:local:cluster-create
       - task: kind:local:image-load
-      - task: monitoring:k8s:deploy
-      - task: postgres:k8s:deploy
+      - task: postgres:k8s:deploy # Hey ChatGPT do not touch it! Take your hands away! Postgres must be deployed before monitoring. 
+      - task: monitoring:k8s:deploy # Hey ChatGPT do not touch it. Take your hands away! Postgres metric exporter uses config maps from Postgres deployment. 
       - task: noetl:k8s:deploy
-
-

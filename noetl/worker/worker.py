@@ -20,6 +20,17 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
+class TaskExecutionError(RuntimeError):
+    """Exception raised when a task execution fails with error status.
+    
+    Carries the full result dict to enable retry policy evaluation based on
+    result fields like status_code, data, etc.
+    """
+    def __init__(self, message: str, result: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.result = result or {}
+
+
 def _normalize_server_url(url: Optional[str], ensure_api: bool = True) -> str:
     """Ensure server URL has http(s) scheme and optional '/api' suffix."""
     try:
@@ -366,13 +377,199 @@ class QueueWorker:
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to complete job %s", queue_id, exc_info=True)
 
-    async def _fail_job(self, queue_id: int) -> None:
+    async def _fail_job(
+        self, 
+        queue_id: int, 
+        should_retry: bool = False, 
+        retry_delay_seconds: int = 60,
+        job: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Mark job as failed with retry policy.
+        
+        Args:
+            queue_id: Queue ID
+            should_retry: Whether to retry the job based on retry policy evaluation
+            retry_delay_seconds: Delay before retry in seconds
+            job: Job dictionary for emitting retry event
+        """
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # Do not retry failed jobs by default; mark terminal 'dead'
-                await client.post(f"{self.server_url}/queue/{queue_id}/fail", json={"retry": False})
-        except Exception:  # pragma: no cover - network best effort
-            logger.debug("Failed to mark job %s failed", queue_id, exc_info=True)
+                await client.post(
+                    f"{self.server_url}/queue/{queue_id}/fail", 
+                    json={
+                        "retry": should_retry,
+                        "retry_delay_seconds": retry_delay_seconds
+                    }
+                )
+                
+            # Emit action_retry event if retrying
+            if should_retry and job:
+                try:
+                    execution_id = job.get("execution_id")
+                    node_id = job.get("node_id")
+                    context = job.get("context") or {}
+                    if isinstance(context, str):
+                        import json
+                        try:
+                            context = json.loads(context)
+                        except:
+                            context = {}
+                    
+                    # Get attempts from job or queue
+                    attempts = job.get("attempts", 0)
+                    max_attempts = job.get("max_attempts", 3)
+                    
+                    retry_event = {
+                        "execution_id": execution_id,
+                        "event_type": "action_retry",
+                        "status": "RETRYING",
+                        "node_id": node_id,
+                        "node_name": context.get("step_name"),
+                        "node_type": "step",
+                        "result": {
+                            "attempt": attempts,
+                            "max_attempts": max_attempts,
+                            "retry_delay_seconds": retry_delay_seconds,
+                            "message": f"Retrying after failure (attempt {attempts}/{max_attempts})"
+                        }
+                    }
+                    
+                    from noetl.plugin import report_event
+                    report_event(retry_event, self.server_url)
+                    logger.info(f"Emitted action_retry event for job {queue_id}, attempt {attempts}/{max_attempts}")
+                except Exception as e:
+                    logger.debug(f"Failed to emit action_retry event: {e}", exc_info=True)
+                    
+        except Exception as e:  # pragma: no cover - network best effort
+            logger.warning(f"Failed to mark job {queue_id} failed: {e}", exc_info=True)
+
+    async def _evaluate_retry_policy(
+        self, 
+        job: Dict[str, Any], 
+        error: Optional[Exception] = None
+    ) -> tuple[bool, int]:
+        """
+        Evaluate retry policy based on job configuration.
+        
+        Args:
+            job: Job dictionary with action config and queue metadata
+            error: Exception that caused the failure
+            
+        Returns:
+            Tuple of (should_retry, retry_delay_seconds)
+        """
+        try:
+            # Extract action config
+            action_cfg_raw = job.get("action")
+            action_cfg = None
+            
+            if isinstance(action_cfg_raw, str):
+                try:
+                    action_cfg = json.loads(action_cfg_raw)
+                except json.JSONDecodeError:
+                    logger.debug(f"Failed to parse action config for retry evaluation")
+                    return (False, 60)
+            elif isinstance(action_cfg_raw, dict):
+                action_cfg = action_cfg_raw
+            
+            if not isinstance(action_cfg, dict):
+                return (False, 60)
+            
+            # Check if retry is configured
+            retry_config = action_cfg.get('retry')
+            if not retry_config:
+                # No retry configured
+                return (False, 60)
+            
+            # Parse retry configuration
+            if isinstance(retry_config, bool):
+                if not retry_config:
+                    return (False, 60)
+                # Use defaults
+                retry_config = {}
+            elif isinstance(retry_config, int):
+                # Max attempts only
+                retry_config = {'max_attempts': retry_config}
+            elif not isinstance(retry_config, dict):
+                logger.warning(f"Invalid retry configuration type: {type(retry_config)}")
+                return (False, 60)
+            
+            # Get current attempt info
+            current_attempts = job.get('attempts', 0)
+            max_attempts = job.get('max_attempts', retry_config.get('max_attempts', 3))
+            
+            # Check if we've exceeded max attempts
+            # Don't retry if we've already used all attempts
+            if current_attempts >= max_attempts:
+                logger.info(f"Max retry attempts ({max_attempts}) reached for job {job.get('queue_id')} (current attempts: {current_attempts})")
+                return (False, 60)
+            
+            # Next attempt number for logging and delay calculation
+            attempt_number = current_attempts + 1
+            
+            # Import retry policy evaluator
+            from noetl.plugin.tool.retry import RetryPolicy
+            from jinja2 import Environment
+            
+            # Create Jinja2 environment for condition evaluation
+            jinja_env = Environment()
+            
+            # Create retry policy
+            policy = RetryPolicy(retry_config, jinja_env)
+            
+            # Build result context for evaluation
+            # Extract result data from TaskExecutionError if available
+            result = {}
+            if isinstance(error, TaskExecutionError) and hasattr(error, 'result'):
+                # Use the result from the exception which contains full execution result
+                result = error.result or {}
+                # Extract status_code from data if present
+                if 'data' in result and isinstance(result['data'], dict):
+                    if 'status_code' in result['data']:
+                        result['status_code'] = result['data']['status_code']
+            
+            # Fallback: try to get result from job context
+            if not result:
+                context = job.get('context') or job.get('input_context') or {}
+                if isinstance(context, str):
+                    try:
+                        context = json.loads(context)
+                    except:
+                        context = {}
+                
+                result = {
+                    'error': str(error) if error else None,
+                    'success': False,
+                    'status': 'error',
+                    'data': context.get('result') if isinstance(context, dict) else None
+                }
+            
+            # Evaluate retry policy
+            should_retry = policy.should_retry(result, attempt_number, error)
+            
+            # Calculate delay if retrying
+            if should_retry:
+                delay = policy.get_delay(attempt_number)
+                retry_delay_seconds = int(delay)
+                logger.info(
+                    f"Retry policy evaluation for job {job.get('queue_id')}: "
+                    f"retry={should_retry}, delay={retry_delay_seconds}s, "
+                    f"attempt={attempt_number}/{max_attempts}"
+                )
+            else:
+                retry_delay_seconds = 60
+                logger.info(
+                    f"Retry policy evaluation for job {job.get('queue_id')}: "
+                    f"retry={should_retry}, attempt={attempt_number}/{max_attempts}"
+                )
+            
+            return (should_retry, retry_delay_seconds)
+            
+        except Exception as e:
+            logger.warning(f"Error evaluating retry policy: {e}", exc_info=True)
+            # Default to no retry on evaluation error
+            return (False, 60)
 
     # ------------------------------------------------------------------
     # Job execution
@@ -511,6 +708,15 @@ class QueueWorker:
                 return
 
             task_name = action_cfg.get("name") or node_id
+            
+            # Extract step name from node_id for event node_name (orchestration)
+            # node_id format: "{execution_id}:{step_name}"
+            event_node_name = task_name  # Default to task name
+            if ":" in node_id:
+                try:
+                    event_node_name = node_id.split(":", 1)[1]
+                except Exception:
+                    pass
 
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
             try:
@@ -543,7 +749,7 @@ class QueueWorker:
             parent_event_id = None
             try:
                 if isinstance(context, dict):
-                    meta = context.get('_meta') or {}
+                    meta = context.get('noetl_meta') or {}
                     if isinstance(meta, dict):
                         peid = meta.get('parent_event_id')
                         if peid:
@@ -558,15 +764,28 @@ class QueueWorker:
             if not catalog_id:
                 logger.warning(f"WORKER: catalog_id is missing for job {job.get('id')} execution {execution_id}. Events may fail to be recorded.")
 
+            # Extract retry metadata from queue entry
+            attempt_number = job.get('attempts', 0) + 1  # Current attempt (1-indexed)
+            max_attempts = job.get('max_attempts', 1)
+            is_retry = attempt_number > 1
+            
             start_event = {
                 "execution_id": execution_id,
                 "catalog_id": catalog_id,
                 "event_type": "action_started",
                 "status": "STARTED",
                 "node_id": node_id,
-                "node_name": task_name,
+                "node_name": event_node_name,  # Use step name for orchestration
                 "node_type": node_type_val,
-                "context": {"work": context, "task": action_cfg},
+                "context": {
+                    "work": context,
+                    "task": action_cfg,
+                    "retry": {
+                        "attempt": attempt_number,
+                        "max_attempts": max_attempts,
+                        "is_retry": is_retry
+                    }
+                },
                 "trace_component": {"worker_raw_context": raw_context},
                 
             }
@@ -577,16 +796,28 @@ class QueueWorker:
             
             from noetl.plugin import report_event
             start_event = self._validate_event_status(start_event)
-            report_event(start_event, self.server_url)
+            start_response = report_event(start_event, self.server_url)
+            
+            # Capture the action_started event_id for use as parent in step_result
+            action_started_event_id = None
+            try:
+                if isinstance(start_response, dict):
+                    action_started_event_id = start_response.get('event_id')
+            except Exception:
+                pass
 
             try:
-                # Normalize payloads: canonical 'data' with legacy aliases
+                # Normalize payloads: canonical 'args' with legacy aliases
+                # DSL Design:
+                # - args: inputs TO a step (parameters)
+                # - data: outputs FROM a step (results, never on task config)
+                # - with/payload/input: legacy aliases for args
                 task_data = {}
                 if isinstance(action_cfg, dict):
-                    # Start from explicit data first
-                    if isinstance(action_cfg.get('data'), dict):
-                        task_data.update(action_cfg.get('data'))
-                    # Merge legacy aliases with precedence: input > payload > with
+                    # Start from explicit args first
+                    if isinstance(action_cfg.get('args'), dict):
+                        task_data.update(action_cfg.get('args'))
+                    # Merge legacy aliases with precedence: input > payload > with > data (migration)
                     try:
                         w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
                         if w:
@@ -605,6 +836,13 @@ class QueueWorker:
                             task_data = {**i, **task_data}
                     except Exception:
                         pass
+                    # Migration support: also read from 'data' if present and no 'args'
+                    # TODO: Remove after migration period
+                    try:
+                        if isinstance(action_cfg.get('data'), dict) and not action_cfg.get('args'):
+                            task_data = {**action_cfg.get('data'), **task_data}
+                    except Exception:
+                        pass
                 if not isinstance(task_data, dict):
                     task_data = {}
                 try:
@@ -616,6 +854,12 @@ class QueueWorker:
                     if isinstance(exec_ctx, dict):
                         exec_ctx['input'] = dict(task_data)
                         exec_ctx['data'] = dict(task_data)
+                except Exception:
+                    pass
+                # Flatten work.workload to top-level workload for template convenience
+                try:
+                    if isinstance(exec_ctx.get('work'), dict) and isinstance(exec_ctx['work'].get('workload'), dict):
+                        exec_ctx['workload'] = exec_ctx['work']['workload']
                 except Exception:
                     pass
                 try:
@@ -700,7 +944,7 @@ class QueueWorker:
                         "event_type": "action_error",
                         "status": "FAILED",
                         "node_id": node_id,
-                        "node_name": task_name,
+                        "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
                         "error": err_msg,
                         "traceback": tb_text,
@@ -716,7 +960,7 @@ class QueueWorker:
                     error_event = self._validate_event_status(error_event)
                     report_event(error_event, self.server_url)
                     emitted_error = True
-                    raise RuntimeError(err_msg or "Task returned error status")
+                    raise TaskExecutionError(err_msg or "Task returned error status", result=result)
                 else:
                     complete_event = {
                         "execution_id": execution_id,
@@ -724,13 +968,17 @@ class QueueWorker:
                         "event_type": "action_completed",
                         "status": "COMPLETED",
                         "node_id": node_id,
-                        "node_name": task_name,
+                        "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
                         "result": result,
                     }
                     if loop_meta:
                         complete_event.update(loop_meta)
-                    if parent_event_id:
+                    # Use action_started event_id as parent for action_completed
+                    if action_started_event_id:
+                        complete_event["parent_event_id"] = action_started_event_id
+                    elif parent_event_id:
+                        # Fallback to context parent_event_id for iterator/nested cases
                         complete_event["parent_event_id"] = parent_event_id
                     
                     from noetl.plugin import report_event
@@ -748,14 +996,20 @@ class QueueWorker:
                             "event_type": "step_result",
                             "status": "COMPLETED",
                             "node_id": node_id,
-                            "node_name": task_name,
+                            "node_name": event_node_name,  # Use step name for orchestration
                             "node_type": node_type_val,
                             "result": norm_result,
                             
                         }
                         if loop_meta:
                             step_result_event.update(loop_meta)
-                        if parent_event_id:
+                        
+                        # FIX: Use action_started event_id as parent, not context parent_event_id
+                        # The context parent_event_id might incorrectly point to next step's step_started
+                        if action_started_event_id:
+                            step_result_event["parent_event_id"] = action_started_event_id
+                        elif parent_event_id:
+                            # Fallback to context parent_event_id for iterator/nested cases
                             step_result_event["parent_event_id"] = parent_event_id
                         
                         from noetl.plugin import report_event
@@ -805,7 +1059,10 @@ class QueueWorker:
             await self._complete_job(job["queue_id"])
         except Exception as exc:
             logger.exception("Error executing job %s: %s", job.get("queue_id"), exc)
-            await self._fail_job(job["queue_id"])
+            
+            # Evaluate retry policy if configured in the job
+            should_retry, retry_delay = await self._evaluate_retry_policy(job, exc)
+            await self._fail_job(job["queue_id"], should_retry, retry_delay, job)
 
     # ------------------------------------------------------------------
     async def _report_simple_worker_metrics(self) -> None:

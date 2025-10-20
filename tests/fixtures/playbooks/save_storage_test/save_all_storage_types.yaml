@@ -6,7 +6,7 @@ metadata:
   description: "Comprehensive test playbook covering all save storage types with data flow between steps"
 
 workload:
-  pg_auth: pg_k8s
+  pg_auth: pg_local
   test_name: "save_storage_comprehensive_test"
   base_data:
     test_id: "save_test_{{ execution_id }}"
@@ -153,12 +153,12 @@ workflow:
           
           print(f"Generated test data with {len(test_data['sample_records'])} records")
           return {"status": "success", "data": test_data}
-    data:
+    args:
       execution_id: "{{ execution_id }}"
       workload: "{{ workload }}"
     save:
       storage: event_log
-      data: "{{ result.data }}"
+      args: "{{ result.data }}"
     next:
       - step: test_flat_postgres_save
 
@@ -176,10 +176,10 @@ workflow:
                   "test_type": "flat_structure"
               }
           }
-    data: "{{ start.data }}"
+    args: "{{ start }}"
     save:
       storage: postgres
-      data:
+      args:
         test_id: "{{ execution_id }}"
         test_name: "Test Employee Flat"
         test_value: 55000
@@ -205,11 +205,11 @@ workflow:
                   "test_type": "nested_structure"
               }
           }
-    data: "{{ test_flat_postgres_save.data }}"
+    args: "{{ test_flat_postgres_save }}"
     save:
       storage:
         type: postgres
-        data:
+        args:
           test_id: "{{ execution_id }}_nested"
           test_name: "Test Employee Nested"
           test_data: '{"value": 58000, "type": "nested_structure", "meta": {"test_phase": "save_test"}}'
@@ -235,7 +235,8 @@ workflow:
                   "execution_id": input_data.get("execution_id", "unknown")
               }
           }
-    data: "{{ test_nested_postgres_save.data }}"
+    args:
+      input_data: "{{ test_nested_postgres_save }}"
     save:
       storage:
         type: postgres
@@ -267,7 +268,8 @@ workflow:
                   "next_phase": "analytics"
               }
           }
-    data: "{{ test_postgres_statement_save.data }}"
+    args:
+      input_data: "{{ test_postgres_statement_save }}"
     save:
       storage:
         type: python
@@ -310,7 +312,7 @@ workflow:
                   "test_type": "duckdb_analytics"
               }
           }
-    data: "{{ test_python_save.data }}"
+    args: "{{ test_python_save }}"
     save:
       storage:
         type: duckdb
@@ -351,7 +353,7 @@ workflow:
                   "test_type": "http_webhook"
               }
           }
-    data: "{{ test_duckdb_save.data }}"
+    args: "{{ test_duckdb_save }}"
     save:
       storage:
         type: http
@@ -361,7 +363,7 @@ workflow:
           Content-Type: "application/json"
           X-Test-Suite: "noetl-save-storage"
           X-Execution-ID: "{{ execution_id }}"
-        data:
+        args:
           test_completion: true
           storage_tests_completed:
             - event_log
@@ -408,10 +410,11 @@ workflow:
           print(json.dumps(summary, indent=2))
           
           return {"status": "success", "data": summary}
-    data: "{{ test_http_save.data }}"
+    args:
+      input_data: "{{ test_http_save }}"
     save:
       storage: event_log
-      data: "{{ result.data }}"
+      args: "{{ result.data }}"
     next:
       - step: end
 

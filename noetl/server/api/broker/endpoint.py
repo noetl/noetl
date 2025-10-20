@@ -6,10 +6,12 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from noetl.core.logger import setup_logger
 
-# Processing functions live in the event processing module
-from noetl.server.api.event.processing import (
-    evaluate_broker_for_execution,
-    check_and_process_completed_loops,
+# Orchestration functions live in the event service module
+from noetl.server.api.event.service import (
+    evaluate_execution,
+)
+from noetl.server.api.event.service.iterators import (
+    check_iterator_completions,
 )
 
 from noetl.core.common import get_async_db_connection
@@ -21,24 +23,24 @@ router = APIRouter()
 
 @router.post("/broker/evaluate/{execution_id}")
 async def trigger_broker_evaluation(execution_id: str):
-    """Manually trigger broker evaluation for an execution, including loop completion checks."""
+    """Manually trigger orchestration evaluation for an execution, including iterator completion checks."""
     try:
-        await evaluate_broker_for_execution(execution_id)
-        return {"status": "success", "message": f"Broker evaluation triggered for execution {execution_id}"}
+        await evaluate_execution(execution_id)
+        return {"status": "success", "message": f"Orchestration evaluation triggered for execution {execution_id}"}
     except Exception as e:
-        logger.error(f"Failed to trigger broker evaluation for {execution_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to trigger broker evaluation: {str(e)}")
+        logger.error(f"Failed to trigger orchestration evaluation for {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger orchestration evaluation: {str(e)}")
 
 
-@router.post("/loop/complete/{execution_id}")
-async def trigger_loop_completion(execution_id: str):
-    """Manually trigger loop completion check for an execution."""
+@router.post("/iterator/complete/{execution_id}")
+async def trigger_iterator_completion(execution_id: str):
+    """Manually trigger iterator completion check for an execution."""
     try:
-        await check_and_process_completed_loops(execution_id)
-        return {"status": "success", "message": f"Loop completion check triggered for execution {execution_id}"}
+        await check_iterator_completions(execution_id)
+        return {"status": "success", "message": f"Iterator completion check triggered for execution {execution_id}"}
     except Exception as e:
-        logger.error(f"Failed to trigger loop completion for {execution_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to trigger loop completion: {str(e)}")
+        logger.error(f"Failed to trigger iterator completion for {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger iterator completion: {str(e)}")
 
 
 def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:

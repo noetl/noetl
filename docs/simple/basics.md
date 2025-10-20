@@ -5,6 +5,8 @@ Core structure
 - Workload: global defaults merged with the execution payload
 - Workflow: ordered steps with routing expressed via `next`
 - Workbook: reusable named tasks referenced by `type: workbook`
+- Composition: invoke another playbook via a `type: playbook` step (modular reuse)
+- Retry: optional `retry` block on action steps to re-attempt transient failures (see `steps/retry.md`)
 
 Naming and references
 - Each step must have a unique `step` name within the workflow
@@ -27,6 +29,8 @@ Control flow
   - conditional: `- when: <expr>`, `then: [ { step: ... } ]`, optional `else`
   - parallel fan-out: multiple entries without `when` get scheduled together
 - `type: iterator` performs per-element execution with `collection`, `element`, and an embedded `task`
+- `type: playbook` executes another playbook (optionally extracting a specific `return_step` result)
+- `retry` evaluates after each attempt: `stop_when` (short-circuit success) then `retry_when` (decide next attempt)
 
 Idempotency and reruns
 - Prefer idempotent SQL (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT`) and deterministic identifiers (`execution_id`, iterator index)

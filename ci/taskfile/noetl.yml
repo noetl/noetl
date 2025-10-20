@@ -53,7 +53,17 @@ tasks:
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"
 
+  noetl:local:install:
+    desc: Install NoETL in editable mode
+    aliases: [install]
+    cmds:
+      - uv pip install --editable .
 
+  noetl:local:install-dev:
+    desc: Install NoETL in editable mode with dev dependencies
+    aliases: [install-dev]
+    cmds:
+      - uv pip install --editable ".[dev]"
 
   noetl:local:server-start:
     desc: Run NoETL server locally as a background daemon with logging
@@ -574,6 +584,9 @@ tasks:
           curl -sS -X POST "http://localhost:8083/api/credentials" \
             -H 'Content-Type: application/json' \
             --data-binary @tests/fixtures/credentials/gcs_hmac_local.json | jq -C . || echo "gcs_hmac_local credential registration failed"
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/sf_test.json | jq -C . || echo "sf_test credential registration failed"
         else
           curl -sS -X POST "http://localhost:8083/api/credentials" \
             -H 'Content-Type: application/json' \
@@ -581,6 +594,9 @@ tasks:
           curl -sS -X POST "http://localhost:8083/api/credentials" \
             -H 'Content-Type: application/json' \
             --data-binary @tests/fixtures/credentials/gcs_hmac_local.json || echo "gcs_hmac_local credential registration failed"
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/sf_test.json || echo "sf_test credential registration failed"
         fi
         echo "✓ Test credentials registered"
         

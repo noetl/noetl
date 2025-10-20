@@ -86,6 +86,9 @@ def extract_playbook_location(context: Dict[str, Any]) -> tuple[Optional[str], s
     """
     Extract playbook path and version from execution context.
     
+    First tries to fetch from workload table using execution_id if available,
+    then falls back to context data structures.
+    
     Args:
         context: Execution context
         
@@ -95,6 +98,52 @@ def extract_playbook_location(context: Dict[str, Any]) -> tuple[Optional[str], s
     Raises:
         ValueError: If path not found in context
     """
+    # Try to get execution_id and fetch from workload table first
+    execution_id = context.get('execution_id')
+    if execution_id:
+        try:
+            import asyncio
+            from noetl.core.common import get_async_db_connection
+            
+            async def _fetch_workload_path(exec_id):
+                try:
+                    async with get_async_db_connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                "SELECT data FROM noetl.workload WHERE execution_id = %s",
+                                (str(exec_id),)
+                            )
+                            row = await cur.fetchone()
+                            if row and row[0]:
+                                import json
+                                data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                                return data.get('path'), data.get('version')
+                except Exception as e:
+                    logger.debug(f"WORKBOOK: Failed to fetch workload from DB: {e}")
+                return None, None
+            
+            # Try to run the async function
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, but execute_task is sync
+                # Create a new event loop in a thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, _fetch_workload_path(execution_id))
+                    db_path, db_version = future.result(timeout=2)
+                    if db_path:
+                        logger.info(f"WORKBOOK: Fetched path={db_path}, version={db_version} from workload table for execution={execution_id}")
+                        return db_path, db_version or 'latest'
+            except RuntimeError:
+                # No running loop
+                db_path, db_version = asyncio.run(_fetch_workload_path(execution_id))
+                if db_path:
+                    logger.info(f"WORKBOOK: Fetched path={db_path}, version={db_version} from workload table for execution={execution_id}")
+                    return db_path, db_version or 'latest'
+        except Exception as e:
+            logger.debug(f"WORKBOOK: Could not fetch from workload table: {e}")
+    
+    # Fall back to context-based extraction
     # Context can come in various shapes. Prefer 'work' wrapper if present 
     # (as emitted by worker events), then fall back to top-level and nested 
     # 'workload' keys.
@@ -113,4 +162,5 @@ def extract_playbook_location(context: Dict[str, Any]) -> tuple[Optional[str], s
     if not path:
         raise ValueError("Workbook task requires 'path' in context to locate playbook")
     
+    logger.info(f"WORKBOOK: Extracted path={path}, version={version} from context")
     return path, version
