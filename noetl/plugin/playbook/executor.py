@@ -159,30 +159,52 @@ def execute_playbook_task(
         # Step 6: Validate configuration (no deprecated loop blocks)
         validate_loop_configuration(task_config)
         
-        # Step 7: Execute via broker
+        # Step 7: Execute via server API to ensure proper catalog registration
         try:
-            # Dynamic import to avoid circular dependency
-            from noetl.server.api.broker import execute_playbook_via_broker
+            # Make HTTP request to server's /api/execute endpoint
+            import os
+            import requests
+            
+            server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip('/')
+            if not server_url.endswith('/api'):
+                server_url = server_url + '/api'
+            execute_url = f"{server_url}/execute"
             
             logger.info(
-                f"PLAYBOOK: Calling execute_playbook_via_broker with "
-                f"parent_execution_id={parent_execution_id}"
+                f"PLAYBOOK: Calling {execute_url} for nested playbook execution "
+                f"with parent_execution_id={parent_execution_id}"
             )
             
-            result = execute_playbook_via_broker(
-                playbook_content=rendered_content,
-                playbook_path=playbook_path or f"nested/{task_name}",
-                playbook_version=playbook_version,
-                input_payload=nested_context,
-                sync_to_postgres=True,
-                merge=True,
-                parent_execution_id=parent_execution_id,
-                parent_event_id=parent_event_id,
-                parent_step=parent_step
+            # Build execution request payload
+            request_payload = {
+                "path": playbook_path or f"nested/{task_name}",
+                "version": playbook_version,
+                "type": "playbook",
+                "parameters": nested_context,
+                "merge": True,
+                "sync_to_postgres": True,
+                "context": {
+                    "parent_execution_id": str(parent_execution_id) if parent_execution_id else None,
+                    "parent_event_id": str(parent_event_id) if parent_event_id else None,
+                    "parent_step": parent_step
+                }
+            }
+            
+            # Make synchronous HTTP POST request
+            response = requests.post(
+                execute_url,
+                json=request_payload,
+                timeout=30
             )
+            
+            if response.status_code != 200:
+                error_detail = response.json().get('detail', response.text) if response.text else 'Unknown error'
+                raise Exception(f"Server returned status {response.status_code}: {error_detail}")
+            
+            result = response.json()
             
             logger.info(
-                f"PLAYBOOK: Broker execution completed with "
+                f"PLAYBOOK: Server execution accepted with "
                 f"status={result.get('status')}, "
                 f"execution_id={result.get('execution_id')}"
             )

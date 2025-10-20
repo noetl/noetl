@@ -6,7 +6,7 @@ metadata:
   description: "Simple test demonstrating save storage delegation is working"
 
 workload:
-  pg_auth: pg_k8s
+  pg_auth: pg_local
   test_message: "Hello from save storage delegation test!"
 
 workflow:
@@ -31,7 +31,7 @@ workflow:
           }
     save:
       storage: event
-      data: "{{ result.data }}"
+      args: "{{ result.data }}"
     next:
       - step: postgres_test
 
@@ -54,7 +54,7 @@ workflow:
         type: postgres
         table: simple_test_flat
         auth: "{{ workload.pg_auth }}"
-      data:
+      args:
         test_id: "delegation_test"
         test_name: "{{ result.data.test }}"
         test_value: "{{ result.data.value }}"
@@ -81,7 +81,7 @@ workflow:
           CREATE OR REPLACE TABLE test_duckdb AS 
           SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
           SELECT * FROM test_duckdb;
-      data: "{{ result.data }}"
+      args: "{{ result.data }}"
     next:
       - step: http_test
 
@@ -105,4 +105,4 @@ workflow:
         method: POST
         headers:
           Content-Type: "application/json"
-      data: "{{ result.data }}"
+      args: "{{ result.data }}"

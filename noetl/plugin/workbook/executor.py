@@ -39,6 +39,10 @@ def build_action_config(
     if task_with:
         action_with.update(task_with)
     
+    logger.info(f"WORKBOOK.BUILD_CONFIG: action_with before merge = {target_action.get('with', {})}")
+    logger.info(f"WORKBOOK.BUILD_CONFIG: task_with from step = {task_with}")
+    logger.info(f"WORKBOOK.BUILD_CONFIG: action_with after merge = {action_with}")
+    
     # Create task config for the actual action type
     action_config = {
         'type': target_action.get('type'),

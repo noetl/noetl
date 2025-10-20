@@ -128,9 +128,16 @@ def execute_python_task(
                 for k, v in (task_with or {}).items():
                     if isinstance(v, str):
                         try:
+                            logger.info(f"PYTHON.RENDER: Rendering template for key={k}, value={v[:100]}")
+                            logger.info(f"PYTHON.RENDER: Context has workload: {'workload' in (context or {})}")
+                            if 'workload' in (context or {}):
+                                logger.info(f"PYTHON.RENDER: workload keys: {list(context.get('workload', {}).keys()) if isinstance(context.get('workload'), dict) else 'not a dict'}")
                             tmpl = jinja_env.from_string(v)
-                            rendered_with[k] = tmpl.render(context or {})
-                        except Exception:
+                            rendered = tmpl.render(context or {})
+                            logger.info(f"PYTHON.RENDER: Rendered result for key={k}: {rendered[:200]}")
+                            rendered_with[k] = rendered
+                        except Exception as render_ex:
+                            logger.error(f"PYTHON.RENDER: Exception rendering key={k}: {render_ex}")
                             rendered_with[k] = v
                     else:
                         rendered_with[k] = v
@@ -141,8 +148,11 @@ def execute_python_task(
             normalized_with = {}
             try:
                 for k, v in rendered_with.items():
-                    normalized_with[k] = _coerce_param(v)
-            except Exception:
+                    coerced = _coerce_param(v)
+                    logger.info(f"PYTHON.COERCE: key={k}, type before={type(v).__name__}, type after={type(coerced).__name__}, value={str(coerced)[:200]}")
+                    normalized_with[k] = coerced
+            except Exception as coerce_ex:
+                logger.error(f"PYTHON.COERCE: Exception: {coerce_ex}")
                 normalized_with = rendered_with
 
             # Enhanced function signature detection and flexible calling
@@ -163,13 +173,11 @@ def execute_python_task(
                 
             elif len(params) == 1 and 'input_data' in params:
                 # Legacy function signature: def main(input_data):
+                # Pass the value of the 'input_data' argument directly
                 logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with input_data parameter")
-                input_data = {
-                    'context': context,
-                    'with': normalized_with,
-                    **normalized_with  # Also include with params at top level
-                }
-                result_data = main_func(input_data)
+                input_data_value = normalized_with.get('input_data')
+                logger.info(f"PYTHON.CALL: Passing input_data value type={type(input_data_value).__name__}, value={str(input_data_value)[:200]}")
+                result_data = main_func(input_data_value)
                 
             elif any(param.kind == inspect.Parameter.VAR_KEYWORD for param in func_signature.parameters.values()):
                 # Function accepts **kwargs: def main(**kwargs):

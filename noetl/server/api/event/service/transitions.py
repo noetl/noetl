@@ -246,7 +246,7 @@ async def _evaluate_transitions(
             )
             continue
         
-        # Build context
+        # Build context with step results
         ctx = {
             'workload': eval_ctx.get('workload', {}),
             'step_name': next_step_name,
@@ -254,6 +254,13 @@ async def _evaluate_transitions(
             'version': pb_ver,
             'catalog_id': catalog_id,
         }
+        
+        # Include all step results in context for template rendering
+        # This allows templates like {{ extract_user_data.data.field_name }} to work
+        for key, value in eval_ctx.items():
+            if key not in ctx and key != 'workload':
+                ctx[key] = value
+        
         if transition_data:
             ctx.update(transition_data)
         
@@ -354,25 +361,36 @@ def _build_task(
         'url', 'endpoint', 'method', 'headers', 'params',
         'collection', 'element', 'mode', 'concurrency', 'enumerate',
         'where', 'limit', 'chunk', 'order_by',
-        'input', 'payload', 'with', 'auth', 'data',
+        'input', 'payload', 'with', 'auth', 'args',
         'resource_path', 'content', 'path', 'iterator', 'save',
-        'credential', 'credentials', 'retry'
+        'credential', 'credentials', 'retry',
+        'direction', 'source', 'target', 'chunk_size'  # snowflake_transfer fields
     ):
         if step_def.get(field) is not None:
             task[field] = step_def.get(field)
     
-    # Merge transition data
+    # Merge transition input into args
+    # transition_data comes from next[].input in edge definitions
     if transition_data:
-        if 'data' in transition_data:
-            base_data = task.get('data', {})
-            if isinstance(base_data, dict) and isinstance(transition_data['data'], dict):
-                base_data.update(transition_data['data'])
-                task['data'] = base_data
+        # 'input' field from edges merges into target step's 'args'
+        if 'input' in transition_data:
+            base_args = task.get('args', {})
+            if isinstance(base_args, dict) and isinstance(transition_data['input'], dict):
+                # Transition input takes precedence
+                merged_args = {**base_args, **transition_data['input']}
+                task['args'] = merged_args
+            elif isinstance(transition_data['input'], dict):
+                task['args'] = transition_data['input']
         
-        existing_with = task.get('with', {})
-        if isinstance(existing_with, dict):
-            merged_with = {**existing_with, **{k: v for k, v in transition_data.items() if k != 'data'}}
-            task['with'] = merged_with
+        # Legacy: also check for 'data' in transition and merge into 'args'
+        # TODO: Remove this after migration period
+        if 'data' in transition_data and 'input' not in transition_data:
+            base_args = task.get('args', {})
+            if isinstance(base_args, dict) and isinstance(transition_data['data'], dict):
+                merged_args = {**base_args, **transition_data['data']}
+                task['args'] = merged_args
+            elif isinstance(transition_data['data'], dict):
+                task['args'] = transition_data['data']
     
     # Normalize
     try:
@@ -402,7 +420,7 @@ def _is_actionable(step_def: Dict[str, Any]) -> bool:
         return True
     
     if step_type in {
-        'http', 'python', 'duckdb', 'postgres', 'snowflake',
+        'http', 'python', 'duckdb', 'postgres', 'snowflake', 'snowflake_transfer',
         'secrets', 'workbook', 'playbook', 'save', 'iterator'
     }:
         if step_type == 'python':

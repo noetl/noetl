@@ -28,7 +28,7 @@ workflow:
           }
     next:
       - step: end
-        data:
+        args:
           temp_table: "{{ process_data.data.temp_table }}"
           cleanup_required: "{{ workload.cleanup_required }}"
         

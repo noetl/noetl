@@ -38,7 +38,7 @@ workflow:
     save:
       storage:
         type: postgres
-        data: "{{ result.data }}"
+        args: "{{ result.data }}"
         table: test_mixed_types
         auth:
           type: postgres
@@ -62,11 +62,11 @@ workflow:
           }
           
           return {"status": "success", "data": special_data}
-    data: "{{ start.data }}"
+    args: "{{ start }}"
     save:
       storage:
         type: postgres
-        data: "{{ result.data }}"
+        args: "{{ result.data }}"
         table: test_special_chars
         mode: insert
         auth:
@@ -91,7 +91,8 @@ workflow:
           }
           
           return {"status": "success", "data": empty_scenarios}
-    data: "{{ test_special_characters.data }}"
+    args:
+      input_data: "{{ test_special_characters }}"
     save:
       storage:
         type: python
@@ -150,7 +151,8 @@ workflow:
               large_data["records"].append(record)
           
           return {"status": "success", "data": large_data}
-    data: "{{ test_empty_data.data }}"
+    args:
+      input_data: "{{ test_empty_data }}"
     save:
       storage:
         type: duckdb
@@ -185,7 +187,8 @@ workflow:
           }
           
           return {"status": "success", "data": potentially_problematic}
-    data: "{{ test_large_payload.data }}"
+    args:
+      input_data: "{{ test_large_payload }}"
     save:
       storage:
         type: http
@@ -194,7 +197,7 @@ workflow:
         headers:
           Content-Type: "application/json"
           X-Test-Type: "error-recovery"
-        data: "{{ result.data }}"
+        args: "{{ result.data }}"
     next:
       - step: test_completion_summary
 
@@ -223,10 +226,11 @@ workflow:
           }
           
           return {"status": "success", "data": summary}
-    data: "{{ test_error_recovery.data }}"
+    args:
+      input_data: "{{ test_error_recovery }}"
     save:
       storage: event_log
-      data: "{{ result.data }}"
+      args: "{{ result.data }}"
     next:
       - step: end
 

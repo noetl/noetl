@@ -21,7 +21,7 @@ workflow:
           }
     next:
       - step: process
-        data:
+        args:
           from_start: "{{ start.data.executed }}"
   
   - step: process
