@@ -79,7 +79,7 @@ workflow:
     type: snowflake_transfer
     direction: sf_to_pg
     source:
-      query: "SELECT * FROM TEST_DATA ORDER BY id"
+      query: "SELECT id, name, value, name, created_at, metadata FROM TEST_DATA ORDER BY id"
     target:
       # Using custom query instead of table - enables UPSERT with ON CONFLICT
       query: |

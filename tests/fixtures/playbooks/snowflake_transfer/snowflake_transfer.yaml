@@ -1,3 +1,4 @@
+# dont use in prod for analytics
 apiVersion: noetl.io/v1
 kind: Playbook
 
