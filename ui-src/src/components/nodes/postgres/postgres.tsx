@@ -1,25 +1,33 @@
 import { memo } from 'react';
-import { Handle, Position } from '@xyflow/react';
-import { NodeMeta, NodeComponentProps } from '../../nodeTypes';
+import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 
-function PostgresNode({ task, args }: NodeComponentProps) {
-    const cfg = args || {};
-    const sqlPreview = (cfg.sql || '').toString();
+interface PostgresData {
+    name?: string;
+    sql?: string;
+    [key: string]: unknown;
+}
+
+function PostgresNode({ id, data }: NodeProps<Node<PostgresData>>) {
+    const { updateNodeData } = useReactFlow();
+    const name = data?.name || 'postgres';
+    const sql = (data?.sql || '').toString();
+    const preview = sql ? (sql.length > 46 ? sql.slice(0, 43) + '…' : sql) : '';
     return (
         <div style={{ padding: 8, border: '1px solid #336791', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>🐘 {task.name || 'postgres'}</div>
-            {sqlPreview && <div style={{ fontSize: 10, opacity: 0.8 }}>{sqlPreview.length > 46 ? sqlPreview.slice(0, 43) + '…' : sqlPreview}</div>}
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🐘 {name}</div>
+            <textarea
+                style={{ width: '100%', fontSize: 10, fontFamily: 'monospace', marginBottom: 4 }}
+                rows={3}
+                value={sql}
+                placeholder="SELECT 1;"
+                onChange={(e) => updateNodeData(id, { sql: e.target.value })}
+                className="xy-theme__input"
+            />
+            {preview && <div style={{ fontSize: 10, opacity: 0.6 }}>{preview}</div>}
         </div>
     );
 }
-export default memo(PostgresNode);
 
-export const postgresMeta: NodeMeta = {
-    type: 'postgres',
-    icon: '🐘',
-    label: 'Postgres',
-    color: '#336791',
-    description: 'Run Postgres SQL'
-};
+export default memo(PostgresNode);

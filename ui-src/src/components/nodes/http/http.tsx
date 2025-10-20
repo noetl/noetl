@@ -1,6 +1,5 @@
 import { memo, useState, useEffect, useCallback } from 'react';
-import { NodeComponentProps, NodeMeta } from '../../nodeTypes';
-import { Handle, Position } from '@xyflow/react';
+import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
 import { EditOutlined } from '@ant-design/icons';
 
@@ -13,8 +12,20 @@ interface HttpConfigDraft {
     timeout: string | number | '';
 }
 
-function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
-    const cfg = args || {};
+interface HttpData {
+    name?: string;
+    method?: string;
+    url?: string;
+    query?: string;
+    headers?: Record<string, any>;
+    body?: string;
+    timeout?: number | string;
+    [key: string]: unknown;
+}
+
+function HttpNode({ id, data }: NodeProps<Node<HttpData>>) {
+    const { updateNodeData } = useReactFlow();
+    const cfg = data || {};
 
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState<HttpConfigDraft>(() => ({
@@ -32,7 +43,7 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
 
     // Re-sync draft when task updates externally (after save elsewhere)
     useEffect(() => {
-        const newCfg = args || {};
+        const newCfg = data || {};
         setDraft({
             method: (newCfg.method || 'GET').toUpperCase(),
             url: newCfg.url || '',
@@ -42,12 +53,11 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
             timeout: newCfg.timeout ?? ''
         });
         try { setHeaderInput(newCfg.headers && Object.keys(newCfg.headers).length ? JSON.stringify(newCfg.headers, null, 2) : ''); } catch { setHeaderInput(''); }
-    }, [args]);
+    }, [data]);
 
     const openEditor = useCallback(() => {
-        if (readOnly) return;
         // fresh copy each open
-        const current = args || {};
+        const current = data || {};
         setDraft({
             method: (current.method || 'GET').toUpperCase(),
             url: current.url || '',
@@ -59,29 +69,23 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
         try { setHeaderInput(current.headers && Object.keys(current.headers).length ? JSON.stringify(current.headers, null, 2) : ''); } catch { setHeaderInput(''); }
         setHeaderError(null);
         setModalOpen(true);
-    }, [args, readOnly]);
+    }, [data]);
 
     const commit = useCallback(() => {
-        if (readOnly || !onEdit) { setModalOpen(false); return; }
         let headersObj: Record<string, any> = draft.headers || {};
         if (headerInput && !headerError) {
             try { headersObj = JSON.parse(headerInput); } catch { /* ignore; keep previous */ }
         }
-        const out = {
-            ...task,
-            config: {
-                ...cfg,
-                method: draft.method || 'GET',
-                url: draft.url || '',
-                query: draft.query || '',
-                headers: headersObj,
-                body: draft.body || '',
-                timeout: draft.timeout === '' ? undefined : Number(draft.timeout)
-            }
-        };
-        onEdit(out);
+        updateNodeData(id, {
+            method: draft.method || 'GET',
+            url: draft.url || '',
+            query: draft.query || '',
+            headers: headersObj,
+            body: draft.body || '',
+            timeout: draft.timeout === '' ? undefined : Number(draft.timeout)
+        });
         setModalOpen(false);
-    }, [draft, headerInput, headerError, readOnly, onEdit, task, cfg]);
+    }, [draft, headerInput, headerError, id, updateNodeData]);
 
     const handleHeaderChange = (val: string) => {
         setHeaderInput(val);
@@ -100,7 +104,7 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
     };
 
     const summaryUrl: string = (() => {
-        const u = (args?.url || '').trim();
+        const u = (data?.url || '').trim();
         if (!u) return '';
         if (u.length < 34) return u;
         return u.slice(0, 31) + '…';
@@ -108,39 +112,37 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
 
     return (
         <div
-            style={{ padding: 8, border: '1px solid #1890ff', borderRadius: 8, fontSize: 12, background: '#fff', width: 240, cursor: readOnly ? 'default' : 'pointer' }}
+            style={{ padding: 8, border: '1px solid #1890ff', borderRadius: 8, fontSize: 12, background: '#fff', width: 240, cursor: 'pointer' }}
             onDoubleClick={openEditor}
         >
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 600, marginBottom: 4 }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>🌐 {task.name || 'http'}</span>
-                {!readOnly && (
-                    <Tooltip title="Edit HTTP config">
-                        <Button
-                            className="http-edit-btn"
-                            size="small"
-                            type="text"
-                            icon={<EditOutlined style={{ fontSize: 14 }} />}
-                            onPointerDown={(e) => { (window as any).__skipNextNodeModal = true; e.stopPropagation(); }}
-                            onMouseDown={(e) => { (window as any).__skipNextNodeModal = true; e.stopPropagation(); }}
-                            onClick={(e) => { (window as any).__skipNextNodeModal = true; e.preventDefault(); e.stopPropagation(); openEditor(); }}
-                        />
-                    </Tooltip>
-                )}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>🌐 {data?.name || 'http'}</span>
+                <Tooltip title="Edit HTTP config">
+                    <Button
+                        className="http-edit-btn"
+                        size="small"
+                        type="text"
+                        icon={<EditOutlined style={{ fontSize: 14 }} />}
+                        onPointerDown={(e) => { (window as any).__skipNextNodeModal = true; e.stopPropagation(); }}
+                        onMouseDown={(e) => { (window as any).__skipNextNodeModal = true; e.stopPropagation(); }}
+                        onClick={(e) => { (window as any).__skipNextNodeModal = true; e.preventDefault(); e.stopPropagation(); openEditor(); }}
+                    />
+                </Tooltip>
             </div>
             <div style={{ fontSize: 11, wordBreak: 'break-all', lineHeight: 1.3 }}>
                 {summaryUrl || <span style={{ opacity: 0.5 }}>(no url)</span>}
             </div>
-            <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{(args?.method || 'GET').toUpperCase()}</div>
-            {!readOnly && <div style={{ fontSize: 9, opacity: 0.55, marginTop: 4 }}>double-click or edit icon</div>}
+            <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{(data?.method || 'GET').toUpperCase()}</div>
+            <div style={{ fontSize: 9, opacity: 0.55, marginTop: 4 }}>double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}
                 onCancel={() => setModalOpen(false)}
-                title={task.name ? `HTTP Config: ${task.name}` : 'HTTP Config'}
+                title={data?.name ? `HTTP Config: ${data?.name}` : 'HTTP Config'}
                 width={640}
-                footer={readOnly ? undefined : [
+                footer={[
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
                     <Button key="save" type="primary" onClick={commit} disabled={!!headerError}>Save</Button>
                 ]}
@@ -148,21 +150,20 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <div style={{ display: 'flex', gap: 8 }}>
                         <Select
-                            disabled={readOnly}
+
                             value={draft.method}
                             onChange={(v) => setDraft(d => ({ ...d, method: v }))}
                             style={{ width: 120 }}
                             options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map(m => ({ value: m, label: m }))}
                         />
                         <Input
-                            disabled={readOnly}
+
                             value={draft.url}
                             placeholder="https://api.example.com"
                             onChange={e => setDraft(d => ({ ...d, url: e.target.value }))}
                         />
                     </div>
                     <Input
-                        disabled={readOnly}
                         value={draft.query}
                         placeholder="query string (?k=v&k2=v2) or custom"
                         onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
@@ -170,7 +171,7 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
                     <div>
                         <div style={{ fontSize: 11, fontWeight: 500, marginBottom: 4 }}>Headers (JSON object)</div>
                         <Input.TextArea
-                            disabled={readOnly}
+
                             value={headerInput}
                             rows={4}
                             placeholder='{"Authorization":"Bearer ..."}'
@@ -182,7 +183,7 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
                     <div>
                         <div style={{ fontSize: 11, fontWeight: 500, marginBottom: 4 }}>Body (raw / JSON)</div>
                         <Input.TextArea
-                            disabled={readOnly}
+
                             value={draft.body}
                             rows={5}
                             placeholder='{"key":"value"} or raw text'
@@ -192,7 +193,7 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
                     </div>
                     <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                         <Input
-                            disabled={readOnly}
+
                             type="number"
                             value={draft.timeout}
                             placeholder="timeout ms"
@@ -201,7 +202,7 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
                         />
                         <div style={{ fontSize: 11, opacity: 0.65 }}>Leave blank for default</div>
                     </div>
-                    {readOnly && <div style={{ fontSize: 11, opacity: 0.6 }}>Read only</div>}
+
                 </div>
             </Modal>
         </div>
@@ -209,11 +210,3 @@ function HttpNode({ task, args, onEdit, readOnly }: NodeComponentProps) {
 }
 
 export default memo(HttpNode);
-
-export const httpMeta: NodeMeta = {
-    type: 'http',
-    icon: '🌐',
-    label: 'HTTP',
-    color: '#1890ff',
-    description: 'HTTP request step'
-};

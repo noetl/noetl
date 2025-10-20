@@ -22,7 +22,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
-import { nodeTypes, orderedNodeTypes } from './nodeTypes'; // consolidated single source
+import { nodeTypes } from './nodeTypes'; // simplified source
 import { EditableTaskNode, TaskNode } from "./types";
 // @ts-ignore
 import yaml from 'js-yaml';
@@ -570,7 +570,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
               disabled={!!readOnly}
               value={activeTask.type}
               onChange={(val) => handleEditTask({ ...activeTask, type: val })}
-              options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
+              options={Object.keys(nodeMeta).map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
               style={{ width: '100%' }}
             />
           </div>
