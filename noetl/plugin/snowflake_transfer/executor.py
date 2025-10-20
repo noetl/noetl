@@ -121,14 +121,20 @@ def execute_snowflake_transfer_action(
         if not source_query:
             raise ValueError("source.query is required")
         
+        # Target can be either table or query (custom INSERT/UPSERT)
         target_table = target_config.get('table')
-        if not target_table:
-            raise ValueError("target.table is required")
+        target_query = target_config.get('query')
+        
+        if not target_table and not target_query:
+            raise ValueError("Either target.table or target.query is required")
         
         logger.info(f"Transfer direction: {direction}")
         logger.info(f"Source query: {source_query}")
-        logger.info(f"Target table: {target_table}")
-        logger.info(f"Chunk size: {chunk_size}, Mode: {mode}")
+        if target_table:
+            logger.info(f"Target table: {target_table}")
+        if target_query:
+            logger.info(f"Target query: {target_query[:100]}...")  # Log first 100 chars
+        logger.info(f"Chunk size: {chunk_size}, Mode: {mode if not target_query else 'custom'}")
         
         # Resolve credentials from auth configuration
         logger.info("Step 1: Getting auth config from task_config")
@@ -255,6 +261,7 @@ def execute_snowflake_transfer_action(
                 pg_conn=pg_conn,
                 source_query=source_query,
                 target_table=target_table,
+                target_query=target_query,
                 chunk_size=chunk_size,
                 mode=mode,
                 progress_callback=progress_cb
@@ -266,6 +273,7 @@ def execute_snowflake_transfer_action(
                 sf_conn=sf_conn,
                 source_query=source_query,
                 target_table=target_table,
+                target_query=target_query,
                 chunk_size=chunk_size,
                 mode=mode,
                 progress_callback=progress_cb

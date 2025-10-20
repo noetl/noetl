@@ -1,0 +1,215 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: snowflake_transfer_query
+  path: tests/fixtures/playbooks/snowflake_transfer_query
+
+workload:
+  sf_auth: sf_test
+  pg_auth: pg_local
+  message: Snowflake <-> PostgreSQL data transfer using custom target queries
+  chunk_size: 1000
+  test_table_sf: TEST_DATA
+  test_table_pg: public.test_snowflake_transfer_query
+
+workflow:
+  - step: start
+    desc: Start Snowflake transfer pipeline with custom queries
+    next:
+      - step: create_sf_database
+
+  - step: create_sf_database
+    desc: Create Snowflake database if it does not exist
+    type: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      CREATE DATABASE IF NOT EXISTS TEST_DB;
+      USE DATABASE TEST_DB;
+      USE SCHEMA PUBLIC;
+    next:
+      - step: setup_pg_table
+
+  - step: setup_pg_table
+    desc: Create PostgreSQL target table for Snowflake data
+    type: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      CREATE TABLE IF NOT EXISTS {{ workload.test_table_pg }} (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        value NUMERIC(10,2),
+        created_at TIMESTAMPTZ,
+        metadata JSONB
+      );
+      
+      TRUNCATE TABLE {{ workload.test_table_pg }};
+    next:
+      - step: setup_sf_table
+
+  - step: setup_sf_table
+    desc: Create and populate Snowflake source table
+    type: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      CREATE OR REPLACE TABLE {{ workload.test_table_sf }} (
+        id INTEGER PRIMARY KEY,
+        name STRING,
+        value NUMERIC(10,2),
+        created_at TIMESTAMP_TZ,
+        metadata VARIANT
+      );
+      
+      -- Insert test data using SELECT to allow PARSE_JSON
+      INSERT INTO {{ workload.test_table_sf }}
+      SELECT 1, 'Record 1', 100.50, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
+      UNION ALL
+      SELECT 2, 'Record 2', 200.75, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
+      UNION ALL
+      SELECT 3, 'Record 3', 300.25, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
+      UNION ALL
+      SELECT 4, 'Record 4', 400.00, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
+      UNION ALL
+      SELECT 5, 'Record 5', 500.99, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 3}');
+    next:
+      - step: transfer_sf_to_pg
+
+  - step: transfer_sf_to_pg
+    desc: Transfer data from Snowflake to PostgreSQL using custom UPSERT query
+    type: snowflake_transfer
+    direction: sf_to_pg
+    source:
+      query: "SELECT * FROM TEST_DATA ORDER BY id"
+    target:
+      # Using custom query instead of table - enables UPSERT with ON CONFLICT
+      query: |
+        INSERT INTO {{ workload.test_table_pg }} (id, name, value, created_at, metadata)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          value = EXCLUDED.value,
+          created_at = EXCLUDED.created_at,
+          metadata = EXCLUDED.metadata
+    chunk_size: "{{ workload.chunk_size }}"
+    auth:
+      sf:
+        source: credential
+        type: snowflake
+        key: "{{ workload.sf_auth }}"
+      pg:
+        source: credential
+        type: postgres
+        key: "{{ workload.pg_auth }}"
+    next:
+      - step: verify_pg_data
+
+  - step: verify_pg_data
+    desc: Verify data was transferred to PostgreSQL
+    type: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT 
+        COUNT(*) as row_count,
+        MIN(id) as min_id,
+        MAX(id) as max_id,
+        SUM(value) as total_value
+      FROM {{ workload.test_table_pg }};
+    next:
+      - step: setup_pg_source
+
+  - step: setup_pg_source
+    desc: Create PostgreSQL source table for reverse transfer
+    type: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      CREATE TABLE IF NOT EXISTS public.test_pg_source_query (
+        id INTEGER PRIMARY KEY,
+        description TEXT,
+        amount NUMERIC(10,2),
+        status TEXT
+      );
+      
+      TRUNCATE TABLE public.test_pg_source_query;
+      
+      INSERT INTO public.test_pg_source_query VALUES
+        (101, 'PG Record 1', 1000.00, 'active'),
+        (102, 'PG Record 2', 2000.50, 'pending'),
+        (103, 'PG Record 3', 3000.75, 'active'),
+        (104, 'PG Record 4', 4000.25, 'completed'),
+        (105, 'PG Record 5', 5000.99, 'active');
+    next:
+      - step: setup_sf_target
+
+  - step: setup_sf_target
+    desc: Create Snowflake target table for reverse transfer
+    type: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      CREATE OR REPLACE TABLE PG_IMPORTED_DATA_QUERY (
+        id INTEGER PRIMARY KEY,
+        description STRING,
+        amount NUMERIC(10,2),
+        status STRING
+      );
+    next:
+      - step: transfer_pg_to_sf
+
+  - step: transfer_pg_to_sf
+    desc: Transfer data from PostgreSQL to Snowflake using custom MERGE query
+    type: snowflake_transfer
+    direction: pg_to_sf
+    source:
+      query: "SELECT * FROM public.test_pg_source_query ORDER BY id"
+    target:
+      # Using custom MERGE query for Snowflake - enables full upsert capabilities
+      query: |
+        MERGE INTO PG_IMPORTED_DATA_QUERY AS target
+        USING (SELECT %s AS id, %s AS description, %s AS amount, %s AS status) AS source
+        ON target.id = source.id
+        WHEN MATCHED THEN
+          UPDATE SET
+            description = source.description,
+            amount = source.amount,
+            status = source.status
+        WHEN NOT MATCHED THEN
+          INSERT (id, description, amount, status)
+          VALUES (source.id, source.description, source.amount, source.status)
+    chunk_size: "{{ workload.chunk_size }}"
+    auth:
+      sf:
+        source: credential
+        type: snowflake
+        key: "{{ workload.sf_auth }}"
+      pg:
+        source: credential
+        type: postgres
+        key: "{{ workload.pg_auth }}"
+    next:
+      - step: verify_sf_data
+
+  - step: verify_sf_data
+    desc: Verify data was transferred to Snowflake
+    type: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      SELECT 
+        COUNT(*) as row_count,
+        MIN(id) as min_id,
+        MAX(id) as max_id,
+        SUM(amount) as total_amount
+      FROM PG_IMPORTED_DATA_QUERY;
+    next:
+      - step: cleanup
+
+  - step: cleanup
+    desc: Clean up test tables
+    type: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS {{ workload.test_table_pg }};
+      DROP TABLE IF EXISTS public.test_pg_source_query;
+    next:
+      - step: end
+
+  - step: end
+    desc: End Snowflake transfer test pipeline with custom queries
