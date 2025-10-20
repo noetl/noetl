@@ -17,6 +17,17 @@ workflow:
   - step: start
     desc: Start Snowflake transfer pipeline
     next:
+      - step: create_sf_database
+
+  - step: create_sf_database
+    desc: Create Snowflake database if it does not exist
+    type: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      CREATE DATABASE IF NOT EXISTS TEST_DB;
+      USE DATABASE TEST_DB;
+      USE SCHEMA PUBLIC;
+    next:
       - step: setup_pg_table
 
   - step: setup_pg_table
@@ -49,85 +60,39 @@ workflow:
         metadata VARIANT
       );
       
-      -- Insert test data
-      INSERT INTO {{ workload.test_table_sf }} VALUES
-        (1, 'Record 1', 100.50, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')),
-        (2, 'Record 2', 200.75, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')),
-        (3, 'Record 3', 300.25, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')),
-        (4, 'Record 4', 400.00, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')),
-        (5, 'Record 5', 500.99, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 3}'));
+      -- Insert test data using SELECT to allow PARSE_JSON
+      INSERT INTO {{ workload.test_table_sf }}
+      SELECT 1, 'Record 1', 100.50, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
+      UNION ALL
+      SELECT 2, 'Record 2', 200.75, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
+      UNION ALL
+      SELECT 3, 'Record 3', 300.25, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
+      UNION ALL
+      SELECT 4, 'Record 4', 400.00, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
+      UNION ALL
+      SELECT 5, 'Record 5', 500.99, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 3}');
     next:
       - step: transfer_sf_to_pg
 
   - step: transfer_sf_to_pg
     desc: Transfer data from Snowflake to PostgreSQL in chunks
-    type: python
-    code: |
-      import psycopg
-      from noetl.plugin.snowflake import execute_snowflake_transfer_task
-      from jinja2 import Environment
-      
-      def main(input_data):
-          """Transfer data from Snowflake to PostgreSQL using chunked streaming"""
-          
-          # Get parameters from input
-          execution_id = input_data.get('execution_id')
-          sf_auth = input_data.get('sf_auth')
-          pg_auth = input_data.get('pg_auth')
-          chunk_size = input_data.get('chunk_size', 1000)
-          
-          # Task configuration
-          task_config = {
-              'transfer_direction': 'sf_to_pg',
-              'source_query': 'SELECT * FROM TEST_DATA ORDER BY id',
-              'target_table': 'public.test_snowflake_transfer',
-              'chunk_size': chunk_size,
-              'mode': 'append'
-          }
-          
-          # Connection parameters (these would come from credentials in real usage)
-          task_with = {
-              'sf_account': input_data.get('sf_account'),
-              'sf_user': input_data.get('sf_user'),
-              'sf_password': input_data.get('sf_password'),
-              'sf_warehouse': input_data.get('sf_warehouse', 'COMPUTE_WH'),
-              'sf_database': input_data.get('sf_database'),
-              'sf_schema': input_data.get('sf_schema', 'PUBLIC'),
-              'pg_host': input_data.get('pg_host', 'localhost'),
-              'pg_port': input_data.get('pg_port', '5432'),
-              'pg_user': input_data.get('pg_user'),
-              'pg_password': input_data.get('pg_password'),
-              'pg_database': input_data.get('pg_database')
-          }
-          
-          context = {'execution_id': execution_id}
-          jinja_env = Environment()
-          
-          # Execute transfer
-          result = execute_snowflake_transfer_task(
-              task_config=task_config,
-              context=context,
-              jinja_env=jinja_env,
-              task_with=task_with
-          )
-          
-          return result
-    args:
-      execution_id: "{{ execution_id }}"
-      sf_auth: "{{ workload.sf_auth }}"
-      pg_auth: "{{ workload.pg_auth }}"
-      chunk_size: "{{ workload.chunk_size }}"
-      sf_account: "{{ secret.SF_ACCOUNT }}"
-      sf_user: "{{ secret.SF_USER }}"
-      sf_password: "{{ secret.SF_PASSWORD }}"
-      sf_warehouse: "{{ secret.SF_WAREHOUSE | default('COMPUTE_WH') }}"
-      sf_database: "{{ secret.SF_DATABASE }}"
-      sf_schema: "{{ secret.SF_SCHEMA | default('PUBLIC') }}"
-      pg_host: "{{ secret.PG_HOST | default('localhost') }}"
-      pg_port: "{{ secret.PG_PORT | default('5432') }}"
-      pg_user: "{{ secret.PG_USER }}"
-      pg_password: "{{ secret.PG_PASSWORD }}"
-      pg_database: "{{ secret.PG_DATABASE }}"
+    type: snowflake_transfer
+    direction: sf_to_pg
+    source:
+      query: "SELECT * FROM TEST_DATA ORDER BY id"
+    target:
+      table: "{{ workload.test_table_pg }}"
+    chunk_size: "{{ workload.chunk_size }}"
+    mode: append
+    auth:
+      sf:
+        source: credential
+        type: snowflake
+        key: "{{ workload.sf_auth }}"
+      pg:
+        source: credential
+        type: postgres
+        key: "{{ workload.pg_auth }}"
     next:
       - step: verify_pg_data
 
@@ -184,69 +149,23 @@ workflow:
 
   - step: transfer_pg_to_sf
     desc: Transfer data from PostgreSQL to Snowflake in chunks
-    type: python
-    code: |
-      import psycopg
-      from noetl.plugin.snowflake import execute_snowflake_transfer_task
-      from jinja2 import Environment
-      
-      def main(input_data):
-          """Transfer data from PostgreSQL to Snowflake using chunked streaming"""
-          
-          # Get parameters from input
-          execution_id = input_data.get('execution_id')
-          chunk_size = input_data.get('chunk_size', 1000)
-          
-          # Task configuration
-          task_config = {
-              'transfer_direction': 'pg_to_sf',
-              'source_query': 'SELECT * FROM public.test_pg_source ORDER BY id',
-              'target_table': 'PG_IMPORTED_DATA',
-              'chunk_size': chunk_size,
-              'mode': 'append'
-          }
-          
-          # Connection parameters
-          task_with = {
-              'sf_account': input_data.get('sf_account'),
-              'sf_user': input_data.get('sf_user'),
-              'sf_password': input_data.get('sf_password'),
-              'sf_warehouse': input_data.get('sf_warehouse', 'COMPUTE_WH'),
-              'sf_database': input_data.get('sf_database'),
-              'sf_schema': input_data.get('sf_schema', 'PUBLIC'),
-              'pg_host': input_data.get('pg_host', 'localhost'),
-              'pg_port': input_data.get('pg_port', '5432'),
-              'pg_user': input_data.get('pg_user'),
-              'pg_password': input_data.get('pg_password'),
-              'pg_database': input_data.get('pg_database')
-          }
-          
-          context = {'execution_id': execution_id}
-          jinja_env = Environment()
-          
-          # Execute transfer
-          result = execute_snowflake_transfer_task(
-              task_config=task_config,
-              context=context,
-              jinja_env=jinja_env,
-              task_with=task_with
-          )
-          
-          return result
-    args:
-      execution_id: "{{ execution_id }}"
-      chunk_size: "{{ workload.chunk_size }}"
-      sf_account: "{{ secret.SF_ACCOUNT }}"
-      sf_user: "{{ secret.SF_USER }}"
-      sf_password: "{{ secret.SF_PASSWORD }}"
-      sf_warehouse: "{{ secret.SF_WAREHOUSE | default('COMPUTE_WH') }}"
-      sf_database: "{{ secret.SF_DATABASE }}"
-      sf_schema: "{{ secret.SF_SCHEMA | default('PUBLIC') }}"
-      pg_host: "{{ secret.PG_HOST | default('localhost') }}"
-      pg_port: "{{ secret.PG_PORT | default('5432') }}"
-      pg_user: "{{ secret.PG_USER }}"
-      pg_password: "{{ secret.PG_PASSWORD }}"
-      pg_database: "{{ secret.PG_DATABASE }}"
+    type: snowflake_transfer
+    direction: pg_to_sf
+    source:
+      query: "SELECT * FROM public.test_pg_source ORDER BY id"
+    target:
+      table: PG_IMPORTED_DATA
+    chunk_size: "{{ workload.chunk_size }}"
+    mode: append
+    auth:
+      sf:
+        source: credential
+        type: snowflake
+        key: "{{ workload.sf_auth }}"
+      pg:
+        source: credential
+        type: postgres
+        key: "{{ workload.pg_auth }}"
     next:
       - step: verify_sf_data
 

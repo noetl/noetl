@@ -58,8 +58,8 @@ def transfer_snowflake_to_postgres(
         sf_cursor = sf_conn.cursor()
         sf_cursor.execute(source_query)
         
-        # Get column names
-        columns = [desc[0] for desc in sf_cursor.description]
+        # Get column names (lowercase for PostgreSQL compatibility)
+        columns = [desc[0].lower() for desc in sf_cursor.description]
         column_list = ', '.join([f'"{col}"' for col in columns])
         placeholders = ', '.join(['%s'] * len(columns))
         

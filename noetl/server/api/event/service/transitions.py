@@ -363,7 +363,8 @@ def _build_task(
         'where', 'limit', 'chunk', 'order_by',
         'input', 'payload', 'with', 'auth', 'args',
         'resource_path', 'content', 'path', 'iterator', 'save',
-        'credential', 'credentials', 'retry'
+        'credential', 'credentials', 'retry',
+        'direction', 'source', 'target', 'chunk_size'  # snowflake_transfer fields
     ):
         if step_def.get(field) is not None:
             task[field] = step_def.get(field)
@@ -419,7 +420,7 @@ def _is_actionable(step_def: Dict[str, Any]) -> bool:
         return True
     
     if step_type in {
-        'http', 'python', 'duckdb', 'postgres', 'snowflake',
+        'http', 'python', 'duckdb', 'postgres', 'snowflake', 'snowflake_transfer',
         'secrets', 'workbook', 'playbook', 'save', 'iterator'
     }:
         if step_type == 'python':

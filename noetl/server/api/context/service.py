@@ -34,6 +34,9 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
     playbook_version = None
     steps = []
     
+    # Initialize DAO for event log access
+    dao = EventLog()
+    
     # Fetch workload from noetl.workload table (primary source of truth)
     async with get_async_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -58,7 +61,6 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
     
     # Fallback: try to fetch from earliest event context if workload table had no data
     if not workload:
-        dao = EventLog()
         first_ctx = await dao.get_earliest_context(execution_id)
         if first_ctx:
             try:
