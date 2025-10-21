@@ -40,6 +40,7 @@ env/
 /status.json.clean
 /status.json
 /tests/fixtures/credentials/gcs_hmac_local.json
+/tests/fixtures/credentials/sf_test.json
 
 # Ignore local credential overrides (keep only templates in git)
 /tests/fixtures/credentials/*_local.json
