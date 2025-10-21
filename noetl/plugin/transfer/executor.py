@@ -24,6 +24,7 @@ Configuration:
 """
 
 from typing import Dict, Any, Optional, Callable
+import httpx
 from noetl.core.logger import setup_logger
 from noetl.plugin.snowflake.transfer import (
     transfer_snowflake_to_postgres,
@@ -33,13 +34,121 @@ from noetl.plugin.snowflake.transfer import (
 logger = setup_logger(__name__, include_location=True)
 
 
-# Supported database types
-SUPPORTED_TYPES = {'snowflake', 'postgres'}
+def transfer_http_to_postgres(
+    url: str,
+    method: str,
+    headers: Dict[str, str],
+    pg_conn,
+    target_table: str,
+    mapping: Dict[str, str],
+    data_path: str = None,
+    chunk_size: int = 1000,
+    mode: str = 'insert',
+    progress_callback: Optional[Callable] = None
+) -> Dict[str, Any]:
+    """
+    Transfer data from HTTP API to PostgreSQL.
+    
+    Args:
+        url: HTTP endpoint URL
+        method: HTTP method (GET, POST)
+        headers: HTTP headers
+        pg_conn: PostgreSQL connection
+        target_table: Target table name
+        mapping: Column mapping {pg_column: json_field}
+        data_path: Path to data in response (e.g., 'data', 'results.items')
+        chunk_size: Rows per batch
+        mode: insert|upsert
+        progress_callback: Progress reporting callback
+        
+    Returns:
+        Dict with rows_transferred, chunks_processed
+    """
+    logger.info(f"Starting HTTP to PostgreSQL transfer from {url}")
+    
+    # Fetch data from HTTP endpoint
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.request(method, url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+    except Exception as e:
+        raise ValueError(f"HTTP request failed: {e}")
+    
+    # Extract data from response using data_path
+    if data_path:
+        for part in data_path.split('.'):
+            if isinstance(data, dict):
+                data = data.get(part, [])
+            else:
+                # If data is already a list and data_path is specified, skip extraction
+                break
+    
+    # Ensure data is a list
+    if not isinstance(data, list):
+        data = [data]
+    
+    logger.info(f"Fetched {len(data)} records from HTTP endpoint")
+    
+    # Build INSERT statement
+    columns = list(mapping.keys())
+    placeholders = ', '.join(['%s'] * len(columns))
+    insert_sql = f"INSERT INTO {target_table} ({', '.join(columns)}) VALUES ({placeholders})"
+    
+    # Transfer data in chunks
+    cursor = pg_conn.cursor()
+    rows_transferred = 0
+    chunks_processed = 0
+    
+    try:
+        for i in range(0, len(data), chunk_size):
+            chunk = data[i:i + chunk_size]
+            
+            # Extract values according to mapping
+            for record in chunk:
+                values = []
+                for pg_col, json_field in mapping.items():
+                    # Support nested field access with dots
+                    value = record
+                    for field_part in json_field.split('.'):
+                        value = value.get(field_part) if isinstance(value, dict) else None
+                        if value is None:
+                            break
+                    values.append(value)
+                
+                cursor.execute(insert_sql, values)
+                rows_transferred += 1
+            
+            pg_conn.commit()
+            chunks_processed += 1
+            
+            if progress_callback:
+                progress_callback(rows_transferred, chunks_processed)
+        
+        cursor.close()
+        
+        logger.info(f"Transferred {rows_transferred} rows in {chunks_processed} chunks")
+        
+        return {
+            'rows_transferred': rows_transferred,
+            'chunks_processed': chunks_processed,
+            'records_fetched': len(data)
+        }
+        
+    except Exception as e:
+        pg_conn.rollback()
+        cursor.close()
+        raise ValueError(f"PostgreSQL insert failed: {e}")
+
+
+# Supported database types and data sources
+SUPPORTED_TYPES = {'snowflake', 'postgres', 'http'}
 
 # Transfer function registry: (source_type, target_type) -> function
 TRANSFER_FUNCTIONS = {
     ('snowflake', 'postgres'): transfer_snowflake_to_postgres,
     ('postgres', 'snowflake'): transfer_postgres_to_snowflake,
+    ('http', 'postgres'): transfer_http_to_postgres,
 }
 
 
@@ -171,15 +280,26 @@ def execute_transfer_action(
         source_type = source_config.get('type', '').lower()
         source_query = source_config.get('query')
         source_auth = source_config.get('auth')
+        source_url = source_config.get('url')
+        source_method = source_config.get('method', 'GET')
+        source_headers = source_config.get('headers', {})
+        source_data_path = source_config.get('data_path')
         
         if not source_type:
             raise ValueError("source.type is required")
         if source_type not in SUPPORTED_TYPES:
             raise ValueError(f"Unsupported source type: {source_type}. Supported: {SUPPORTED_TYPES}")
-        if not source_query:
-            raise ValueError("source.query is required")
-        if not source_auth:
-            raise ValueError("source.auth is required")
+        
+        # Validate source-specific requirements
+        if source_type == 'http':
+            if not source_url:
+                raise ValueError("source.url is required for HTTP source")
+        else:
+            # Database sources need query and auth
+            if not source_query:
+                raise ValueError("source.query is required")
+            if not source_auth:
+                raise ValueError("source.auth is required")
         
         # Extract and validate target configuration
         target_config = task_config.get('target', {})
@@ -190,6 +310,7 @@ def execute_transfer_action(
         target_table = target_config.get('table')
         target_query = target_config.get('query')
         target_auth = target_config.get('auth')
+        target_mapping = target_config.get('mapping', {})
         
         if not target_type:
             raise ValueError("target.type is required")
@@ -217,22 +338,27 @@ def execute_transfer_action(
         direction_name = f"{source_type}_to_{target_type}"
         
         logger.info(f"Transfer direction: {source_type} -> {target_type} ({direction_name})")
-        logger.info(f"Source query: {source_query[:100]}...")
+        if source_query:
+            logger.info(f"Source query: {source_query[:100]}...")
         if target_table:
             logger.info(f"Target table: {target_table}")
         if target_query:
             logger.info(f"Target query: {target_query[:100]}...")
         logger.info(f"Chunk size: {chunk_size}, Mode: {mode if not target_query else 'custom'}")
         
-        # Resolve authentication for source
-        logger.info(f"Resolving authentication for source ({source_type})...")
-        source_auth_data = _resolve_auth(source_auth, jinja_env, context)
-        source_conn = _create_connection(source_type, source_auth_data)
+        # Resolve authentication and create connections for database sources/targets
+        source_conn = None
+        target_conn = None
         
-        # Resolve authentication for target
-        logger.info(f"Resolving authentication for target ({target_type})...")
-        target_auth_data = _resolve_auth(target_auth, jinja_env, context)
-        target_conn = _create_connection(target_type, target_auth_data)
+        if source_type != 'http':
+            logger.info(f"Resolving authentication for source ({source_type})...")
+            source_auth_data = _resolve_auth(source_auth, jinja_env, context)
+            source_conn = _create_connection(source_type, source_auth_data)
+        
+        if target_type != 'http':
+            logger.info(f"Resolving authentication for target ({target_type})...")
+            target_auth_data = _resolve_auth(target_auth, jinja_env, context)
+            target_conn = _create_connection(target_type, target_auth_data)
         
         # Progress callback for reporting
         def progress_callback(rows_so_far: int, chunk_num: int):
@@ -251,7 +377,20 @@ def execute_transfer_action(
         # Execute transfer based on direction
         logger.info(f"Starting {direction_name} transfer...")
         
-        if direction_key == ('snowflake', 'postgres'):
+        if direction_key == ('http', 'postgres'):
+            result = transfer_function(
+                url=source_url,
+                method=source_method,
+                headers=source_headers,
+                pg_conn=target_conn,
+                target_table=target_table,
+                mapping=target_mapping,
+                data_path=source_data_path,
+                chunk_size=chunk_size,
+                mode=mode,
+                progress_callback=progress_callback
+            )
+        elif direction_key == ('snowflake', 'postgres'):
             result = transfer_function(
                 sf_conn=source_conn,
                 pg_conn=target_conn,
@@ -276,9 +415,11 @@ def execute_transfer_action(
         else:
             raise ValueError(f"Transfer function not implemented for {direction_key}")
         
-        # Close connections
-        _close_connection(source_type, source_conn)
-        _close_connection(target_type, target_conn)
+        # Close connections (if they exist)
+        if source_conn:
+            _close_connection(source_type, source_conn)
+        if target_conn:
+            _close_connection(target_type, target_conn)
         
         logger.info(f"Transfer completed: {result}")
         
