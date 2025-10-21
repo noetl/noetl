@@ -7,12 +7,35 @@ NoETL server API with automatic enrichment of worker metadata and tracing.
 
 import os
 import socket
+import json
 import httpx
+from decimal import Decimal
 from typing import Dict, Any
 
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _decimal_serializer(obj):
+    """
+    JSON serializer for objects not serializable by default json code.
+    
+    Handles:
+    - Decimal: Convert to float for JSON serialization
+    
+    Args:
+        obj: Object to serialize
+        
+    Returns:
+        JSON-serializable representation of the object
+        
+    Raises:
+        TypeError: If object type is not handled
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
@@ -43,9 +66,16 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
         
         logger.debug(f"Reporting event to {url}: {event_data.get('event_type', 'unknown')}")
         
+        # Serialize event data with Decimal handling
+        json_data = json.dumps(event_data, default=_decimal_serializer)
+        
         # Send the event to the server
         with httpx.Client(timeout=10.0) as client:
-            response = client.post(url, json=event_data)
+            response = client.post(
+                url, 
+                content=json_data,
+                headers={"Content-Type": "application/json"}
+            )
             response.raise_for_status()
             return response.json()
             
