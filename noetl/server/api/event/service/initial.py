@@ -300,7 +300,7 @@ def _is_actionable(step_def: Dict[str, Any]) -> bool:
     
     # Action types
     if step_type in {
-        'http', 'python', 'duckdb', 'postgres', 'snowflake',
+        'http', 'python', 'duckdb', 'postgres', 'snowflake', 'snowflake_transfer', 'transfer',
         'secrets', 'workbook', 'playbook', 'save', 'iterator'
     }:
         if step_type == 'python':

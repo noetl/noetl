@@ -53,6 +53,7 @@ def execute_task(
     from ..postgres import execute_postgres_task
     from ..snowflake import execute_snowflake_task
     from ..snowflake_transfer import execute_snowflake_transfer_action
+    from ..transfer import execute_transfer_action
     from ..secret import execute_secrets_task
     from ..playbook import execute_playbook_task
     from ..workbook import execute_workbook_task
@@ -77,6 +78,9 @@ def execute_task(
         return execute_snowflake_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
     elif task_type == 'snowflake_transfer':
         return execute_snowflake_transfer_action(task_config, context, jinja_env, task_with or {}, log_event_callback)
+    elif task_type == 'transfer':
+        # Generic transfer executor - infers direction from source/target types
+        return execute_transfer_action(task_config, context, jinja_env, task_with or {}, log_event_callback)
     elif task_type == 'secrets':
         # For secrets, we need to get the secret_manager from context or somewhere
         secret_manager = context.get('secret_manager')
@@ -93,7 +97,7 @@ def execute_task(
     else:
         raise ValueError(
             f"Unknown task type '{raw_type}'. "
-            f"Available types: http, python, duckdb, postgres, snowflake, snowflake_transfer, secrets, playbook, workbook, iterator, save"
+            f"Available types: http, python, duckdb, postgres, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, iterator, save"
         )
 
 
