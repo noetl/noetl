@@ -2,7 +2,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // Derive API base URL from env with sensible default (prefers NoETL default 8083)
-const apiUrl = process.env.VITE_API_BASE_URL || 'http://localhost:8083'
+let apiUrl = process.env.VITE_API_BASE_URL
+
+console.log("VITE_API_BASE_URL=", apiUrl)
+if (!apiUrl) {
+  console.warn("VITE_API_BASE_URL is not set")
+  apiUrl = "http://localhost:8082/api"
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
