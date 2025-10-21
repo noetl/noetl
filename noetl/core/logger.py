@@ -1,3 +1,4 @@
+import re
 import sys
 import json
 import logging
@@ -215,6 +216,16 @@ class CustomFormatter(logging.Formatter):
         if extra_items:
             extra_info = f"\n     {' '.join(extra_items)}"
         formatted_log = f"{metadata_line}\n{message_line}{extra_info}"
+        if record.exc_info:
+            try:
+                # for vescode clickable stack traces from logs files
+                format_exception = traceback.format_exception(record.exc_info[0], record.exc_info[1], record.exc_info[2])
+                for i in range(len(format_exception)):
+                    format_exception[i] = re.sub(r'File "([^"]+)", line (\d+),', r'File "\1:\2"', format_exception[i])
+                format_exception = "".join(format_exception)
+            except Exception as e:
+                format_exception += "\n" + self.formatException(record.exc_info)
+            formatted_log += f"\n{format_exception}"
         return formatted_log
 
 
@@ -233,6 +244,8 @@ class JSONFormatter(logging.Formatter):
                 "function": record.funcName,
                 "line": record.lineno,
             }
+        if record.exc_info:
+            log_dict["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_dict, ensure_ascii=False)
 
 def setup_logger(name: str, include_location=False, use_json=False):
@@ -254,3 +267,16 @@ def setup_logger(name: str, include_location=False, use_json=False):
 
 
 logger = setup_logger(__name__, include_location=True)
+
+if __name__ == "__main__":
+    test_logger = setup_logger("test_logger", include_location=True)
+    # test_logger.debug("This is a debug message", extra={"scope": "test_scope", "user_id": 123})
+    # test_logger.info("This is an info message", extra={"scope": "test_scope", "operation": "data_fetch"})
+    # test_logger.success("This is a success message", extra={"scope": "test_scope", "task": "data_load"})
+    # test_logger.warning("This is a warning message", extra={"scope": "test_scope", "disk_space": "low"})
+    # test_logger.error("This is an error message", extra={"scope": "test_scope", "error_code": 500})
+    test_logger.critical("This is a critical message", extra={"scope": "test_scope", "system": "down"})
+    try:
+        1 / 0
+    except Exception as e:
+        test_logger.exception("An exception occurred", extra={"scope": "test_scope", "action": "division"})
