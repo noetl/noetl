@@ -25,12 +25,14 @@ The `transfer` action type is a modernized, extensible approach to data movement
 - step: transfer_data
   type: transfer
   source:
-    type: snowflake|postgres|...
+    type: snowflake|postgres|http|...
     auth:
       source: credential
       type: snowflake
       key: "credential_name"
-    query: "SELECT * FROM source_table"
+    query: "SELECT * FROM source_table"  # For database sources
+    url: "https://api.example.com/data"  # For HTTP sources
+    method: GET                          # For HTTP sources
   target:
     type: postgres|snowflake|...
     auth:
@@ -39,10 +41,58 @@ The `transfer` action type is a modernized, extensible approach to data movement
       key: "credential_name"
     table: "target_table"  # OR
     query: "INSERT INTO target_table ..."  # Custom query
+    mapping:              # For HTTP sources
+      target_col: source_field
   chunk_size: 1000
 ```
 
 ## Test Playbooks
+
+### http_to_postgres_transfer.yaml
+
+Transfer data from HTTP REST API to PostgreSQL database.
+
+**Features Tested:**
+- HTTP GET request to external API (JSONPlaceholder)
+- JSON array response handling
+- Column mapping from JSON fields to PostgreSQL columns
+- Table creation and data insertion
+- Record count validation
+
+**Configuration:**
+```yaml
+source:
+  type: http
+  url: "{{ workload.api_url }}"
+  method: GET
+target:
+  type: postgres
+  auth: "{{ workload.pg_credential }}"
+  table: public.http_posts
+  mode: insert
+  mapping:
+    post_id: id        # Maps JSON 'id' to PostgreSQL 'post_id'
+    user_id: userId
+    title: title
+    body: body
+```
+
+**Usage:**
+```bash
+# Register playbook
+task playbook:local:register PLAYBOOK=tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer.yaml
+
+# Execute playbook
+curl -X POST http://localhost:8083/api/executions/run \
+  -H "Content-Type: application/json" \
+  -d '{"path": "tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer", "payload": {}}'
+```
+
+**Expected Result:**
+- Fetches 100 posts from JSONPlaceholder API
+- Creates `public.http_posts` table with columns: post_id, user_id, title, body, fetched_at
+- Inserts all 100 records with mapped columns
+- Returns count verification
 
 ### snowflake_postgres.yaml
 
@@ -72,8 +122,11 @@ curl -X POST http://localhost:8083/api/execute \
 Currently supported:
 - ✅ Snowflake → PostgreSQL
 - ✅ PostgreSQL → Snowflake
+- ✅ HTTP → PostgreSQL
 
 Future additions (easy to add):
+- HTTP → Snowflake
+- HTTP → DuckDB
 - BigQuery → PostgreSQL
 - PostgreSQL → BigQuery
 - Redshift → PostgreSQL
@@ -82,11 +135,13 @@ Future additions (easy to add):
 
 ## Adding New Data Sources
 
-To add a new data source (e.g., MySQL):
+To add a new data source (e.g., MySQL or HTTP):
+
+### Adding a Database Source (MySQL)
 
 1. **Add connection logic** in `noetl/plugin/transfer/executor.py`:
    ```python
-   SUPPORTED_TYPES = {'snowflake', 'postgres', 'mysql'}
+   SUPPORTED_TYPES = {'snowflake', 'postgres', 'mysql', 'http'}
    
    def _create_connection(self, db_type: str, auth_data: Dict[str, Any]):
        elif db_type == 'mysql':
@@ -109,6 +164,33 @@ To add a new data source (e.g., MySQL):
    ```
 
 4. **Test** with a new playbook in this directory
+
+### Adding an HTTP Source
+
+HTTP sources don't require authentication setup but need:
+
+1. **Add HTTP handling** in `noetl/plugin/transfer/executor.py`:
+   ```python
+   def transfer_http_to_postgres(url, method, headers, pg_conn, 
+                                  target_table, mapping, ...):
+       # Fetch from HTTP
+       response = httpx.Client().request(method, url, headers=headers)
+       data = response.json()
+       
+       # Handle data_path extraction if needed
+       # Bulk insert with column mapping
+   ```
+
+2. **Register in TRANSFER_FUNCTIONS**:
+   ```python
+   TRANSFER_FUNCTIONS = {
+       ('http', 'postgres'): transfer_http_to_postgres,
+       ('http', 'snowflake'): transfer_http_to_snowflake,
+       # ... other combinations
+   }
+   ```
+
+3. **No connection creation needed** - HTTP uses httpx client directly
 
 ## Architecture
 
