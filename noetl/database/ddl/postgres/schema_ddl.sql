@@ -441,6 +441,7 @@ END;
 $$ LANGUAGE plpgsql;
 ALTER FUNCTION noetl.snowflake_id() OWNER TO noetl;
 ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+ALTER TABLE noetl.workload ALTER COLUMN execution_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.catalog ALTER COLUMN catalog_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();

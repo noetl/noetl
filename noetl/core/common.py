@@ -514,7 +514,7 @@ async def get_async_db_connection(optional: bool = False):
                 yield conn
                 return
         except Exception as pool_error:
-            logger.warning(f"Async connection pool error: {pool_error}. Falling back to direct connection.")
+            logger.exception(f"Async connection pool error: {pool_error}. Falling back to direct connection.")
     
     # Direct connection fallback
     conn = None
@@ -522,7 +522,7 @@ async def get_async_db_connection(optional: bool = False):
         conn = await psycopg.AsyncConnection.connect(get_pgdb_connection())
         yield conn
     except Exception as e:
-        logger.error(f"Async connection failed: {e}")
+        logger.exception(f"Async connection failed: {e}")
         if optional:
             logger.warning("Async database connection is optional, continuing without it.")
             yield None
