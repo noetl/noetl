@@ -68,7 +68,8 @@ class EventService:
                         # catalog_id = row[1]
                         # metadata = row[5] if row[5] else {}  # meta is now JSONB
                         # input_context = json.loads(row[6]) if row[6] else {}
-                        output_result = json.loads(row[7]) if row[7] else {}
+                        
+                        output_result = row[7] if row[7] else {}
                         
                         # Try to get playbook info from catalog_id first, then fallback to metadata
                         playbook_id = row[10]

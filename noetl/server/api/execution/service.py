@@ -8,6 +8,7 @@ Separates business logic from endpoint routing concerns.
 import json
 from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException
+from psycopg.rows import dict_row
 from noetl.core.logger import setup_logger
 from noetl.core.common import get_async_db_connection
 from noetl.server.api.broker import execute_playbook_via_broker
@@ -219,36 +220,35 @@ class ExecutionService:
             # Prepare execution parameters
             parameters = request.parameters or {}
             merge = request.merge
-            sync_to_postgres = request.sync_to_postgres
             
             # Extract context
             context = request.context
             parent_execution_id = context.parent_execution_id if context else None
             parent_event_id = context.parent_event_id if context else None
             parent_step = context.parent_step if context else None
+
             
+            execution_id = await ExecutionService.create_workload(
+                path, version, parameters
+            )
             # Execute via broker
             result = execute_playbook_via_broker(
+                execution_id=execution_id,
                 playbook_content=content,
                 playbook_path=path,
                 playbook_version=version,
                 input_payload=parameters,
-                sync_to_postgres=sync_to_postgres,
                 merge=merge,
                 parent_execution_id=parent_execution_id,
                 parent_event_id=parent_event_id,
                 parent_step=parent_step,
                 requestor_info=requestor_info
             )
-            
-            # Persist workload record for server-side tracking
-            exec_id = result.get("execution_id")
-            if exec_id and sync_to_postgres:
-                await ExecutionService.persist_workload(exec_id, parameters)
+
             
             # Build response - ensure all fields are proper types
             execution_response = ExecutionResponse(
-                execution_id=str(exec_id) if exec_id else "",
+                execution_id=str(execution_id),
                 catalog_id=str(catalog_id) if catalog_id is not None else None,
                 path=str(path) if path else None,
                 playbook_id=str(path) if path else None,  # For backward compatibility
@@ -258,10 +258,10 @@ class ExecutionService:
                 status="running",
                 timestamp=result.get("timestamp", ""),
                 progress=0,
-                result=result if not sync_to_postgres else None
+                result=result
             )
-            
-            logger.debug(f"Execution created: execution_id={exec_id}")
+
+            logger.debug(f"Execution created: execution_id={execution_id}")
             return execution_response
             
         except HTTPException:
@@ -270,32 +270,37 @@ class ExecutionService:
             logger.error(f"Error executing request: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
+    # @staticmethod
+    # async def create_workload(path: str, version: str, workload: Dict[str, Any] | None) -> int:
+    #     payload = {
+    #         'path': path,
+    #         'version': version,
+    #         'workload': workload or {},
+    #     }
+    #     async with get_async_db_connection() as conn:
+    #         conn.row_factory = dict_row
+    #         async with conn.cursor() as cur:
+    #             await cur.execute(
+    #                 "INSERT INTO noetl.workload (data) VALUES (%(data)s) RETURNING execution_id",
+    #                 {"data": payload},
+    #             )
+    #             return (await cur.fetchone())["execution_id"]
     @staticmethod
-    async def persist_workload(execution_id: str, parameters: Dict[str, Any]) -> None:
-        """
-        Persist workload data for an execution.
-        
-        Args:
-            execution_id: Execution ID
-            parameters: Execution parameters to persist
-        """
-        try:
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO workload (execution_id, data)
-                        VALUES (%s, %s)
-                        ON CONFLICT (execution_id) DO UPDATE SET data = EXCLUDED.data
-                        """,
-                        (execution_id, json.dumps(parameters or {}))
-                    )
-                    try:
-                        await conn.commit()
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning(f"Failed to persist workload for execution {execution_id}: {e}")
+    async def create_workload(path: str, version: str, workload: Dict[str, Any] | None) -> int:
+        payload = {
+            'path': path,
+            'version': version,
+            'workload': workload or {},
+        }
+        payload = json.dumps(payload)
+        async with get_async_db_connection() as conn:
+            # conn.row_factory = dict_row
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO noetl.workload (data) VALUES (%s) RETURNING execution_id",
+                    (payload,),
+                )
+                return (await cur.fetchone())[0]
 
 
 async def execute_request(request: ExecutionRequest, requestor_info: Optional[Dict[str, Any]] = None) -> ExecutionResponse:

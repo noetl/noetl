@@ -89,10 +89,6 @@ class ExecutionRequest(BaseModel):
         default=False,
         description="Merge parameters with existing workload data"
     )
-    sync_to_postgres: bool = Field(
-        default=True,
-        description="Persist execution state to PostgreSQL"
-    )
     
     # Context (supports both nested and flattened formats)
     context: Optional[ExecutionContext] = Field(
