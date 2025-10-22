@@ -9,6 +9,7 @@ import json
 from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException
 from psycopg.rows import dict_row
+from noetl.core.db.pool import get_pool
 from noetl.core.logger import setup_logger
 from noetl.core.common import get_async_db_connection
 from noetl.server.api.broker import execute_playbook_via_broker
@@ -267,24 +268,9 @@ class ExecutionService:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error executing request: {e}")
+            logger.exception(f"Error executing request: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    # @staticmethod
-    # async def create_workload(path: str, version: str, workload: Dict[str, Any] | None) -> int:
-    #     payload = {
-    #         'path': path,
-    #         'version': version,
-    #         'workload': workload or {},
-    #     }
-    #     async with get_async_db_connection() as conn:
-    #         conn.row_factory = dict_row
-    #         async with conn.cursor() as cur:
-    #             await cur.execute(
-    #                 "INSERT INTO noetl.workload (data) VALUES (%(data)s) RETURNING execution_id",
-    #                 {"data": payload},
-    #             )
-    #             return (await cur.fetchone())["execution_id"]
     @staticmethod
     async def create_workload(path: str, version: str, workload: Dict[str, Any] | None) -> int:
         payload = {
@@ -292,15 +278,14 @@ class ExecutionService:
             'version': version,
             'workload': workload or {},
         }
-        payload = json.dumps(payload)
-        async with get_async_db_connection() as conn:
-            # conn.row_factory = dict_row
+        async with get_pool().connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "INSERT INTO noetl.workload (data) VALUES (%s) RETURNING execution_id",
-                    (payload,),
+                    "INSERT INTO noetl.workload (data) VALUES (%(data)s) RETURNING execution_id",
+                    {"data": json.dumps(payload)},
                 )
-                return (await cur.fetchone())[0]
+                return (await cur.fetchone())["execution_id"]
+
 
 
 async def execute_request(request: ExecutionRequest, requestor_info: Optional[Dict[str, Any]] = None) -> ExecutionResponse:
