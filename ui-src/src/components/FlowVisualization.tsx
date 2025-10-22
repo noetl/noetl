@@ -75,7 +75,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
 
   // Provide nodeTypes directly (already a stable object export)
   // React Flow expects a mapping of type -> React component receiving {id, data, ...}; our adapted components satisfy this
-  const customNodeTypes = useMemo(() => nodeTypes as any, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -506,18 +505,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                onNodeClick={(e, node) => {
-                  // Explicit global flag set by HTTP edit button to bypass type modal
-                  if ((window as any).__skipNextNodeModal) {
-                    (window as any).__skipNextNodeModal = false;
-                    return;
-                  }
-                  const target = e.target as HTMLElement;
-                  if (target && target.closest('.http-edit-btn')) return;
-                  const task = (node.data as any)?.task;
-                  if (task) setActiveTask(task);
-                }}
-                nodeTypes={customNodeTypes}
+                // onNodeClick={(e, node) => {
+                //   const target = e.target as HTMLElement;
+                //   console.log('Node click target:', target);
+                //   if (target && target.closest('.edit-node-btn')) return;
+                //   const task = (node.data as any)?.task;
+                //   if (task) setActiveTask(task);
+                // }}
+                nodeTypes={nodeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
                 connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
                 fitView
