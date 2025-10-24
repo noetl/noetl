@@ -9,14 +9,119 @@ import json
 from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException
 from psycopg.rows import dict_row
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from noetl.core.db.pool import get_pool
 from noetl.core.logger import setup_logger
-from noetl.core.common import get_async_db_connection
 from noetl.server.api.broker import execute_playbook_via_broker
 from .schema import ExecutionRequest, ExecutionResponse
 
 logger = setup_logger(__name__, include_location=True)
 
+
+class CatalogEntry(BaseModel):
+    """Resolved catalog entry with all required metadata."""
+    path: str
+    version: str
+    content: str
+    catalog_id: str
+
+
+class ResourceContent(BaseModel):
+    catalog_id: str
+    path: str
+    version: int
+    content: str
+
+    model_config = ConfigDict(from_attributes=True, coerce_numbers_to_str=True)
+
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Path cannot be empty")
+        return cleaned
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def parse_version(cls, value: Any) -> Optional[int]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Version must be an integer") from exc
+
+    @model_validator(mode="after")
+    def validate_identifiers(self) -> "ResourceContent":
+        if not self.catalog_id and not self.path:
+            raise ValueError("Either catalog_id or path must be provided")
+        return self
+
+    @staticmethod
+    def _build_query(        
+        catalog_id: Optional[str] = None,
+        path: Optional[str] = None,
+        version: Optional[int] = None) -> tuple[str, Dict[str, Any]]:
+        base_query = "SELECT catalog_id, path, version, content FROM noetl.catalog"
+        params: Dict[str, Any] = {}
+
+        if catalog_id:
+            where_clause = "catalog_id = %(catalog_id)s"
+            params["catalog_id"] = catalog_id
+            order_clause = ""
+        else:
+            clauses = ["path = %(path)s"]
+            params["path"] = path
+            if version is not None:
+                clauses.append("version = %(version)s")
+                params["version"] = version
+                order_clause = ""
+            else:
+                order_clause = "ORDER BY version DESC"
+            where_clause = " AND ".join(clauses)
+
+        parts = [f"{base_query} WHERE {where_clause}"]
+        if order_clause:
+            parts.append(order_clause)
+        parts.append("LIMIT 1")
+
+        return " ".join(parts), params
+
+    @staticmethod
+    async def get(
+        catalog_id: Optional[str] = None,
+        path: Optional[str] = None,
+        version: Optional[int] = None
+    ) -> "ResourceContent | None":
+        """
+        Execute a database query and return a single row.
+        
+        Args:
+            query: SQL query string with named parameters
+            params: Dictionary of named parameters
+            
+        Returns:
+            Dictionary representing the row, or None if not found
+            
+        Raises:
+            RuntimeError: If database error occurs
+        """
+        query, params = ResourceContent._build_query(
+            catalog_id=catalog_id,
+            path=path,
+            version=version
+        )
+        async with get_pool().connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                row = await cur.fetchone()
+                return ResourceContent(**row) if row else None
 
 class ExecutionService:
     """
@@ -30,159 +135,27 @@ class ExecutionService:
     """
     
     @staticmethod
-    async def resolve_catalog_entry(request: ExecutionRequest) -> Tuple[str, str, str, Optional[str]]:
+    async def resolve_catalog_entry(request: ExecutionRequest) -> CatalogEntry:
         """
         Resolve catalog entry from request identifiers.
         
         Returns:
-            Tuple of (path, version, content, catalog_id)
+            CatalogEntry with resolved metadata
         
         Raises:
-            HTTPException: If catalog entry not found or invalid
+            ValueError: If catalog entry not found or invalid
+            RuntimeError: If database error occurs
         """
-        catalog_id = request.catalog_id
-        path = request.path
-        version = request.version or "latest"
-        execution_type = request.type
+        # Build lookup input from request
         
-        logger.debug(
-            f"Resolving catalog entry: catalog_id={catalog_id}, "
-            f"path={path}, version={version}, type={execution_type}"
+        resource_content = await ResourceContent.get(
+            catalog_id=request.catalog_id,
+            path=request.path,
+            version=request.version
         )
         
-        # Strategy 1: catalog_id lookup
-        if catalog_id:
-            logger.debug(f"Using catalog_id lookup: {catalog_id}")
-            
-            row = None
-            db_error = None
-            
-            try:
-                async with get_async_db_connection() as conn:
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            """
-                            SELECT catalog_id, path, version, content
-                            FROM noetl.catalog
-                            WHERE catalog_id = %s
-                            """,
-                            (catalog_id,)
-                        )
-                        row = await cur.fetchone()
-            except Exception as e:
-                logger.error(f"Database error during catalog_id lookup: {e}")
-                db_error = e
-            
-            # Check results after context manager exits
-            if db_error:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Database error: {str(db_error)}"
-                )
-            
-            if not row:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Catalog entry with ID '{catalog_id}' not found"
-                )
-            
-            catalog_id_result, path_result, version_result, content = row
-            logger.info(
-                f"Resolved by catalog_id: path={path_result} (type: {type(path_result).__name__}), "
-                f"version={version_result} (type: {type(version_result).__name__}), "
-                f"catalog_id={catalog_id_result} (type: {type(catalog_id_result).__name__})"
-            )
-            # Convert to strings for schema compatibility
-            path_str = str(path_result)
-            version_str = str(version_result)
-            catalog_id_str = str(catalog_id_result)
-            logger.info(
-                f"After conversion: path={path_str} (type: {type(path_str).__name__}), "
-                f"version={version_str} (type: {type(version_str).__name__}), "
-                f"catalog_id={catalog_id_str} (type: {type(catalog_id_str).__name__})"
-            )
-            return path_str, version_str, content, catalog_id_str
+        return resource_content
         
-        # Strategy 2: Path + version lookup
-        if path:
-            logger.debug(f"Using path+version lookup: path={path}, version={version}")
-            
-            row = None
-            db_error = None
-            
-            try:
-                if version == "latest":
-                    # Get latest version for this path
-                    async with get_async_db_connection() as conn:
-                        async with conn.cursor() as cur:
-                            await cur.execute(
-                                """
-                                SELECT catalog_id, version, content
-                                FROM noetl.catalog
-                                WHERE path = %s
-                                ORDER BY created_at DESC
-                                LIMIT 1
-                                """,
-                                (path,)
-                            )
-                            row = await cur.fetchone()
-                else:
-                    # Get specific version
-                    async with get_async_db_connection() as conn:
-                        async with conn.cursor() as cur:
-                            await cur.execute(
-                                """
-                                SELECT catalog_id, content
-                                FROM noetl.catalog
-                                WHERE path = %s AND version = %s
-                                """,
-                                (path, version)
-                            )
-                            row = await cur.fetchone()
-            except Exception as e:
-                logger.error(f"Database error during path lookup: {e}")
-                db_error = e
-            
-            # Check results after context manager exits
-            if db_error:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Database error: {str(db_error)}"
-                )
-            
-            if not row:
-                if version == "latest":
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"No catalog entries found for path '{path}'"
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Catalog entry '{path}' with version '{version}' not found"
-                    )
-            
-            if version == "latest":
-                catalog_id_result, version_result, content = row
-                logger.debug(
-                    f"Resolved latest version: version={version_result}, "
-                    f"catalog_id={catalog_id_result}"
-                )
-                # Convert to strings for schema compatibility
-                return path, str(version_result), content, str(catalog_id_result)
-            else:
-                catalog_id_result, content = row
-                logger.debug(
-                    f"Resolved specific version: catalog_id={catalog_id_result}"
-                )
-                # Convert to strings for schema compatibility
-                return path, version, content, str(catalog_id_result)
-        
-        # Should never reach here due to request validation, but just in case
-        raise HTTPException(
-            status_code=400,
-            detail="No valid identifier provided (catalog_id, path, or playbook_id required)"
-        )
     
     @staticmethod
     async def execute(request: ExecutionRequest, requestor_info: Optional[Dict[str, Any]] = None) -> ExecutionResponse:
@@ -206,16 +179,11 @@ class ExecutionService:
                 requestor_info['timestamp'] = datetime.utcnow().isoformat()
             
             # Resolve catalog entry
-            path, version, content, catalog_id = await ExecutionService.resolve_catalog_entry(request)
-            logger.info(
-                f"After resolve_catalog_entry: path={path} (type: {type(path).__name__}), "
-                f"version={version} (type: {type(version).__name__}), "
-                f"catalog_id={catalog_id} (type: {type(catalog_id).__name__})"
-            )
+            entry = await ExecutionService.resolve_catalog_entry(request)
             
             logger.debug(
-                f"Executing: path={path}, version={version}, "
-                f"type={request.type}, catalog_id={catalog_id}"
+                f"Executing: path={entry.path}, version={entry.version}, "
+                f"type={request.type}, catalog_id={entry.catalog_id}"
             )
             
             # Prepare execution parameters
@@ -230,14 +198,14 @@ class ExecutionService:
 
             
             execution_id = await ExecutionService.create_workload(
-                path, version, parameters
+                entry.path, entry.version, parameters
             )
             # Execute via broker
             result = execute_playbook_via_broker(
                 execution_id=execution_id,
-                playbook_content=content,
-                playbook_path=path,
-                playbook_version=version,
+                playbook_content=entry.content,
+                playbook_path=entry.path,
+                playbook_version=entry.version,
                 input_payload=parameters,
                 merge=merge,
                 parent_execution_id=parent_execution_id,
@@ -250,11 +218,11 @@ class ExecutionService:
             # Build response - ensure all fields are proper types
             execution_response = ExecutionResponse(
                 execution_id=str(execution_id),
-                catalog_id=str(catalog_id) if catalog_id is not None else None,
-                path=str(path) if path else None,
-                playbook_id=str(path) if path else None,  # For backward compatibility
-                playbook_name=path.split("/")[-1] if path else None,
-                version=str(version) if version else None,
+                catalog_id=entry.catalog_id,
+                path=entry.path,
+                playbook_id=entry.path,  # For backward compatibility
+                playbook_name=entry.path.split("/")[-1],
+                version=entry.version,
                 type=request.type,
                 status="running",
                 timestamp=result.get("timestamp", ""),
@@ -265,6 +233,12 @@ class ExecutionService:
             logger.debug(f"Execution created: execution_id={execution_id}")
             return execution_response
             
+        except ValueError as e:
+            logger.error(f"Validation error: {e}")
+            raise HTTPException(status_code=404, detail=str(e))
+        except RuntimeError as e:
+            logger.error(f"Runtime error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
         except HTTPException:
             raise
         except Exception as e:

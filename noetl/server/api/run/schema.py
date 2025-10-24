@@ -12,8 +12,8 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator, field_validator
 
 
-# Execution Types (extensible for future MCP tool/model support)
-ExecutionType = Literal["playbook", "tool", "model", "workflow"]
+# Execution Types
+ResourceType = Literal["playbook"]
 
 
 class ExecutionContext(BaseModel):
@@ -51,7 +51,7 @@ class ExecutionRequest(BaseModel):
     # Target identification - multiple strategies supported
     catalog_id: Optional[str] = Field(
         default=None,
-        description="Direct catalog entry ID (primary key lookup)",
+        description="Direct catalog entry ID",
         example="478775660589088776"
     )
     path: Optional[str] = Field(
@@ -62,7 +62,7 @@ class ExecutionRequest(BaseModel):
     version: Optional[str] = Field(
         default="latest",
         description="Version identifier (semantic version or 'latest'). Used with path lookup",
-        example="v1.0.0"
+        example="1"
     )
     
     # Execution type and configuration
@@ -160,11 +160,6 @@ class ExecutionResponse(BaseModel):
         ...,
         description="Unique execution ID for tracking"
     )
-    id: Optional[str] = Field(
-        default=None,
-        description="Alias for execution_id (backward compatibility)"
-    )
-    
     # Catalog metadata
     catalog_id: Optional[str] = Field(
         None,
@@ -174,9 +169,9 @@ class ExecutionResponse(BaseModel):
         None,
         description="Catalog path executed"
     )
-    playbook_name: Optional[str] = Field(
+    name: Optional[str] = Field(
         None,
-        description="Playbook name (derived from path)"
+        description="Resource name (derived from path)"
     )
     version: Optional[str] = Field(
         None,
@@ -184,13 +179,9 @@ class ExecutionResponse(BaseModel):
     )
     
     # Execution metadata (backward compatible - both names)
-    type: ExecutionType = Field(
+    type: ResourceType = Field(
         default="playbook",
         description="Type of execution"
-    )
-    execution_type: Optional[ExecutionType] = Field(
-        default=None,
-        description="Alias for type (backward compatibility)"
     )
     status: str = Field(
         ...,
@@ -227,7 +218,7 @@ class ExecutionResponse(BaseModel):
         description="Error message if execution failed"
     )
     
-    @field_validator('execution_id', 'id', 'catalog_id', 'path', 'version', mode='before')
+    @field_validator('execution_id', 'catalog_id', 'path', 'version', mode='before')
     @classmethod
     def coerce_to_string(cls, v):
         """Coerce integers or other types to strings for all ID and path fields."""
@@ -238,23 +229,14 @@ class ExecutionResponse(BaseModel):
     def model_post_init(self, __context):
         """Ensure backward compatible field aliases are populated."""
         # Populate id from execution_id
-        if self.execution_id and not self.id:
-            self.id = self.execution_id
-        
-        # Populate execution_type from type
-        if self.type and not self.execution_type:
-            self.execution_type = self.type
         
         # Populate start_time from timestamp
         if self.timestamp and not self.start_time:
             self.start_time = self.timestamp
     
-    model_config = {
-        "populate_by_name": True,  # Allow both field name and alias
-    }
 
 
-class ExecutionListQuery(BaseModel):
+class ExecutionQuery(BaseModel):
     """Query parameters for listing executions."""
     
     # Filters
@@ -266,10 +248,9 @@ class ExecutionListQuery(BaseModel):
         None,
         description="Filter by catalog path"
     )
-    type: Optional[ExecutionType] = Field(
+    resource_type: Optional[ResourceType] = Field(
         None,
-        description="Filter by execution type",
-        alias="execution_type"
+        description="Filter by resource type"
     )
     status: Optional[str] = Field(
         None,
@@ -301,10 +282,7 @@ class ExecutionListQuery(BaseModel):
         ge=0,
         description="Offset for pagination"
     )
-    
-    model_config = {
-        "populate_by_name": True,
-    }
+
 
 
 class ExecutionListResponse(BaseModel):
@@ -331,87 +309,13 @@ class ExecutionListResponse(BaseModel):
     )
 
 
-# MCP Tool/Model execution schemas (future extensibility)
-
-class ToolExecutionRequest(ExecutionRequest):
-    """
-    Execute an MCP tool by reference.
-    
-    Extends ExecutionRequest with tool-specific fields.
-    """
-    tool_name: Optional[str] = Field(
-        None,
-        description="Tool identifier (alternative to path)"
-    )
-    tool_version: Optional[str] = Field(
-        default="latest",
-        description="Tool version"
-    )
-    arguments: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Tool-specific arguments (alias for parameters)"
-    )
-    
-    @model_validator(mode='after')
-    def set_tool_defaults(self):
-        """Set tool-specific defaults."""
-        self.type = "tool"
-        if self.tool_name and not self.path:
-            self.path = f"tools/{self.tool_name}"
-        if self.tool_version:
-            self.version = self.tool_version
-        if self.arguments and not self.parameters:
-            self.parameters = self.arguments
-        return self
-
-
-class ModelExecutionRequest(ExecutionRequest):
-    """
-    Execute an MCP model inference.
-    
-    Extends ExecutionRequest with model-specific fields.
-    """
-    model_name: Optional[str] = Field(
-        None,
-        description="Model identifier (alternative to path)"
-    )
-    model_version: Optional[str] = Field(
-        default="latest",
-        description="Model version"
-    )
-    inputs: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Model inputs (alias for parameters)"
-    )
-    inference_config: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Inference configuration (temperature, max_tokens, etc.)"
-    )
-    
-    @model_validator(mode='after')
-    def set_model_defaults(self):
-        """Set model-specific defaults."""
-        self.type = "model"
-        if self.model_name and not self.path:
-            self.path = f"models/{self.model_name}"
-        if self.model_version:
-            self.version = self.model_version
-        if self.inputs and not self.parameters:
-            self.parameters = self.inputs
-        if self.inference_config:
-            if not self.metadata:
-                self.metadata = {}
-            self.metadata["inference_config"] = self.inference_config
-        return self
 
 
 __all__ = [
-    "ExecutionType",
+    "ResourceType",
     "ExecutionContext",
     "ExecutionRequest",
     "ExecutionResponse",
-    "ExecutionListQuery",
-    "ExecutionListResponse",
-    "ToolExecutionRequest",
-    "ModelExecutionRequest",
+    "ExecutionQuery",
+    "ExecutionListResponse"
 ]

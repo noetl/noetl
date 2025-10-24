@@ -1,14 +1,15 @@
 from fastapi import APIRouter, HTTPException, Request
 from noetl.core.logger import setup_logger
 from .schema import ExecutionRequest, ExecutionResponse
-from .service import execute_request
+from .service import ExecutionService, execute_request
 
 
 logger = setup_logger(__name__, include_location=True)
-router = APIRouter()
+router = APIRouter(prefix="/playbook", tags=["playbook"])
 
 
-@router.post("/playbook/run", response_model=ExecutionResponse)
+# @router.post("/run", response_model=ExecutionResponse)
+@router.post("/run")
 async def execute_playbook(request: Request, payload: ExecutionRequest):
     """
     Execute a playbook/tool/model using unified request schema.
@@ -42,21 +43,18 @@ async def execute_playbook(request: Request, payload: ExecutionRequest):
     This endpoint supports Model Context Protocol (MCP) for executing
     playbooks, tools, and models with a unified interface.
     """
-    try:
         # Capture requestor details from HTTP request
-        requestor_info = {
-            "ip": request.client.host if request.client else None,
-            "user_agent": request.headers.get("user-agent"),
-            "timestamp": None,  # Will be set during execution
-        }
-        
-        logger.debug(f"EXECUTE: Received request: {payload.model_dump()}")
-        return await execute_request(payload, requestor_info)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error executing request: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    requestor_info = {
+        "ip": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+        "timestamp": None,  # Will be set during execution
+    }
+
+    resource_content = await ExecutionService.resolve_catalog_entry(payload)
+    logger.debug(f"EXECUTE: Received request: {payload.model_dump()}")
+    return resource_content
+    # return await execute_request(payload, requestor_info)
+
 
 
 @router.post("/execute", response_model=ExecutionResponse)
