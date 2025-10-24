@@ -80,23 +80,14 @@ def execute_playbook_via_broker(
             # Populate default tables if specified in playbook
             if pb and isinstance(pb, dict):
                 # Extract default tables configuration
-                default_tables_config = {}
 
                 # Check if playbook has workflow steps with table configurations
-                workflow_steps = (pb.get('workflow') or pb.get('steps') or [])
+                workflow_steps = pb.get('workflow')
                 if workflow_steps:
                     broker.workflow(workflow_steps, execution_id=execution_id, playbook_path=playbook_path)
                     logger.info(f"Populated workflow with {len(workflow_steps)} steps")
 
                 # Look for default tables in workload or metadata
-                if 'default_tables' in pb:
-                    default_tables_config = pb['default_tables']
-                elif 'tables' in base_workload:
-                    default_tables_config = base_workload['tables']
-
-                if default_tables_config:
-                    broker.default_tables(default_tables_config)
-                    logger.info(f"Populated default tables: {list(default_tables_config.keys())}")
 
                 # Set up transitions between workflow steps
                 for i, step in enumerate(workflow_steps):
