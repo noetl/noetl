@@ -1,85 +1,141 @@
-from datetime import datetime
-import json
-from typing import Any, Type, TypeVar
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator, Field
+"""
+NoETL Catalog API Schemas - Request/Response models for catalog endpoints.
 
+Provides unified schema design for catalog resource lookup and management.
+Supports multiple lookup strategies: catalog_id, path + version.
+"""
+
+from datetime import datetime
+from typing import Any, Optional
+from pydantic import model_validator, Field, field_validator
+
+from noetl.core.common import AppBaseModel, transform
 from noetl.core.logger import setup_logger
+
 logger = setup_logger(__name__, include_location=True)
 
 
-class AppBaseModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True, coerce_numbers_to_str=True)
+class CatalogEntriesRequest(AppBaseModel):
+    """Request schema for listing catalog entries."""
+    resource_type: Optional[str] = Field(
+        default=None,
+        description="Filter by resource kind (e.g., 'Playbook', 'Tool', 'Model')"
+    )
 
 
-T = TypeVar("T", bound=BaseModel)
-
-
-def transform(class_constructor: Type[T], arg: dict) -> T:
+class CatalogEntryRequest(AppBaseModel):
     """
-    Generic function to transform a dict into a Pydantic model instance. with error logging.
-
-    Args:
-        class_constructor: Any Pydantic model class.
-        arg: Dictionary of data to pass to the model.
-
-    Returns:
-        An instance of the model.
-
-    Raises:
-        ValidationError: If the data does not conform to the model.
+    Catalog resource lookup request schema.
+    
+    **Lookup Strategies** (priority order):
+    1. `catalog_id`: Direct catalog entry lookup (highest priority)
+    2. `path` + `version`: Version-controlled path-based lookup
+    
+    At least one identifier (catalog_id or path) must be provided.
     """
-    try:
-        return class_constructor(**arg)
-    except ValidationError as e:
-        logger.error(
-            f"{class_constructor.__name__} Validation error: {json.dumps(e.errors(include_input=False, include_url=False))}")
-        raise
+    
+    catalog_id: Optional[str] = Field(
+        default=None,
+        description="Direct catalog entry ID",
+        example="478775660589088776"
+    )
+    path: Optional[str] = Field(
+        default=None,
+        description="Catalog path for version-controlled lookup",
+        example="examples/weather/forecast"
+    )
+    version: Optional[str | int] = Field(
+        default=None,
+        description="Version identifier (semantic version or 'latest'). Defaults to latest if omitted",
+        example="1"
+    )
+    
+    @field_validator('catalog_id', 'path', mode='before')
+    @classmethod
+    def coerce_ids_to_string(cls, v):
+        """Coerce integers or other types to strings for ID fields."""
+        if v is None:
+            return v
+        return str(v)
+    
+    @model_validator(mode='after')
+    def validate_identifiers(self) -> "CatalogEntryRequest":
+        """Validate that at least one identifier is provided."""
+        if not self.catalog_id and not self.path:
+            raise ValueError(
+                "At least one identifier must be provided: catalog_id or path"
+            )
+        return self
 
 
-class PlaybookResourceResponse(AppBaseModel):
-    """Response model for playbook resource"""
+class CatalogEntry(AppBaseModel):
+    """
+    Complete catalog entry data model from database.
+    
+    Represents the full catalog table record with all fields.
+    Used internally by the service layer when fetching from database.
+    """
+    
+    catalog_id: str
     path: str
-    kind: str
     version: int
-    content: str | None = None
-    layout: dict[str, Any] | None = None
-    payload: dict[str, Any] | None = None
-    meta: dict[str, Any]
-    created_at: datetime
-
-    @model_validator(mode="after")
-    def check_content_or_layout(cls, model):
-        if not model.content and not model.layout:
-            raise ValueError("Either 'content' or 'layout' must be provided.")
-        return model
-
-
-class CatalogEntryResponse(AppBaseModel):
-    """Response model for a single catalog entry"""
-    path: str
     kind: str
-    version: int
-    content: str | None = None
-    layout: dict[str, Any] | None = None
-    payload: dict[str, Any] | None = None
-    meta: dict[str, Any] | None = None
-    created_at: datetime
+    content: Optional[str] = None
+    layout: Optional[dict[str, Any]] = None
+    payload: Optional[dict[str, Any]] = None
+    meta: Optional[dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+    
+    @field_validator('catalog_id', 'path', mode='before')
+    @classmethod
+    def coerce_ids_to_string(cls, v):
+        """Coerce integers or other types to strings for ID fields."""
+        if v is None:
+            return v
+        return str(v)
+    
+    @field_validator("version", mode="before")
+    @classmethod
+    def parse_version(cls, value: Any) -> Optional[int]:
+        """Parse version to integer."""
+        if value in (None, ""):
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Version must be an integer") from exc
+    
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: Optional[str]) -> Optional[str]:
+        """Validate and clean path."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Path cannot be empty")
+        return cleaned
+    
+    model_config = {
+        "populate_by_name": True,  # Allow both field name and alias
+    }
 
 
-class CatalogListResponse(AppBaseModel):
-    """Response model for catalog list endpoint"""
-    entries: list[CatalogEntryResponse]
+# class CatalogEntry(AppBaseModel):
+#     """Response model for a single catalog entry"""
+#     catalog_id: str
+#     path: str
+#     kind: str
+#     version: int
+#     content: str | None = None
+#     layout: dict[str, Any] | None = None
+#     payload: dict[str, Any] | None = None
+#     meta: dict[str, Any] | None = None
+#     created_at: datetime
 
 
-class PlaybookSummaryResponse(AppBaseModel):
-    """Response model for playbook summary (legacy /catalog/playbooks endpoint)"""
-    id: str
-    name: str
-    kind: str
-    version: int
-    meta: dict[str, Any] | None = None
-    description: str | None = None
-    created_at: datetime
-    updated_at: datetime
-    status: str = "active"
-    tasks_count: int = 0
+class CatalogEntries(AppBaseModel):
+    """Response model for list of catalog entries endpoint"""
+    entries: list[CatalogEntry]

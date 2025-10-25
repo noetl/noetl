@@ -4,8 +4,9 @@ from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row, DictRow
 import asyncio
 from typing import Optional
+from contextlib import asynccontextmanager
 
-_pool: Optional[AsyncConnectionPool] = None
+_pool: Optional[AsyncConnectionPool[AsyncConnection[DictRow]]] = None
 _lock = asyncio.Lock()
 
 
@@ -31,10 +32,16 @@ async def init_pool(conninfo: str):
 
 def get_pool() -> AsyncConnectionPool[AsyncConnection[DictRow]]:
     """Return AsyncConnectionPool with dict_row as default pool instance."""
+    global _pool
     if _pool is None:
         raise RuntimeError("Database pool is not initialized. Call init_pool() first.")
     return _pool
 
+@asynccontextmanager
+async def get_pool_connection():
+    """Get a connection from the global pool as an async context manager."""
+    async with get_pool().connection() as conn:
+        yield conn
 
 async def close_pool():
     """Close and reset the global connection pool."""

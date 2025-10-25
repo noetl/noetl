@@ -11,13 +11,60 @@ from datetime import datetime, timedelta, timezone, date
 import random
 import string
 from decimal import Decimal
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Type, TypeVar
 import psycopg
 from contextlib import contextmanager
+from pydantic import BaseModel, ConfigDict, ValidationError
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
+
+# =============================================================================
+# Pydantic Common Models and Utilities
+# =============================================================================
+
+class AppBaseModel(BaseModel):
+    """
+    Base Pydantic model with common configuration.
+    
+    Used across all NoETL API schemas to provide consistent:
+    - ORM mode support (from_attributes=True)
+    - Automatic string coercion for numeric types
+    """
+    model_config = ConfigDict(from_attributes=True, coerce_numbers_to_str=True)
+
+
+T = TypeVar("T", bound=BaseModel)
+
+
+def transform(class_constructor: Type[T], arg: dict) -> T:
+    """
+    Generic function to transform a dict into a Pydantic model instance with error logging.
+
+    Args:
+        class_constructor: Any Pydantic model class.
+        arg: Dictionary of data to pass to the model.
+
+    Returns:
+        An instance of the model.
+
+    Raises:
+        ValidationError: If the data does not conform to the model.
+    """
+    try:
+        return class_constructor(**arg)
+    except ValidationError as e:
+        logger.error(
+            f"{class_constructor.__name__} Validation error: "
+            f"{json.dumps(e.errors(include_input=False, include_url=False))}"
+        )
+        raise
+
+
+# =============================================================================
+# Snowflake ID Generation
+# =============================================================================
 
 
 try:
