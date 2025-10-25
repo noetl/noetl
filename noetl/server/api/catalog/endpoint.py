@@ -142,7 +142,7 @@ async def list_resources(
 
 @router.post(
     "/catalog/resource",
-    response_model=list[CatalogEntry],
+    response_model=CatalogEntry,
     tags=["Catalog"],
     summary="Get catalog resource versions",
     description="""
@@ -220,11 +220,15 @@ async def get_catalog_entry(
     catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     """Get catalog resource(s) using unified lookup strategies"""
-    return await catalog_service.get(
+    result = await catalog_service.get(
         path=payload.path, 
         version=payload.version, 
         catalog_id=payload.catalog_id
-        )
+    )
+    # Return single entry or raise 404
+    if not result:
+        raise HTTPException(status_code=404, detail="Catalog entry not found")
+    return result
     # try:
     #     # Determine lookup strategy
     #     # Priority: catalog_id > path+version > path only
