@@ -19,7 +19,8 @@ class CatalogEntriesRequest(AppBaseModel):
     """Request schema for listing catalog entries."""
     resource_type: Optional[str] = Field(
         default=None,
-        description="Filter by resource kind (e.g., 'Playbook', 'Tool', 'Model')"
+        description="Filter by resource kind (e.g., 'Playbook', 'Tool', 'Model')",
+        example="Playbook"
     )
 
 
@@ -42,7 +43,7 @@ class CatalogEntryRequest(AppBaseModel):
     path: Optional[str] = Field(
         default=None,
         description="Catalog path for version-controlled lookup",
-        example="examples/weather/forecast"
+        example="tests/fixtures/playbooks/hello_world"
     )
     version: Optional[str | int] = Field(
         default=None,
