@@ -5,12 +5,13 @@ Provides unified catalog resource lookup and management with multiple
 lookup strategies: catalog_id, path + version.
 """
 from __future__ import annotations
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Coroutine
 from datetime import datetime
 import yaml
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
+from noetl.server.api.catalog.schema import CatalogEntries
 from .schema import CatalogEntry, CatalogEntries
 
 
@@ -117,14 +118,14 @@ class CatalogService:
         """
         Get a catalog resource by its identifiers.
         """
-        return await CatalogService._fetch_entry(
+        return await CatalogService.fetch_entry(
             catalog_id=catalog_id,
             path=path,
             version=version
         )
 
     @staticmethod
-    async def _fetch_entry(
+    async def fetch_entry(
         catalog_id: Optional[str] = None,
         path: Optional[str] = None,
         version: Optional[int | str] = None
@@ -168,7 +169,7 @@ class CatalogService:
     @staticmethod
     async def get_catalog_id(resource_path: str, version: str | int) -> Optional[int]:
         """Get catalog_id for a given path and version"""
-        resource = await CatalogService._get_resource(
+        resource = await CatalogService.get(
             path=resource_path,
             version=version
         )
@@ -202,7 +203,8 @@ class CatalogService:
     #     """
     #     return await CatalogService._get_resource(path=path, version=version)
 
-    def increment_version(self, version: int) -> int:
+    @staticmethod
+    def increment_version(version: int) -> int:
         return version + 1
 
     @staticmethod
@@ -217,24 +219,39 @@ class CatalogService:
 
         async with get_pool_connection() as conn:
             async with conn.cursor() as cursor:
-                await cursor.execute("INSERT INTO noetl.resource (name) VALUES (%s) ON CONFLICT DO NOTHING", (resource_type,))
+                await cursor.execute(
+                    "INSERT INTO noetl.resource (name) VALUES (%(resource_type)s) ON CONFLICT DO NOTHING",
+                    {"resource_type": resource_type}
+                )
 
                 
                 await cursor.execute(
                     """
-                    INSERT INTO noetl.catalog
-                    (path, version, kind, content, payload, meta)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO noetl.catalog (
+                        path,
+                        version,
+                        kind,
+                        content,
+                        payload,
+                        meta
+                    ) VALUES (
+                        %(path)s,
+                        %(version)s,
+                        %(kind)s,
+                        %(content)s,
+                        %(payload)s,
+                        %(meta)s
+                    )
                     RETURNING catalog_id, version
                     """,
-                    (
-                        path,
-                        new_version,
-                        resource_type,
-                        content,
-                        Json(resource_data),
-                        Json({"registered_at": datetime.now().astimezone().isoformat()}),
-                    )
+                    {
+                        "path": path,
+                        "version": new_version,
+                        "kind": resource_type,
+                        "content": content,
+                        "payload": Json(resource_data),
+                        "meta": Json({"registered_at": datetime.now().astimezone().isoformat()}),
+                    }
                 )
                 result = await cursor.fetchone()
                 catalog_id = result['catalog_id'] if result else None
@@ -251,7 +268,8 @@ class CatalogService:
             "kind": resource_type,
         }
 
-    async def fetch_entries(self, resource_type: Optional[str] = None) -> List[CatalogEntry]:
+    @staticmethod
+    async def fetch_entries(resource_type: Optional[str] = None) -> List[CatalogEntry]:
         """List all catalog entries, optionally filtered by resource type"""
         query, params = CatalogService._build_query_filter(resource_type=resource_type)
         return await CatalogService._fetch_filter(query, params)
@@ -303,7 +321,7 @@ class CatalogService:
         return " ".join(parts), params
     
     @staticmethod
-    async def _fetch_filter(query: str, params: Dict[str, Any]) -> List[CatalogEntry]:
+    async def _fetch_filter(query: str, params: Dict[str, Any]) -> CatalogEntries:
         """
         Fetch a list of CatalogEntries.
 

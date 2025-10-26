@@ -52,17 +52,17 @@ class ExecutionRequest(BaseModel):
     catalog_id: Optional[str] = Field(
         default=None,
         description="Direct catalog entry ID",
-        example="478775660589088776"
+        examples=["478775660589088776"]
     )
     path: Optional[str] = Field(
         default=None,
         description="Catalog path for version-controlled lookup",
-        example="examples/weather/forecast"
+        examples=["tests/fixtures/playbooks/hello_world"]
     )
     version: Optional[str] = Field(
         default="latest",
         description="Version identifier (semantic version or 'latest'). Used with path lookup",
-        example="1"
+        examples=["1", "latest"]
     )
     
     # Execution type and configuration
