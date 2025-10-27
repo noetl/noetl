@@ -14,17 +14,24 @@ from typing import Dict, Any, Optional
 from noetl.core.common import deep_merge
 from noetl.plugin import report_event
 from noetl.core.logger import setup_logger
+
+from noetl.core.common import get_async_db_connection
+from noetl.database import sqlcmd
+import asyncio
+import json
+from psycopg.rows import dict_row
+import yaml
+
 from .broker import Broker
 
 logger = setup_logger(__name__, include_location=True)
 
-
 def execute_playbook_via_broker(
+    execution_id: int,
     playbook_content: str,
     playbook_path: str,
     playbook_version: str,
     input_payload: Optional[Dict[str, Any]] = None,
-    sync_to_postgres: bool = True,
     merge: bool = False,
     parent_execution_id: Optional[str] = None,
     parent_event_id: Optional[str] = None,
@@ -43,30 +50,15 @@ def execute_playbook_via_broker(
     logger.debug(
         f"EXECUTE: Received parameters - playbook_path={playbook_path}, "
         f"playbook_version={playbook_version}, input_payload={input_payload}, "
-        f"sync_to_postgres={sync_to_postgres}, merge={merge}, "
+        f"merge={merge}, "
         f"parent_execution_id={parent_execution_id}, parent_event_id={parent_event_id}, parent_step={parent_step}"
     )
 
     try:
-        # Create execution ID (prefer snowflake if available)
-        try:
-            from noetl.core.common import get_snowflake_id_str as _snow_id  # type: ignore
-            execution_id = _snow_id()
-        except Exception:
-            try:
-                from noetl.core.common import get_snowflake_id as _snow
-                execution_id = str(_snow())
-            except Exception:
-                execution_id = str(uuid.uuid4())
+        pb = yaml.safe_load(playbook_content)
+        base_workload = pb.get('workload', {})
 
-        # Load workload from playbook content (best-effort)
-        try:
-            import yaml
-            pb = yaml.safe_load(playbook_content) or {}
-            base_workload = pb.get('workload', {}) if isinstance(pb, dict) else {}
-        except Exception:
-            base_workload = {}
-
+        # merged workload
         if input_payload:
             if merge:
                 merged_workload = deep_merge(base_workload, input_payload)
@@ -74,68 +66,6 @@ def execute_playbook_via_broker(
                 merged_workload = {**base_workload, **input_payload}
         else:
             merged_workload = base_workload
-
-        # Best-effort: persist workload row immediately so evaluator can read it
-        try:
-            from noetl.core.common import get_async_db_connection as _get_async_db_connection
-            from noetl.database import sqlcmd as _sqlcmd
-            import asyncio as _asyncio
-            import json as _json
-
-            async def _persist_workload_row(_exec_id, _path, _version, _workload):
-                try:
-                    payload = {
-                        'path': _path,
-                        'version': _version,
-                        'workload': _workload or {},
-                    }
-                    data = _json.dumps(payload)
-                    async with _get_async_db_connection() as _conn:
-                        async with _conn.cursor() as _cur:
-                            try:
-                                _sql = _sqlcmd.WORKLOAD_INSERT_POSTGRES
-                                try:
-                                    if "INSERT INTO workload" in _sql:
-                                        _sql = _sql.replace("INSERT INTO workload", "INSERT INTO noetl.workload")
-                                except Exception:
-                                    pass
-                                await _cur.execute(_sql, (_exec_id, data))
-                            except Exception:
-                                try:
-                                    await _cur.execute(_sqlcmd.WORKLOAD_INSERT_DUCKDB, (_exec_id, data))
-                                except Exception:
-                                    # Try update as last resort for duckdb
-                                    try:
-                                        await _cur.execute(_sqlcmd.WORKLOAD_UPDATE_DUCKDB, (data, _exec_id))
-                                    except Exception:
-                                        pass
-                            try:
-                                await _conn.commit()
-                            except Exception:
-                                pass
-                except Exception:
-                    logger.debug("EXECUTE: Failed to persist workload row (best-effort)", exc_info=True)
-
-            try:
-                _asyncio.run(_persist_workload_row(execution_id, playbook_path, playbook_version, merged_workload))
-            except RuntimeError:
-                # If already in an async loop, we need to schedule the task properly
-                # Check if we can access the current event loop
-                try:
-                    loop = _asyncio.get_running_loop()
-                    # Schedule the task and store the task object
-                    task = loop.create_task(_persist_workload_row(execution_id, playbook_path, playbook_version, merged_workload))
-                    # Don't await here as this function is synchronous, but ensure task runs
-                    def _handle_task_result(task_obj):
-                        try:
-                            task_obj.result()  # This will raise any exceptions that occurred
-                        except Exception:
-                            logger.debug("EXECUTE: _persist_workload_row task completed with exception", exc_info=True)
-                    task.add_done_callback(_handle_task_result)
-                except Exception:
-                    logger.debug("EXECUTE: Failed to properly schedule _persist_workload_row task", exc_info=True)
-        except Exception:
-            logger.debug("EXECUTE: Skipped workload persistence", exc_info=True)
 
         # Initialize broker and populate workflow data
         try:

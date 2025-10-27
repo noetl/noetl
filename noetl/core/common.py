@@ -430,7 +430,7 @@ def initialize_db_pool():
     if db_pool is None and ConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            db_pool = ConnectionPool(conninfo=connection_string, min_size=2, max_size=20, open=False)
+            db_pool = ConnectionPool(conninfo=connection_string, min_size=2, max_size=20, name="sync_legacy_noetl_server_connection", open=False)
             db_pool.open()
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
@@ -445,7 +445,7 @@ async def initialize_async_db_pool():
     if async_db_pool is None and AsyncConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=2, max_size=20, open=False)
+            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=2, max_size=20, name="legacy_noetl_server_connection", open=False)
             await async_db_pool.open()
             logger.info("Async database connection pool initialized successfully")
         except Exception as e:
@@ -514,7 +514,7 @@ async def get_async_db_connection(optional: bool = False):
                 yield conn
                 return
         except Exception as pool_error:
-            logger.warning(f"Async connection pool error: {pool_error}. Falling back to direct connection.")
+            logger.exception(f"Async connection pool error: {pool_error}. Falling back to direct connection.")
     
     # Direct connection fallback
     conn = None
@@ -522,7 +522,7 @@ async def get_async_db_connection(optional: bool = False):
         conn = await psycopg.AsyncConnection.connect(get_pgdb_connection())
         yield conn
     except Exception as e:
-        logger.error(f"Async connection failed: {e}")
+        logger.exception(f"Async connection failed: {e}")
         if optional:
             logger.warning("Async database connection is optional, continuing without it.")
             yield None

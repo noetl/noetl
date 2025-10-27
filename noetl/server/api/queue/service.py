@@ -940,8 +940,11 @@ class QueueService:
                     (status,)
                 )
                 row = await cur.fetchone()
+                logger.debug(f"Queue size for status '{status}': {row}")
+                if isinstance(row, tuple):
+                    row = row[0]
         
-        return QueueSizeResponse(status="ok", count=row[0] if row else 0)
+        return QueueSizeResponse(status="ok", count=row)
     
     @staticmethod
     async def reserve_job(worker_id: str, lease_seconds: int = 60) -> ReserveResponse:
