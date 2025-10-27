@@ -19,6 +19,7 @@ EventType = Literal[
     "step_completed",
     "step_failed",
     "step_skipped",
+    "step_result",
     "action_started",
     "action_completed",
     "action_failed",
