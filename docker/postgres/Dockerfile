@@ -1,5 +1,8 @@
 FROM postgres:17.4
 
+# Accept timezone as build argument, default to UTC
+ARG TZ=UTC
+
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         postgresql-plpython3-17 \
@@ -12,7 +15,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-ENV TZ=America/Chicago
+# Configure timezone (use build arg or default to UTC)
+ENV TZ=${TZ}
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY scripts/database/postgres/postgresql.conf /etc/postgresql/postgresql.conf
 COPY scripts/database/postgres/init_database.sh /docker-entrypoint-initdb.d/init_database.sh

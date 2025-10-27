@@ -277,7 +277,8 @@ class QueueService:
         if parent_execution_id and parent_step and parent_execution_id != exec_id:
             logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
             try:
-                from noetl.server.api.event import get_event_service
+                # TODO: Use new event API for event sourcing
+                # from noetl.server.api.event import EventService
                 
                 async with get_async_db_connection() as conn:
                     async with conn.cursor() as cur:
@@ -294,28 +295,20 @@ class QueueService:
                             cur, parent_execution_id, parent_step, exec_id
                         )
                         
-                        # Emit per-iteration result event
-                        await get_event_service().emit({
-                            'execution_id': parent_execution_id,
-                            'event_type': 'result',
-                            'status': 'COMPLETED',
-                            'node_id': iter_data['node_id'],
-                            'node_name': parent_step,
-                            'node_type': 'task',
-                            'result': child_result,
-                            'iterator': iter_data.get('iterator'),
-                            'current_index': iter_data.get('current_index'),
-                            'current_item': iter_data.get('current_item'),
-                            'loop_id': iter_data.get('loop_id'),
-                            'loop_name': iter_data.get('loop_name'),
-                            'context': {
-                                'child_execution_id': exec_id,
-                                'parent_step': parent_step,
-                                'return_step': return_step
-                            }
-                        })
+                        # TODO: Emit per-iteration result event using new event API
+                        # await EventService.emit_event(EventEmitRequest(
+                        #     execution_id=parent_execution_id,
+                        #     event_type='result',
+                        #     status='completed',
+                        #     node_id=iter_data['node_id'],
+                        #     node_name=parent_step,
+                        #     node_type='task',
+                        #     context={'result': child_result, 'iterator': iter_data}
+                        # ))
                         
-                        logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id}")
+                        logger.debug(f"Child execution {exec_id} result collected for parent {parent_execution_id}")
+                        
+                        logger.info(f"COMPLETION_HANDLER: Collected result for parent {parent_execution_id} step {parent_step} from child {exec_id}")
                         
                         # Check if all iterations are complete and emit aggregated result
                         await QueueService._check_and_emit_aggregated_result(
@@ -493,178 +486,30 @@ class QueueService:
     async def _check_and_emit_aggregated_result(
         cur,
         conn,
-        parent_execution_id: int,
+        parent_execution_id: str,
         parent_step: str
     ):
-        """Check if all iterations complete and emit aggregated result."""
-        try:
-            # Count expected iterations
-            await cur.execute(
-                """
-                SELECT COUNT(*) FROM noetl.event
-                WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
-                """,
-                (parent_execution_id, parent_step)
-            )
-            row_ct = await cur.fetchone()
-            expected = (row_ct[0] if isinstance(row_ct, tuple) else row_ct.get('count')) if row_ct else 0
-            
-            # Count completed iterations
-            await cur.execute(
-                """
-                SELECT COUNT(*) FROM noetl.event
-                WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
-                  AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
-                  AND result IS NOT NULL AND result != '{}'
-                  AND NOT (result::text LIKE '%%"skipped": true%%')
-                  AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                """,
-                (parent_execution_id, parent_step)
-            )
-            row_done = await cur.fetchone()
-            done = row_done[0] if row_done else 0
-            
-            # Check if final aggregate already exists
-            await cur.execute(
-                """
-                SELECT COUNT(*) FROM noetl.event
-                WHERE execution_id = %s AND event_type = 'action_completed' AND node_name = %s
-                  AND context::text LIKE '%%loop_completed%%' AND context::text LIKE '%%true%%'
-                """,
-                (parent_execution_id, parent_step)
-            )
-            row_final = await cur.fetchone()
-            already_final = (row_final[0] if row_final else 0) > 0
-            
-            if expected > 0 and done >= expected and not already_final:
-                from noetl.server.api.event import get_event_service
-                
-                # Collect results from each iteration
-                await cur.execute(
-                    """
-                    SELECT result FROM noetl.event
-                    WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
-                      AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
-                      AND result IS NOT NULL AND result != '{}'
-                      AND NOT (result::text LIKE '%%"skipped": true%%')
-                      AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                    ORDER BY created_at
-                    """,
-                    (parent_execution_id, parent_step)
-                )
-                rows_res = await cur.fetchall()
-                
-                final_results = []
-                for rr in rows_res or []:
-                    val = rr[0] if isinstance(rr, tuple) else rr.get('result')
-                    try:
-                        parsed = json.loads(val) if isinstance(val, str) else val
-                    except Exception:
-                        parsed = val
-                    if parsed is not None:
-                        final_results.append(parsed)
-                
-                result_data = {
-                    'data': {
-                        'results': final_results,
-                        'result': final_results,
-                        'count': len(final_results)
-                    },
-                    'results': final_results,
-                    'result': final_results,
-                    'count': len(final_results)
-                }
-                
-                # Emit final aggregated action_completed
-                await get_event_service().emit({
-                    'execution_id': parent_execution_id,
-                    'event_type': 'action_completed',
-                    'node_name': parent_step,
-                    'node_type': 'loop',
-                    'status': 'COMPLETED',
-                    'result': result_data,
-                    'context': {
-                        'loop_completed': True,
-                        'total_iterations': expected
-                    },
-                    'loop_id': f"{parent_execution_id}:{parent_step}",
-                    'loop_name': parent_step
-                })
-                
-                # Emit result marker event
-                await get_event_service().emit({
-                    'execution_id': parent_execution_id,
-                    'event_type': 'result',
-                    'node_name': parent_step,
-                    'node_type': 'loop',
-                    'status': 'COMPLETED',
-                    'result': result_data,
-                    'context': {
-                        'loop_completed': True,
-                        'total_iterations': expected
-                    },
-                    'loop_id': f"{parent_execution_id}:{parent_step}",
-                    'loop_name': parent_step
-                })
-                
-                # Emit loop_completed marker
-                try:
-                    await get_event_service().emit({
-                        'execution_id': parent_execution_id,
-                        'event_type': 'loop_completed',
-                        'node_name': parent_step,
-                        'node_type': 'loop_control',
-                        'status': 'COMPLETED',
-                        'result': result_data,
-                        'context': {
-                            'loop_completed': True,
-                            'total_iterations': expected,
-                            'aggregated_results': final_results
-                        },
-                        'loop_id': f"{parent_execution_id}:{parent_step}",
-                        'loop_name': parent_step
-                    })
-                except Exception:
-                    logger.debug("Failed to emit loop_completed marker event", exc_info=True)
-                
-                logger.info(f"COMPLETION_HANDLER: Emitted final aggregated event for {parent_step} with {len(final_results)} results")
-                
-                # Mark parent iterator job as done
-                try:
-                    await cur.execute(
-                        """
-                        UPDATE noetl.queue
-                        SET status='done', lease_until=NULL
-                        WHERE execution_id = %s
-                          AND node_id = %s
-                          AND status = 'leased'
-                        """,
-                        (parent_execution_id, f"{parent_execution_id}:{parent_step}")
-                    )
-                    await conn.commit()
-                except Exception:
-                    logger.debug("COMPLETION_HANDLER: Failed to mark parent iterator job done", exc_info=True)
-                
-                # Trigger broker for parent - USE NEW SERVICE LAYER BROKER
-                try:
-                    from noetl.server.api.event.service import evaluate_execution
-                    if asyncio.get_event_loop().is_running():
-                        asyncio.create_task(evaluate_execution(str(parent_execution_id)))
-                    else:
-                        await evaluate_execution(str(parent_execution_id))
-                except Exception:
-                    logger.debug("Failed to schedule broker evaluation after aggregated event", exc_info=True)
-        except Exception:
-            logger.debug("Failed to emit aggregated loop completion", exc_info=True)
+        """
+        Check if all iterations complete and emit aggregated result.
+        
+        TODO: Reimplement using new event sourcing API (noetl.server.api.event)
+        This function is temporarily disabled during event API refactoring.
+        """
+        logger.debug(
+            f"Aggregated result check disabled - TODO: implement with new event API. "
+            f"parent_execution_id={parent_execution_id}, parent_step={parent_step}"
+        )
+        # Old implementation disabled - will be reimplemented with new event sourcing model
+        pass
     
     @staticmethod
     async def _schedule_broker_evaluation(
         exec_id: int,
         parent_execution_id: Optional[int]
     ):
-        """Schedule broker evaluation for execution(s) - USE NEW SERVICE LAYER BROKER."""
+        """Schedule broker evaluation for execution(s) - USE NEW ORCHESTRATOR FROM RUN PACKAGE."""
         try:
-            from noetl.server.api.event.service import evaluate_execution
+            from noetl.server.api.run import evaluate_execution
             
             if asyncio.get_event_loop().is_running():
                 asyncio.create_task(evaluate_execution(str(exec_id)))
@@ -756,8 +601,12 @@ class QueueService:
         Args:
             job_info: Job dictionary with execution_id, node_id, context, etc.
         """
+        # TODO: Use new event API for emitting step_started events
+        # from noetl.server.api.event import EventService
+        # await EventService.emit_event(EventEmitRequest(...))
+        logger.debug(f"Step started event emission TODO - execution_id={job_info.get('execution_id')}")
+        
         try:
-            from noetl.server.api.event import get_event_service
             import json
             
             execution_id = job_info.get("execution_id")
@@ -801,38 +650,19 @@ class QueueService:
             if not last_error:
                 last_error = "Task failed after all retry attempts"
             
-            # Emit step_failed event
-            event_service = get_event_service()
-            step_failed_payload = {
-                "execution_id": execution_id,
-                "catalog_id": catalog_id,
-                "event_type": "step_failed",
-                "status": "FAILED",
-                "node_id": node_id,
-                "node_name": step_name,
-                "node_type": "step",
-                "error": last_error,
-                "result": last_error_result or {},
-            }
+            # TODO: Emit step_failed and execution_failed events using new event API
+            # from noetl.server.api.event import EventService
+            # await EventService.emit_event(EventEmitRequest(
+            #     execution_id=execution_id,
+            #     event_type='step_failed',
+            #     status='failed',
+            #     node_id=node_id,
+            #     node_name=step_name,
+            #     context={'error': last_error, 'result': last_error_result}
+            # ))
+            logger.warning(f"Step '{step_name}' failed in execution {execution_id}: {last_error}")
+            logger.debug(f"TODO: Emit step_failed and execution_failed events for execution {execution_id}")
             
-            await event_service.emit(step_failed_payload)
-            logger.info(f"Emitted step_failed event for step '{step_name}' in execution {execution_id}")
-            
-            # Emit execution_failed event
-            execution_failed_payload = {
-                "execution_id": execution_id,
-                "catalog_id": catalog_id,
-                "event_type": "execution_failed",
-                "status": "FAILED",
-                "node_id": execution_id,
-                "node_name": step_name,
-                "node_type": "execution",
-                "error": f"Execution failed at step '{step_name}': {last_error}",
-                "result": {"failed_step": step_name, "reason": last_error},
-            }
-            
-            await event_service.emit(execution_failed_payload)
-            logger.info(f"Emitted execution_failed event for execution {execution_id}")
         except Exception as e:
             logger.error(f"Error in _emit_final_failure_events: {e}", exc_info=True)
             raise
@@ -963,9 +793,9 @@ class QueueService:
                 await cur.execute(
                     """
                     WITH cte AS (
-                      SELECT id FROM noetl.queue
+                      SELECT queue_id FROM noetl.queue
                       WHERE status IN ('queued', 'retry') AND available_at <= now()
-                      ORDER BY priority DESC, id
+                      ORDER BY priority DESC, queue_id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
                     )
@@ -976,7 +806,7 @@ class QueueService:
                         last_heartbeat=now(),
                         attempts = q.attempts + 1
                     FROM cte
-                    WHERE q.id = cte.id
+                    WHERE q.queue_id = cte.queue_id
                     RETURNING q.*;
                     """,
                     (worker_id, str(lease_seconds))

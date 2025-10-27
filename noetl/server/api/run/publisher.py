@@ -6,7 +6,7 @@ Publishes actionable tasks to queue table for worker pools to consume.
 
 from typing import Dict, Any, Optional, List
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from psycopg.rows import dict_row
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
@@ -85,8 +85,8 @@ class QueuePublisher:
                     # Determine priority (start step has higher priority)
                     priority = 100 if step_name.lower() == "start" else 50
                     
-                    # Make available immediately
-                    available_at = datetime.utcnow()
+                    # Make available immediately (use UTC timezone-aware datetime)
+                    available_at = datetime.now(timezone.utc)
                     
                     await cur.execute(
                         """
@@ -201,8 +201,8 @@ class QueuePublisher:
         if context:
             task_context.update(context)
         
-        # Make available after delay
-        available_at = datetime.utcnow() + timedelta(seconds=delay_seconds)
+        # Make available after delay (use UTC timezone-aware datetime)
+        available_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
         
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:

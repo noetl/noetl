@@ -877,9 +877,9 @@ def run_playbook(
     This is an alias for 'noetl execute playbook'.
 
     Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/executions/run \
+      curl -X POST http://{host}:{port}/api/run/playbook \
            -H "Content-Type: application/json" \
-           -d '{"playbook_id": "<playbook_id>", "parameters": {...}}'
+           -d '{"path": "<playbook_path>", "args": {...}}'
 
     Example:
       noetl run "examples/weather_loop_example" --host localhost --port 8082
@@ -902,8 +902,8 @@ def run_playbook(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/executions/run"
-        body = {"playbook_id": playbook_id, "parameters": parameters, "merge": merge}
+        url = f"http://{host}:{port}/api/run/playbook"
+        body = {"path": playbook_id, "args": parameters, "merge": merge}
         if not json_only:
             typer.echo(f"POST {url}")
         resp = requests.post(url, json=body)
@@ -983,9 +983,9 @@ def execute_playbook_by_name(
     Execute a registered playbook by name against a running NoETL server.
 
     Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/executions/run \
+      curl -X POST http://{host}:{port}/api/run/playbook \
            -H "Content-Type: application/json" \
-           -d '{"playbook_id": "<playbook_id>", "parameters": {...}}'
+           -d '{"path": "<playbook_path>", "args": {...}}'
 
     Example:
       noetl execute playbook "examples/weather_loop_example" --host localhost --port 8082
@@ -1008,9 +1008,9 @@ def execute_playbook_by_name(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/executions/run"
+        url = f"http://{host}:{port}/api/run/playbook"
         logger.info(f"POST {url}")
-        body = {"playbook_id": playbook_id, "parameters": parameters, "merge": merge}
+        body = {"path": playbook_id, "args": parameters, "merge": merge}
         if not json_only:
             typer.echo(f"POST {url}")
         resp = requests.post(url, json=body)

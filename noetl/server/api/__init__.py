@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 # Import routers from local modules
-from . import execution, credential, queue, aggregate, catalog, runtime, event, dashboard, system, metrics, broker, \
+from . import execution, credential, queue, aggregate, catalog, runtime, dashboard, system, metrics, broker, \
     database, context, run
 
 router = APIRouter()
@@ -24,7 +24,7 @@ async def api_health():
 
 # Include all sub-routers
 router.include_router(context.router)
-router.include_router(event.router)
+router.include_router(broker.router)  # Event handler (was event package)
 router.include_router(catalog.router)
 router.include_router(credential.router)
 router.include_router(database.router)
@@ -33,14 +33,14 @@ router.include_router(dashboard.router)
 router.include_router(system.router)
 router.include_router(queue.router)
 router.include_router(aggregate.router)
-router.include_router(broker.router)
+# Note: broker.router already included above as event handler
 router.include_router(metrics.router)
 router.include_router(execution.router)
 router.include_router(run.router)
 
 __all__ = [
     "router",
-    "context", "queue", "event", "catalog", "credential",
+    "context", "queue", "broker", "catalog", "credential",
     "database", "runtime", "dashboard", "system",
-    "aggregate", "broker", "metrics", "execution", "run"
+    "aggregate", "metrics", "execution", "run"
 ]

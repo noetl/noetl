@@ -1,0 +1,30 @@
+# Centralized Timezone Configuration
+# 
+# This file defines the timezone used across all NoETL infrastructure components.
+# Change NOETL_TIMEZONE to configure the timezone for:
+# - PostgreSQL database server
+# - NoETL server processes
+# - NoETL worker processes
+# - All containerized components
+#
+# Recommended: Use UTC for production to avoid daylight saving time issues
+# and simplify distributed system coordination.
+#
+# Valid values: Any IANA timezone (e.g., UTC, America/Chicago, Europe/London)
+# See: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noetl-timezone-config
+  namespace: noetl
+  labels:
+    app: noetl
+    component: timezone
+data:
+  # System timezone - applies to all components
+  NOETL_TIMEZONE: "UTC"
+  
+  # Convenience aliases for different components
+  TZ: "UTC"
+  POSTGRES_TIMEZONE: "UTC"

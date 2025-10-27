@@ -9,6 +9,8 @@ from . import validation
 from . import planner
 from . import events
 from . import publisher
+from . import orchestrator
+from .orchestrator import evaluate_execution
 
 __all__ = [
     "router",
@@ -17,5 +19,7 @@ __all__ = [
     "validation",
     "planner",
     "events",
-    "publisher"
+    "publisher",
+    "orchestrator",
+    "evaluate_execution"
 ]

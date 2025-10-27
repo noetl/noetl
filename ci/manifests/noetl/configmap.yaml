@@ -6,7 +6,9 @@ metadata:
   labels:
     app: noetl
 data:
-  TZ: "America/Chicago"
+  # Timezone - Must match Postgres timezone for correct timestamp handling
+  # Change to America/Chicago or other timezone if needed (must also update postgres configmap)
+  TZ: "UTC"
   LOG_LEVEL: "INFO"
   PYTHONPATH: "/opt/noetl"
   NOETL_DATA_DIR: "/opt/noetl/data"

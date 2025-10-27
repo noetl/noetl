@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from noetl.core.db.pool import get_pool
 from noetl.core.logger import setup_logger
 from noetl.core.common import get_async_db_connection
-from noetl.server.api.broker import execute_playbook_via_broker
+from noetl.server.api.run.service import execute_request as run_execute_request
 from .schema import ExecutionRequest, ExecutionResponse
 
 logger = setup_logger(__name__, include_location=True)
@@ -232,20 +232,10 @@ class ExecutionService:
             execution_id = await ExecutionService.create_workload(
                 path, version, parameters
             )
-            # Execute via broker
-            result = execute_playbook_via_broker(
-                execution_id=execution_id,
-                playbook_content=content,
-                playbook_path=path,
-                playbook_version=version,
-                input_payload=parameters,
-                merge=merge,
-                parent_execution_id=parent_execution_id,
-                parent_event_id=parent_event_id,
-                parent_step=parent_step,
-                requestor_info=requestor_info
-            )
-
+            
+            # Execute via run package - triggers orchestrator which publishes to queue
+            # Orchestrator will analyze events and publish actionable tasks
+            result = await run_execute_request(request, requestor_info)
             
             # Build response - ensure all fields are proper types
             execution_response = ExecutionResponse(
@@ -257,9 +247,9 @@ class ExecutionService:
                 version=str(version) if version else None,
                 type=request.type,
                 status="running",
-                timestamp=result.get("timestamp", ""),
+                timestamp=result.timestamp if hasattr(result, 'timestamp') else "",
                 progress=0,
-                result=result
+                result=result.model_dump() if hasattr(result, 'model_dump') else {}
             )
 
             logger.debug(f"Execution created: execution_id={execution_id}")
