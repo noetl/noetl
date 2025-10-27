@@ -32,44 +32,6 @@ class CatalogService:
     - Resource registration and versioning
     - Catalog listing and querying
     """
-
-    # @staticmethod
-    # async def resolve_catalog_entry(
-    #     catalog_id: Optional[str] = None,
-    #     path: Optional[str] = None,
-    #     version: Optional[int] = None
-    # ) -> CatalogEntry:
-    #     """
-    #     Resolve catalog entry from identifiers.
-        
-    #     Args:
-    #         catalog_id: Direct catalog ID lookup
-    #         path: Resource path for path-based lookup
-    #         version: Optional version (defaults to latest if not provided)
-        
-    #     Returns:
-    #         CatalogEntry with resolved metadata
-        
-    #     Raises:
-    #         ValueError: If catalog entry not found or invalid
-    #         RuntimeError: If database error occurs
-    #     """
-    #     resource_content = await CatalogService._get_resource(
-    #         catalog_id=catalog_id,
-    #         path=path,
-    #         version=version
-    #     )
-        
-    #     if not resource_content:
-    #         identifier = catalog_id or f"{path}@{version or 'latest'}"
-    #         raise ValueError(f"Catalog entry not found: {identifier}")
-        
-    #     return CatalogEntry(
-    #         path=resource_content.path,
-    #         version=str(resource_content.version),
-    #         content=resource_content.content,
-    #         catalog_id=str(resource_content.catalog_id)
-    #     )
     
     @staticmethod
     def _build_query(        
@@ -189,19 +151,6 @@ class CatalogService:
                     return int(row['max_version'])
                 return 0  # Return 0 so that first version will be 1
 
-    # @staticmethod
-    # async def fetch_entry(path: str, version: str | int = "latest") -> Optional[CatalogResource]:
-    #     """
-    #     Fetch a catalog entry by path and version (supports 'latest').
-        
-    #     Args:
-    #         path: Resource path
-    #         version: Version number (int), version string, or 'latest' (default)
-            
-    #     Returns:
-    #         CatalogResource if found, None otherwise
-    #     """
-    #     return await CatalogService._get_resource(path=path, version=version)
 
     @staticmethod
     def increment_version(version: int) -> int:
@@ -273,11 +222,6 @@ class CatalogService:
         """List all catalog entries, optionally filtered by resource type"""
         query, params = CatalogService._build_query_filter(resource_type=resource_type)
         return await CatalogService._fetch_filter(query, params)
-        # async with get_pool_connection() as conn:
-        #     async with conn.cursor(row_factory=dict_row) as cur:
-        #         await cur.execute(query, params)
-        #         rows = await cur.fetchall() or []
-        #         return CatalogEntries(entries=[CatalogEntry(**dict(r)) for r in rows])
     
     @staticmethod
     def _build_query_filter(
