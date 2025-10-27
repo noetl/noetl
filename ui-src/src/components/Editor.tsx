@@ -140,15 +140,7 @@ const PlaybookEditor: React.FC = () => {
       loadPlaybook(playbookId);
     } else {
       // Create new playbooks template
-      setContent(`# New Playbook
-name: "untitled-playbook"
-description: "Enter description here"
-tasks:
-  - name: "sample-task"
-    type: "log"
-    config:
-      message: "Hello from NoETL!"
-`);
+      setContent(`# New Playbook`);
     }
   }, [playbookId]);
 
@@ -162,13 +154,11 @@ tasks:
       setLoading(true);
       setError(null);
 
-      const [playbookData, playbookContent] = await Promise.all([
-        apiService.getPlaybook(id),
-        apiService.getPlaybookContent(id),
-      ]);
+      const playbookData = await apiService.getPlaybook(id);
+      console.log("Loaded playbook data:", playbookData);
 
       setPlaybook(playbookData);
-      setContent(playbookContent);
+      setContent(playbookData.content || "");
     } catch (err: any) {
       console.error("Failed to load playbooks:", err);
       // IMPROVEMENT: Display the specific error from the server
@@ -244,7 +234,7 @@ tasks:
 
     try {
       setExecuting(true);
-      await apiService.executePlaybook(playbook.id);
+      await apiService.executePlaybook(playbook.catalog_id);
       message.success("Playbook execution started");
       // Redirect to execution page
       window.location.href = "/execution";

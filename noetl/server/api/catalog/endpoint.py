@@ -107,24 +107,6 @@ async def list_resources(
 ):
     try:
         return await catalog_service.fetch_entries(payload.resource_type)
-        # Convert CatalogResourceRequest Pydantic models to response models
-        # return {
-        #     "entries": [
-        #         CatalogResourceResponse(
-        #             catalog_id=entry.catalog_id,
-        #             path=entry.path,
-        #             kind=entry.kind,
-        #             version=entry.version,
-        #             content=entry.content,
-        #             layout=entry.layout,
-        #             payload=entry.payload,
-        #             meta=entry.meta,
-        #             created_at=entry.created_at
-        #         )
-        #         for entry in entries
-        #     ]
-        # }
-
     except Exception as e:
         logger.exception(f"Error listing resources: {e}")
         raise HTTPException(

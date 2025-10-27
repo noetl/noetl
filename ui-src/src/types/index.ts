@@ -6,18 +6,30 @@ export interface ServerStatus {
   timestamp: string;
 }
 
+// export interface PlaybookData {
+//   id: string;
+//   name: string;
+//   kind: string;
+//   version: number;
+//   meta: any;
+//   timestamp: string;
+//   status: "active" | "inactive" | "draft";
+//   tasks_count: number;
+//   updated_at: string;
+//   description?: string;
+//   created_at?: string;
+// }
 export interface PlaybookData {
-  id: string;
-  name: string;
-  kind: string;
-  version: number;
-  meta: any;
-  timestamp: string;
+  catalog_id: string
+  path: string
+  version: string
+  kind?: string
+  content?: string
+  layout?: any
+  payload?: any
   status: "active" | "inactive" | "draft";
-  tasks_count: number;
-  updated_at: string;
-  description?: string;
-  created_at?: string;
+  meta?: any
+  created_at?: string
 }
 
 export interface ExecutionData {
