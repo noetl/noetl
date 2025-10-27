@@ -423,7 +423,7 @@ class QueueWorker:
                     retry_event = {
                         "execution_id": execution_id,
                         "event_type": "action_retry",
-                        "status": "RETRYING",
+                        "status": "RUNNING",
                         "node_id": node_id,
                         "node_name": context.get("step_name"),
                         "node_type": "step",
@@ -773,7 +773,7 @@ class QueueWorker:
                 "execution_id": execution_id,
                 "catalog_id": catalog_id,
                 "event_type": "action_started",
-                "status": "STARTED",
+                "status": "RUNNING",
                 "node_id": node_id,
                 "node_name": event_node_name,  # Use step name for orchestration
                 "node_type": node_type_val,
@@ -941,13 +941,13 @@ class QueueWorker:
                     error_event = {
                         "execution_id": execution_id,
                         "catalog_id": catalog_id,
-                        "event_type": "action_error",
+                        "event_type": "action_failed",
                         "status": "FAILED",
                         "node_id": node_id,
                         "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
                         "error": err_msg,
-                        "traceback": tb_text,
+                        "stack_trace": tb_text,
                         "result": result,
                         
                     }
@@ -1028,14 +1028,14 @@ class QueueWorker:
                     error_event = {
                         "execution_id": execution_id,
                         "catalog_id": catalog_id,
-                        "event_type": "action_error",
+                        "event_type": "action_failed",
                         "status": "FAILED",
                         "node_id": node_id,
                         "node_name": task_name,
                         "node_type": node_type_val,
                         "error": f"{type(e).__name__}: {str(e)}",
-                        "traceback": tb_text,
-                        "result": {"error": str(e), "traceback": tb_text},
+                        "stack_trace": tb_text,
+                        "result": {"error": str(e), "stack_trace": tb_text},
                         
                     }
                     if loop_meta:

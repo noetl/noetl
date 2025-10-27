@@ -27,14 +27,16 @@ EventType = Literal[
     "warning"
 ]
 
-# Event status
+# Event status - uppercase to match worker/core status system
 EventStatus = Literal[
-    "pending",
-    "running",
-    "completed",
-    "failed",
-    "cancelled",
-    "skipped"
+    "PENDING",
+    "RUNNING",
+    "COMPLETED",
+    "FAILED",
+    "CANCELLED",
+    "SKIPPED",
+    "STARTED",
+    "PAUSED"
 ]
 
 
