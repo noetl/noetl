@@ -82,4 +82,3 @@ async def execute_resource(
     except Exception as e:
         logger.error(f"Error executing request: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

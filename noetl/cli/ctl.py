@@ -677,12 +677,11 @@ def manage_catalog(
             if host is None or port is None:
                 logger.error("Error: --host and --port are required for this client command")
                 raise typer.Exit(code=1)
-            url = f"http://{host}:{port}/api/execute"
+            url = f"http://{host}:{port}/api/run/playbook"
             headers = {"Content-Type": "application/json"}
             data = {
                 "path": path,
-                "input_payload": input_payload,
-                "sync_to_postgres": sync,
+                "args": input_payload,
                 "merge": merge
             }
 
