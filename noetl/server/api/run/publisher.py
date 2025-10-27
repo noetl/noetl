@@ -6,12 +6,52 @@ Publishes actionable tasks to queue table for worker pools to consume.
 
 from typing import Dict, Any, Optional, List
 import json
+import base64
 from datetime import datetime, timedelta, timezone
 from psycopg.rows import dict_row
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply base64 encoding to multiline code/commands in task configuration
+    to prevent serialization issues when passing through JSON in queue table.
+    Only base64 versions are stored - original fields are removed to ensure single method of handling.
+    
+    Args:
+        task_config: The original task configuration
+        
+    Returns:
+        Modified task configuration with base64 encoded fields, original fields removed
+    """
+    if not isinstance(task_config, dict):
+        return task_config
+    
+    encoded_task = dict(task_config)
+    
+    try:
+        # Encode Python code and remove original
+        code_val = encoded_task.get('code')
+        if isinstance(code_val, str) and code_val.strip():
+            encoded_task['code_b64'] = base64.b64encode(code_val.encode('utf-8')).decode('ascii')
+            # Remove original to ensure only base64 is used
+            encoded_task.pop('code', None)
+            
+        # Encode command/commands for PostgreSQL and DuckDB and remove originals
+        for field in ('command', 'commands'):
+            cmd_val = encoded_task.get(field)
+            if isinstance(cmd_val, str) and cmd_val.strip():
+                encoded_task[f'{field}_b64'] = base64.b64encode(cmd_val.encode('utf-8')).decode('ascii')
+                # Remove original to ensure only base64 is used
+                encoded_task.pop(field, None)
+                
+    except Exception:
+        logger.debug("Failed to encode task fields with base64", exc_info=True)
+        
+    return encoded_task
 
 
 class QueuePublisher:
@@ -36,6 +76,9 @@ class QueuePublisher:
         """
         Publish initial workflow steps to queue.
         
+        Router steps (e.g., start without actionable type) are not enqueued.
+        Instead, their actionable next steps are resolved from transitions and enqueued directly.
+        
         Args:
             execution_id: Execution identifier
             catalog_id: Catalog entry ID
@@ -56,76 +99,105 @@ class QueuePublisher:
         }
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 for step_name in initial_steps:
                     step_def = step_map.get(step_name)
                     if not step_def:
-                        logger.warning(
-                            f"Initial step '{step_name}' not found in workflow, skipping"
-                        )
+                        logger.warning(f"Initial step '{step_name}' not found in workflow, skipping")
                         continue
-                    
-                    # Generate queue_id from database
+
+                    step_type = (step_def.get("step_type") or "").lower()
+
+                    # If router (e.g. start without actionable type), do not enqueue itself.
+                    if step_type == "router":
+                        # Lookup transitions from this step and enqueue actionable next steps
+                        await cur.execute(
+                            """
+                            SELECT to_step, condition, with_params
+                            FROM noetl.transition
+                            WHERE execution_id = %(execution_id)s
+                              AND from_step = %(from_step)s
+                            """,
+                            {"execution_id": execution_id, "from_step": step_name}
+                        )
+                        next_rows = await cur.fetchall() or []
+
+                        for row in next_rows:
+                            to_step = row.get("to_step")
+                            if not to_step:
+                                continue
+                            next_def = step_map.get(to_step)
+                            if not next_def:
+                                logger.warning(f"Transition target step '{to_step}' not found in workflow, skipping")
+                                continue
+                            nxt_type = (next_def.get("step_type") or "").lower()
+                            # Skip non-actionable types (router/end)
+                            if nxt_type in ("router", "end"):
+                                logger.debug(f"Skipping non-actionable next step '{to_step}' of type '{nxt_type}'")
+                                continue
+
+                            # Merge transition with_params into the step config as inputs
+                            step_cfg = json.loads(next_def["raw_config"]) if isinstance(next_def.get("raw_config"), str) else (next_def.get("raw_config") or {})
+                            try:
+                                with_params = row.get("with_params") or {}
+                                if isinstance(step_cfg, dict) and isinstance(with_params, dict):
+                                    # Normalize into 'args' to be read by worker
+                                    args = step_cfg.get("args") if isinstance(step_cfg.get("args"), dict) else {}
+                                    step_cfg["args"] = {**args, **with_params}
+                            except Exception:
+                                pass
+
+                            # Publish the actionable next step
+                            qid = await QueuePublisher.publish_step(
+                                execution_id=execution_id,
+                                catalog_id=catalog_id,
+                                step_name=to_step,
+                                step_config=step_cfg,
+                                step_type=nxt_type,
+                                parent_event_id=parent_event_id,
+                                context={"workload": (context or {}).get("workload", {})},
+                                priority=90  # just below start's 100, but urgent
+                            )
+                            queue_ids.append(qid)
+
+                        # Done with router; do not enqueue router itself
+                        logger.info(f"Router step '{step_name}' resolved to {len(next_rows)} next steps")
+                        continue
+
+                    # Actionable start (has explicit type) — enqueue as before
                     queue_id = await get_snowflake_id()
+
+                    # Parse and encode step config
+                    step_cfg = json.loads(step_def["raw_config"])
+                    encoded_step_cfg = encode_task_for_queue(step_cfg)
                     
-                    # Build task context
                     task_context = {
                         "execution_id": execution_id,
                         "step_name": step_name,
                         "step_type": step_def["step_type"],
-                        "step_config": json.loads(step_def["raw_config"])
+                        "step_config": encoded_step_cfg
                     }
-                    
                     if context:
                         task_context["workload"] = context.get("workload", {})
-                    
-                    # Prepare action payload (raw step config)
-                    action = step_def["raw_config"]
-                    
-                    # Determine priority (start step has higher priority)
+
+                    action = json.dumps(encoded_step_cfg)  # Use encoded config for action
                     priority = 100 if step_name.lower() == "start" else 50
-                    
-                    # Make available immediately (use UTC timezone-aware datetime)
                     available_at = datetime.now(timezone.utc)
-                    
+
                     await cur.execute(
                         """
                         INSERT INTO noetl.queue (
-                            queue_id,
-                            execution_id,
-                            catalog_id,
-                            node_id,
-                            node_name,
-                            node_type,
-                            action,
-                            context,
-                            status,
-                            priority,
-                            attempts,
-                            max_attempts,
-                            available_at,
-                            parent_event_id,
-                            event_id,
-                            created_at,
-                            updated_at
+                            queue_id, execution_id, catalog_id,
+                            node_id, node_name, node_type,
+                            action, context, status, priority,
+                            attempts, max_attempts, available_at,
+                            parent_event_id, event_id, created_at, updated_at
                         ) VALUES (
-                            %(queue_id)s,
-                            %(execution_id)s,
-                            %(catalog_id)s,
-                            %(node_id)s,
-                            %(node_name)s,
-                            %(node_type)s,
-                            %(action)s,
-                            %(context)s,
-                            %(status)s,
-                            %(priority)s,
-                            %(attempts)s,
-                            %(max_attempts)s,
-                            %(available_at)s,
-                            %(parent_event_id)s,
-                            %(event_id)s,
-                            %(created_at)s,
-                            %(updated_at)s
+                            %(queue_id)s, %(execution_id)s, %(catalog_id)s,
+                            %(node_id)s, %(node_name)s, %(node_type)s,
+                            %(action)s, %(context)s, %(status)s, %(priority)s,
+                            %(attempts)s, %(max_attempts)s, %(available_at)s,
+                            %(parent_event_id)s, %(event_id)s, %(created_at)s, %(updated_at)s
                         )
                         """,
                         {
@@ -143,17 +215,15 @@ class QueuePublisher:
                             "max_attempts": 5,
                             "available_at": available_at,
                             "parent_event_id": parent_event_id,
-                            "event_id": None,  # Will be set when worker picks up
+                            "event_id": None,
                             "created_at": datetime.utcnow(),
-                            "updated_at": datetime.utcnow()
-                        }
+                            "updated_at": datetime.utcnow(),
+                        },
                     )
-                    
+
                     queue_ids.append(queue_id)
-                    
                     logger.info(
-                        f"Published step '{step_name}' to queue: "
-                        f"execution_id={execution_id}, queue_id={queue_id}, priority={priority}"
+                        f"Published step '{step_name}' to queue: execution_id={execution_id}, queue_id={queue_id}, priority={priority}"
                     )
         
         return queue_ids
@@ -190,12 +260,15 @@ class QueuePublisher:
         # Generate queue_id from database
         queue_id = await get_snowflake_id()
         
+        # Encode task config for queue (base64 encode code/command fields)
+        encoded_step_config = encode_task_for_queue(step_config)
+        
         # Build task context
         task_context = {
             "execution_id": execution_id,
             "step_name": step_name,
             "step_type": step_type,
-            "step_config": step_config
+            "step_config": encoded_step_config
         }
         
         if context:
@@ -251,7 +324,7 @@ class QueuePublisher:
                         "node_id": step_name,
                         "node_name": step_name,
                         "node_type": step_type,
-                        "action": json.dumps(step_config),
+                        "action": json.dumps(encoded_step_config),
                         "context": json.dumps(task_context),
                         "status": "queued",
                         "priority": priority,

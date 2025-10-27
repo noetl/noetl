@@ -684,6 +684,38 @@ class QueueWorker:
                 act_type = str(action_cfg.get('type') or '').strip().lower()
             except Exception:
                 act_type = ''
+            
+            # Defensive: treat router as non-actionable; complete immediately
+            if act_type in ('router', 'start'):
+                logger.info(f"WORKER: Skipping non-actionable job of type '{act_type}' for node {node_id}")
+                from noetl.plugin import report_event
+                # Emit minimal started/completed pair for trace consistency
+                start_event = {
+                    "execution_id": execution_id,
+                    "catalog_id": catalog_id,
+                    "event_type": "action_started",
+                    "status": "RUNNING",
+                    "node_id": node_id,
+                    "node_name": action_cfg.get('name') or node_id,
+                    "node_type": "task",
+                    "context": {"work": context, "task": action_cfg},
+                }
+                start_response = report_event(self._validate_event_status(start_event), self.server_url)
+                parent_eid = start_response.get('event_id') if isinstance(start_response, dict) else None
+                complete_event = {
+                    "execution_id": execution_id,
+                    "catalog_id": catalog_id,
+                    "event_type": "action_completed",
+                    "status": "SUCCEEDED",
+                    "node_id": node_id,
+                    "node_name": action_cfg.get('name') or node_id,
+                    "node_type": "task",
+                    "parent_event_id": parent_eid,
+                    "context": {"result": {"skipped": True, "reason": "router"}},
+                }
+                report_event(self._validate_event_status(complete_event), self.server_url)
+                return
+            
             if act_type == 'result_aggregation':
                 # Process loop result aggregation job via worker-side coroutine
                 from noetl.plugin.result import process_loop_aggregation_job

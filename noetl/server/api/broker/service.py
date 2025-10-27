@@ -7,6 +7,7 @@ Similar pattern to run/catalog services.
 
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
@@ -50,7 +51,7 @@ class EventService:
         meta = Json(request.meta) if request.meta else None
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
@@ -128,7 +129,7 @@ class EventService:
         event_id_int = int(event_id)
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     SELECT
@@ -226,7 +227,7 @@ class EventService:
         params["offset"] = query.offset
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 # Get total count
                 count_sql = f"""
                     SELECT COUNT(*) as total
@@ -290,6 +291,43 @@ class EventService:
                     offset=query.offset,
                     has_more=has_more
                 )
+    
+    @staticmethod
+    async def get_catalog_id_from_execution(execution_id: int | str) -> int:
+        """
+        Get catalog_id from the first event of an execution.
+        
+        This is useful for queue operations that need to associate jobs with catalogs.
+        
+        Args:
+            execution_id: Execution ID (int or string)
+            
+        Returns:
+            Catalog ID as integer
+            
+        Raises:
+            ValueError: If no catalog_id found for the execution
+        """
+        execution_id_int = int(execution_id)
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT catalog_id 
+                    FROM noetl.event 
+                    WHERE execution_id = %(execution_id)s 
+                    ORDER BY created_at 
+                    LIMIT 1
+                    """,
+                    {"execution_id": execution_id_int}
+                )
+                row = await cur.fetchone()
+                
+                if row and row['catalog_id']:
+                    return int(row['catalog_id'])
+                else:
+                    raise ValueError(f"No catalog_id found for execution {execution_id}")
 
 
 __all__ = ["EventService"]

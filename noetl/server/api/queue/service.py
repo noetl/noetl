@@ -15,11 +15,10 @@ import asyncio
 from typing import Any, Dict, List, Optional, Tuple
 from psycopg.rows import dict_row
 
-from noetl.core.common import (
-    get_async_db_connection,
-    normalize_execution_id_for_db
-)
+from noetl.core.db.pool import get_pool_connection
+from noetl.core.common import normalize_execution_id_for_db
 from noetl.core.logger import setup_logger
+from noetl.server.api.broker.service import EventService
 from .schema import (
     EnqueueResponse,
     LeaseResponse,
@@ -57,32 +56,6 @@ class QueueService:
         return normalize_execution_id_for_db(execution_id)
     
     @staticmethod
-    async def get_catalog_id_from_execution(execution_id: int) -> int:
-        """
-        Get catalog_id from the first event of an execution.
-        
-        Args:
-            execution_id: Execution ID
-            
-        Returns:
-            Catalog ID
-            
-        Raises:
-            ValueError: If no catalog_id found
-        """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1",
-                    (execution_id,)
-                )
-                row = await cur.fetchone()
-                if row:
-                    return row[0]
-                else:
-                    raise ValueError(f"No catalog_id found for execution {execution_id}")
-    
-    @staticmethod
     async def enqueue_job(
         execution_id: str | int,
         node_id: str,
@@ -116,11 +89,11 @@ class QueueService:
         # Convert execution_id from string to int for database storage
         execution_id_int = QueueService.normalize_execution_id(execution_id)
         
-        # Get catalog_id from the execution's first event
-        catalog_id = await QueueService.get_catalog_id_from_execution(execution_id_int)
+        # Get catalog_id from the execution's first event using EventService
+        catalog_id = await EventService.get_catalog_id_from_execution(execution_id_int)
         
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
@@ -150,7 +123,7 @@ class QueueService:
         Returns:
             LeaseResponse with job details or empty status
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
@@ -206,7 +179,7 @@ class QueueService:
         Returns:
             CompleteResponse with status
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE queue_id = %s RETURNING queue_id, execution_id, context",
@@ -280,8 +253,8 @@ class QueueService:
                 # TODO: Use new event API for event sourcing
                 # from noetl.server.api.event import EventService
                 
-                async with get_async_db_connection() as conn:
-                    async with conn.cursor() as cur:
+                async with get_pool_connection() as conn:
+                    async with conn.cursor(row_factory=dict_row) as cur:
                         # Resolve return_step from queue.action
                         return_step = await QueueService._resolve_return_step(cur, queue_id, return_step)
                         
@@ -546,7 +519,7 @@ class QueueService:
         job_is_dead = False
         job_info = None
         
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 # Get job info including execution context
                 await cur.execute(
@@ -627,7 +600,7 @@ class QueueService:
             last_error_result = None
             
             try:
-                async with get_async_db_connection() as conn:
+                async with get_pool_connection() as conn:
                     async with conn.cursor(row_factory=dict_row) as cur:
                         await cur.execute(
                             """
@@ -684,8 +657,8 @@ class QueueService:
         Returns:
             HeartbeatResponse with status
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 if extend_seconds:
                     await cur.execute(
                         "UPDATE noetl.queue SET last_heartbeat = now(), lease_until = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id",
@@ -738,7 +711,7 @@ class QueueService:
         
         where = f"WHERE {' AND '.join(filters)}" if filters else ''
         
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     f"SELECT * FROM noetl.queue {where} ORDER BY priority DESC, queue_id LIMIT %s",
@@ -763,18 +736,16 @@ class QueueService:
         Returns:
             QueueSizeResponse with count
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    "SELECT count(*) FROM noetl.queue WHERE status = %s",
+                    "SELECT count(*) as count FROM noetl.queue WHERE status = %s",
                     (status,)
                 )
                 row = await cur.fetchone()
-                logger.debug(f"Queue size for status '{status}': {row}")
-                if isinstance(row, tuple):
-                    row = row[0]
+                count = row["count"] if row else 0
         
-        return QueueSizeResponse(status="ok", count=row)
+        return QueueSizeResponse(status="ok", count=count)
     
     @staticmethod
     async def reserve_job(worker_id: str, lease_seconds: int = 60) -> ReserveResponse:
@@ -788,7 +759,7 @@ class QueueService:
         Returns:
             ReserveResponse with job details
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
@@ -834,7 +805,7 @@ class QueueService:
         Returns:
             AckResponse with status
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     "SELECT worker_id FROM noetl.queue WHERE queue_id = %s",
@@ -872,7 +843,7 @@ class QueueService:
         Returns:
             NackResponse with status
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     "SELECT worker_id, attempts, max_attempts FROM noetl.queue WHERE queue_id = %s",
@@ -910,8 +881,8 @@ class QueueService:
         Returns:
             ReapResponse with count of reclaimed jobs
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     UPDATE noetl.queue

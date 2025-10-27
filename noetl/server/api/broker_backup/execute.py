@@ -283,9 +283,12 @@ def execute_playbook_via_broker(
                 "version": playbook_version,
                 "workload": merged_workload,
             }
+            # TODO: Emit execution_start event using new event API
+            # from noetl.server.api.event import EventService
+            # await EventService.emit_event(EventEmitRequest(...))
+            logger.debug(f"Execution started: execution_id={execution_id}, path={playbook_path}")
             try:
-                from noetl.server.api.event import get_event_service
-                es = get_event_service()
+                # TODO:                 es = get_event_service()
                 import asyncio as _asyncio
                 if _asyncio.get_event_loop().is_running():
                     # within async server context
@@ -312,7 +315,7 @@ def execute_playbook_via_broker(
                         payload['parent_event_id'] = parent_event_id
                     if parent_execution_id:
                         payload['parent_execution_id'] = parent_execution_id
-                    _asyncio.create_task(es.emit(payload))
+                    # TODO:                     _asyncio.create_task(es.emit(payload))
                 else:
                     # best-effort synchronous run
                     meta = {
@@ -338,7 +341,7 @@ def execute_playbook_via_broker(
                         payload['parent_event_id'] = parent_event_id
                     if parent_execution_id:
                         payload['parent_execution_id'] = parent_execution_id
-                    _asyncio.run(es.emit(payload))
+                    # TODO:                     _asyncio.run(es.emit(payload))
             except Exception:
                 # Fallback to HTTP if direct emit fails
                 server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
@@ -376,7 +379,7 @@ def execute_playbook_via_broker(
         # Kick off broker evaluation for this execution id - USE NEW SERVICE LAYER BROKER
         logger.info(f"BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: Attempting to start broker evaluation for execution_id={execution_id}")
         try:
-            from noetl.server.api.event.service import evaluate_execution
+            from noetl.server.api.run import evaluate_execution
             import asyncio as _asyncio
 
             logger.info("BROKER.EXECUTE_PLAYBOOK_VIA_BROKER: evaluate_execution (NEW) imported successfully")

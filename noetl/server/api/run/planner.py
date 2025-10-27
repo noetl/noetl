@@ -223,15 +223,26 @@ class ExecutionPlanner:
         Determine step type from step configuration.
         
         Priority:
-        1. Explicit 'type' field
-        2. 'start' or 'end' special steps
-        3. Default to 'task'
+        1. Special control steps with specific handling:
+           - 'start': router if no explicit type; otherwise use explicit type (actionable)
+           - 'end': remains a terminal control step
+        2. Explicit 'type' field
+        3. Check for workbook reference
+        4. Default to 'task'
         """
         step_name = step.get("step", "").lower()
         
-        # Special control steps
-        if step_name in ["start", "end"]:
-            return step_name
+        # Special control steps handling
+        # - start: router if no explicit type; otherwise use explicit type (actionable)
+        # - end: remains a terminal control step
+        if step_name == "start":
+            if step.get("type"):
+                # Explicitly actionable start
+                return step.get("type")
+            # Default non-actionable router
+            return "router"
+        if step_name == "end":
+            return "end"
         
         # Explicit type
         step_type = step.get("type")

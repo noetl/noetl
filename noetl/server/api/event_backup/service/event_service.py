@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.status import validate_status
-from noetl.server.api.event.event_log import EventLog
+from noetl.server.api.event_backup.event_log import EventLog
 
 logger = setup_logger(__name__, include_location=True)
 
