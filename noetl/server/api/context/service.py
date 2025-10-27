@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.server.api.catalog import get_catalog_service
-from noetl.server.api.event_backup.event_log import EventLog
+from noetl.server.api.broker.service import EventService
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -33,9 +33,6 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
     playbook_path = None
     playbook_version = None
     steps = []
-    
-    # Initialize DAO for event log access
-    dao = EventLog()
     
     # Fetch workload from noetl.workload table (primary source of truth)
     async with get_async_db_connection() as conn:
@@ -61,7 +58,7 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
     
     # Fallback: try to fetch from earliest event context if workload table had no data
     if not workload:
-        first_ctx = await dao.get_earliest_context(execution_id)
+        first_ctx = await EventService.get_earliest_context(execution_id)
         if first_ctx:
             try:
                 ctx_first = json.loads(first_ctx) if isinstance(first_ctx, str) else first_ctx
@@ -72,7 +69,7 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
                 workload = {}
     
     # Fetch results from all completed steps
-    node_results = await dao.get_all_node_results(execution_id)
+    node_results = await EventService.get_all_node_results(execution_id)
     if isinstance(node_results, dict):
         for node_name, out in node_results.items():
             if not node_name or out is None:

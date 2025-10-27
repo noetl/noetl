@@ -328,6 +328,75 @@ class EventService:
                     return int(row['catalog_id'])
                 else:
                     raise ValueError(f"No catalog_id found for execution {execution_id}")
+    
+    @staticmethod
+    async def get_earliest_context(execution_id: int | str) -> Optional[Dict[str, Any]]:
+        """
+        Get the context from the earliest event of an execution.
+        
+        Useful for retrieving initial workload configuration.
+        
+        Args:
+            execution_id: Execution ID (int or string)
+            
+        Returns:
+            Context dictionary from the first event, or None if not found
+        """
+        execution_id_int = int(execution_id)
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT context 
+                    FROM noetl.event 
+                    WHERE execution_id = %(execution_id)s 
+                    ORDER BY created_at ASC 
+                    LIMIT 1
+                    """,
+                    {"execution_id": execution_id_int}
+                )
+                row = await cur.fetchone()
+                return row['context'] if row else None
+    
+    @staticmethod
+    async def get_all_node_results(execution_id: int | str) -> Dict[str, Any]:
+        """
+        Get all node results from events for an execution.
+        
+        Returns a map of node_name -> result for all events with non-empty results.
+        
+        Args:
+            execution_id: Execution ID (int or string)
+            
+        Returns:
+            Dictionary mapping node names to their results
+        """
+        execution_id_int = int(execution_id)
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT node_name, result 
+                    FROM noetl.event 
+                    WHERE execution_id = %(execution_id)s 
+                      AND result IS NOT NULL 
+                      AND result != '{}'::jsonb 
+                      AND result != 'null'::jsonb
+                    ORDER BY created_at ASC
+                    """,
+                    {"execution_id": execution_id_int}
+                )
+                rows = await cur.fetchall()
+                
+                # Build map of node_name -> result
+                results = {}
+                for row in rows:
+                    if row['node_name']:
+                        results[row['node_name']] = row['result']
+                
+                return results
 
 
 __all__ = ["EventService"]
