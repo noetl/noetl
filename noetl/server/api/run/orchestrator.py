@@ -88,7 +88,7 @@ async def evaluate_execution(
             # Only process transitions for actionable events
             if trigger_event_type in ('action_completed', 'step_result', 'step_end'):
                 logger.info(f"ORCHESTRATOR: Processing transitions for execution {exec_id}")
-                await _process_transitions(exec_id, trigger_event_id)
+                await _process_transitions(exec_id)
             else:
                 logger.debug(f"ORCHESTRATOR: No transition processing needed for {trigger_event_type}")
             

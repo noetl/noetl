@@ -60,24 +60,38 @@ class QueueService:
         execution_id: str | int,
         node_id: str,
         action: str,
+        catalog_id: Optional[int] = None,
         context: Optional[Dict[str, Any]] = None,
         input_context: Optional[Dict[str, Any]] = None,
+        node_name: Optional[str] = None,
+        node_type: Optional[str] = None,
         priority: int = 0,
         max_attempts: int = 5,
-        available_at: Optional[str] = None
+        available_at: Optional[Any] = None,
+        parent_event_id: Optional[str] = None,
+        event_id: Optional[str] = None,
+        queue_id: Optional[int] = None,
+        status: str = "queued"
     ) -> EnqueueResponse:
         """
         Enqueue a job into the queue table.
         
         Args:
             execution_id: Execution ID
-            node_id: Node ID
-            action: Action to execute
+            node_id: Node ID (or step_id)
+            action: Action to execute (JSON string)
+            catalog_id: Catalog ID (if None, will query from EventService)
             context: Job context/input data
             input_context: Legacy field for context (backward compatibility)
+            node_name: Node name (step name)
+            node_type: Node type (step type)
             priority: Job priority (higher = more priority)
             max_attempts: Maximum retry attempts
-            available_at: Timestamp when job becomes available
+            available_at: Timestamp when job becomes available (datetime or string)
+            parent_event_id: Parent event ID
+            event_id: Associated event ID
+            queue_id: Pre-generated queue ID (if None, will auto-generate)
+            status: Job status (default: "queued")
             
         Returns:
             EnqueueResponse with queue ID
@@ -89,26 +103,70 @@ class QueueService:
         # Convert execution_id from string to int for database storage
         execution_id_int = QueueService.normalize_execution_id(execution_id)
         
-        # Get catalog_id from the execution's first event using EventService
-        catalog_id = await EventService.get_catalog_id_from_execution(execution_id_int)
+        # Get catalog_id if not provided
+        if catalog_id is None:
+            catalog_id = await EventService.get_catalog_id_from_execution(execution_id_int)
+        
+        # Generate queue_id if not provided
+        if queue_id is None:
+            from noetl.core.db.pool import get_snowflake_id
+            queue_id = await get_snowflake_id()
+        
+        # Handle available_at - convert to proper timestamp
+        from datetime import datetime, timezone
+        if available_at is None:
+            available_at = datetime.now(timezone.utc)
+        elif isinstance(available_at, str):
+            # Keep as string for database conversion
+            pass
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                # Build INSERT query with all fields
                 await cur.execute(
                     """
-                    INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()))
+                    INSERT INTO noetl.queue (
+                        queue_id, execution_id, catalog_id,
+                        node_id, node_name, node_type,
+                        action, context, status, priority,
+                        attempts, max_attempts, available_at,
+                        parent_event_id, event_id, created_at, updated_at
+                    ) VALUES (
+                        %(queue_id)s, %(execution_id)s, %(catalog_id)s,
+                        %(node_id)s, %(node_name)s, %(node_type)s,
+                        %(action)s, %(context)s, %(status)s, %(priority)s,
+                        %(attempts)s, %(max_attempts)s, %(available_at)s,
+                        %(parent_event_id)s, %(event_id)s, %(created_at)s, %(updated_at)s
+                    )
                     ON CONFLICT (execution_id, node_id) DO NOTHING
                     RETURNING queue_id
                     """,
-                    (execution_id_int, catalog_id, node_id, action, json.dumps(context), priority, max_attempts, available_at)
+                    {
+                        "queue_id": queue_id,
+                        "execution_id": execution_id_int,
+                        "catalog_id": catalog_id,
+                        "node_id": node_id,
+                        "node_name": node_name or node_id,
+                        "node_type": node_type,
+                        "action": action if isinstance(action, str) else json.dumps(action),
+                        "context": json.dumps(context) if isinstance(context, dict) else context,
+                        "status": status,
+                        "priority": priority,
+                        "attempts": 0,
+                        "max_attempts": max_attempts,
+                        "available_at": available_at,
+                        "parent_event_id": parent_event_id,
+                        "event_id": event_id,
+                        "created_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc)
+                    }
                 )
                 row = await cur.fetchone()
                 await conn.commit()
         
         return EnqueueResponse(
             status="ok",
-            id=row[0] if row else None
+            id=row["queue_id"] if row else queue_id
         )
     
     @staticmethod

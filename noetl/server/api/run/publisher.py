@@ -164,7 +164,10 @@ class QueuePublisher:
                         logger.info(f"Router step '{step_name}' resolved to {len(next_rows)} next steps")
                         continue
 
-                    # Actionable start (has explicit type) — enqueue as before
+                    # Actionable start (has explicit type) — enqueue via QueueService
+                    # Lazy import to avoid circular dependency
+                    from noetl.server.api.queue.service import QueueService
+                    
                     queue_id = await get_snowflake_id()
 
                     # Parse and encode step config
@@ -184,44 +187,25 @@ class QueuePublisher:
                     priority = 100 if step_name.lower() == "start" else 50
                     available_at = datetime.now(timezone.utc)
 
-                    await cur.execute(
-                        """
-                        INSERT INTO noetl.queue (
-                            queue_id, execution_id, catalog_id,
-                            node_id, node_name, node_type,
-                            action, context, status, priority,
-                            attempts, max_attempts, available_at,
-                            parent_event_id, event_id, created_at, updated_at
-                        ) VALUES (
-                            %(queue_id)s, %(execution_id)s, %(catalog_id)s,
-                            %(node_id)s, %(node_name)s, %(node_type)s,
-                            %(action)s, %(context)s, %(status)s, %(priority)s,
-                            %(attempts)s, %(max_attempts)s, %(available_at)s,
-                            %(parent_event_id)s, %(event_id)s, %(created_at)s, %(updated_at)s
-                        )
-                        """,
-                        {
-                            "queue_id": queue_id,
-                            "execution_id": execution_id,
-                            "catalog_id": catalog_id,
-                            "node_id": step_def["step_id"],
-                            "node_name": step_name,
-                            "node_type": step_def["step_type"],
-                            "action": action,
-                            "context": json.dumps(task_context),
-                            "status": "queued",
-                            "priority": priority,
-                            "attempts": 0,
-                            "max_attempts": 5,
-                            "available_at": available_at,
-                            "parent_event_id": parent_event_id,
-                            "event_id": None,
-                            "created_at": datetime.utcnow(),
-                            "updated_at": datetime.utcnow(),
-                        },
+                    # Use QueueService to enqueue the job
+                    response = await QueueService.enqueue_job(
+                        execution_id=execution_id,
+                        catalog_id=catalog_id,
+                        node_id=step_def["step_id"],
+                        node_name=step_name,
+                        node_type=step_def["step_type"],
+                        action=action,
+                        context=task_context,
+                        priority=priority,
+                        max_attempts=5,
+                        available_at=available_at,
+                        parent_event_id=parent_event_id,
+                        event_id=None,
+                        queue_id=queue_id,
+                        status="queued"
                     )
 
-                    queue_ids.append(queue_id)
+                    queue_ids.append(response.id)
                     logger.info(
                         f"Published step '{step_name}' to queue: execution_id={execution_id}, queue_id={queue_id}, priority={priority}"
                     )
@@ -277,69 +261,30 @@ class QueuePublisher:
         # Make available after delay (use UTC timezone-aware datetime)
         available_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
         
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO noetl.queue (
-                        queue_id,
-                        execution_id,
-                        catalog_id,
-                        node_id,
-                        node_name,
-                        node_type,
-                        action,
-                        context,
-                        status,
-                        priority,
-                        attempts,
-                        max_attempts,
-                        available_at,
-                        parent_event_id,
-                        created_at,
-                        updated_at
-                    ) VALUES (
-                        %(queue_id)s,
-                        %(execution_id)s,
-                        %(catalog_id)s,
-                        %(node_id)s,
-                        %(node_name)s,
-                        %(node_type)s,
-                        %(action)s,
-                        %(context)s,
-                        %(status)s,
-                        %(priority)s,
-                        %(attempts)s,
-                        %(max_attempts)s,
-                        %(available_at)s,
-                        %(parent_event_id)s,
-                        %(created_at)s,
-                        %(updated_at)s
-                    )
-                    """,
-                    {
-                        "queue_id": queue_id,
-                        "execution_id": execution_id,
-                        "catalog_id": catalog_id,
-                        "node_id": step_name,
-                        "node_name": step_name,
-                        "node_type": step_type,
-                        "action": json.dumps(encoded_step_config),
-                        "context": json.dumps(task_context),
-                        "status": "queued",
-                        "priority": priority,
-                        "attempts": 0,
-                        "max_attempts": 5,
-                        "available_at": available_at,
-                        "parent_event_id": parent_event_id,
-                        "created_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow()
-                    }
-                )
+        # Lazy import to avoid circular dependency
+        from noetl.server.api.queue.service import QueueService
+        
+        # Use QueueService to enqueue the job
+        response = await QueueService.enqueue_job(
+            execution_id=execution_id,
+            catalog_id=catalog_id,
+            node_id=step_name,
+            node_name=step_name,
+            node_type=step_type,
+            action=json.dumps(encoded_step_config),
+            context=task_context,
+            priority=priority,
+            max_attempts=5,
+            available_at=available_at,
+            parent_event_id=parent_event_id,
+            event_id=None,
+            queue_id=queue_id,
+            status="queued"
+        )
         
         logger.info(
             f"Published step '{step_name}' to queue: "
-            f"execution_id={execution_id}, queue_id={queue_id}, priority={priority}"
+            f"execution_id={execution_id}, queue_id={response.id}, priority={priority}"
         )
         
-        return queue_id
+        return response.id
