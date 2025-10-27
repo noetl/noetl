@@ -17,10 +17,110 @@ Pure event sourcing - NO business logic in events, orchestrator decides everythi
 """
 
 from typing import Optional, Dict, Any
+from jinja2 import Environment, TemplateSyntaxError, UndefinedError
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _evaluate_jinja_condition(condition: str, context: Dict[str, Any]) -> bool:
+    """
+    Evaluate a Jinja2 condition expression.
+    
+    Args:
+        condition: Jinja2 expression (without {{ }})
+        context: Dictionary with variables for evaluation
+        
+    Returns:
+        True if condition evaluates to truthy value
+    """
+    try:
+        env = Environment()
+        # Wrap condition in {{ }} if not already wrapped
+        expr = condition.strip()
+        if not (expr.startswith("{{") and expr.endswith("}}")):
+            expr = f"{{{{ {expr} }}}}"
+        
+        template = env.from_string(expr)
+        result = template.render(**context)
+        
+        # Convert string result to boolean
+        if isinstance(result, str):
+            result = result.strip().lower()
+            return result not in ("false", "0", "", "none", "null")
+        
+        return bool(result)
+    except (TemplateSyntaxError, UndefinedError) as e:
+        logger.warning(f"Failed to evaluate condition '{condition}': {e}")
+        return False
+    except Exception as e:
+        logger.exception(f"Error evaluating condition '{condition}'")
+        return False
+
+
+async def _check_execution_completion(execution_id: str, workflow_steps: Dict[str, Dict]) -> None:
+    """
+    Check if all workflow steps are complete and finalize execution if needed.
+    
+    Args:
+        execution_id: Execution ID
+        workflow_steps: Dictionary of step_name -> step_definition
+    """
+    from psycopg.rows import dict_row
+    
+    # Count actionable steps (exclude router and end steps)
+    actionable_steps = [
+        name for name, step_def in workflow_steps.items()
+        if step_def.get("type", "").lower() not in ("router", "end", "")
+    ]
+    
+    if not actionable_steps:
+        logger.info(f"No actionable steps in workflow for execution {execution_id}")
+        return
+    
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # Count completed steps
+            await cur.execute(
+                """
+                SELECT COUNT(DISTINCT node_name)
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND event_type = 'step_completed'
+                """,
+                {"execution_id": int(execution_id)}
+            )
+            row = await cur.fetchone()
+            completed_count = row["count"] if row else 0
+            
+            logger.info(f"Execution {execution_id}: {completed_count}/{len(actionable_steps)} steps completed")
+            
+            # If all actionable steps are complete, emit execution_completed
+            if completed_count >= len(actionable_steps):
+                logger.info(f"All steps completed for execution {execution_id}, finalizing")
+                
+                import httpx
+                from noetl.core.config import get_settings
+                settings = get_settings()
+                server_url = f"http://{settings.NOETL_API_HOST}:{settings.NOETL_API_PORT}"
+                
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            f"{server_url}/api/events",
+                            json={
+                                "execution_id": str(execution_id),
+                                "event_type": "execution_completed",
+                                "status": "COMPLETED"
+                            }
+                        )
+                        if resp.status_code == 200:
+                            logger.info(f"Emitted execution_completed for {execution_id}")
+                        else:
+                            logger.warning(f"Failed to emit execution_completed: {resp.status_code}")
+                except Exception as e:
+                    logger.exception(f"Error emitting execution_completed for {execution_id}")
 
 
 async def evaluate_execution(
@@ -85,7 +185,8 @@ async def evaluate_execution(
             
         elif state == 'in_progress':
             # Steps are running - process completions and transitions
-            # Only process transitions for actionable events
+            # Only process transitions for actionable events (worker-reported completions)
+            # Do NOT process transitions for step_completed - that event is emitted BY _process_transitions
             if trigger_event_type in ('action_completed', 'step_result', 'step_end'):
                 logger.info(f"ORCHESTRATOR: Processing transitions for execution {exec_id}")
                 await _process_transitions(exec_id)
@@ -103,7 +204,7 @@ async def evaluate_execution(
         logger.debug(f"ORCHESTRATOR: Evaluation complete for execution {exec_id}")
         
     except Exception as e:
-        logger.error(f"ORCHESTRATOR: Error evaluating execution {exec_id}: {e}", exc_info=True)
+        logger.exception(f"ORCHESTRATOR: Error evaluating execution {exec_id}")
         # Don't re-raise - orchestrator errors shouldn't break the system
 
 
@@ -218,21 +319,243 @@ async def _process_transitions(execution_id: str) -> None:
     Analyze completed steps and publish next actionable tasks to queue.
     
     Process:
-    1. Query events to find completed steps
+    1. Query events to find steps with action_completed but no step_completed
     2. Query transition table for matching step completions
     3. Evaluate Jinja2 conditions in transitions
-    4. Publish next steps to queue table as actionable tasks
-    5. Workers execute and report results back via events
-    
-    TODO: Implement transition evaluation and queue publishing
+    4. Emit step_completed events
+    5. Publish next steps to queue table as actionable tasks
+    6. Workers execute and report results back via events
     """
     logger.info(f"Processing transitions for execution {execution_id}")
-    # TODO: Query events for step_end/action_completed events
-    # TODO: Query transition table for next steps
-    # TODO: Evaluate Jinja2 'when' conditions
-    # TODO: Publish next steps to queue
-    # Workers will execute and report results back via /api/v1/event/emit
-    pass
+    
+    from psycopg.rows import dict_row
+    from noetl.core.db.pool import get_pool_connection
+    from noetl.server.api.broker.service import EventService
+    from noetl.server.api.catalog.service import CatalogService
+    
+    # Lazy import to avoid circular dependency
+    from noetl.server.api.run.publisher import QueuePublisher
+    
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # Find completed steps without step_completed event
+            await cur.execute(
+                """
+                SELECT DISTINCT node_name
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND event_type IN ('action_completed', 'step_result')
+                  AND node_name NOT IN (
+                      SELECT node_name FROM noetl.event
+                      WHERE execution_id = %(execution_id)s AND event_type = 'step_completed'
+                  )
+                """,
+                {"execution_id": int(execution_id)}
+            )
+            rows = await cur.fetchall()
+            completed_steps = [r["node_name"] for r in rows]
+            
+            if not completed_steps:
+                logger.debug(f"No new completed steps found for execution {execution_id}")
+                return
+            
+            logger.info(f"Found {len(completed_steps)} completed steps: {completed_steps}")
+            
+            # Get catalog_id
+            catalog_id = await EventService.get_catalog_id_from_execution(execution_id)
+            
+            # Get execution metadata to find playbook path/version
+            await cur.execute(
+                """
+                SELECT meta FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND event_type = 'execution_started'
+                ORDER BY created_at LIMIT 1
+                """,
+                {"execution_id": int(execution_id)}
+            )
+            exec_row = await cur.fetchone()
+            if not exec_row or not exec_row["meta"]:
+                logger.warning(f"No execution metadata found for {execution_id}")
+                return
+            
+            metadata = exec_row["meta"]
+            pb_path = metadata.get("path")
+            pb_version = metadata.get("version", "latest")
+            
+            # Load playbook from catalog
+            catalog_entry = await CatalogService.fetch_entry(catalog_id=catalog_id)
+            if not catalog_entry or not catalog_entry.content:
+                logger.warning(f"No playbook content found for catalog_id {catalog_id}")
+                return
+            
+            import yaml
+            playbook = yaml.safe_load(catalog_entry.content)
+            workload = playbook.get("workload", {})
+            
+            # Build step index
+            workflow_steps = playbook.get("workflow", [])
+            by_name = {}
+            for step_def in workflow_steps:
+                step_name = step_def.get("step")
+                if step_name:
+                    by_name[step_name] = step_def
+            
+            # Query all transitions for this execution
+            await cur.execute(
+                """
+                SELECT from_step, to_step, condition, with_params
+                FROM noetl.transition
+                WHERE execution_id = %(execution_id)s
+                """,
+                {"execution_id": int(execution_id)}
+            )
+            transition_rows = await cur.fetchall()
+            
+            # Group transitions by from_step
+            transitions_by_step = {}
+            for tr in transition_rows:
+                from_step = tr["from_step"]
+                if from_step not in transitions_by_step:
+                    transitions_by_step[from_step] = []
+                transitions_by_step[from_step].append(tr)
+            
+            # Build evaluation context with all step results
+            eval_ctx = {"workload": workload}
+            await cur.execute(
+                """
+                SELECT node_name, result
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND event_type IN ('action_completed', 'step_result')
+                  AND result IS NOT NULL
+                ORDER BY created_at
+                """,
+                {"execution_id": int(execution_id)}
+            )
+            result_rows = await cur.fetchall()
+            for res_row in result_rows:
+                if res_row["node_name"] and res_row["result"]:
+                    eval_ctx[res_row["node_name"]] = res_row["result"]
+            
+            # Process each completed step
+            for step_name in completed_steps:
+                logger.info(f"Processing transitions for completed step '{step_name}'")
+                
+                # Add current step result as 'result' for condition evaluation
+                if step_name in eval_ctx:
+                    eval_ctx["result"] = eval_ctx[step_name]
+                
+                # Get step definition to extract node_type
+                step_def = by_name.get(step_name, {})
+                step_type = step_def.get("type", "step")
+                
+                # Emit step_completed event
+                import httpx
+                from noetl.core.config import get_settings
+                settings = get_settings()
+                server_url = f"http://{settings.host}:{settings.port}"
+                
+                step_completed_payload = {
+                    "execution_id": str(execution_id),
+                    "catalog_id": catalog_id,
+                    "event_type": "step_completed",
+                    "status": "COMPLETED",
+                    "node_id": step_name,
+                    "node_name": step_name,
+                    "node_type": step_type,
+                }
+                
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(f"{server_url}/api/events", json=step_completed_payload)
+                        if resp.status_code == 200:
+                            step_completed_event = resp.json()
+                            step_completed_event_id = step_completed_event.get("event_id")
+                            logger.info(f"Emitted step_completed for '{step_name}', event_id={step_completed_event_id}")
+                        else:
+                            logger.warning(f"Failed to emit step_completed: {resp.status_code}")
+                            step_completed_event_id = None
+                except Exception as e:
+                    logger.exception(f"Error emitting step_completed for step '{step_name}'")
+                    step_completed_event_id = None
+                
+                # Get transitions for this step
+                step_transitions = transitions_by_step.get(step_name, [])
+                
+                if not step_transitions:
+                    logger.info(f"No transitions found for step '{step_name}'")
+                    # Check if execution should be finalized
+                    await _check_execution_completion(execution_id, by_name)
+                    continue
+                
+                logger.info(f"Evaluating {len(step_transitions)} transitions for '{step_name}'")
+                
+                # Evaluate each transition
+                for transition in step_transitions:
+                    to_step = transition["to_step"]
+                    condition = transition["condition"]
+                    with_params = transition.get("with_params") or {}
+                    
+                    # Ensure with_params is a dict (could be string from DB)
+                    if isinstance(with_params, str):
+                        import json
+                        try:
+                            with_params = json.loads(with_params)
+                        except:
+                            with_params = {}
+                    elif not isinstance(with_params, dict):
+                        with_params = {}
+                    
+                    # Evaluate condition if present
+                    if condition:
+                        if not _evaluate_jinja_condition(condition, eval_ctx):
+                            logger.debug(f"Condition not met for {step_name} -> {to_step}")
+                            continue
+                        logger.info(f"Condition met for {step_name} -> {to_step}")
+                    
+                    # Get next step definition
+                    next_step_def = by_name.get(to_step)
+                    if not next_step_def:
+                        logger.warning(f"Next step '{to_step}' not found in workflow")
+                        continue
+                    
+                    # Check if step has actionable type (not router/end)
+                    next_step_type = next_step_def.get("type", "").lower()
+                    if next_step_type in ("router", "end", ""):
+                        logger.info(f"Next step '{to_step}' is control flow type '{next_step_type}', skipping enqueue")
+                        continue
+                    
+                    # Publish next step to queue
+                    try:
+                        # Use the step definition directly as the config
+                        step_config = dict(next_step_def)
+                        
+                        # Merge with_params into step config data field
+                        if with_params:
+                            if "data" not in step_config:
+                                step_config["data"] = {}
+                            step_config["data"].update(with_params)
+                        
+                        # Build context for next step
+                        context_data = {"workload": workload}
+                        # Include all step results for template rendering
+                        context_data.update({k: v for k, v in eval_ctx.items() if k != "workload"})
+                        
+                        queue_id = await QueuePublisher.publish_step(
+                            execution_id=str(execution_id),
+                            catalog_id=catalog_id,
+                            step_name=to_step,
+                            step_config=step_config,
+                            step_type=next_step_type,
+                            parent_event_id=step_completed_event_id,
+                            context=context_data,
+                            priority=50
+                        )
+                        
+                        logger.info(f"Published next step '{to_step}' to queue, queue_id={queue_id}")
+                    except Exception as e:
+                        logger.exception(f"Failed to publish step '{to_step}'")
 
 
 async def _check_iterator_completions(execution_id: str) -> None:
