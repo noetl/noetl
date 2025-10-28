@@ -45,7 +45,8 @@ async def catch_exceptions_middleware(request: Request, call_next):
             response_json = json.dumps(response_json, indent=2)
         except Exception as err:
             response_json = response_body.decode()
-        logger.info(f"{request.method} {request.url} ({round(process_time_sec, 2)}):\nrequest: {request_json}\nstatus_code: {response.status_code}\nresponse: {response_json}")
+        if "/api/queue" not in request.url.path and "heartbeat" not in request.url.path:
+            logger.info(f"{request.method} {request.url} ({round(process_time_sec, 2)}):\nrequest: {request_json}\nstatus_code: {response.status_code}\nresponse: {response_json}")
         # Rebuild response (since the original stream is consumed)
         new_response = Response(
             content=response_body,

@@ -543,14 +543,14 @@ const Execution: React.FC = () => {
   const columns = [
     {
       title: "Execution ID",
-      dataIndex: "id",
-      key: "id",
+      dataIndex: "execution_id",
+      key: "execution_id",
       render: (id: string) => <Text code>{id}</Text>,
     },
     {
       title: "Playbook",
-      dataIndex: "playbook_name",
-      key: "playbook_name",
+      dataIndex: "path",
+      key: "path",
     },
     {
       title: "Status",
@@ -594,7 +594,7 @@ const Execution: React.FC = () => {
           <Button
             type="text"
             icon={<EyeOutlined />}
-            onClick={() => navigate(`/execution/${record.id}`)}
+            onClick={() => navigate(`/execution/${record.execution_id}`)}
           >
             View
           </Button>
@@ -603,7 +603,7 @@ const Execution: React.FC = () => {
               type="text"
               danger
               icon={<StopOutlined />}
-              onClick={() => handleStopExecution(record.id)}
+              onClick={() => handleStopExecution(record.execution_id)}
             >
               Stop
             </Button>
@@ -628,7 +628,7 @@ const Execution: React.FC = () => {
 
   // Get unique playbook names for filter dropdown
   const uniquePlaybooks = Array.from(
-    new Set(executions.map((exec) => exec.playbook_name))
+    new Set(executions.map((exec) => exec.path + ":" + exec.version)),
   );
 
   if (loading) {
