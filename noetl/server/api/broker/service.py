@@ -46,9 +46,10 @@ class EventService:
         # Use provided timestamp or generate new one
         created_at = request.created_at or datetime.utcnow()
         
-        # Prepare context and meta as JSON
+        # Prepare context, meta, and result as JSON
         context = Json(request.context) if request.context else None
         meta = Json(request.meta) if request.meta else None
+        result = Json(request.result) if request.result else None
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -66,6 +67,9 @@ class EventService:
                         node_type,
                         status,
                         context,
+                        result,
+                        error,
+                        stack_trace,
                         meta,
                         created_at
                     ) VALUES (
@@ -80,6 +84,9 @@ class EventService:
                         %(node_type)s,
                         %(status)s,
                         %(context)s,
+                        %(result)s,
+                        %(error)s,
+                        %(stack_trace)s,
                         %(meta)s,
                         %(created_at)s
                     )
@@ -96,6 +103,9 @@ class EventService:
                         "node_type": request.node_type,
                         "status": request.status,
                         "context": context,
+                        "result": result,
+                        "error": request.error,
+                        "stack_trace": request.stack_trace,
                         "meta": meta,
                         "created_at": created_at,
                     }

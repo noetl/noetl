@@ -17,6 +17,7 @@ Pure event sourcing - NO business logic in events, orchestrator decides everythi
 """
 
 import json
+import yaml
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from jinja2 import Environment, TemplateSyntaxError, UndefinedError
@@ -310,7 +311,8 @@ async def evaluate_execution(
                 logger.debug(f"ORCHESTRATOR: No transition processing needed for {trigger_event_type}")
             
             # Check for iterator completions (child executions)
-            if trigger_event_type in ('execution_complete', 'execution_end', 'action_completed'):
+            # When a child execution completes, check if all siblings are done
+            if trigger_event_type in ('execution_completed', 'execution_complete', 'execution_end'):
                 logger.debug(f"ORCHESTRATOR: Checking iterator completions for execution {exec_id}")
                 await _check_iterator_completions(exec_id)
         
@@ -497,7 +499,6 @@ async def _process_transitions(execution_id: str) -> None:
                 logger.warning(f"No playbook content found for catalog_id {catalog_id}")
                 return
             
-            import yaml
             playbook = yaml.safe_load(catalog_entry.content)
             workload = playbook.get("workload", {})
             
@@ -544,7 +545,11 @@ async def _process_transitions(execution_id: str) -> None:
             result_rows = await cur.fetchall()
             for res_row in result_rows:
                 if res_row["node_name"] and res_row["result"]:
-                    eval_ctx[res_row["node_name"]] = res_row["result"]
+                    # Normalize result: if it has 'data' field, use that instead of the envelope
+                    result_value = res_row["result"]
+                    if isinstance(result_value, dict) and "data" in result_value:
+                        result_value = result_value["data"]
+                    eval_ctx[res_row["node_name"]] = result_value
             
             # Process each completed step
             for step_name in completed_steps:
@@ -553,6 +558,9 @@ async def _process_transitions(execution_id: str) -> None:
                 # Add current step result as 'result' for condition evaluation
                 if step_name in eval_ctx:
                     eval_ctx["result"] = eval_ctx[step_name]
+                    logger.debug(f"Added result to eval_ctx for '{step_name}': {eval_ctx['result']}")
+                else:
+                    logger.warning(f"No result found in eval_ctx for step '{step_name}'")
                 
                 # Get step definition to extract node_type
                 step_def = by_name.get(step_name, {})
@@ -608,7 +616,9 @@ async def _process_transitions(execution_id: str) -> None:
                     
                     # Evaluate condition if present
                     if condition:
-                        if not _evaluate_jinja_condition(condition, eval_ctx):
+                        result_val = _evaluate_jinja_condition(condition, eval_ctx)
+                        logger.debug(f"Condition '{condition}' evaluated to {result_val} with context keys: {list(eval_ctx.keys())}")
+                        if not result_val:
                             logger.debug(f"Condition not met for {step_name} -> {to_step}")
                             continue
                         logger.info(f"Condition met for {step_name} -> {to_step}")
@@ -621,14 +631,79 @@ async def _process_transitions(execution_id: str) -> None:
                     
                     # Check if step has actionable type (not router/end)
                     next_step_type = next_step_def.get("type", "").lower()
-                    if next_step_type in ("router", "end", ""):
-                        logger.info(f"Next step '{to_step}' is control flow type '{next_step_type}', skipping enqueue")
+                    
+                    # If it's an "end" step, just emit step_completed and skip
+                    if next_step_type == "end":
+                        logger.info(f"Next step '{to_step}' is end step, skipping enqueue")
                         continue
                     
-                    # Publish next step to queue
+                    # If it's a router (no type or type="router"), emit step_completed and process its transitions
+                    if next_step_type in ("router", ""):
+                        logger.info(f"Next step '{to_step}' is router step, emitting step_completed and processing its transitions")
+                        
+                        # Emit step_completed for the router step
+                        from noetl.server.api.broker.schema import EventEmitRequest
+                        router_completed_request = EventEmitRequest(
+                            execution_id=str(execution_id),
+                            catalog_id=catalog_id,
+                            event_type="step_completed",
+                            status="COMPLETED",
+                            node_id=to_step,
+                            node_name=to_step,
+                            node_type="router"
+                        )
+                        try:
+                            await EventService.emit_event(router_completed_request)
+                            logger.info(f"Emitted step_completed for router step '{to_step}'")
+                        except Exception as e:
+                            logger.exception(f"Error emitting step_completed for router step '{to_step}'")
+                        
+                        # Get router's transitions and publish its next steps
+                        router_transitions = transitions_by_step.get(to_step, [])
+                        for router_transition in router_transitions:
+                            router_next_step = router_transition["to_step"]
+                            router_next_def = by_name.get(router_next_step)
+                            if not router_next_def:
+                                logger.warning(f"Router next step '{router_next_step}' not found in workflow")
+                                continue
+                            
+                            router_next_type = router_next_def.get("type", "").lower()
+                            if router_next_type in ("router", "end", ""):
+                                logger.debug(f"Router next step '{router_next_step}' is control flow, skipping")
+                                continue
+                            
+                            # Publish the actionable step
+                            router_step_config = dict(router_next_def)
+                            from noetl.server.api.run.publisher import expand_workbook_reference
+                            router_step_config = await expand_workbook_reference(router_step_config, catalog_id)
+                            
+                            # Build context for router next step
+                            router_context_data = {"workload": workload}
+                            router_context_data.update({k: v for k, v in eval_ctx.items() if k != "workload"})
+                            
+                            queue_id = await QueuePublisher.publish_step(
+                                execution_id=str(execution_id),
+                                catalog_id=catalog_id,
+                                step_name=router_next_step,
+                                step_config=router_step_config,
+                                step_type=router_next_type,
+                                parent_event_id=step_completed_event_id,
+                                context=router_context_data,
+                                priority=50
+                            )
+                            logger.info(f"Published router next step '{router_next_step}' to queue, queue_id={queue_id}")
+                        
+                        continue
+                    
+                    # Actionable step - publish to queue
                     try:
                         # Use the step definition directly as the config
                         step_config = dict(next_step_def)
+                        
+                        # Expand workbook references - resolve the workbook action definition
+                        # so the worker doesn't need to fetch from catalog
+                        from noetl.server.api.run.publisher import expand_workbook_reference
+                        step_config = await expand_workbook_reference(step_config, catalog_id)
                         
                         # Merge with_params into step config data field
                         if with_params:
@@ -665,21 +740,205 @@ async def _check_iterator_completions(execution_id: str) -> None:
     Aggregate child execution results and continue parent workflow.
     
     Process:
-    1. Find parent iterator execution relationships
+    1. Find parent iterator execution relationships via parent_execution_id
     2. Count completed child executions vs total expected
-    3. When all children complete, aggregate results
-    4. Publish parent's next step to queue
-    5. Worker executes parent continuation and reports via events
+    3. When all children complete, aggregate results and emit step_completed
+    4. Process transitions to continue parent workflow
     
-    TODO: Implement child execution aggregation and parent continuation
+    Note: This is triggered when a child execution completes (execution_completed event)
     """
     logger.info(f"Checking iterator completions for execution {execution_id}")
-    # TODO: Find iterator parent-child relationships
-    # TODO: Count child execution completions
-    # TODO: Aggregate results when all children done
-    # TODO: Publish parent next step to queue
-    # Workers will execute parent continuation and report via /api/v1/event/emit
-    pass
+    
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # Find all child executions of this execution (this execution is a child that just completed)
+            # We need to check if we are a child, and if so, check parent's completion status
+            await cur.execute(
+                """
+                SELECT parent_execution_id
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND parent_execution_id IS NOT NULL
+                LIMIT 1
+                """,
+                {"execution_id": int(execution_id)}
+            )
+            parent_row = await cur.fetchone()
+            
+            if not parent_row:
+                # This execution has no parent, nothing to check
+                logger.debug(f"Execution {execution_id} has no parent, skipping iterator completion check")
+                return
+            
+            parent_execution_id = parent_row['parent_execution_id']
+            logger.info(f"Execution {execution_id} is child of {parent_execution_id}, checking parent iterator status")
+            
+            # Find the iterator step in the parent that spawned these child executions
+            # The iterator step would have created multiple child executions
+            await cur.execute(
+                """
+                SELECT 
+                    node_name as iterator_step,
+                    COUNT(DISTINCT execution_id) as total_children
+                FROM noetl.event
+                WHERE parent_execution_id = %(parent_execution_id)s
+                  AND event_type = 'execution_started'
+                GROUP BY node_name
+                """,
+                {"parent_execution_id": parent_execution_id}
+            )
+            iterator_info = await cur.fetchone()
+            
+            if not iterator_info:
+                logger.warning(f"No iterator step found for parent {parent_execution_id}")
+                return
+            
+            iterator_step = iterator_info['iterator_step']
+            total_children = iterator_info['total_children']
+            
+            logger.info(f"Iterator step '{iterator_step}' in parent {parent_execution_id} has {total_children} child executions")
+            
+            # Count how many child executions have completed
+            await cur.execute(
+                """
+                SELECT COUNT(DISTINCT e.execution_id) as completed_count
+                FROM noetl.event e
+                WHERE e.parent_execution_id = %(parent_execution_id)s
+                  AND e.event_type = 'execution_completed'
+                """,
+                {"parent_execution_id": parent_execution_id}
+            )
+            completion_row = await cur.fetchone()
+            completed_count = completion_row['completed_count'] if completion_row else 0
+            
+            logger.info(f"Iterator '{iterator_step}': {completed_count}/{total_children} children completed")
+            
+            # Check if all children are complete
+            if completed_count < total_children:
+                logger.debug(f"Iterator '{iterator_step}' still has {total_children - completed_count} children running")
+                return
+            
+            logger.info(f"All children completed for iterator '{iterator_step}' in parent {parent_execution_id}, aggregating results")
+            
+            # Aggregate child execution results
+            await cur.execute(
+                """
+                SELECT 
+                    e.execution_id,
+                    e.node_name,
+                    e.context
+                FROM noetl.event e
+                WHERE e.parent_execution_id = %(parent_execution_id)s
+                  AND e.event_type = 'execution_completed'
+                ORDER BY e.event_id
+                """,
+                {"parent_execution_id": parent_execution_id}
+            )
+            child_results = await cur.fetchall()
+            
+            # Extract results from child executions
+            aggregated_results = []
+            for child in child_results:
+                try:
+                    context = child['context']
+                    if isinstance(context, dict):
+                        # Extract the result from the child execution context
+                        # The result is typically in the return_step data
+                        aggregated_results.append(context)
+                    else:
+                        aggregated_results.append({"execution_id": child['execution_id']})
+                except Exception as e:
+                    logger.warning(f"Failed to extract result from child {child['execution_id']}: {e}")
+                    aggregated_results.append({"execution_id": child['execution_id'], "error": str(e)})
+            
+            # Emit step_completed event for the iterator step in the parent
+            step_completed_event_id = await get_snowflake_id()
+            now = datetime.now(timezone.utc)
+            
+            # Get parent catalog_id
+            await cur.execute(
+                """
+                SELECT catalog_id, event_id as workflow_event_id
+                FROM noetl.event
+                WHERE execution_id = %(parent_execution_id)s
+                  AND event_type IN ('execution_started', 'workflow_initialized')
+                ORDER BY event_id
+                LIMIT 1
+                """,
+                {"parent_execution_id": parent_execution_id}
+            )
+            parent_info = await cur.fetchone()
+            parent_catalog_id = parent_info['catalog_id'] if parent_info else None
+            parent_event_id = parent_info['workflow_event_id'] if parent_info else None
+            
+            # Create context with aggregated data
+            step_context = {
+                "data": aggregated_results,
+                "iterator_step": iterator_step,
+                "total_children": total_children,
+                "completed_at": now.isoformat()
+            }
+            
+            meta = {
+                "emitted_at": now.isoformat(),
+                "emitter": "orchestrator",
+                "aggregation_source": "iterator_completion"
+            }
+            
+            await cur.execute(
+                """
+                INSERT INTO noetl.event (
+                    execution_id,
+                    catalog_id,
+                    event_id,
+                    parent_event_id,
+                    event_type,
+                    node_id,
+                    node_name,
+                    node_type,
+                    status,
+                    context,
+                    meta,
+                    created_at
+                ) VALUES (
+                    %(execution_id)s,
+                    %(catalog_id)s,
+                    %(event_id)s,
+                    %(parent_event_id)s,
+                    %(event_type)s,
+                    %(node_id)s,
+                    %(node_name)s,
+                    %(node_type)s,
+                    %(status)s,
+                    %(context)s,
+                    %(meta)s,
+                    %(created_at)s
+                )
+                """,
+                {
+                    "execution_id": parent_execution_id,
+                    "catalog_id": parent_catalog_id,
+                    "event_id": step_completed_event_id,
+                    "parent_event_id": parent_event_id,
+                    "event_type": "step_completed",
+                    "node_id": iterator_step,
+                    "node_name": iterator_step,
+                    "node_type": "iterator",
+                    "status": "COMPLETED",
+                    "context": json.dumps(step_context),
+                    "meta": json.dumps(meta),
+                    "created_at": now
+                }
+            )
+            
+            logger.info(
+                f"Emitted step_completed for iterator '{iterator_step}' "
+                f"in parent {parent_execution_id}, event_id={step_completed_event_id}"
+            )
+            
+            # The step_completed event will trigger the orchestrator to process
+            # transitions and continue the parent workflow
+            # No need to call evaluate_execution here, the event system will handle it
 
 
 __all__ = ["evaluate_execution"]

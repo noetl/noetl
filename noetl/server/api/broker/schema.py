@@ -102,6 +102,18 @@ class EventEmitRequest(BaseModel):
         default=None,
         description="Event context data (arbitrary JSON)"
     )
+    result: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Event result data (arbitrary JSON)"
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if event represents a failure"
+    )
+    stack_trace: Optional[str] = Field(
+        default=None,
+        description="Stack trace for error events"
+    )
     meta: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Event metadata (arbitrary JSON)"

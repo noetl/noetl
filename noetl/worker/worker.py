@@ -741,14 +741,16 @@ class QueueWorker:
 
             task_name = action_cfg.get("name") or node_id
             
-            # Extract step name from node_id for event node_name (orchestration)
-            # node_id format: "{execution_id}:{step_name}"
+            # Extract step name from context for event node_name (orchestration)
+            # Priority: context.step_name > node_id extraction > task_name
             event_node_name = task_name  # Default to task name
-            if ":" in node_id:
-                try:
+            try:
+                if isinstance(context, dict) and context.get('step_name'):
+                    event_node_name = context['step_name']
+                elif ":" in node_id:
                     event_node_name = node_id.split(":", 1)[1]
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
             try:

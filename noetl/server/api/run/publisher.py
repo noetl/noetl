@@ -49,9 +49,98 @@ def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
                 encoded_task.pop(field, None)
                 
     except Exception:
-        logger.debug("Failed to encode task fields with base64", exc_info=True)
-        
+        logger.debug("Failed to encode task fields", exc_info=True)
+    
     return encoded_task
+
+
+async def expand_workbook_reference(
+    step_config: Dict[str, Any],
+    catalog_id: str
+) -> Dict[str, Any]:
+    """
+    Expand workbook action references by fetching the actual action definition from the playbook.
+    
+    If step_config has type='workbook', this function:
+    1. Fetches the playbook from catalog
+    2. Looks up the action by name in the workbook section
+    3. Merges the action definition into step_config
+    4. Preserves step-level overrides (args, data)
+    
+    Args:
+        step_config: Step configuration (may contain type='workbook' and name='action_name')
+        catalog_id: Catalog entry ID to fetch playbook from
+        
+    Returns:
+        Expanded step configuration with workbook action merged in
+    """
+    # Only expand if type is 'workbook'
+    if not isinstance(step_config, dict):
+        return step_config
+    
+    step_type = step_config.get("type", "").lower()
+    if step_type != "workbook":
+        return step_config
+    
+    workbook_action_name = step_config.get("name")
+    if not workbook_action_name:
+        logger.warning("Workbook step missing 'name' attribute, cannot expand")
+        return step_config
+    
+    try:
+        # Lazy import to avoid circular dependency
+        from noetl.server.api.catalog.service import CatalogService
+        import yaml
+        
+        # Fetch playbook from catalog
+        catalog_entry = await CatalogService.fetch_entry(catalog_id=catalog_id)
+        if not catalog_entry or not catalog_entry.content:
+            logger.warning(f"No playbook content found for catalog_id {catalog_id}")
+            return step_config
+        
+        playbook = yaml.safe_load(catalog_entry.content)
+        
+        # Find the workbook action in the playbook's workbook section
+        workbook_actions = playbook.get("workbook", [])
+        workbook_action = None
+        for action in workbook_actions:
+            if action.get("name") == workbook_action_name:
+                workbook_action = dict(action)
+                break
+        
+        if not workbook_action:
+            logger.warning(f"Workbook action '{workbook_action_name}' not found in playbook")
+            return step_config
+        
+        # Preserve step-level overrides
+        step_args = step_config.get("args", {})
+        step_data = step_config.get("data", {})
+        
+        # Merge workbook action into step config
+        expanded_config = dict(workbook_action)
+        expanded_config["type"] = workbook_action.get("type", "python")
+        
+        # Restore step-level overrides (they take precedence)
+        if step_args:
+            if "args" not in expanded_config:
+                expanded_config["args"] = {}
+            expanded_config["args"].update(step_args)
+        if step_data:
+            if "data" not in expanded_config:
+                expanded_config["data"] = {}
+            expanded_config["data"].update(step_data)
+        
+        # Preserve other step-level fields that aren't in the workbook action
+        for key in ["desc", "next", "step"]:
+            if key in step_config and key not in expanded_config:
+                expanded_config[key] = step_config[key]
+        
+        logger.info(f"Expanded workbook action '{workbook_action_name}' to type '{expanded_config['type']}'")
+        return expanded_config
+        
+    except Exception:
+        logger.exception(f"Failed to expand workbook action '{workbook_action_name}'")
+        return step_config
 
 
 class QueuePublisher:
@@ -147,6 +236,9 @@ class QueuePublisher:
                             except Exception:
                                 pass
 
+                            # Expand workbook references before publishing
+                            step_cfg = await expand_workbook_reference(step_cfg, catalog_id)
+
                             # Publish the actionable next step
                             qid = await QueuePublisher.publish_step(
                                 execution_id=execution_id,
@@ -170,8 +262,13 @@ class QueuePublisher:
                     
                     queue_id = await get_snowflake_id()
 
-                    # Parse and encode step config
+                    # Parse step config
                     step_cfg = json.loads(step_def["raw_config"])
+                    
+                    # Expand workbook references (if type='workbook')
+                    step_cfg = await expand_workbook_reference(step_cfg, catalog_id)
+                    
+                    # Encode step config for queue
                     encoded_step_cfg = encode_task_for_queue(step_cfg)
                     
                     task_context = {
