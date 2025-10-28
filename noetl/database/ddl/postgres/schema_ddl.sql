@@ -1,14 +1,8 @@
--- Canonical Schema DDL for NoETL (single source of truth)
-
+-- Canonical Schema DDL for NoETL Platform
 CREATE SCHEMA IF NOT EXISTS noetl;
 ALTER SCHEMA noetl OWNER TO noetl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON TABLES TO noetl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;
-
--- Optional: create plpython3u if available (ignore errors if not present)
--- DO $$ BEGIN
---     CREATE EXTENSION IF NOT EXISTS plpython3u;
--- EXCEPTION WHEN others THEN NULL; END $$;
 
 -- Resource
 CREATE TABLE IF NOT EXISTS noetl.resource (
@@ -70,9 +64,6 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     PRIMARY KEY (execution_id, event_id)
 );
 ALTER TABLE noetl.event OWNER TO noetl;
-ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS trace_component JSONB;
-ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
-ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS stack_trace TEXT;
 DO $$ BEGIN
     ALTER TABLE noetl.event ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
 EXCEPTION WHEN others THEN NULL; END $$;
