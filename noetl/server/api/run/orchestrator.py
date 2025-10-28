@@ -67,7 +67,9 @@ async def _check_execution_completion(execution_id: str, workflow_steps: Dict[st
         execution_id: Execution ID
         workflow_steps: Dictionary of step_name -> step_definition
     """
-    from psycopg.rows import dict_row
+    import json
+    from datetime import datetime, timezone
+    from noetl.core.db.pool import get_snowflake_id
     
     # Count actionable steps (exclude router and end steps)
     actionable_steps = [
@@ -80,47 +82,160 @@ async def _check_execution_completion(execution_id: str, workflow_steps: Dict[st
         return
     
     async with get_pool_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+        async with conn.cursor() as cur:
             # Count completed steps
             await cur.execute(
                 """
-                SELECT COUNT(DISTINCT node_name)
+                SELECT COUNT(DISTINCT node_name) as count
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                   AND event_type = 'step_completed'
                 """,
                 {"execution_id": int(execution_id)}
             )
-            row = await cur.fetchone()
-            completed_count = row["count"] if row else 0
+            result = await cur.fetchone()
+            completed_count = result['count'] if result else 0
             
             logger.info(f"Execution {execution_id}: {completed_count}/{len(actionable_steps)} steps completed")
             
-            # If all actionable steps are complete, emit execution_completed
+            # If all actionable steps are complete, emit completion events
             if completed_count >= len(actionable_steps):
                 logger.info(f"All steps completed for execution {execution_id}, finalizing")
                 
-                import httpx
-                from noetl.core.config import get_settings
-                settings = get_settings()
-                server_url = f"http://{settings.NOETL_API_HOST}:{settings.NOETL_API_PORT}"
+                # Get catalog_id and catalog path from execution_started event
+                await cur.execute(
+                    """
+                    SELECT catalog_id, node_name as catalog_path
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type = 'execution_started'
+                    LIMIT 1
+                    """,
+                    {"execution_id": int(execution_id)}
+                )
+                row = await cur.fetchone()
+                if not row:
+                    logger.warning(f"No execution_started event found for {execution_id}")
+                    return
+                
+                catalog_id = row['catalog_id']
+                catalog_path = row['catalog_path']
+                
+                # Get parent_event_id from workflow_initialized event
+                await cur.execute(
+                    """
+                    SELECT event_id as parent_event_id
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type = 'workflow_initialized'
+                    LIMIT 1
+                    """,
+                    {"execution_id": int(execution_id)}
+                )
+                row = await cur.fetchone()
+                parent_event_id = row['parent_event_id'] if row else None
+                
+                now = datetime.now(timezone.utc)
+                meta = {
+                    "emitted_at": now.isoformat(),
+                    "emitter": "orchestrator"
+                }
                 
                 try:
-                    async with httpx.AsyncClient() as client:
-                        resp = await client.post(
-                            f"{server_url}/api/events",
-                            json={
-                                "execution_id": str(execution_id),
-                                "event_type": "execution_completed",
-                                "status": "COMPLETED"
-                            }
+                    # Emit workflow_completed event first
+                    workflow_event_id = await get_snowflake_id()
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id,
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            event_type,
+                            node_id,
+                            node_name,
+                            node_type,
+                            status,
+                            meta,
+                            created_at
+                        ) VALUES (
+                            %(execution_id)s,
+                            %(catalog_id)s,
+                            %(event_id)s,
+                            %(parent_event_id)s,
+                            %(event_type)s,
+                            %(node_id)s,
+                            %(node_name)s,
+                            %(node_type)s,
+                            %(status)s,
+                            %(meta)s,
+                            %(created_at)s
                         )
-                        if resp.status_code == 200:
-                            logger.info(f"Emitted execution_completed for {execution_id}")
-                        else:
-                            logger.warning(f"Failed to emit execution_completed: {resp.status_code}")
+                        """,
+                        {
+                            "execution_id": int(execution_id),
+                            "catalog_id": catalog_id,
+                            "event_id": workflow_event_id,
+                            "parent_event_id": parent_event_id,
+                            "event_type": "workflow_completed",
+                            "node_id": "workflow",
+                            "node_name": "workflow",
+                            "node_type": "workflow",
+                            "status": "COMPLETED",
+                            "meta": json.dumps(meta),
+                            "created_at": now
+                        }
+                    )
+                    logger.info(f"Emitted workflow_completed event_id={workflow_event_id} for execution {execution_id}")
+                    
+                    # Then emit execution_completed event
+                    execution_event_id = await get_snowflake_id()
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id,
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            event_type,
+                            node_id,
+                            node_name,
+                            node_type,
+                            status,
+                            meta,
+                            created_at
+                        ) VALUES (
+                            %(execution_id)s,
+                            %(catalog_id)s,
+                            %(event_id)s,
+                            %(parent_event_id)s,
+                            %(event_type)s,
+                            %(node_id)s,
+                            %(node_name)s,
+                            %(node_type)s,
+                            %(status)s,
+                            %(meta)s,
+                            %(created_at)s
+                        )
+                        """,
+                        {
+                            "execution_id": int(execution_id),
+                            "catalog_id": catalog_id,
+                            "event_id": execution_event_id,
+                            "parent_event_id": workflow_event_id,
+                            "event_type": "execution_completed",
+                            "node_id": "playbook",
+                            "node_name": catalog_path,
+                            "node_type": "execution",
+                            "status": "COMPLETED",
+                            "meta": json.dumps(meta),
+                            "created_at": now
+                        }
+                    )
+                    logger.info(f"Emitted execution_completed event_id={execution_event_id} for execution {execution_id}")
+                    
                 except Exception as e:
-                    logger.exception(f"Error emitting execution_completed for {execution_id}")
+                    logger.exception(f"Error emitting completion events for {execution_id}")
 
 
 async def evaluate_execution(
@@ -185,9 +300,8 @@ async def evaluate_execution(
             
         elif state == 'in_progress':
             # Steps are running - process completions and transitions
-            # Only process transitions for actionable events (worker-reported completions)
-            # Do NOT process transitions for step_completed - that event is emitted BY _process_transitions
-            if trigger_event_type in ('action_completed', 'step_result', 'step_end'):
+            # Process transitions for worker-reported completions
+            if trigger_event_type in ('action_completed', 'step_result', 'step_end', 'step_completed'):
                 logger.info(f"ORCHESTRATOR: Processing transitions for execution {exec_id}")
                 await _process_transitions(exec_id)
             else:
@@ -450,35 +564,26 @@ async def _process_transitions(execution_id: str) -> None:
                 step_def = by_name.get(step_name, {})
                 step_type = step_def.get("type", "step")
                 
-                # Emit step_completed event
-                import httpx
-                from noetl.core.config import get_settings
-                settings = get_settings()
-                server_url = f"http://{settings.host}:{settings.port}"
+                # Emit step_completed event - use EventService directly (not HTTP)
+                from noetl.server.api.broker.schema import EventEmitRequest
                 
-                step_completed_payload = {
-                    "execution_id": str(execution_id),
-                    "catalog_id": catalog_id,
-                    "event_type": "step_completed",
-                    "status": "COMPLETED",
-                    "node_id": step_name,
-                    "node_name": step_name,
-                    "node_type": step_type,
-                }
+                step_completed_request = EventEmitRequest(
+                    execution_id=str(execution_id),
+                    catalog_id=catalog_id,
+                    event_type="step_completed",
+                    status="COMPLETED",
+                    node_id=step_name,
+                    node_name=step_name,
+                    node_type=step_type
+                )
                 
+                step_completed_event_id = None
                 try:
-                    async with httpx.AsyncClient() as client:
-                        resp = await client.post(f"{server_url}/api/events", json=step_completed_payload)
-                        if resp.status_code == 200:
-                            step_completed_event = resp.json()
-                            step_completed_event_id = step_completed_event.get("event_id")
-                            logger.info(f"Emitted step_completed for '{step_name}', event_id={step_completed_event_id}")
-                        else:
-                            logger.warning(f"Failed to emit step_completed: {resp.status_code}")
-                            step_completed_event_id = None
+                    result = await EventService.emit_event(step_completed_request)
+                    step_completed_event_id = result.event_id
+                    logger.info(f"Emitted step_completed for '{step_name}', event_id={step_completed_event_id}")
                 except Exception as e:
                     logger.exception(f"Error emitting step_completed for step '{step_name}'")
-                    step_completed_event_id = None
                 
                 # Get transitions for this step
                 step_transitions = transitions_by_step.get(step_name, [])
@@ -556,6 +661,9 @@ async def _process_transitions(execution_id: str) -> None:
                         logger.info(f"Published next step '{to_step}' to queue, queue_id={queue_id}")
                     except Exception as e:
                         logger.exception(f"Failed to publish step '{to_step}'")
+                
+                # After processing all transitions, check if execution should be finalized
+                await _check_execution_completion(execution_id, by_name)
 
 
 async def _check_iterator_completions(execution_id: str) -> None:
