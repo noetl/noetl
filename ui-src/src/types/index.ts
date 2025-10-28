@@ -33,9 +33,9 @@ export interface PlaybookData {
 }
 
 export interface ExecutionData {
-  id: string;
-  playbook_id: string;
-  playbook_name: string;
+  execution_id: string;
+  path: string;
+  version: string;
   status: "running" | "completed" | "failed" | "pending";
   start_time: string;
   end_time?: string;

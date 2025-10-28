@@ -116,10 +116,10 @@ tasks:
         pidfile="logs/server.pid"
 
         if "$py" -c "import uvicorn" >/dev/null 2>&1; then
-          bash -c "exec \"$py\" -m uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level debug > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
+          bash -c "exec \"$py\" -m uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level error --no-access-log > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
           server_pid=$(cat "$pidfile")
         elif command -v uvicorn >/dev/null 2>&1; then
-          bash -c "exec uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level debug > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
+          bash -c "exec uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level error --no-access-log > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
           server_pid=$(cat "$pidfile")
         else
           echo "uvicorn is not installed in the active interpreter or PATH."
@@ -630,3 +630,12 @@ tasks:
         echo ""
         echo "To start UI in a new terminal:"
         echo "  task noetl:local:ui-dev-start"
+
+  noetl_server:local:restart:
+    desc: Complete local setup - test environment, services, and tables (everything except UI)
+    aliases: [local-full-setup, lfs, noetl-local-full-setup]
+    cmds:
+      - |
+        set -e
+        task noetl:local:stop || true 
+        task noetl:local:start

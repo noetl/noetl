@@ -329,13 +329,13 @@ const ExecutionDetail: React.FC = () => {
           <Col xs={24} sm={12} md={8}>
             <div className="execution-detail-field">
               <Text className="execution-detail-label">ID</Text>
-              <Text code className="execution-detail-value">{execution.id}</Text>
+              <Text code className="execution-detail-value">{execution.execution_id}</Text>
             </div>
           </Col>
           <Col xs={24} sm={12} md={8}>
             <div className="execution-detail-field">
               <Text className="execution-detail-label">Playbook</Text>
-              <Text className="execution-detail-value">{execution.playbook_name}</Text>
+              <Text className="execution-detail-value">{execution.path}</Text>
             </div>
           </Col>
           <Col xs={24} sm={12} md={8}>
@@ -343,9 +343,9 @@ const ExecutionDetail: React.FC = () => {
               <Text className="execution-detail-label">Status</Text>
               <Tag
                 color={
-                  execution.status.toLowerCase() === "completed"
+                  execution?.status?.toLowerCase() === "completed"
                     ? "green"
-                    : execution.status.toLowerCase() === "failed"
+                    : execution?.status?.toLowerCase() === "failed"
                       ? "red"
                       : "blue"
                 }

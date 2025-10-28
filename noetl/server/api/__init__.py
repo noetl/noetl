@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 # Import routers from local modules
 from . import credential, queue, aggregate, catalog, runtime, dashboard, system, metrics, broker, \
-    database, context, run
+    database, context, run, execution
 
 router = APIRouter()
 
@@ -26,6 +26,7 @@ async def api_health():
 router.include_router(context.router)
 router.include_router(broker.router)  # Event handler (was event package)
 router.include_router(catalog.router)
+router.include_router(execution.router)
 router.include_router(credential.router)
 router.include_router(database.router)
 router.include_router(runtime.router)
