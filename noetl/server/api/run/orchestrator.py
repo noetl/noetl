@@ -16,10 +16,16 @@ Flow:
 Pure event sourcing - NO business logic in events, orchestrator decides everything.
 """
 
+import json
 from typing import Optional, Dict, Any
+from datetime import datetime, timezone
 from jinja2 import Environment, TemplateSyntaxError, UndefinedError
-from noetl.core.db.pool import get_pool_connection
+from psycopg.rows import dict_row
+from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.server.api.broker.service import EventService
+from noetl.server.api.catalog.service import CatalogService
+from noetl.server.api.run.publisher import QueuePublisher
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -67,10 +73,6 @@ async def _check_execution_completion(execution_id: str, workflow_steps: Dict[st
         execution_id: Execution ID
         workflow_steps: Dictionary of step_name -> step_definition
     """
-    import json
-    from datetime import datetime, timezone
-    from noetl.core.db.pool import get_snowflake_id
-    
     # Count actionable steps (exclude router and end steps)
     actionable_steps = [
         name for name, step_def in workflow_steps.items()
@@ -441,14 +443,6 @@ async def _process_transitions(execution_id: str) -> None:
     6. Workers execute and report results back via events
     """
     logger.info(f"Processing transitions for execution {execution_id}")
-    
-    from psycopg.rows import dict_row
-    from noetl.core.db.pool import get_pool_connection
-    from noetl.server.api.broker.service import EventService
-    from noetl.server.api.catalog.service import CatalogService
-    
-    # Lazy import to avoid circular dependency
-    from noetl.server.api.run.publisher import QueuePublisher
     
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
