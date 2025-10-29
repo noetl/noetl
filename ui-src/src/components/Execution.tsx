@@ -190,7 +190,7 @@ const Execution: React.FC = () => {
     // Filter by playbook name
     if (playbookFilter) {
       filtered = filtered.filter((exec) =>
-        exec.playbook_name.toLowerCase().includes(playbookFilter.toLowerCase())
+        exec.path.toLowerCase().includes(playbookFilter.toLowerCase())
       );
     }
 
@@ -198,9 +198,8 @@ const Execution: React.FC = () => {
     if (searchText) {
       filtered = filtered.filter(
         (exec) =>
-          exec.playbook_name.toLowerCase().includes(searchText.toLowerCase()) ||
-          exec.id.toLowerCase().includes(searchText.toLowerCase()) ||
-          exec.playbook_id.toLowerCase().includes(searchText.toLowerCase())
+          exec.path.toLowerCase().includes(searchText.toLowerCase()) ||
+          exec.execution_id.toLowerCase().includes(searchText.toLowerCase())
       );
     }
 
@@ -827,7 +826,7 @@ const Execution: React.FC = () => {
           <Table
             dataSource={filteredExecutions}
             columns={columns}
-            rowKey="id"
+            rowKey="execution_id"
             pagination={{
               current: currentPage,
               pageSize: pageSize,

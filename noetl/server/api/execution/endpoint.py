@@ -71,44 +71,53 @@ async def get_executions():
 async def get_execution(execution_id: str):
     """Get execution by ID with full event history"""
     async with get_pool_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute("""
-                    SELECT event_id,
-                           event_type,
-                           node_id,
-                           node_name,
-                           node_type,
-                           status,
-                           duration,
-                           created_at,
-                           context,
-                           result,
-                           meta,
-                           error,
-                           catalog_id
-                    FROM event
-                    WHERE execution_id = %(execution_id)s
-                    ORDER BY created_at
-                    """, {"execution_id": execution_id})
+        async with conn.cursor() as cursor:
+            await cursor.execute("""
+            SELECT event_id,
+                   event_type,
+                   node_id,
+                   node_name,
+                   node_type,
+                   status,
+                   duration,
+                   created_at,
+                   context,
+                   result,
+                   meta,
+                   error,
+                   catalog_id
+            FROM event
+            WHERE execution_id = %(execution_id)s
+            ORDER BY created_at
+            """, {"execution_id": execution_id})
+            rows = await cursor.fetchall()
+            if rows:
+                events = []
+                for row in rows:
+                    # Use the dictionary keys directly, no manual mapping needed
+                    event_data = dict(row)
+                    event_data["execution_id"] = execution_id
+                    event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
+                    event_data["metadata"] = row["meta"]
+                    # Parse JSON fields if they're strings
+                    if isinstance(row["context"], str):
+                        event_data["context"] = json.loads(row["context"])
+                    if isinstance(row["result"], str):
+                        event_data["result"] = json.loads(row["result"])
+                    
+                    events.append(event_data)
 
-                    rows = await cursor.fetchall()
-                    if rows:
-                        events = []
-                        for row in rows:
-                            # Use the dictionary keys directly, no manual mapping needed
-                            event_data = dict(row)
-                            event_data["execution_id"] = execution_id
-                            event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
-                            event_data["metadata"] = row["meta"]
-
-                            # Parse JSON fields if they're strings
-                            if isinstance(row["context"], str):
-                                event_data["context"] = json.loads(row["context"])
-                            if isinstance(row["result"], str):
-                                event_data["result"] = json.loads(row["result"])
-
-                            events.append(event_data)
-
-                        return {"events": events}
-
-                    return None
+                def filter_events(event: dict):
+                    return event.get("node_id") == "playbook" and event.get("status") == "STARTED"
+                print(json.dumps(events, default=str, indent=2))
+                execution_item = next(filter(filter_events, events), None)
+                if execution_item is None:
+                    logger.error(f"No event node_id:playbook status:STARTED item found for execution_id: {execution_id}")
+                return {
+                    "execution_id": execution_item["execution_id"],
+                    "path": execution_item["node_name"],
+                    "status": events[-1].get("status"),
+                    "start_time": execution_item["timestamp"],
+                    "end_time": events[-1].get("timestamp"),
+                    "events": events,
+                }

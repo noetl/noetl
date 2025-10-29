@@ -1,5 +1,7 @@
 // Common types used across the application
 
+import Execution from "../components/Execution";
+
 export interface ServerStatus {
   status: "ok" | "healthy" | "error" | "warning" | string;
   message: string;
@@ -32,6 +34,14 @@ export interface PlaybookData {
   created_at?: string
 }
 
+export interface ExecutionEvent {
+  event_id: string;
+  event_type: string;
+  node_name: string;
+  status: string;
+  timestamp: string;
+  duration: number;
+}
 export interface ExecutionData {
   execution_id: string;
   path: string;
@@ -43,14 +53,7 @@ export interface ExecutionData {
   progress: number;
   result?: any;
   error?: string;
-  events?: Array<{
-    event_id: string;
-    event_type: string;
-    node_name: string;
-    status: string;
-    timestamp: string;
-    duration: number;
-  }>;
+  events?: Array<ExecutionEvent>;
 }
 
 export interface DashboardStats {

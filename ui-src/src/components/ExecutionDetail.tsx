@@ -26,7 +26,7 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
-import { ExecutionData } from "../types";
+import { ExecutionData, ExecutionEvent } from "../types";
 import moment from "moment";
 import "../styles/ExecutionDetail.css";
 import { CopyOutlined, ExpandAltOutlined, CompressOutlined } from "@ant-design/icons";
@@ -43,8 +43,8 @@ const ExecutionDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [execution, setExecution] = useState<ExecutionData | null>(null);
-  const [events, setEvents] = useState<any[]>([]);
-  const [filteredEvents, setFilteredEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<ExecutionEvent[]>([]);
+  const [filteredEvents, setFilteredEvents] = useState<ExecutionEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,15 +74,7 @@ const ExecutionDetail: React.FC = () => {
         setExecution(data);
 
         // Extract events from execution data or create demo events if not available
-        const executionEvents = (data as any).events || [
-          { event_id: 1, event_type: "START", node_name: "workflow_start", status: "success", timestamp: data.start_time, duration: 0.1 },
-          { event_id: 2, event_type: "TASK", node_name: "task_1", status: "success", timestamp: data.start_time, duration: 2.5 },
-          { event_id: 3, event_type: "LOG", node_name: "task_1", status: "info", timestamp: data.start_time, duration: 0.1 },
-          { event_id: 4, event_type: "HTTP", node_name: "api_call", status: "success", timestamp: data.start_time, duration: 1.2 },
-          { event_id: 5, event_type: "ERROR", node_name: "task_2", status: "failed", timestamp: data.start_time, duration: 0.5 },
-          { event_id: 6, event_type: "RETRY", node_name: "task_2", status: "success", timestamp: data.start_time, duration: 1.8 },
-          { event_id: 7, event_type: "COMPLETE", node_name: "workflow_end", status: "success", timestamp: data.end_time || data.start_time, duration: 0.1 },
-        ];
+        const executionEvents = data.events || [];
 
         setEvents(executionEvents);
         setFilteredEvents(executionEvents);
@@ -310,7 +302,9 @@ const ExecutionDetail: React.FC = () => {
       render: (d: number) => `${d}s`,
     },
   ];
-
+  console.log('Rendering ExecutionDetail for execution:', execution);
+  console.log('execution.start_time:', execution.start_time);
+  console.log('moment: execution.start_time:', moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss"));
   return (
     <Card className="execution-detail-container">
       <Button
@@ -359,7 +353,7 @@ const ExecutionDetail: React.FC = () => {
             <div className="execution-detail-field">
               <Text className="execution-detail-label">Start Time</Text>
               <Text className="execution-detail-value">
-                {moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss")}
+                {execution.start_time ? moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss") : "-"}
               </Text>
             </div>
           </Col>
