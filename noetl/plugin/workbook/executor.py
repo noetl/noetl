@@ -21,7 +21,7 @@ logger = setup_logger(__name__, include_location=True)
 def build_action_config(
     target_action: Dict[str, Any], 
     task_name: str,
-    task_with: Optional[Dict[str, Any]] = None
+    args: Optional[Dict[str, Any]] = None
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Build action configuration from workbook action definition.
@@ -29,19 +29,19 @@ def build_action_config(
     Args:
         target_action: Workbook action definition
         task_name: Task name for reference
-        task_with: Additional parameters from 'with' clause
+        args: Additional arguments from step
         
     Returns:
-        Tuple of (action_config, action_with)
+        Tuple of (action_config, action_args)
     """
-    # Merge task_with into the action's 'with' parameters
-    action_with = target_action.get('with', {}).copy()
-    if task_with:
-        action_with.update(task_with)
+    # Merge step args into the action's args
+    action_args = target_action.get('args', {}).copy()
+    if args:
+        action_args.update(args)
     
-    logger.info(f"WORKBOOK.BUILD_CONFIG: action_with before merge = {target_action.get('with', {})}")
-    logger.info(f"WORKBOOK.BUILD_CONFIG: task_with from step = {task_with}")
-    logger.info(f"WORKBOOK.BUILD_CONFIG: action_with after merge = {action_with}")
+    logger.info(f"WORKBOOK.BUILD_CONFIG: action_args from workbook = {target_action.get('args', {})}")
+    logger.info(f"WORKBOOK.BUILD_CONFIG: args from step = {args}")
+    logger.info(f"WORKBOOK.BUILD_CONFIG: action_args after merge = {action_args}")
     
     # Create task config for the actual action type
     action_config = {
@@ -58,14 +58,14 @@ def build_action_config(
         if field in target_action:
             action_config[field] = target_action[field]
     
-    return action_config, action_with
+    return action_config, action_args
 
 
 async def execute_workbook_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
-    task_with: Optional[Dict[str, Any]] = None,
+    args: Optional[Dict[str, Any]] = None,
     log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
@@ -82,7 +82,7 @@ async def execute_workbook_task(
         task_config: Task configuration containing 'name' attribute to lookup
         context: Execution context (should contain workload with path/version)
         jinja_env: Jinja2 environment for template rendering
-        task_with: Additional parameters from 'with' clause
+        args: Additional arguments from step
         log_event_callback: Optional callback for logging events
         
     Returns:
@@ -109,8 +109,8 @@ async def execute_workbook_task(
     target_action = find_workbook_action(playbook, task_name)
     
     # Step 4: Build action config
-    action_config, action_with = build_action_config(
-        target_action, task_name, task_with
+    action_config, action_args = build_action_config(
+        target_action, task_name, args
     )
     
     logger.info(
@@ -118,7 +118,7 @@ async def execute_workbook_task(
         f"'{target_action.get('type')}'"
     )
     logger.debug(f"WORKBOOK: Action config: {action_config}")
-    logger.debug(f"WORKBOOK: Action with: {action_with}")
+    logger.debug(f"WORKBOOK: Action args: {action_args}")
     
     # Step 5: Execute the actual action using the standard task executor
     # Import execute_task here to avoid circular imports
@@ -129,7 +129,7 @@ async def execute_workbook_task(
         task_name,
         context,
         jinja_env,
-        action_with,
+        action_args,
         log_event_callback
     )
     

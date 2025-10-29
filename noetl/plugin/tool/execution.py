@@ -19,7 +19,7 @@ def execute_task(
     task_name: str,
     context: Dict[str, Any],
     jinja_env: Environment,
-    task_with: Optional[Dict[str, Any]] = None,
+    args: Optional[Dict[str, Any]] = None,
     log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
@@ -37,7 +37,7 @@ def execute_task(
         task_name: Name of the task
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
-        task_with: Additional parameters from 'with' clause
+        args: Task arguments/parameters
         log_event_callback: Optional callback for logging events
 
     Returns:
@@ -67,33 +67,33 @@ def execute_task(
 
     # Dispatch to appropriate action handler
     if task_type == 'http':
-        return execute_http_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_http_task(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'python':
-        return execute_python_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_python_task(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'duckdb':
-        return execute_duckdb_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_duckdb_task(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'postgres':
-        return execute_postgres_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_postgres_task(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'snowflake':
-        return execute_snowflake_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_snowflake_task(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'snowflake_transfer':
-        return execute_snowflake_transfer_action(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_snowflake_transfer_action(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'transfer':
         # Generic transfer executor - infers direction from source/target types
-        return execute_transfer_action(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_transfer_action(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'secrets':
         # For secrets, we need to get the secret_manager from context or somewhere
         secret_manager = context.get('secret_manager')
-        return execute_secrets_task(task_config, context, secret_manager, task_with or {}, log_event_callback)
+        return execute_secrets_task(task_config, context, secret_manager, args or {}, log_event_callback)
     elif task_type == 'playbook':
-        return execute_playbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_playbook_task(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'workbook':
         # Workbook tasks need async execution for catalog access
-        return _execute_workbook_async(execute_workbook_task, task_config, context, jinja_env, task_with, log_event_callback)
+        return _execute_workbook_async(execute_workbook_task, task_config, context, jinja_env, args, log_event_callback)
     elif task_type == 'save':
-        return execute_save_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_save_task(task_config, context, jinja_env, args or {}, log_event_callback)
     elif task_type == 'iterator':
-        return execute_iterator_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+        return execute_iterator_task(task_config, context, jinja_env, args or {}, log_event_callback)
     else:
         raise ValueError(
             f"Unknown task type '{raw_type}'. "
@@ -106,7 +106,7 @@ def _execute_workbook_async(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
-    task_with: Optional[Dict[str, Any]],
+    args: Optional[Dict[str, Any]],
     log_event_callback: Optional[Callable]
 ) -> Dict[str, Any]:
     """
@@ -120,36 +120,23 @@ def _execute_workbook_async(
         task_config: Task configuration
         context: Execution context
         jinja_env: Jinja2 environment
-        task_with: Additional parameters
-        log_event_callback: Event logging callback
+        args: Task arguments
+        log_event_callback: Optional event logging callback
         
     Returns:
         Task execution result
     """
     import asyncio
     
-    if asyncio.iscoroutinefunction(execute_workbook_task):
-        # In worker threads, there may be no running event loop; prefer asyncio.run
-        try:
-            return asyncio.run(
-                execute_workbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
-            )
-        except RuntimeError:
-            # Fallback: create and manage a new event loop explicitly
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                return loop.run_until_complete(
-                    execute_workbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
-                )
-            finally:
-                try:
-                    asyncio.set_event_loop(None)
-                except Exception:
-                    pass
-                loop.close()
-    else:
-        return execute_workbook_task(task_config, context, jinja_env, task_with or {}, log_event_callback)
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(
+        execute_workbook_task(task_config, context, jinja_env, args, log_event_callback)
+    )
 
 
 def execute_task_resolved(
@@ -157,7 +144,7 @@ def execute_task_resolved(
     task_name: str,
     context: Dict[str, Any],
     jinja_env: Environment,
-    task_with: Optional[Dict[str, Any]] = None,
+    args: Optional[Dict[str, Any]] = None,
     log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
@@ -170,10 +157,10 @@ def execute_task_resolved(
         task_name: Name of the task
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
-        task_with: Additional parameters from 'with' clause
+        args: Task arguments
         log_event_callback: Optional callback for logging events
 
     Returns:
         Task execution result
     """
-    return execute_task(task_config, task_name, context, jinja_env, task_with, log_event_callback)
+    return execute_task(task_config, task_name, context, jinja_env, args, log_event_callback)

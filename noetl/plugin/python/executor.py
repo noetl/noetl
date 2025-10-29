@@ -42,7 +42,7 @@ def execute_python_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
-    task_with: Dict[str, Any],
+    args: Optional[Dict[str, Any]] = None,
     log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
@@ -52,7 +52,7 @@ def execute_python_task(
         task_config: Task configuration
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
-        task_with: Task parameters
+        args: Task arguments/parameters
         log_event_callback: Optional callback for logging events
 
     Returns:
@@ -66,9 +66,12 @@ def execute_python_task(
     task_name = task_config.get('name', 'unnamed_python_task')
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task ID={task_id}, name={task_name}")
 
+    # Use args if provided, otherwise empty dict
+    args = args or {}
+
     try:
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task config keys: {list(task_config.keys())}")
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task with keys: {list((task_with or {}).keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Args keys: {list(args.keys())}")
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Context keys: {list((context or {}).keys())}")
 
         # Get and decode the code
@@ -99,7 +102,7 @@ def execute_python_task(
             event_id = log_event_callback(
                 'task_start', task_id, task_name, 'python',
                 'in_progress', 0, context, None,
-                {'with_params': task_with}, None
+                {'args': args}, None
             )
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task start event_id={event_id}")
 
@@ -121,95 +124,86 @@ def execute_python_task(
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
 
         if 'main' in exec_locals and callable(exec_locals['main']):
-            # Render and normalize parameters from 'with' using server-evaluated context
-            # 1) Render Jinja templates against provided context
-            rendered_with = {}
+            # Render Jinja templates in args against context
+            rendered_args = {}
             try:
-                for k, v in (task_with or {}).items():
+                for k, v in args.items():
                     if isinstance(v, str):
                         try:
                             logger.info(f"PYTHON.RENDER: Rendering template for key={k}, value={v[:100]}")
-                            logger.info(f"PYTHON.RENDER: Context has workload: {'workload' in (context or {})}")
-                            if 'workload' in (context or {}):
-                                logger.info(f"PYTHON.RENDER: workload keys: {list(context.get('workload', {}).keys()) if isinstance(context.get('workload'), dict) else 'not a dict'}")
                             tmpl = jinja_env.from_string(v)
                             rendered = tmpl.render(context or {})
                             logger.info(f"PYTHON.RENDER: Rendered result for key={k}: {rendered[:200]}")
-                            rendered_with[k] = rendered
+                            rendered_args[k] = rendered
                         except Exception as render_ex:
-                            logger.error(f"PYTHON.RENDER: Exception rendering key={k}: {render_ex}")
-                            rendered_with[k] = v
+                            logger.exception(f"PYTHON.RENDER: Exception rendering key={k}: {render_ex}")
+                            rendered_args[k] = v
                     else:
-                        rendered_with[k] = v
+                        rendered_args[k] = v
             except Exception:
-                rendered_with = task_with or {}
+                rendered_args = args
 
-            # 2) Coerce common literal/JSON strings to Python objects
-            normalized_with = {}
+            # Coerce string literals to Python objects (e.g., "30" -> 30)
+            coerced_args = {}
             try:
-                for k, v in rendered_with.items():
+                for k, v in rendered_args.items():
                     coerced = _coerce_param(v)
                     logger.info(f"PYTHON.COERCE: key={k}, type before={type(v).__name__}, type after={type(coerced).__name__}, value={str(coerced)[:200]}")
-                    normalized_with[k] = coerced
+                    coerced_args[k] = coerced
             except Exception as coerce_ex:
-                logger.error(f"PYTHON.COERCE: Exception: {coerce_ex}")
-                normalized_with = rendered_with
+                logger.exception(f"PYTHON.COERCE: Exception: {coerce_ex}")
+                coerced_args = rendered_args
 
-            # Enhanced function signature detection and flexible calling
+            # Call main function based on its signature
             main_func = exec_locals['main']
             func_signature = inspect.signature(main_func)
             params = list(func_signature.parameters.keys())
             
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Function signature: {func_signature}")
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Function parameters: {params}")
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Available args: {list(coerced_args.keys())}")
             
-            # Determine how to call the function based on its signature
             result_data = None
             
             if len(params) == 0:
                 # Function takes no parameters: def main():
-                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with no parameters")
+                logger.debug("PYTHON.CALL: Calling function with no parameters")
                 result_data = main_func()
                 
             elif len(params) == 1 and 'input_data' in params:
                 # Legacy function signature: def main(input_data):
-                # Pass the value of the 'input_data' argument directly
-                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with input_data parameter")
-                input_data_value = normalized_with.get('input_data')
+                logger.debug("PYTHON.CALL: Calling function with input_data parameter")
+                input_data_value = coerced_args.get('input_data')
                 logger.info(f"PYTHON.CALL: Passing input_data value type={type(input_data_value).__name__}, value={str(input_data_value)[:200]}")
                 result_data = main_func(input_data_value)
                 
             elif any(param.kind == inspect.Parameter.VAR_KEYWORD for param in func_signature.parameters.values()):
                 # Function accepts **kwargs: def main(**kwargs):
-                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with **kwargs")
-                call_kwargs = {
-                    'context': context,
-                    **normalized_with
-                }
+                logger.debug("PYTHON.CALL: Calling function with **kwargs")
+                call_kwargs = {'context': context, **coerced_args}
+                logger.info(f"PYTHON.CALL: Passing kwargs: {list(call_kwargs.keys())}")
                 result_data = main_func(**call_kwargs)
                 
             else:
-                # Function has specific named parameters
-                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Calling function with specific named parameters")
+                # Function has specific named parameters: def main(param1, param2, ...):
+                logger.debug("PYTHON.CALL: Calling function with specific named parameters")
                 call_kwargs = {}
                 
-                # Map available data to function parameters
-                available_data = {
-                    'context': context,
-                    **normalized_with
-                }
-                
+                # Map args to function parameters by name
                 for param_name in params:
-                    if param_name in available_data:
-                        call_kwargs[param_name] = available_data[param_name]
-                    elif param_name == 'input_data':
-                        # Provide input_data if specifically requested
-                        call_kwargs['input_data'] = {
-                            'context': context,
-                            'with': normalized_with,
-                            **normalized_with
-                        }
+                    if param_name in coerced_args:
+                        call_kwargs[param_name] = coerced_args[param_name]
+                        logger.info(f"PYTHON.CALL: Mapped arg '{param_name}' = {str(coerced_args[param_name])[:100]}")
+                    elif param_name == 'context':
+                        call_kwargs['context'] = context
+                        logger.info(f"PYTHON.CALL: Mapped 'context'")
+                    else:
+                        # Check if parameter has a default value
+                        param_obj = func_signature.parameters[param_name]
+                        if param_obj.default == inspect.Parameter.empty:
+                            raise TypeError(f"Missing required argument: '{param_name}'")
                 
+                logger.info(f"PYTHON.CALL: Final kwargs: {list(call_kwargs.keys())}")
                 result_data = main_func(**call_kwargs)
 
             end_time = datetime.datetime.now()
@@ -219,7 +213,7 @@ def execute_python_task(
                 log_event_callback(
                     'task_complete', task_id, task_name, 'python',
                     'success', duration, context, result_data,
-                    {'with_params': task_with}, event_id
+                    {'args': args}, event_id
                 )
 
             return {
@@ -236,7 +230,7 @@ def execute_python_task(
                 log_event_callback(
                     'task_error', task_id, task_name, 'python',
                     'error', duration, context, None,
-                    {'error': error_msg, 'with_params': task_with}, event_id
+                    {'error': error_msg, 'args': args}, event_id
                 )
 
             return {
@@ -247,7 +241,7 @@ def execute_python_task(
 
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"PYTHON.EXECUTE_PYTHON_TASK: Exception - {error_msg}", exc_info=True)
+        logger.exception(f"PYTHON.EXECUTE_PYTHON_TASK: Exception - {error_msg}", exc_info=True)
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -258,7 +252,7 @@ def execute_python_task(
             log_event_callback(
                 'task_error', task_id, task_name, 'python',
                 'error', duration, context, None,
-                {'error': error_msg, 'with_params': task_with}, event_id
+                {'error': error_msg, 'args': args}, event_id
             )
 
         result = {
