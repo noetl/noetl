@@ -566,6 +566,31 @@ async def _process_transitions(execution_id: str) -> None:
                 step_def = by_name.get(step_name, {})
                 step_type = step_def.get("type", "step")
                 
+                # Query action_completed event to get parent_event_id from queue_meta
+                parent_event_id = None
+                try:
+                    await cur.execute(
+                        """
+                        SELECT meta
+                        FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                          AND node_name = %(node_name)s
+                          AND event_type = 'action_completed'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """,
+                        {"execution_id": int(execution_id), "node_name": step_name}
+                    )
+                    action_row = await cur.fetchone()
+                    if action_row and action_row.get("meta"):
+                        meta = action_row["meta"]
+                        if isinstance(meta, dict):
+                            queue_meta = meta.get("queue_meta", {})
+                            if isinstance(queue_meta, dict):
+                                parent_event_id = queue_meta.get("parent_event_id")
+                except Exception as e:
+                    logger.debug(f"Could not extract parent_event_id from action_completed for '{step_name}': {e}")
+                
                 # Emit step_completed event - use EventService directly (not HTTP)
                 from noetl.server.api.broker.schema import EventEmitRequest
                 
@@ -576,7 +601,8 @@ async def _process_transitions(execution_id: str) -> None:
                     status="COMPLETED",
                     node_id=step_name,
                     node_name=step_name,
-                    node_type=step_type
+                    node_type=step_type,
+                    parent_event_id=parent_event_id
                 )
                 
                 step_completed_event_id = None
@@ -641,6 +667,9 @@ async def _process_transitions(execution_id: str) -> None:
                     if next_step_type in ("router", ""):
                         logger.info(f"Next step '{to_step}' is router step, emitting step_completed and processing its transitions")
                         
+                        # Use the current step's step_completed event_id as parent
+                        router_parent_event_id = step_completed_event_id
+                        
                         # Emit step_completed for the router step
                         from noetl.server.api.broker.schema import EventEmitRequest
                         router_completed_request = EventEmitRequest(
@@ -650,7 +679,8 @@ async def _process_transitions(execution_id: str) -> None:
                             status="COMPLETED",
                             node_id=to_step,
                             node_name=to_step,
-                            node_type="router"
+                            node_type="router",
+                            parent_event_id=router_parent_event_id
                         )
                         try:
                             await EventService.emit_event(router_completed_request)
