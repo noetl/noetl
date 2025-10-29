@@ -234,7 +234,7 @@ class QueuePublisher:
                                     args = step_cfg.get("args") if isinstance(step_cfg.get("args"), dict) else {}
                                     step_cfg["args"] = {**args, **with_params}
                             except Exception:
-                                pass
+                                logger.exception("Error merging with_params into step config")
 
                             # Expand workbook references before publishing
                             step_cfg = await expand_workbook_reference(step_cfg, catalog_id)

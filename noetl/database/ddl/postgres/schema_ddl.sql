@@ -1,15 +1,16 @@
 -- Canonical Schema DDL for NoETL Platform
+
 CREATE SCHEMA IF NOT EXISTS noetl;
 ALTER SCHEMA noetl OWNER TO noetl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON TABLES TO noetl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;
+
 
 -- Resource
 CREATE TABLE IF NOT EXISTS noetl.resource (
     name VARCHAR PRIMARY KEY,
     meta JSONB
 );
-ALTER TABLE noetl.resource OWNER TO noetl;
 
 -- Catalog
 CREATE TABLE IF NOT EXISTS noetl.catalog (
@@ -24,7 +25,6 @@ CREATE TABLE IF NOT EXISTS noetl.catalog (
     created_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (path, version)
 );
-ALTER TABLE noetl.catalog OWNER TO noetl;
 
 -- Workload
 CREATE TABLE IF NOT EXISTS noetl.workload (
@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS noetl.workload (
     data JSONB,
     PRIMARY KEY (execution_id)
 );
-ALTER TABLE noetl.workload OWNER TO noetl;
 
 -- Event
 CREATE TABLE IF NOT EXISTS noetl.event (
@@ -63,7 +62,6 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     stack_trace TEXT,
     PRIMARY KEY (execution_id, event_id)
 );
-ALTER TABLE noetl.event OWNER TO noetl;
 DO $$ BEGIN
     ALTER TABLE noetl.event ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
 EXCEPTION WHEN others THEN NULL; END $$;
@@ -88,7 +86,6 @@ CREATE TABLE IF NOT EXISTS noetl.workflow (
     raw_config TEXT,
     PRIMARY KEY (execution_id, step_id)
 );
-ALTER TABLE noetl.workflow OWNER TO noetl;
 
 CREATE TABLE IF NOT EXISTS noetl.workbook (
     execution_id BIGINT,
@@ -98,7 +95,6 @@ CREATE TABLE IF NOT EXISTS noetl.workbook (
     raw_config TEXT,
     PRIMARY KEY (execution_id, task_id)
 );
-ALTER TABLE noetl.workbook OWNER TO noetl;
 
 CREATE TABLE IF NOT EXISTS noetl.transition (
     execution_id BIGINT,
@@ -108,7 +104,6 @@ CREATE TABLE IF NOT EXISTS noetl.transition (
     with_params TEXT,
     PRIMARY KEY (execution_id, from_step, to_step, condition)
 );
-ALTER TABLE noetl.transition OWNER TO noetl;
 
 -- Legacy compatibility view for event_log
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
@@ -125,7 +120,6 @@ CREATE TABLE IF NOT EXISTS noetl.credential (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE noetl.credential OWNER TO noetl;
 CREATE INDEX IF NOT EXISTS idx_credential_type ON noetl.credential (type);
 ALTER TABLE noetl.catalog ADD COLUMN IF NOT EXISTS credential_id INTEGER;
 
@@ -144,7 +138,7 @@ CREATE TABLE IF NOT EXISTS noetl.runtime (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE noetl.runtime OWNER TO noetl;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_kind_name ON noetl.runtime (kind, name);
 CREATE INDEX IF NOT EXISTS idx_runtime_kind ON noetl.runtime (kind);
 CREATE INDEX IF NOT EXISTS idx_runtime_status ON noetl.runtime (status);
@@ -164,7 +158,6 @@ CREATE TABLE IF NOT EXISTS noetl.metric (
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '1 day'),
     PRIMARY KEY (metric_id, created_at)
 ) PARTITION BY RANGE (created_at);
-ALTER TABLE noetl.metric OWNER TO noetl;
 
 -- Create indexes on the parent table (will be inherited by partitions)
 CREATE INDEX IF NOT EXISTS idx_metric_runtime_id ON noetl.metric (runtime_id);
@@ -190,7 +183,6 @@ BEGIN
                    partition_name, start_date, end_date);
     
     -- Set ownership
-    EXECUTE format('ALTER TABLE noetl.%I OWNER TO noetl', partition_name);
     
     RETURN partition_name;
 END;
@@ -343,7 +335,6 @@ CREATE TABLE IF NOT EXISTS noetl.queue (
     meta JSONB,
     UNIQUE(execution_id, node_id)
 );
-ALTER TABLE noetl.queue OWNER TO noetl;
 
 -- Schedule
 CREATE TABLE IF NOT EXISTS noetl.schedule (
@@ -362,7 +353,6 @@ CREATE TABLE IF NOT EXISTS noetl.schedule (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     meta JSONB
 );
-ALTER TABLE noetl.schedule OWNER TO noetl;
 CREATE INDEX IF NOT EXISTS idx_schedule_next_run ON noetl.schedule (next_run_at) WHERE enabled = TRUE;
 CREATE INDEX IF NOT EXISTS idx_schedule_playbook ON noetl.schedule (playbook_path);
 
@@ -372,7 +362,6 @@ CREATE TABLE IF NOT EXISTS noetl.role (
     name TEXT UNIQUE NOT NULL,
     description TEXT
 );
-ALTER TABLE noetl.role OWNER TO noetl;
 
 CREATE TABLE IF NOT EXISTS noetl.profile (
     id BIGINT PRIMARY KEY,
@@ -383,7 +372,6 @@ CREATE TABLE IF NOT EXISTS noetl.profile (
     type TEXT NOT NULL CHECK (type IN ('user','bot')),
     created_at TIMESTAMPTZ DEFAULT now()
 );
-ALTER TABLE noetl.profile OWNER TO noetl;
 
 CREATE TABLE IF NOT EXISTS noetl.session (
     id BIGINT PRIMARY KEY,
@@ -393,7 +381,6 @@ CREATE TABLE IF NOT EXISTS noetl.session (
     disconnected_at TIMESTAMPTZ,
     meta JSONB
 );
-ALTER TABLE noetl.session OWNER TO noetl;
 
 -- Dentry-based hierarchy replacing label/attachment
 CREATE TABLE IF NOT EXISTS noetl.dentry (
@@ -405,7 +392,6 @@ CREATE TABLE IF NOT EXISTS noetl.dentry (
     created_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE(parent_id, name)
 );
-ALTER TABLE noetl.dentry OWNER TO noetl;
 
 
 
@@ -416,7 +402,6 @@ CREATE INDEX IF NOT EXISTS idx_dentry_kind ON noetl.dentry(kind);
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
-ALTER SEQUENCE noetl.snowflake_seq OWNER TO noetl;
 CREATE OR REPLACE FUNCTION noetl.snowflake_id() RETURNS BIGINT AS $$
 DECLARE
     our_epoch BIGINT := 1704067200000;
@@ -431,7 +416,6 @@ BEGIN
            (seq_id & 262143);
 END;
 $$ LANGUAGE plpgsql;
-ALTER FUNCTION noetl.snowflake_id() OWNER TO noetl;
 ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.workload ALTER COLUMN execution_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.catalog ALTER COLUMN catalog_id SET DEFAULT noetl.snowflake_id();

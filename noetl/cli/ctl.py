@@ -1015,6 +1015,7 @@ def execute_playbook_by_name(
         resp = requests.post(url, json=body)
         if resp.status_code >= 200 and resp.status_code < 300:
             data = resp.json()
+            logger.info(f"Response: {data}")
             exec_id = data.get("id") or data.get("execution_id")
             if not json_only:
                 typer.echo("Execution started")
@@ -1022,6 +1023,7 @@ def execute_playbook_by_name(
                     typer.echo(f"execution_id: {exec_id}")
             typer.echo(json.dumps(data, indent=2, cls=DateTimeEncoder))
         else:
+            logger.error(f"Server returned {resp.text}")
             if not json_only:
                 typer.echo(f"Server returned {resp.status_code}")
                 typer.echo(resp.text)
