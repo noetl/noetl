@@ -27,6 +27,7 @@ from noetl.core.logger import setup_logger
 from noetl.server.api.broker.service import EventService
 from noetl.server.api.catalog.service import CatalogService
 from noetl.server.api.run.publisher import QueuePublisher
+from noetl.server.api.run.queries import OrchestratorQueries
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -84,27 +85,17 @@ async def _check_execution_completion(execution_id: str, workflow_steps: Dict[st
         logger.info(f"No actionable steps in workflow for execution {execution_id}")
         return
     
-    async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
-            # Count completed steps
-            await cur.execute(
-                """
-                SELECT COUNT(DISTINCT node_name) as count
-                FROM noetl.event
-                WHERE execution_id = %(execution_id)s
-                  AND event_type = 'step_completed'
-                """,
-                {"execution_id": int(execution_id)}
-            )
-            result = await cur.fetchone()
-            completed_count = result['count'] if result else 0
-            
-            logger.info(f"Execution {execution_id}: {completed_count}/{len(actionable_steps)} steps completed")
-            
-            # If all actionable steps are complete, emit completion events
-            if completed_count >= len(actionable_steps):
-                logger.info(f"All steps completed for execution {execution_id}, finalizing")
-                
+    # Count completed steps using async query executor
+    completed_count = await OrchestratorQueries.count_completed_steps(int(execution_id))
+    
+    logger.info(f"Execution {execution_id}: {completed_count}/{len(actionable_steps)} steps completed")
+    
+    # If all actionable steps are complete, emit completion events
+    if completed_count >= len(actionable_steps):
+        logger.info(f"All steps completed for execution {execution_id}, finalizing")
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 # Get catalog_id and catalog path from execution_started event
                 await cur.execute(
                     """
@@ -336,22 +327,7 @@ async def _has_failed(execution_id: int) -> bool:
     Returns:
         True if any failure/error events exist
     """
-    async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT 1 FROM noetl.event
-                WHERE execution_id = %(execution_id)s
-                  AND (
-                    LOWER(status) LIKE '%%failed%%'
-                    OR LOWER(status) LIKE '%%error%%'
-                    OR event_type = 'error'
-                  )
-                LIMIT 1
-                """,
-                {"execution_id": execution_id}
-            )
-            return await cur.fetchone() is not None
+    return await OrchestratorQueries.has_execution_failed(execution_id)
 
 
 async def _get_execution_state(execution_id: int) -> str:
@@ -377,7 +353,7 @@ async def _get_execution_state(execution_id: int) -> str:
                 """
                 SELECT 1 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
-                  AND event_type IN ('execution_complete', 'execution_end')
+                  AND event_type IN ('execution_completed', 'execution_complete', 'execution_end')
                 LIMIT 1
                 """,
                 {"execution_id": execution_id}
@@ -398,17 +374,8 @@ async def _get_execution_state(execution_id: int) -> str:
             if await cur.fetchone():
                 return 'in_progress'
             
-            # Check for active queue items
-            await cur.execute(
-                """
-                SELECT 1 FROM noetl.queue
-                WHERE execution_id = %(execution_id)s
-                  AND status IN ('queued', 'leased')
-                LIMIT 1
-                """,
-                {"execution_id": execution_id}
-            )
-            if await cur.fetchone():
+            # Check for active queue items using query executor
+            if await OrchestratorQueries.has_pending_queue_jobs(execution_id):
                 return 'in_progress'
             
             return 'initial'
@@ -446,111 +413,68 @@ async def _process_transitions(execution_id: str) -> None:
     """
     logger.info(f"Processing transitions for execution {execution_id}")
     
+    # Find completed steps without step_completed event using async executor
+    completed_steps = await OrchestratorQueries.get_completed_steps_without_step_completed(int(execution_id))
+    
+    if not completed_steps:
+        logger.debug(f"No new completed steps found for execution {execution_id}")
+        return
+    
+    logger.info(f"Found {len(completed_steps)} completed steps: {completed_steps}")
+    
+    # Get catalog_id
+    catalog_id = await EventService.get_catalog_id_from_execution(execution_id)
+    
+    # Get execution metadata using async executor
+    metadata = await OrchestratorQueries.get_execution_metadata(int(execution_id))
+    if not metadata:
+        logger.warning(f"No execution metadata found for {execution_id}")
+        return
+    
+    pb_path = metadata.get("path")
+    pb_version = metadata.get("version", "latest")
+    
+    # Load playbook from catalog
+    catalog_entry = await CatalogService.fetch_entry(catalog_id=catalog_id)
+    if not catalog_entry or not catalog_entry.content:
+        logger.warning(f"No playbook content found for catalog_id {catalog_id}")
+        return
+    
+    playbook = yaml.safe_load(catalog_entry.content)
+    workload = playbook.get("workload", {})
+    
+    # Build step index
+    workflow_steps = playbook.get("workflow", [])
+    by_name = {}
+    for step_def in workflow_steps:
+        step_name = step_def.get("step")
+        if step_name:
+            by_name[step_name] = step_def
+    
+    # Query all transitions using async executor
+    transition_rows = await OrchestratorQueries.get_transitions(int(execution_id))
+    
+    # Group transitions by from_step
+    transitions_by_step = {}
+    for tr in transition_rows:
+        from_step = tr["from_step"]
+        if from_step not in transitions_by_step:
+            transitions_by_step[from_step] = []
+        transitions_by_step[from_step].append(tr)
+    
+    # Build evaluation context with all step results using async executor
+    eval_ctx = {"workload": workload}
+    result_rows = await OrchestratorQueries.get_step_results(int(execution_id))
+    for res_row in result_rows:
+        if res_row["node_name"] and res_row["result"]:
+            # Normalize result: if it has 'data' field, use that instead of the envelope
+            result_value = res_row["result"]
+            if isinstance(result_value, dict) and "data" in result_value:
+                result_value = result_value["data"]
+            eval_ctx[res_row["node_name"]] = result_value
+    
     async with get_pool_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            # Find completed steps without step_completed event
-            await cur.execute(
-                """
-                SELECT DISTINCT node_name
-                FROM noetl.event
-                WHERE execution_id = %(execution_id)s
-                  AND event_type IN ('action_completed', 'step_result')
-                  AND node_name NOT IN (
-                      SELECT node_name FROM noetl.event
-                      WHERE execution_id = %(execution_id)s AND event_type = 'step_completed'
-                  )
-                """,
-                {"execution_id": int(execution_id)}
-            )
-            rows = await cur.fetchall()
-            completed_steps = [r["node_name"] for r in rows]
-            
-            if not completed_steps:
-                logger.debug(f"No new completed steps found for execution {execution_id}")
-                return
-            
-            logger.info(f"Found {len(completed_steps)} completed steps: {completed_steps}")
-            
-            # Get catalog_id
-            catalog_id = await EventService.get_catalog_id_from_execution(execution_id)
-            
-            # Get execution metadata to find playbook path/version
-            await cur.execute(
-                """
-                SELECT meta FROM noetl.event
-                WHERE execution_id = %(execution_id)s
-                  AND event_type = 'execution_started'
-                ORDER BY created_at LIMIT 1
-                """,
-                {"execution_id": int(execution_id)}
-            )
-            exec_row = await cur.fetchone()
-            if not exec_row or not exec_row["meta"]:
-                logger.warning(f"No execution metadata found for {execution_id}")
-                return
-            
-            metadata = exec_row["meta"]
-            pb_path = metadata.get("path")
-            pb_version = metadata.get("version", "latest")
-            
-            # Load playbook from catalog
-            catalog_entry = await CatalogService.fetch_entry(catalog_id=catalog_id)
-            if not catalog_entry or not catalog_entry.content:
-                logger.warning(f"No playbook content found for catalog_id {catalog_id}")
-                return
-            
-            playbook = yaml.safe_load(catalog_entry.content)
-            workload = playbook.get("workload", {})
-            
-            # Build step index
-            workflow_steps = playbook.get("workflow", [])
-            by_name = {}
-            for step_def in workflow_steps:
-                step_name = step_def.get("step")
-                if step_name:
-                    by_name[step_name] = step_def
-            
-            # Query all transitions for this execution
-            await cur.execute(
-                """
-                SELECT from_step, to_step, condition, with_params
-                FROM noetl.transition
-                WHERE execution_id = %(execution_id)s
-                """,
-                {"execution_id": int(execution_id)}
-            )
-            transition_rows = await cur.fetchall()
-            
-            # Group transitions by from_step
-            transitions_by_step = {}
-            for tr in transition_rows:
-                from_step = tr["from_step"]
-                if from_step not in transitions_by_step:
-                    transitions_by_step[from_step] = []
-                transitions_by_step[from_step].append(tr)
-            
-            # Build evaluation context with all step results
-            eval_ctx = {"workload": workload}
-            await cur.execute(
-                """
-                SELECT node_name, result
-                FROM noetl.event
-                WHERE execution_id = %(execution_id)s
-                  AND event_type IN ('action_completed', 'step_result')
-                  AND result IS NOT NULL
-                ORDER BY created_at
-                """,
-                {"execution_id": int(execution_id)}
-            )
-            result_rows = await cur.fetchall()
-            for res_row in result_rows:
-                if res_row["node_name"] and res_row["result"]:
-                    # Normalize result: if it has 'data' field, use that instead of the envelope
-                    result_value = res_row["result"]
-                    if isinstance(result_value, dict) and "data" in result_value:
-                        result_value = result_value["data"]
-                    eval_ctx[res_row["node_name"]] = result_value
-            
+        async with conn.cursor() as cur:
             # Process each completed step
             for step_name in completed_steps:
                 logger.info(f"Processing transitions for completed step '{step_name}'")
@@ -566,30 +490,19 @@ async def _process_transitions(execution_id: str) -> None:
                 step_def = by_name.get(step_name, {})
                 step_type = step_def.get("type", "step")
                 
-                # Query action_completed event to get parent_event_id from queue_meta
+                # Query action_completed event to get parent_event_id from queue_meta using async executor
                 parent_event_id = None
                 try:
-                    await cur.execute(
-                        """
-                        SELECT meta
-                        FROM noetl.event
-                        WHERE execution_id = %(execution_id)s
-                          AND node_name = %(node_name)s
-                          AND event_type = 'action_completed'
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                        """,
-                        {"execution_id": int(execution_id), "node_name": step_name}
+                    action_meta = await OrchestratorQueries.get_action_completed_meta(
+                        int(execution_id), step_name
                     )
-                    action_row = await cur.fetchone()
-                    if action_row and action_row.get("meta"):
-                        meta = action_row["meta"]
-                        if isinstance(meta, dict):
-                            queue_meta = meta.get("queue_meta", {})
-                            if isinstance(queue_meta, dict):
-                                parent_event_id = queue_meta.get("parent_event_id")
+                    if action_meta and isinstance(action_meta, dict):
+                        queue_meta = action_meta.get("queue_meta", {})
+                        if isinstance(queue_meta, dict):
+                            parent_event_id = queue_meta.get("parent_event_id")
+                            logger.debug(f"Extracted parent_event_id={parent_event_id} from action_completed.meta.queue_meta for '{step_name}'")
                 except Exception as e:
-                    logger.debug(f"Could not extract parent_event_id from action_completed for '{step_name}': {e}")
+                    logger.warning(f"Could not extract parent_event_id from action_completed for '{step_name}': {e}")
                 
                 # Emit step_completed event - use EventService directly (not HTTP)
                 from noetl.server.api.broker.schema import EventEmitRequest
