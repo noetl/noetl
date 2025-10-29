@@ -340,6 +340,7 @@ CREATE TABLE IF NOT EXISTS noetl.queue (
     event_id BIGINT,
     node_name VARCHAR,
     node_type VARCHAR,
+    meta JSONB,
     UNIQUE(execution_id, node_id)
 );
 ALTER TABLE noetl.queue OWNER TO noetl;

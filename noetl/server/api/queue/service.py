@@ -69,6 +69,7 @@ class QueueService:
         max_attempts: int = 5,
         available_at: Optional[Any] = None,
         parent_event_id: Optional[str] = None,
+        parent_execution_id: Optional[str] = None,
         event_id: Optional[str] = None,
         queue_id: Optional[int] = None,
         status: str = "queued"
@@ -88,7 +89,8 @@ class QueueService:
             priority: Job priority (higher = more priority)
             max_attempts: Maximum retry attempts
             available_at: Timestamp when job becomes available (datetime or string)
-            parent_event_id: Parent event ID
+            parent_event_id: Parent event ID that triggered this job
+            parent_execution_id: Parent execution ID (for sub-playbook calls)
             event_id: Associated event ID
             queue_id: Pre-generated queue ID (if None, will auto-generate)
             status: Job status (default: "queued")
@@ -122,7 +124,14 @@ class QueueService:
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                # Build INSERT query with all fields
+                # Build metadata for queue entry
+                meta = {}
+                if parent_event_id:
+                    meta['parent_event_id'] = parent_event_id
+                if parent_execution_id:
+                    meta['parent_execution_id'] = parent_execution_id
+                
+                # Build INSERT query with all fields including meta
                 await cur.execute(
                     """
                     INSERT INTO noetl.queue (
@@ -130,13 +139,13 @@ class QueueService:
                         node_id, node_name, node_type,
                         action, context, status, priority,
                         attempts, max_attempts, available_at,
-                        parent_event_id, event_id, created_at, updated_at
+                        parent_event_id, event_id, meta, created_at, updated_at
                     ) VALUES (
                         %(queue_id)s, %(execution_id)s, %(catalog_id)s,
                         %(node_id)s, %(node_name)s, %(node_type)s,
                         %(action)s, %(context)s, %(status)s, %(priority)s,
                         %(attempts)s, %(max_attempts)s, %(available_at)s,
-                        %(parent_event_id)s, %(event_id)s, %(created_at)s, %(updated_at)s
+                        %(parent_event_id)s, %(event_id)s, %(meta)s, %(created_at)s, %(updated_at)s
                     )
                     ON CONFLICT (execution_id, node_id) DO NOTHING
                     RETURNING queue_id
@@ -157,6 +166,7 @@ class QueueService:
                         "available_at": available_at,
                         "parent_event_id": parent_event_id,
                         "event_id": event_id,
+                        "meta": json.dumps(meta) if meta else None,
                         "created_at": datetime.now(timezone.utc),
                         "updated_at": datetime.now(timezone.utc)
                     }

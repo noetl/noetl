@@ -779,17 +779,40 @@ class QueueWorker:
             except Exception:
                 loop_meta = None
 
-            # Extract parent_event_id from context metadata when provided (e.g., loop iteration parent)
+            # Extract parent_event_id and parent_execution_id from queue meta or context
             parent_event_id = None
+            parent_execution_id = None
+            
+            # First priority: check queue meta (set by server when enqueueing)
             try:
-                if isinstance(context, dict):
-                    meta = context.get('noetl_meta') or {}
-                    if isinstance(meta, dict):
-                        peid = meta.get('parent_event_id')
-                        if peid:
-                            parent_event_id = peid
+                job_meta = job.get('meta')
+                if isinstance(job_meta, dict):
+                    parent_event_id = job_meta.get('parent_event_id')
+                    parent_execution_id = job_meta.get('parent_execution_id')
+                elif isinstance(job_meta, str):
+                    # meta might be JSON string
+                    import json
+                    job_meta_parsed = json.loads(job_meta)
+                    if isinstance(job_meta_parsed, dict):
+                        parent_event_id = job_meta_parsed.get('parent_event_id')
+                        parent_execution_id = job_meta_parsed.get('parent_execution_id')
             except Exception:
-                parent_event_id = None
+                pass
+            
+            # Second priority: check context metadata (legacy/backward compat)
+            if not parent_event_id:
+                try:
+                    if isinstance(context, dict):
+                        ctx_meta = context.get('noetl_meta') or {}
+                        if isinstance(ctx_meta, dict):
+                            peid = ctx_meta.get('parent_event_id')
+                            if peid:
+                                parent_event_id = peid
+                            pexec_id = ctx_meta.get('parent_execution_id')
+                            if pexec_id:
+                                parent_execution_id = pexec_id
+                except Exception:
+                    pass
 
             # Determine node_type for events (iterator vs task)
             node_type_val = "iterator" if act_type == "iterator" else "task"
@@ -827,6 +850,8 @@ class QueueWorker:
                 start_event.update(loop_meta)
             if parent_event_id:
                 start_event["parent_event_id"] = parent_event_id
+            if parent_execution_id:
+                start_event["parent_execution_id"] = parent_execution_id
             
             from noetl.plugin import report_event
             start_event = self._validate_event_status(start_event)
@@ -989,6 +1014,8 @@ class QueueWorker:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    if parent_execution_id:
+                        error_event["parent_execution_id"] = parent_execution_id
                     
                     from noetl.plugin import report_event
                     error_event = self._validate_event_status(error_event)
@@ -1014,6 +1041,8 @@ class QueueWorker:
                     elif parent_event_id:
                         # Fallback to context parent_event_id for iterator/nested cases
                         complete_event["parent_event_id"] = parent_event_id
+                    if parent_execution_id:
+                        complete_event["parent_execution_id"] = parent_execution_id
                     
                     from noetl.plugin import report_event
                     complete_event = self._validate_event_status(complete_event)
@@ -1045,6 +1074,8 @@ class QueueWorker:
                         elif parent_event_id:
                             # Fallback to context parent_event_id for iterator/nested cases
                             step_result_event["parent_event_id"] = parent_event_id
+                        if parent_execution_id:
+                            step_result_event["parent_execution_id"] = parent_execution_id
                         
                         from noetl.plugin import report_event
                         step_result_event = self._validate_event_status(step_result_event)
@@ -1076,6 +1107,8 @@ class QueueWorker:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    if parent_execution_id:
+                        error_event["parent_execution_id"] = parent_execution_id
                     
                     from noetl.plugin import report_event
                     error_event = self._validate_event_status(error_event)
