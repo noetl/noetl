@@ -11,11 +11,50 @@ tasks:
         set -e
 
         ports=(54321 3000 9428 8082)
-        output=$(lsof -nP -iTCP -sTCP:LISTEN)
-
         error=0
+
+        # Platform-agnostic port check function
+        check_port() {
+            local port=$1
+            
+            # Try multiple methods for maximum compatibility
+            # Return 0 if port is busy, 1 if free (for bash if statement)
+            
+            # Method 1: Try lsof (macOS, Linux)
+            if command -v lsof >/dev/null 2>&1; then
+                if lsof -nP -iTCP:${port} -sTCP:LISTEN >/dev/null 2>&1; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            # Method 2: Try ss (modern Linux, WSL2)
+            if command -v ss >/dev/null 2>&1; then
+                if ss -ltn 2>/dev/null | grep -q ":${port} "; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            # Method 3: Try netstat (fallback for older systems)
+            if command -v netstat >/dev/null 2>&1; then
+                # Different netstat flags for different platforms
+                if netstat -an 2>/dev/null | grep -q "[:.]${port}.*LISTEN"; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            # Method 4: Try nc (netcat) as last resort - attempt connection
+            if command -v nc >/dev/null 2>&1; then
+                if nc -z localhost ${port} 2>/dev/null; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            return 1  # Port is free
+        }
+
+        # Check each port
         for port in "${ports[@]}"; do
-            if echo "$output" | grep -q ":$port "; then
+            if check_port $port; then
                 echo "ERROR: Port $port is already LISTENING (busy)"
                 error=1
             else
