@@ -13,7 +13,6 @@ Handles:
 import json
 import asyncio
 from typing import Any, Dict, List, Optional, Tuple
-from psycopg.rows import dict_row
 
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.common import normalize_execution_id_for_db
@@ -123,13 +122,13 @@ class QueueService:
             pass
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 # Build metadata for queue entry
                 meta = {}
                 if parent_event_id:
-                    meta['parent_event_id'] = parent_event_id
+                    meta['parent_event_id'] = str(parent_event_id)
                 if parent_execution_id:
-                    meta['parent_execution_id'] = parent_execution_id
+                    meta['parent_execution_id'] = str(parent_execution_id)
                 
                 # Build INSERT query with all fields including meta
                 await cur.execute(
@@ -192,7 +191,7 @@ class QueueService:
             LeaseResponse with job details or empty status
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     WITH cte AS (
@@ -248,7 +247,7 @@ class QueueService:
             CompleteResponse with status
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE queue_id = %s RETURNING queue_id, execution_id, context",
                     (queue_id,)
@@ -322,7 +321,7 @@ class QueueService:
                 # from noetl.server.api.event import EventService
                 
                 async with get_pool_connection() as conn:
-                    async with conn.cursor(row_factory=dict_row) as cur:
+                    async with conn.cursor() as cur:
                         # Resolve return_step from queue.action
                         return_step = await QueueService._resolve_return_step(cur, queue_id, return_step)
                         
@@ -588,7 +587,7 @@ class QueueService:
         job_info = None
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 # Get job info including execution context
                 await cur.execute(
                     "SELECT queue_id, execution_id, node_id, attempts, max_attempts, context, catalog_id FROM noetl.queue WHERE queue_id = %s",
@@ -669,12 +668,12 @@ class QueueService:
             
             try:
                 async with get_pool_connection() as conn:
-                    async with conn.cursor(row_factory=dict_row) as cur:
+                    async with conn.cursor() as cur:
                         await cur.execute(
                             """
-                            SELECT error, result, traceback 
+                            SELECT error, result, stack_trace 
                             FROM noetl.event 
-                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_error'
+                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_failed'
                             ORDER BY created_at DESC 
                             LIMIT 1
                             """,
@@ -726,7 +725,7 @@ class QueueService:
             HeartbeatResponse with status
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 if extend_seconds:
                     await cur.execute(
                         "UPDATE noetl.queue SET last_heartbeat = now(), lease_until = now() + (%s || ' seconds')::interval WHERE queue_id = %s RETURNING queue_id",
@@ -780,7 +779,7 @@ class QueueService:
         where = f"WHERE {' AND '.join(filters)}" if filters else ''
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     f"SELECT * FROM noetl.queue {where} ORDER BY priority DESC, queue_id LIMIT %s",
                     params + [limit]
@@ -805,7 +804,7 @@ class QueueService:
             QueueSizeResponse with count
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT count(*) as count FROM noetl.queue WHERE status = %s",
                     (status,)
@@ -828,7 +827,7 @@ class QueueService:
             ReserveResponse with job details
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     WITH cte AS (
@@ -874,7 +873,7 @@ class QueueService:
             AckResponse with status
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT worker_id FROM noetl.queue WHERE queue_id = %s",
                     (queue_id,)
@@ -912,7 +911,7 @@ class QueueService:
             NackResponse with status
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT worker_id, attempts, max_attempts FROM noetl.queue WHERE queue_id = %s",
                     (queue_id,)
@@ -950,7 +949,7 @@ class QueueService:
             ReapResponse with count of reclaimed jobs
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     UPDATE noetl.queue

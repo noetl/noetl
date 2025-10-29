@@ -782,6 +782,7 @@ class QueueWorker:
             # Extract parent_event_id and parent_execution_id from queue meta or context
             parent_event_id = None
             parent_execution_id = None
+            job_meta = None
             
             # First priority: check queue meta (set by server when enqueueing)
             try:
@@ -791,9 +792,9 @@ class QueueWorker:
                     parent_execution_id = job_meta.get('parent_execution_id')
                 elif isinstance(job_meta, str):
                     # meta might be JSON string
-                    import json
                     job_meta_parsed = json.loads(job_meta)
                     if isinstance(job_meta_parsed, dict):
+                        job_meta = job_meta_parsed  # Update to parsed dict
                         parent_event_id = job_meta_parsed.get('parent_event_id')
                         parent_execution_id = job_meta_parsed.get('parent_execution_id')
             except Exception:
@@ -844,8 +845,13 @@ class QueueWorker:
                     }
                 },
                 "trace_component": {"worker_raw_context": raw_context},
-                
             }
+            # Attach queue meta to event for server-side context tracking
+            if job_meta and isinstance(job_meta, dict):
+                if "meta" not in start_event:
+                    start_event["meta"] = {}
+                start_event["meta"]["queue_meta"] = job_meta
+                
             if loop_meta:
                 start_event.update(loop_meta)
             if parent_event_id:
@@ -1008,8 +1014,13 @@ class QueueWorker:
                         "error": err_msg,
                         "stack_trace": tb_text,
                         "result": result,
-                        
                     }
+                    # Attach queue meta to event for server-side context tracking
+                    if job_meta and isinstance(job_meta, dict):
+                        if "meta" not in error_event:
+                            error_event["meta"] = {}
+                        error_event["meta"]["queue_meta"] = job_meta
+                        
                     if loop_meta:
                         error_event.update(loop_meta)
                     if parent_event_id:
@@ -1033,6 +1044,12 @@ class QueueWorker:
                         "node_type": node_type_val,
                         "result": result,
                     }
+                    # Attach queue meta to event for server-side context tracking
+                    if job_meta and isinstance(job_meta, dict):
+                        if "meta" not in complete_event:
+                            complete_event["meta"] = {}
+                        complete_event["meta"]["queue_meta"] = job_meta
+                        
                     if loop_meta:
                         complete_event.update(loop_meta)
                     # Use action_started event_id as parent for action_completed
@@ -1062,8 +1079,13 @@ class QueueWorker:
                             "node_name": event_node_name,  # Use step name for orchestration
                             "node_type": node_type_val,
                             "result": norm_result,
-                            
                         }
+                        # Attach queue meta to event for server-side context tracking
+                        if job_meta and isinstance(job_meta, dict):
+                            if "meta" not in step_result_event:
+                                step_result_event["meta"] = {}
+                            step_result_event["meta"]["queue_meta"] = job_meta
+                            
                         if loop_meta:
                             step_result_event.update(loop_meta)
                         
@@ -1101,8 +1123,13 @@ class QueueWorker:
                         "error": f"{type(e).__name__}: {str(e)}",
                         "stack_trace": tb_text,
                         "result": {"error": str(e), "stack_trace": tb_text},
-                        
                     }
+                    # Attach queue meta to event for server-side context tracking
+                    if job_meta and isinstance(job_meta, dict):
+                        if "meta" not in error_event:
+                            error_event["meta"] = {}
+                        error_event["meta"]["queue_meta"] = job_meta
+                        
                     if loop_meta:
                         error_event.update(loop_meta)
                     if parent_event_id:
