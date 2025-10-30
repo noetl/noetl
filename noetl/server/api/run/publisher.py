@@ -160,7 +160,8 @@ class QueuePublisher:
         initial_steps: List[str],
         workflow_steps: List[Dict[str, Any]],
         parent_event_id: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> List[str]:
         """
         Publish initial workflow steps to queue.
@@ -175,6 +176,7 @@ class QueuePublisher:
             workflow_steps: Complete workflow step definitions
             parent_event_id: Parent event ID (workflow initialized event)
             context: Optional execution context
+            metadata: Optional iterator/execution metadata to propagate through queue
             
         Returns:
             List of queue_ids for published tasks
@@ -248,7 +250,8 @@ class QueuePublisher:
                                 step_type=nxt_type,
                                 parent_event_id=parent_event_id,
                                 context={"workload": (context or {}).get("workload", {})},
-                                priority=90  # just below start's 100, but urgent
+                                priority=90,  # just below start's 100, but urgent
+                                metadata=metadata
                             )
                             queue_ids.append(qid)
 
@@ -299,7 +302,8 @@ class QueuePublisher:
                         parent_event_id=parent_event_id,
                         event_id=None,
                         queue_id=queue_id,
-                        status="queued"
+                        status="queued",
+                        metadata=metadata
                     )
 
                     queue_ids.append(response.id)
@@ -319,7 +323,8 @@ class QueuePublisher:
         parent_event_id: str,
         context: Optional[Dict[str, Any]] = None,
         priority: int = 50,
-        delay_seconds: int = 0
+        delay_seconds: int = 0,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         Publish a single step to queue.
@@ -334,6 +339,7 @@ class QueuePublisher:
             context: Optional execution context
             priority: Task priority (0-100, higher is more urgent)
             delay_seconds: Delay before making available (default: 0)
+            metadata: Optional iterator/execution metadata to propagate
             
         Returns:
             queue_id of published task
@@ -376,7 +382,8 @@ class QueuePublisher:
             parent_event_id=parent_event_id,
             event_id=None,
             queue_id=queue_id,
-            status="queued"
+            status="queued",
+            metadata=metadata
         )
         
         logger.info(

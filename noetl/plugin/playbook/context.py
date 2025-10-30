@@ -53,6 +53,13 @@ def extract_parent_identifiers(
     """
     parent_context = context.get('parent', context)
     
+    logger.debug(
+        f"PLAYBOOK.CONTEXT: extract_parent_identifiers called - "
+        f"has_parent={'parent' in context}, "
+        f"context_keys={list(context.keys()) if isinstance(context, dict) else 'not dict'}, "
+        f"parent_context_keys={list(parent_context.keys()) if isinstance(parent_context, dict) else 'not dict'}"
+    )
+    
     # Extract metadata structures
     parent_meta = {}
     try:
@@ -69,11 +76,13 @@ def extract_parent_identifiers(
         context_meta = {}
     
     # Resolve parent_execution_id from various sources
+    # Priority: parent_context.execution_id > parent_meta > context_meta > context.execution_id
     parent_execution_id = (
         (parent_context.get('execution_id')
          if isinstance(parent_context, dict) else None)
         or parent_meta.get('parent_execution_id')
         or context_meta.get('parent_execution_id')
+        or context.get('execution_id')  # Fallback to current context execution_id
     )
     
     # Resolve parent_event_id from various sources
@@ -84,9 +93,10 @@ def extract_parent_identifiers(
         or context_meta.get('parent_event_id')
     )
     
-    logger.debug(
-        f"PLAYBOOK: Resolved parent identifiers - "
-        f"execution_id={parent_execution_id}, event_id={parent_event_id}"
+    logger.info(
+        f"PLAYBOOK.CONTEXT: Resolved parent identifiers - "
+        f"execution_id={parent_execution_id}, event_id={parent_event_id}, "
+        f"parent_step={task_name}"
     )
     
     parent_step = task_name

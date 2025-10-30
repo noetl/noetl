@@ -71,7 +71,8 @@ class QueueService:
         parent_execution_id: Optional[str] = None,
         event_id: Optional[str] = None,
         queue_id: Optional[int] = None,
-        status: str = "queued"
+        status: str = "queued",
+        metadata: Optional[Dict[str, Any]] = None
     ) -> EnqueueResponse:
         """
         Enqueue a job into the queue table.
@@ -129,6 +130,10 @@ class QueueService:
                     meta['parent_event_id'] = str(parent_event_id)
                 if parent_execution_id:
                     meta['parent_execution_id'] = str(parent_execution_id)
+                
+                # Include iterator/execution metadata if provided
+                if metadata:
+                    meta.update(metadata)
                 
                 # Build INSERT query with all fields including meta
                 await cur.execute(

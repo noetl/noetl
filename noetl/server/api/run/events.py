@@ -37,7 +37,8 @@ class ExecutionEventEmitter:
         workload: Dict[str, Any],
         parent_execution_id: Optional[str] = None,
         parent_event_id: Optional[str] = None,
-        requestor_info: Optional[Dict[str, Any]] = None
+        requestor_info: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         Emit execution start event.
@@ -51,6 +52,7 @@ class ExecutionEventEmitter:
             parent_execution_id: Optional parent execution
             parent_event_id: Optional parent event
             requestor_info: Optional requestor metadata (IP, user agent, etc.)
+            metadata: Optional iterator/execution metadata to propagate
             
         Returns:
             event_id of the emitted event
@@ -91,6 +93,10 @@ class ExecutionEventEmitter:
         
         if requestor_info:
             meta["requestor"] = requestor_info
+        
+        # Include iterator metadata if provided (from nested playbook calls)
+        if metadata:
+            meta.update(metadata)
         
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:

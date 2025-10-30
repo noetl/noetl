@@ -136,7 +136,8 @@ class ExecutionService:
                 workload=merged_workload,
                 parent_execution_id=request.context.parent_execution_id if request.context else None,
                 parent_event_id=request.context.parent_event_id if request.context else None,
-                requestor_info=requestor_info
+                requestor_info=requestor_info,
+                metadata=request.metadata
             )
             
             # Step 8: Persist workflow/workbook/transitions
@@ -169,7 +170,8 @@ class ExecutionService:
                 initial_steps=execution_plan.initial_steps,
                 workflow_steps=execution_plan.workflow_steps,
                 parent_event_id=workflow_event_id,
-                context=context
+                context=context,
+                metadata=request.metadata
             )
             
             logger.info(
