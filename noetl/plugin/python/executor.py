@@ -128,7 +128,15 @@ def execute_python_task(
             rendered_args = {}
             try:
                 for k, v in args.items():
-                    if isinstance(v, str):
+                    # Check if value is a TaskResultProxy object (has _data attribute)
+                    if hasattr(v, '_data'):
+                        logger.info(f"PYTHON.RENDER: Unwrapping TaskResultProxy for key={k}")
+                        rendered_args[k] = v._data
+                    # Check if value is dict or list (already resolved data structures)
+                    elif isinstance(v, (dict, list)):
+                        logger.info(f"PYTHON.RENDER: Using dict/list directly for key={k}, type={type(v).__name__}")
+                        rendered_args[k] = v
+                    elif isinstance(v, str):
                         try:
                             logger.info(f"PYTHON.RENDER: Rendering template for key={k}, value={v[:100]}")
                             tmpl = jinja_env.from_string(v)
