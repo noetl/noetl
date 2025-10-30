@@ -391,4 +391,27 @@ class QueuePublisher:
             f"execution_id={execution_id}, queue_id={response.id}, priority={priority}"
         )
         
+        # Emit step_started event when step is enqueued
+        try:
+            from noetl.server.api.broker.service import EventService
+            from noetl.server.api.broker.schema import EventEmitRequest
+            
+            step_started_request = EventEmitRequest(
+                execution_id=int(execution_id),
+                catalog_id=int(catalog_id),
+                event_type="step_started",
+                node_id=step_name,
+                node_name=step_name,
+                node_type=step_type,
+                status="RUNNING",
+                parent_event_id=int(parent_event_id) if parent_event_id else None,
+                context={"step_config": step_config},
+                meta={"emitter": "publisher", "queue_id": str(response.id)}
+            )
+            
+            step_started_result = await EventService.emit_event(step_started_request)
+            logger.debug(f"Emitted step_started event for '{step_name}', event_id={step_started_result.event_id}")
+        except Exception as e:
+            logger.warning(f"Failed to emit step_started event for step '{step_name}': {e}", exc_info=True)
+        
         return response.id
