@@ -8,7 +8,7 @@ Public repository: `ghcr.io/noetl`
 ## Create personal access token (PAT)
 
 1. In GitHub go to:   
-Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic).
+[Open Github profile settings](https://github.com/settings/profile) → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic).
 
 2. Give it scopes: `read:packages`, `write:packages`.  
 Save the token somewhere safe.
@@ -30,6 +30,12 @@ Official guide is [here](https://docs.github.com/en/packages/working-with-a-gith
 ## Build and push multi-platform image
 ```bash
 docker buildx build --push --platform linux/amd64,linux/arm64 --no-cache \
---progress plain --tag ghcr.io/noetl/noetl:v1.0.0 \
+--progress plain --tag ghcr.io/noetl/noetl:v1.0.2 \
+--file docker/noetl/dev/Dockerfile .
+```
+
+```bash
+docker build --push --platform linux/amd64 --no-cache \
+--progress plain --tag ghcr.io/noetl/noetl:v1.0.2 \
 --file docker/noetl/dev/Dockerfile .
 ```
