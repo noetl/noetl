@@ -109,7 +109,7 @@ async def get_execution(execution_id: str):
 
                 def filter_events(event: dict):
                     return event.get("node_id") == "playbook" and event.get("status") == "STARTED"
-                print(json.dumps(events, default=str, indent=2))
+                # print(json.dumps(events, default=str, indent=2))
                 execution_item = next(filter(filter_events, events), None)
                 if execution_item is None:
                     logger.error(f"No event node_id:playbook status:STARTED item found for execution_id: {execution_id}")

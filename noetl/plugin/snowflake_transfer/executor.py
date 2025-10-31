@@ -294,7 +294,7 @@ def execute_snowflake_transfer_action(
             
             if log_event_callback:
                 log_event_callback(
-                    'action_error',
+                    'action_failed',
                     task_id,
                     task_name,
                     'snowflake_transfer',
@@ -354,7 +354,7 @@ def execute_snowflake_transfer_action(
         
         if log_event_callback:
             log_event_callback(
-                'action_error',
+                'action_failed',
                 task_id,
                 task_name,
                 'snowflake_transfer',

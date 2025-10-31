@@ -139,12 +139,12 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                     def __str__(self):
                         """Return JSON string representation when TaskResultProxy is rendered directly in Jinja2"""
                         import json
-                        return json.dumps(self._data)
+                        return json.dumps(self._data, default=str)
                     
                     def __repr__(self):
                         """Return JSON string representation for debugging"""
                         import json
-                        return json.dumps(self._data)
+                        return json.dumps(self._data, default=str)
 
                 reserved = {'work', 'workload', 'context', 'env', 'job', 'input', 'data', 'results'}
                 for key, value in render_ctx.items():

@@ -973,7 +973,7 @@ class QueueWorker:
                                 exec_ctx_with_result['data'] = _current
                             logger.debug(f"WORKER: Added result context variables - result keys: {list(_current.keys()) if isinstance(_current, dict) else type(_current)}, this keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
                         except Exception as ctx_err:
-                            logger.warning(f"WORKER: Failed to add result context variables, falling back to original context: {ctx_err}")
+                            logger.exception(f"WORKER: Failed to add result context variables, falling back to original context: {ctx_err}")
                             exec_ctx_with_result = exec_ctx
                         from ..plugin.save import execute_save_task as _do_save
                         save_payload = {'save': inline_save}
@@ -990,6 +990,7 @@ class QueueWorker:
                                 result['meta'] = {'save': save_out}
                     except Exception as _e:
                         # Attach error under meta.save_error but do not fail the action
+                        logger.exception("WORKER: Inline save operation failed")
                         if isinstance(result, dict):
                             if 'meta' in result and isinstance(result['meta'], dict):
                                 result['meta']['save_error'] = str(_e)
