@@ -128,18 +128,17 @@ def deregister_server_from_env() -> None:
             )
             logger.info(f"Server deregister response: {resp.status_code} - {resp.text}")
         except Exception as e:
-            logger.error(f"Server deregister HTTP error: {e}")
+            logger.exception(f"Server deregister HTTP error: {e}")
 
         try:
             os.remove('/tmp/noetl_server_name')
         except FileNotFoundError:
             pass  # Expected if file doesn't exist
         except Exception as e:
-            logger.error(f"Failed to remove server name file: {e}")
+            logger.exception(f"Failed to remove server name file: {e}")
         logger.info(f"Deregistered server: {name}")
     except Exception as e:
-        logger.error(f"Critical error during server deregistration: {e}")
-        logger.exception("Server deregistration exception details:")
+        logger.exception(f"Server deregistration exception details: {e}")
 
 
 def register_worker_pool_from_env() -> None:
@@ -195,22 +194,17 @@ def register_worker_pool_from_env() -> None:
         
         logger.info(f"Registering worker pool '{name}' with runtime '{runtime}' at {url}")
         
-        try:
-            with httpx.Client(timeout=10.0) as client:  # Increased timeout
-                resp = client.post(url, json=payload)
-                if resp.status_code == 200:
-                    logger.info(f"Worker pool registered: {name} ({runtime}) -> {worker_uri}")
-                    try:
-                        with open(f'/tmp/noetl_worker_pool_name_{name}', 'w') as f:
-                            f.write(name)
-                    except Exception:
-                        pass
-                else:
-                    logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
-                    raise Exception(f"Registration failed with status {resp.status_code}: {resp.text}")
-        except Exception as e:
-            logger.error(f"Worker pool register exception: {e}")
-            raise
+
+        with httpx.Client(timeout=10.0) as client:  # Increased timeout
+            resp = client.post(url, json=payload)
+            if resp.status_code == 200:
+                logger.info(f"Worker pool registered: {name} ({runtime}) -> {worker_uri}")
+                with open(f'/tmp/noetl_worker_pool_name_{name}', 'w') as f:
+                    f.write(name)
+            else:
+                logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
+                raise Exception(f"Registration failed with status {resp.status_code}: {resp.text}")
+
     except Exception as e:
         logger.exception(f"Unexpected error during worker pool registration: {e}")
         raise
@@ -227,22 +221,9 @@ def deregister_worker_pool_from_env() -> None:
             logger.info(f"Using worker name from env: {name}")
             worker_file = f'/tmp/noetl_worker_pool_name_{name}'
             if os.path.exists(worker_file):
-                try:
-                    with open(worker_file, 'r') as f:
-                        file_name = f.read().strip()
-                    logger.info(f"Found worker name from file: {file_name}")
-                    name = file_name
-                except Exception:
-                    logger.warning("Failed to read worker name from file")
-                    pass
-
-        if not name and os.path.exists('/tmp/noetl_worker_pool_name'):
-            try:
-                with open('/tmp/noetl_worker_pool_name', 'r') as f:
+                with open(worker_file, 'r') as f:
                     name = f.read().strip()
-                logger.info(f"Found worker name from legacy file: {name}")
-            except Exception:
-                name = None
+                logger.info(f"Found worker name from file: {name}")
 
         if not name:
             logger.warning("No worker name found for deregistration")
@@ -250,30 +231,25 @@ def deregister_worker_pool_from_env() -> None:
         server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
         logger.info(f"Attempting to deregister worker {name} via {server_url}")
 
-        try:
-            resp = httpx.request(
-                "DELETE",
-                f"{server_url}/worker/pool/deregister",
-                json={"name": name},
-                timeout=5.0,
-            )
-            logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
-        except Exception as e:
-            logger.error(f"Worker deregister HTTP error: {e}")
+    
+        resp = httpx.request(
+            "DELETE",
+            f"{server_url}/worker/pool/deregister",
+            json={"name": name},
+            timeout=5.0,
+        )
+        logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
 
-        try:
-            worker_file = f'/tmp/noetl_worker_pool_name_{name}'
-            if os.path.exists(worker_file):
-                os.remove(worker_file)
-                logger.info("Removed worker-specific name file")
-            elif os.path.exists('/tmp/noetl_worker_pool_name'):
-                os.remove('/tmp/noetl_worker_pool_name')
-                logger.info("Removed legacy worker name file")
-        except Exception:
-            pass
+        worker_file = f'/tmp/noetl_worker_pool_name_{name}'
+        if os.path.exists(worker_file):
+            os.remove(worker_file)
+            logger.info("Removed worker-specific name file")
+        elif os.path.exists('/tmp/noetl_worker_pool_name'):
+            os.remove('/tmp/noetl_worker_pool_name')
+            logger.info("Removed legacy worker name file")
         logger.info(f"Deregistered worker pool: {name}")
     except Exception as e:
-        logger.error(f"Worker deregister general error: {e}")
+        logger.exception(f"Worker deregister general error: {e}")
 
 
 def on_worker_terminate(signum):
@@ -439,10 +415,10 @@ class QueueWorker:
                     report_event(retry_event, self.server_url)
                     logger.info(f"Emitted action_retry event for job {queue_id}, attempt {attempts}/{max_attempts}")
                 except Exception as e:
-                    logger.debug(f"Failed to emit action_retry event: {e}", exc_info=True)
+                    logger.exception(f"Failed to emit action_retry event: {e}")
                     
         except Exception as e:  # pragma: no cover - network best effort
-            logger.warning(f"Failed to mark job {queue_id} failed: {e}", exc_info=True)
+            logger.exception(f"Failed to mark job {queue_id} failed: {e}")
 
     async def _evaluate_retry_policy(
         self, 
@@ -467,8 +443,8 @@ class QueueWorker:
             if isinstance(action_cfg_raw, str):
                 try:
                     action_cfg = json.loads(action_cfg_raw)
-                except json.JSONDecodeError:
-                    logger.debug(f"Failed to parse action config for retry evaluation")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse action config for retry evaluation: {e}")
                     return (False, 60)
             elif isinstance(action_cfg_raw, dict):
                 action_cfg = action_cfg_raw
@@ -492,7 +468,7 @@ class QueueWorker:
                 # Max attempts only
                 retry_config = {'max_attempts': retry_config}
             elif not isinstance(retry_config, dict):
-                logger.warning(f"Invalid retry configuration type: {type(retry_config)}")
+                logger.error(f"Invalid retry configuration type: {type(retry_config)}")
                 return (False, 60)
             
             # Get current attempt info
