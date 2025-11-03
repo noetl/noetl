@@ -68,6 +68,7 @@ tasks:
     vars:
       CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:
+      - task: tshoot:local:check-dependencies
       - task: tshoot:local:check-ports
       - task: docker:local:noetl-image-build
       - task: kind:local:cluster-create
