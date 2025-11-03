@@ -43,6 +43,15 @@ class EventService:
         parent_event_id = int(request.parent_event_id) if request.parent_event_id else None
         parent_execution_id = int(request.parent_execution_id) if request.parent_execution_id else None
         
+        # Defense-in-depth: resolve catalog_id from execution if missing
+        # This prevents event insert failures and lost telemetry
+        if catalog_id is None and execution_id:
+            try:
+                catalog_id = await EventService.get_catalog_id_from_execution(execution_id)
+                logger.debug(f"Resolved missing catalog_id={catalog_id} from execution_id={execution_id}")
+            except Exception as e:
+                logger.warning(f"Failed to resolve catalog_id for execution {execution_id}: {e}")
+        
         # Use provided timestamp or generate new one
         created_at = request.created_at or datetime.utcnow()
         

@@ -619,12 +619,38 @@ class QueueWorker:
         execution_id = job.get("execution_id")
         catalog_id = job.get("catalog_id")
         
-        # Fallback: get catalog_id from context if not present in job
+        # Catalog ID Resolution Chain (defense-in-depth):
+        # 1. Job record from queue table (set by QueueService.enqueue_job)
+        # 2. Context metadata (legacy/backward compatibility)
+        # 3. Server lookup by execution_id (final fallback to prevent event failures)
+        
+        # Fallback 1: get catalog_id from context if not present in job
         if not catalog_id:
             try:
                 catalog_id = context.get("catalog_id") if isinstance(context, dict) else None
             except Exception:
                 pass
+        
+        # Fallback 2: fetch catalog_id from server by execution_id (final defense)
+        # This prevents event emission failures and lost telemetry
+        if not catalog_id and execution_id:
+            try:
+                logger.debug(f"WORKER: catalog_id missing, fetching from server for execution {execution_id}")
+                with httpx.Client(timeout=5.0) as client:
+                    resp = client.get(
+                        f"{self.server_url}/api/events",
+                        params={"execution_id": execution_id, "limit": 1}
+                    )
+                    if resp.status_code == 200:
+                        events_data = resp.json()
+                        if isinstance(events_data, dict) and events_data.get("events"):
+                            first_event = events_data["events"][0]
+                            if isinstance(first_event, dict):
+                                catalog_id = first_event.get("catalog_id")
+                                if catalog_id:
+                                    logger.info(f"WORKER: Retrieved catalog_id {catalog_id} from server for execution {execution_id}")
+            except Exception as e:
+                logger.warning(f"WORKER: Failed to fetch catalog_id from server: {e}")
         
         node_id = job.get("node_id") or f"job_{job.get('id')}"
 
