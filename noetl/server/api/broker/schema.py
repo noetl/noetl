@@ -98,6 +98,10 @@ class EventEmitRequest(BaseModel):
         default=None,
         description="Event status"
     )
+    duration: Optional[float] = Field(
+        default=None,
+        description="Event duration in seconds (DOUBLE PRECISION)"
+    )
     context: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Event context data (arbitrary JSON)"

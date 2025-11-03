@@ -977,7 +977,11 @@ class QueueWorker:
                     pass
                 
                 from noetl.plugin import execute_task
+                import time
+                action_start_time = time.time()
                 result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_data)
+                action_end_time = time.time()
+                action_duration = action_end_time - action_start_time
 
                 # Inline save: if the action config declares a `save` block, perform the save on worker
                 inline_save = None
@@ -1038,6 +1042,7 @@ class QueueWorker:
                         "node_id": node_id,
                         "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
+                        "duration": action_duration,
                         "error": err_msg,
                         "stack_trace": tb_text,
                         "result": result,
@@ -1069,6 +1074,7 @@ class QueueWorker:
                         "node_id": node_id,
                         "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
+                        "duration": action_duration,
                         "result": result,
                     }
                     # Attach queue meta to event for server-side context tracking
@@ -1105,6 +1111,7 @@ class QueueWorker:
                             "node_id": node_id,
                             "node_name": event_node_name,  # Use step name for orchestration
                             "node_type": node_type_val,
+                            "duration": action_duration,
                             "result": norm_result,
                         }
                         # Attach queue meta to event for server-side context tracking
@@ -1151,6 +1158,9 @@ class QueueWorker:
                         "stack_trace": tb_text,
                         "result": {"error": str(e), "stack_trace": tb_text},
                     }
+                    # Add duration if action_duration was captured (error during/after execute_task)
+                    if 'action_duration' in locals():
+                        error_event["duration"] = action_duration
                     # Attach queue meta to event for server-side context tracking
                     if job_meta and isinstance(job_meta, dict):
                         if "meta" not in error_event:
