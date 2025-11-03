@@ -590,7 +590,7 @@ class QueueWorker:
                 else:
                     logger.warning(f"WORKER: server render failed {resp.status_code}: {resp.text}")
         except Exception:
-            logger.debug("WORKER: server-side render exception; using raw context", exc_info=True)
+            logger.exception("WORKER: server-side render exception; using raw context")
             context = raw_context
         execution_id = job.get("execution_id")
         catalog_id = job.get("catalog_id")
@@ -1116,6 +1116,7 @@ class QueueWorker:
                         logger.debug("WORKER: Failed to emit step_result companion event", exc_info=True)
 
             except Exception as e:
+                logger.exception(f"WORKER: Exception during task execution for job {e}")
                 try:
                     import traceback as _tb
                     tb_text = _tb.format_exc()
@@ -1177,7 +1178,7 @@ class QueueWorker:
         # Check if metrics are disabled
         metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
         if metrics_disabled:
-            logger.debug("Simple metric reporting disabled")
+            # logger.debug("Simple metric reporting disabled")
             return
         
         try:

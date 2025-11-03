@@ -1,7 +1,9 @@
+from datetime import datetime
 import re
 import sys
 import json
 import logging
+import time
 from typing import Dict, TYPE_CHECKING
 import traceback
 
@@ -177,6 +179,8 @@ class CustomFormatter(logging.Formatter):
 
             metadata_line = f"{level_color}[{level_name}]{RESET_COLOR} {scope_highlight} {location}".strip()
         else:
+            
+
             if hasattr(record, "scope"):
                 scope_highlight = f"{record.scope}"
             else:
@@ -189,7 +193,7 @@ class CustomFormatter(logging.Formatter):
             
             location = f"{vs_code_navigation}\n{location}"
 
-            metadata_line = f"[{level_name}] {scope_highlight} {location}".strip()
+            metadata_line = f"{datetime.now().isoformat()} [{level_name}] {scope_highlight} {location}".strip()
 
         if isinstance(record.msg, (dict, list)):
             message = str(record.msg)

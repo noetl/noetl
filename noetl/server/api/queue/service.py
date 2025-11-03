@@ -709,7 +709,7 @@ class QueueService:
             logger.debug(f"TODO: Emit step_failed and execution_failed events for execution {execution_id}")
             
         except Exception as e:
-            logger.error(f"Error in _emit_final_failure_events: {e}", exc_info=True)
+            logger.exception(f"Error in _emit_final_failure_events: {e}")
             raise
     
     @staticmethod

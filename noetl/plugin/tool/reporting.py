@@ -54,34 +54,39 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
     Returns:
         Response from the server
     """
-    try:
-        # Enrich metadata with worker pool/runtime hints
-        _enrich_event_metadata(event_data)
-        
-        # Attach trace component with worker details
-        _enrich_trace_component(event_data)
-        
-        # Build the API URL
-        url = _build_event_url(server_url)
-        
-        logger.debug(f"Reporting event to {url}: {event_data.get('event_type', 'unknown')}")
-        
-        # Serialize event data with Decimal handling
-        json_data = json.dumps(event_data, default=_decimal_serializer)
-        
-        # Send the event to the server
-        with httpx.Client(timeout=10.0) as client:
-            response = client.post(
-                url, 
-                content=json_data,
-                headers={"Content-Type": "application/json"}
-            )
-            response.raise_for_status()
+    # try:
+    # Enrich metadata with worker pool/runtime hints
+    _enrich_event_metadata(event_data)
+    
+    # Attach trace component with worker details
+    _enrich_trace_component(event_data)
+    
+    # Build the API URL
+    url = _build_event_url(server_url)
+    
+    logger.debug(f"Reporting event to {url}: {event_data.get('event_type', 'unknown')}")
+    
+    # Serialize event data with Decimal handling
+    json_data = json.dumps(event_data, default=_decimal_serializer)
+    
+    # Send the event to the server
+    with httpx.Client(timeout=10.0) as client:
+        response = client.post(
+            url, 
+            content=json_data,
+            headers={"Content-Type": "application/json"}
+        )
+        # response.raise_for_status()
+        if response.status_code == 200:
             return response.json()
+        else:
+            logger.error(f"Failed to report event, status code: {response.status_code}, response: {response.text}")
+            raise RuntimeError(f"Failed to report event, status code: {response.status_code}")
+
             
-    except Exception as e:
-        logger.warning(f"Failed to report event: {e}")
-        return {"status": "error", "message": str(e)}
+    # except Exception as e:
+    #     logger.exception(f"Failed to report event: {e}")
+    #     return {"status": "error", "message": str(e)}
 
 
 def _enrich_event_metadata(event_data: Dict[str, Any]) -> None:
@@ -106,6 +111,7 @@ def _enrich_event_metadata(event_data: Dict[str, Any]) -> None:
             
         event_data['meta'] = meta
     except Exception:
+        logger.exception("Failed to enrich event metadata")
         pass
 
 
@@ -148,6 +154,7 @@ def _enrich_trace_component(event_data: Dict[str, Any]) -> None:
         trace_component['worker'] = worker_tc
         event_data['trace_component'] = trace_component
     except Exception:
+        logger.exception("Failed to enrich trace component")
         pass
 
 

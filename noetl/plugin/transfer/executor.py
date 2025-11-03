@@ -23,6 +23,7 @@ Configuration:
     chunk_size: number of rows per chunk
 """
 
+import json
 from typing import Dict, Any, Optional, Callable
 import httpx
 from noetl.core.logger import setup_logger
@@ -303,6 +304,7 @@ def execute_transfer_action(
         
         # Extract and validate target configuration
         target_config = task_config.get('target', {})
+        logger.debug(f"Target configuration: {json.dumps(target_config, indent=2, default=str)}")
         if not target_config:
             raise ValueError("'target' configuration is required")
         
