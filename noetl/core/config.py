@@ -35,8 +35,15 @@ def _load_env_file(path: str, allow_override: bool = False) -> None:
                     value = value[1:-1]
                 if allow_override or key not in os.environ:
                     os.environ[key] = value
-    except Exception:
+    except FileNotFoundError:
+        # Silent pass for missing .env files - this is expected
         pass
+    except PermissionError as e:
+        print(f"FATAL: Permission denied reading environment file {path}: {e}", file=sys.stderr)
+        raise
+    except Exception as e:
+        print(f"FATAL: Failed to load environment file {path}: {e}", file=sys.stderr)
+        raise
 
 def load_env_if_present(force_reload: bool = False) -> None:
     """
@@ -83,6 +90,10 @@ def validate_mandatory_env_vars():
         'NOETL_SERVER_URL', 'NOETL_SERVER_NAME',
         # Server runtime
         'NOETL_SERVER', 'NOETL_SERVER_WORKERS', 'NOETL_SERVER_RELOAD',
+        # Server runtime tuning (required)
+        'NOETL_AUTO_RECREATE_RUNTIME', 'NOETL_HEARTBEAT_RETRY_AFTER',
+        'NOETL_RUNTIME_SWEEP_INTERVAL', 'NOETL_RUNTIME_OFFLINE_SECONDS',
+        'NOETL_DISABLE_METRICS', 'NOETL_SERVER_METRICS_INTERVAL',
         # Drop schema control
         'NOETL_DROP_SCHEMA'
     ]
@@ -164,12 +175,12 @@ class Settings(BaseModel):
     server_runtime: str = Field(..., alias="NOETL_SERVER")            # "uvicorn" | "gunicorn" | "auto"
     server_workers: int = Field(..., alias="NOETL_SERVER_WORKERS")    # >= 1
     server_reload: bool = Field(..., alias="NOETL_SERVER_RELOAD")     # true/false
-    auto_recreate_runtime: bool = Field(False, alias="NOETL_AUTO_RECREATE_RUNTIME")
-    heartbeat_retry_after: int = Field(3, alias="NOETL_HEARTBEAT_RETRY_AFTER")
-    runtime_sweep_interval: float = Field(15.0, alias="NOETL_RUNTIME_SWEEP_INTERVAL")
-    runtime_offline_seconds: int = Field(60, alias="NOETL_RUNTIME_OFFLINE_SECONDS")
-    disable_metrics: bool = Field(True, alias="NOETL_DISABLE_METRICS")
-    server_metrics_interval: float = Field(60.0, alias="NOETL_SERVER_METRICS_INTERVAL")
+    auto_recreate_runtime: bool = Field(..., alias="NOETL_AUTO_RECREATE_RUNTIME")
+    heartbeat_retry_after: int = Field(..., alias="NOETL_HEARTBEAT_RETRY_AFTER")
+    runtime_sweep_interval: float = Field(..., alias="NOETL_RUNTIME_SWEEP_INTERVAL")
+    runtime_offline_seconds: int = Field(..., alias="NOETL_RUNTIME_OFFLINE_SECONDS")
+    disable_metrics: bool = Field(..., alias="NOETL_DISABLE_METRICS")
+    server_metrics_interval: float = Field(..., alias="NOETL_SERVER_METRICS_INTERVAL")
     server_labels_raw: Optional[str] = Field(None, alias="NOETL_SERVER_LABELS")
     hostname_env: Optional[str] = Field(None, alias="HOSTNAME")
 
@@ -307,6 +318,34 @@ class Settings(BaseModel):
         """
         return os.path.join(self.pid_file_dir, "noetl_server.pid")
 
+    # API Endpoint URLs - centralized endpoint construction
+    @property
+    def endpoint_runtime_register(self) -> str:
+        """Runtime registration endpoint"""
+        return f"{self.server_api_url}/runtime/register"
+
+    @property
+    def endpoint_runtime_deregister(self) -> str:
+        """Runtime deregistration endpoint"""
+        return f"{self.server_api_url}/runtime/deregister"
+
+    @property
+    def endpoint_events(self) -> str:
+        """Events submission endpoint"""
+        return f"{self.server_api_url}/events"
+
+    @property
+    def endpoint_credentials(self) -> str:
+        """Base credentials endpoint"""
+        return f"{self.server_api_url}/credentials"
+
+    def endpoint_credential_by_key(self, key: str, include_data: bool = True) -> str:
+        """Get credential by key endpoint with optional data inclusion"""
+        url = f"{self.endpoint_credentials}/{key}"
+        if include_data:
+            url += "?include_data=true"
+        return url
+
 _settings: Optional[Settings] = None
 class WorkerSettings(BaseModel):
     """Worker runtime configuration derived from environment variables."""
@@ -417,6 +456,67 @@ class WorkerSettings(BaseModel):
             url = f"http://{url}"
         return url.rstrip('/')
 
+    # Worker API Endpoint URLs - centralized endpoint construction
+    @property
+    def endpoint_worker_pool_register(self) -> str:
+        """Worker pool registration endpoint"""
+        return f"{self.server_api_url}/worker/pool/register"
+
+    @property
+    def endpoint_worker_pool_deregister(self) -> str:
+        """Worker pool deregistration endpoint"""
+        return f"{self.server_api_url}/worker/pool/deregister"
+
+    @property
+    def endpoint_worker_pool_heartbeat(self) -> str:
+        """Worker pool heartbeat endpoint"""
+        return f"{self.server_api_url}/worker/pool/heartbeat"
+
+    @property
+    def endpoint_queue_lease(self) -> str:
+        """Queue job lease endpoint"""
+        return f"{self.server_api_url}/queue/lease"
+
+    @property
+    def endpoint_queue_complete(self) -> str:
+        """Queue job completion endpoint"""
+        return f"{self.server_api_url}/queue/complete"
+
+    def endpoint_queue_complete_by_id(self, queue_id: int) -> str:
+        """Queue job completion endpoint by queue ID"""
+        return f"{self.server_api_url}/queue/{queue_id}/complete"
+
+    @property
+    def endpoint_queue_fail(self) -> str:
+        """Queue job failure endpoint"""
+        return f"{self.server_api_url}/queue/fail"
+
+    def endpoint_queue_fail_by_id(self, queue_id: int) -> str:
+        """Queue job failure endpoint by queue ID"""
+        return f"{self.server_api_url}/queue/{queue_id}/fail"
+
+    @property
+    def endpoint_queue_size(self) -> str:
+        """Queue size endpoint"""
+        return f"{self.server_api_url}/queue/size"
+
+    @property
+    def endpoint_events(self) -> str:
+        """Events submission endpoint"""
+        return f"{self.server_api_url}/events"
+
+    @property
+    def endpoint_credentials(self) -> str:
+        """Base credentials endpoint"""
+        return f"{self.server_api_url}/credentials"
+
+    def endpoint_credential_by_key(self, key: str, include_data: bool = True) -> str:
+        """Get credential by key endpoint with optional data inclusion"""
+        url = f"{self.endpoint_credentials}/{key}"
+        if include_data:
+            url += "?include_data=true"
+        return url
+
 
 _settings: Optional[Settings] = None
 _worker_settings: Optional[WorkerSettings] = None
@@ -468,12 +568,12 @@ def get_settings(reload: bool = False) -> Settings:
                 # Drop schema & validation
                 NOETL_DROP_SCHEMA=os.environ['NOETL_DROP_SCHEMA'],
                 NOETL_SCHEMA_VALIDATE=os.environ['NOETL_SCHEMA_VALIDATE'],
-                NOETL_AUTO_RECREATE_RUNTIME=os.environ.get('NOETL_AUTO_RECREATE_RUNTIME', 'false'),
-                NOETL_HEARTBEAT_RETRY_AFTER=os.environ.get('NOETL_HEARTBEAT_RETRY_AFTER', '3'),
-                NOETL_RUNTIME_SWEEP_INTERVAL=os.environ.get('NOETL_RUNTIME_SWEEP_INTERVAL', '15'),
-                NOETL_RUNTIME_OFFLINE_SECONDS=os.environ.get('NOETL_RUNTIME_OFFLINE_SECONDS', '60'),
-                NOETL_DISABLE_METRICS=os.environ.get('NOETL_DISABLE_METRICS', 'true'),
-                NOETL_SERVER_METRICS_INTERVAL=os.environ.get('NOETL_SERVER_METRICS_INTERVAL', '60'),
+                NOETL_AUTO_RECREATE_RUNTIME=os.environ['NOETL_AUTO_RECREATE_RUNTIME'],
+                NOETL_HEARTBEAT_RETRY_AFTER=os.environ['NOETL_HEARTBEAT_RETRY_AFTER'],
+                NOETL_RUNTIME_SWEEP_INTERVAL=os.environ['NOETL_RUNTIME_SWEEP_INTERVAL'],
+                NOETL_RUNTIME_OFFLINE_SECONDS=os.environ['NOETL_RUNTIME_OFFLINE_SECONDS'],
+                NOETL_DISABLE_METRICS=os.environ['NOETL_DISABLE_METRICS'],
+                NOETL_SERVER_METRICS_INTERVAL=os.environ['NOETL_SERVER_METRICS_INTERVAL'],
                 NOETL_SERVER_LABELS=os.environ.get('NOETL_SERVER_LABELS'),
                 HOSTNAME=os.environ.get('HOSTNAME'),
             )

@@ -57,45 +57,35 @@ def _normalize_server_url(url: Optional[str], ensure_api: bool = True) -> str:
 
 
 def register_server_from_env(settings: Optional[Settings] = None) -> None:
-    """Register this server instance with the server registry using environment variables.
-    Required envs to trigger:
-      - NOETL_SERVER_URL: server URL (will be auto-detected if not set)
-    Optional:
-      - NOETL_SERVER_NAME
-      - NOETL_HOST (default localhost)
-      - NOETL_PORT (default 8082)
-      - NOETL_SERVER_LABELS (CSV)
+    """Register this server instance with the server registry using settings configuration.
+    
+    Uses centralized settings from noetl.core.config instead of direct environment access.
+    Settings provide: server_api_url, server_name, server_labels, hostname
     """
     try:
         settings = _resolve_server_settings(settings)
-        server_url = settings.server_api_url
-        name = settings.server_name or f"server-{socket.gethostname()}"
-        labels = settings.server_labels or None
-        hostname = settings.hostname
-
+        
         payload = {
-            "name": name,
+            "name": settings.server_name or f"server-{settings.hostname}",
             "component_type": "server_api",
             "runtime": "server",
-            "base_url": server_url,
+            "base_url": settings.server_api_url,
             "status": "ready",
             "capacity": None,
-            "labels": labels,
+            "labels": settings.server_labels or None,
             "pid": os.getpid(),
-            "hostname": hostname,
+            "hostname": settings.hostname,
         }
-
-        url = f"{server_url}/runtime/register"
         try:
             with httpx.Client(timeout=5.0) as client:
-                resp = client.post(url, json=payload)
+                resp = client.post(settings.endpoint_runtime_register, json=payload)
                 if resp.status_code == 200:
-                    logger.info(f"Server registered: {name} -> {server_url}")
+                    logger.info(f"Server registered: {payload['name']} -> {settings.server_api_url}")
                     try:
                         with open('/tmp/noetl_server_name', 'w') as f:
-                            f.write(name)
-                    except Exception:
-                        pass
+                            f.write(payload['name'])
+                    except (IOError, OSError, PermissionError) as e:
+                        logger.warning(f"Could not write server name to /tmp/noetl_server_name: {e}")
                 else:
                     logger.warning(f"Server register failed ({resp.status_code}): {resp.text}")
         except Exception as e:
@@ -105,7 +95,10 @@ def register_server_from_env(settings: Optional[Settings] = None) -> None:
 
 
 def deregister_server_from_env(settings: Optional[Settings] = None) -> None:
-    """Deregister server using stored name via HTTP (no DB fallback)."""
+    """Deregister server using stored name via HTTP (no DB fallback).
+    
+    Uses centralized settings from noetl.core.config for server_api_url and server_name.
+    """
     try:
         settings = _resolve_server_settings(settings)
         name: Optional[str] = None
@@ -120,11 +113,10 @@ def deregister_server_from_env(settings: Optional[Settings] = None) -> None:
         if not name:
             return
 
-        server_url = settings.server_api_url
         try:
             resp = httpx.request(
                 "DELETE",
-                f"{server_url}/runtime/deregister",
+                settings.endpoint_runtime_deregister,
                 json={"name": name, "component_type": "server_api"},
                 timeout=5.0,
             )
@@ -144,56 +136,43 @@ def deregister_server_from_env(settings: Optional[Settings] = None) -> None:
 
 
 def register_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = None) -> None:
-    """Register this worker pool with the server registry using environment variables.
-    Required envs to trigger:
-      - NOETL_WORKER_POOL_RUNTIME: cpu|gpu|qpu
-    Optional:
-      - NOETL_WORKER_POOL_NAME
-      - NOETL_SERVER_URL (default http://localhost:8082)
-      - NOETL_WORKER_CAPACITY
-      - NOETL_WORKER_LABELS (CSV)
-      - NOETL_WORKER_BASE_URL (defaults to dummy value for queue-based workers)
+    """Register this worker pool with the server registry using worker settings.
+    
+    Uses centralized settings from noetl.core.config.WorkerSettings for all configuration:
+    - pool_runtime, resolved_pool_name, worker_base_url
+    - server_api_url, worker_capacity, worker_labels
+    - hostname, namespace
     """
     try:
         worker_settings = _resolve_worker_settings(worker_settings)
-        runtime = worker_settings.pool_runtime or "cpu"
-        base_url = worker_settings.worker_base_url
-        name = worker_settings.resolved_pool_name
-        server_url = worker_settings.server_api_url
-        capacity = worker_settings.worker_capacity
-        labels = worker_settings.worker_labels or None
-        hostname = worker_settings.hostname
         
         # Generate worker URI based on environment (k8s or local)
-        namespace = worker_settings.namespace
-        if namespace:
+        if worker_settings.namespace:
             # Running in Kubernetes
-            worker_uri = f"k8s://{namespace}/{hostname}"
+            worker_uri = f"k8s://{worker_settings.namespace}/{worker_settings.hostname}"
         else:
             # Running locally
-            worker_uri = f"local://{hostname}"
+            worker_uri = f"local://{worker_settings.hostname}"
 
         payload = {
-            "name": name,
-            "runtime": runtime,
+            "name": worker_settings.resolved_pool_name,
+            "runtime": worker_settings.pool_runtime,
             "uri": worker_uri,
             "status": "ready",
-            "capacity": capacity,
-            "labels": labels,
+            "capacity": worker_settings.worker_capacity,
+            "labels": worker_settings.worker_labels or None,
             "pid": os.getpid(),
-            "hostname": hostname,
+            "hostname": worker_settings.hostname,
         }
-        url = f"{server_url}/worker/pool/register"
         
-        logger.info(f"Registering worker pool '{name}' with runtime '{runtime}' at {url}")
-        
+        logger.info(f"Registering worker pool '{worker_settings.resolved_pool_name}' with runtime '{worker_settings.pool_runtime}' at {worker_settings.endpoint_worker_pool_register}")
 
         with httpx.Client(timeout=10.0) as client:  # Increased timeout
-            resp = client.post(url, json=payload)
+            resp = client.post(worker_settings.endpoint_worker_pool_register, json=payload)
             if resp.status_code == 200:
-                logger.info(f"Worker pool registered: {name} ({runtime}) -> {worker_uri}")
-                with open(f'/tmp/noetl_worker_pool_name_{name}', 'w') as f:
-                    f.write(name)
+                logger.info(f"Worker pool registered: {payload['name']} ({payload['runtime']}) -> {payload['uri']}")
+                with open(f'/tmp/noetl_worker_pool_name_{payload["name"]}', 'w') as f:
+                    f.write(payload['name'])
             else:
                 logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
                 raise Exception(f"Registration failed with status {resp.status_code}: {resp.text}")
@@ -204,7 +183,10 @@ def register_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = No
 
 
 def deregister_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = None) -> None:
-    """Attempt to deregister worker pool using stored name (HTTP only)."""
+    """Attempt to deregister worker pool using stored name (HTTP only).
+    
+    Uses centralized settings from noetl.core.config.WorkerSettings for server_api_url and pool_name.
+    """
     logger.info("Worker deregistration starting...")
     try:
         worker_settings = _resolve_worker_settings(worker_settings)
@@ -222,12 +204,11 @@ def deregister_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = 
             logger.warning("No worker name found for deregistration")
             return
 
-        server_url = worker_settings.server_api_url
-        logger.info(f"Attempting to deregister worker {name} via {server_url}")
+        logger.info(f"Attempting to deregister worker {name} via {worker_settings.endpoint_worker_pool_deregister}")
 
         resp = httpx.request(
             "DELETE",
-            f"{server_url}/worker/pool/deregister",
+            worker_settings.endpoint_worker_pool_deregister,
             json={"name": name},
             timeout=5.0,
         )
@@ -329,7 +310,7 @@ class QueueWorker:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
-                    f"{self.server_url}/queue/lease",
+                    self._settings.endpoint_queue_lease,
                     json={"worker_id": self.worker_id, "lease_seconds": lease_seconds},
                 )
                 resp.raise_for_status()
@@ -345,7 +326,7 @@ class QueueWorker:
         try:
             logger.debug(f"WORKER: Completing job {queue_id}")
             async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(f"{self.server_url}/queue/{queue_id}/complete")
+                await client.post(self._settings.endpoint_queue_complete_by_id(queue_id))
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to complete job %s", queue_id, exc_info=True)
 
@@ -368,7 +349,7 @@ class QueueWorker:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 await client.post(
-                    f"{self.server_url}/queue/{queue_id}/fail", 
+                    self._settings.endpoint_queue_fail_by_id(queue_id), 
                     json={
                         "retry": should_retry,
                         "retry_delay_seconds": retry_delay_seconds
@@ -600,8 +581,8 @@ class QueueWorker:
         if not catalog_id:
             try:
                 catalog_id = context.get("catalog_id") if isinstance(context, dict) else None
-            except Exception:
-                pass
+            except (AttributeError, TypeError, KeyError) as e:
+                logger.debug(f"Could not extract catalog_id from context: {e}")
         
         # Fallback 2: fetch catalog_id from server by execution_id (final defense)
         # This prevents event emission failures and lost telemetry
@@ -610,7 +591,7 @@ class QueueWorker:
                 logger.debug(f"WORKER: catalog_id missing, fetching from server for execution {execution_id}")
                 with httpx.Client(timeout=5.0) as client:
                     resp = client.get(
-                        f"{self.server_url}/api/events",
+                        self._settings.endpoint_events,
                         params={"execution_id": execution_id, "limit": 1}
                     )
                     if resp.status_code == 200:
@@ -747,15 +728,16 @@ class QueueWorker:
                     event_node_name = context['step_name']
                 elif ":" in node_id:
                     event_node_name = node_id.split(":", 1)[1]
-            except Exception:
-                pass
+            except (KeyError, TypeError, AttributeError, IndexError) as e:
+                logger.debug(f"Could not extract step name from context/node_id: {e}")
 
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
             try:
                 if not isinstance(action_cfg.get('with'), dict):
                     action_cfg['with'] = {}
-            except Exception:
-                pass
+            except (TypeError, AttributeError, KeyError) as e:
+                logger.warning(f"Could not validate/initialize action_cfg 'with' field: {e}")
+                raise
 
             try:
                 logger.debug(f"WORKER: evaluated input_context (server): {json.dumps(context, default=str)[:500]}")
@@ -795,8 +777,8 @@ class QueueWorker:
                         job_meta = job_meta_parsed  # Update to parsed dict
                         parent_event_id = job_meta_parsed.get('parent_event_id')
                         parent_execution_id = job_meta_parsed.get('parent_execution_id')
-            except Exception:
-                pass
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.debug(f"Could not parse job metadata JSON: {e}")
             
             # Second priority: check context metadata (legacy/backward compat)
             if not parent_event_id:
@@ -810,8 +792,8 @@ class QueueWorker:
                             pexec_id = ctx_meta.get('parent_execution_id')
                             if pexec_id:
                                 parent_execution_id = pexec_id
-                except Exception:
-                    pass
+                except (KeyError, TypeError, AttributeError) as e:
+                    logger.debug(f"Could not extract parent metadata from context: {e}")
 
             # Determine node_type for events (iterator vs task)
             node_type_val = "iterator" if act_type == "iterator" else "task"
@@ -866,8 +848,8 @@ class QueueWorker:
             try:
                 if isinstance(start_response, dict):
                     action_started_event_id = start_response.get('event_id')
-            except Exception:
-                pass
+            except (TypeError, AttributeError, KeyError) as e:
+                logger.debug(f"Could not extract event_id from start_response: {e}")
 
             try:
                 # Normalize payloads: canonical 'args' with legacy aliases
@@ -885,57 +867,58 @@ class QueueWorker:
                         w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
                         if w:
                             task_data = {**w, **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.warning(f"Could not merge 'with' field into task_data: {e}")
                     try:
                         p = action_cfg.get('payload') if isinstance(action_cfg.get('payload'), dict) else None
                         if p:
                             task_data = {**p, **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.warning(f"Could not merge 'payload' field into task_data: {e}")
                     try:
                         i = action_cfg.get('input') if isinstance(action_cfg.get('input'), dict) else None
                         if i:
                             task_data = {**i, **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.warning(f"Could not merge 'input' field into task_data: {e}")
                     # Migration support: also read from 'data' if present and no 'args'
                     # TODO: Remove after migration period
                     try:
                         if isinstance(action_cfg.get('data'), dict) and not action_cfg.get('args'):
                             task_data = {**action_cfg.get('data'), **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.debug(f"Could not merge 'data' field into task_data (migration path): {e}")
                 if not isinstance(task_data, dict):
                     task_data = {}
                 try:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
-                except Exception:
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Could not convert context to dict, using empty dict: {e}")
                     exec_ctx = {}
                 # Expose unified payload under exec_ctx['input'] for template convenience
                 try:
                     if isinstance(exec_ctx, dict):
                         exec_ctx['input'] = dict(task_data)
                         exec_ctx['data'] = dict(task_data)
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Could not set input/data in exec_ctx: {e}")
                 # Flatten work.workload to top-level workload for template convenience
                 try:
                     if isinstance(exec_ctx.get('work'), dict) and isinstance(exec_ctx['work'].get('workload'), dict):
                         exec_ctx['workload'] = exec_ctx['work']['workload']
-                except Exception:
-                    pass
+                except (TypeError, AttributeError, KeyError) as e:
+                    logger.debug(f"Could not flatten workload to exec_ctx: {e}")
                 try:
                     # Ensure execution_id is present and non-empty in context
                     if not exec_ctx.get('execution_id'):
                         exec_ctx['execution_id'] = execution_id
-                except Exception:
-                    pass
+                except (TypeError, AttributeError) as e:
+                    logger.warning(f"Could not set execution_id in exec_ctx: {e}")
                 try:
                     if 'env' not in exec_ctx:
                         exec_ctx['env'] = dict(self._settings.raw_env)
-                except Exception:
-                    pass
+                except (TypeError, AttributeError, ValueError) as e:
+                    logger.warning(f"Could not set env in exec_ctx: {e}")
                 try:
                     if 'job' not in exec_ctx:
                         exec_ctx['job'] = {
@@ -945,8 +928,8 @@ class QueueWorker:
                             'node_id': node_id,
                             'worker_id': self.worker_id,
                         }
-                except Exception:
-                    pass
+                except (TypeError, AttributeError, KeyError) as e:
+                    logger.warning(f"Could not set job metadata in exec_ctx: {e}")
                 
                 from noetl.plugin import execute_task
                 import time
@@ -1291,8 +1274,8 @@ class QueueWorker:
             if self._deregister_on_exit:
                 try:
                     await asyncio.to_thread(deregister_worker_pool_from_env)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to deregister worker pool on exit: {e}", exc_info=True)
 
 
 class ScalableQueueWorkerPool:
@@ -1325,7 +1308,7 @@ class ScalableQueueWorkerPool:
     async def _queue_size(self) -> int:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.server_url}/queue/size")
+                resp = await client.get(self._settings.endpoint_queue_size)
                 resp.raise_for_status()
                 data = resp.json()
                 return int(data.get("queued") or data.get("count") or 0)
@@ -1507,7 +1490,7 @@ class ScalableQueueWorkerPool:
         async def _heartbeat_loop():
             name = (self._settings.pool_name or '').strip() or 'worker-cpu'
             payload = {"name": name}
-            url = f"{self.server_url}/worker/pool/heartbeat"
+            url = self._settings.endpoint_worker_pool_heartbeat
             consecutive_failures = 0
             max_failures = 5
             
@@ -1546,10 +1529,10 @@ class ScalableQueueWorkerPool:
             await self.stop()
             try:
                 hb_task.cancel()
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(asyncio.CancelledError):
                     await hb_task
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error cancelling heartbeat task: {e}", exc_info=True)
 
     async def stop(self) -> None:
         """Request the scaling loop and all workers to stop."""

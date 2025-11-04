@@ -37,18 +37,20 @@ def start_worker_service(
 ):
     """Start the queue worker pool that polls the server queue API."""
 
-    from noetl.core.config import _settings
+    from noetl.core.config import _settings, get_worker_settings
     import noetl.core.config as core_config
     core_config._settings = None
     core_config._ENV_LOADED = False
     
     # get_settings(reload=True)
 
+    # Ensure NOETL_WORKER_POOL_RUNTIME is set if not already present
     if not os.environ.get("NOETL_WORKER_POOL_RUNTIME"):
         os.environ["NOETL_WORKER_POOL_RUNTIME"] = "cpu"
 
-    worker_name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{os.environ.get('NOETL_WORKER_POOL_RUNTIME', 'cpu')}"
-    worker_name = worker_name.replace("-", "_")  # Replace hyphens with underscores for filename
+    # Get worker settings to access resolved pool name
+    worker_settings = get_worker_settings()
+    worker_name = worker_settings.resolved_pool_name.replace("-", "_")  # Replace hyphens with underscores for filename
     
     pid_dir = os.path.expanduser("~/.noetl")
     os.makedirs(pid_dir, exist_ok=True)
@@ -247,11 +249,12 @@ def start_server(
             except OSError:
                 logger.info("Found stale PID file. Removing it before start.")
                 os.remove(settings.pid_file_path)
-        except Exception:
+        except (FileNotFoundError, ValueError, PermissionError) as e:
+            logger.warning(f"Could not process PID file {settings.pid_file_path}: {e}")
             try:
                 os.remove(settings.pid_file_path)
-            except Exception:
-                pass
+            except (FileNotFoundError, PermissionError) as e:
+                logger.warning(f"Could not remove PID file: {e}")
 
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -262,8 +265,9 @@ def start_server(
             if s.connect_ex((host, port)) == 0:
                 logger.error(f"Port {host}:{port} is already in use. Aborting start.")
                 raise typer.Exit(code=1)
-        except socket.gaierror:
-            pass
+        except socket.gaierror as e:
+            logger.warning(f"Could not resolve host {host}: {e}")
+            raise
 
     try:
         workers = int(settings.server_workers)
@@ -308,8 +312,8 @@ def start_server(
         if os.path.exists(settings.pid_file_path):
             try:
                 os.remove(settings.pid_file_path)
-            except Exception:
-                pass
+            except (FileNotFoundError, PermissionError) as e:
+                logger.warning(f"Could not remove PID file on error: {e}")
         raise
 
 def _run_with_uvicorn(host: str, port: int, workers: int, reload: bool, log_level: str):
@@ -424,11 +428,10 @@ def stop_server(
             pass
 
     # 2) Fallback: detect listening process on configured port and stop it
-    host = os.environ.get("NOETL_HOST", "localhost")
-    try:
-        port = int(os.environ.get("NOETL_PORT", 8082))
-    except Exception:
-        port = 8082
+    from noetl.core.config import get_settings
+    settings = get_settings()
+    host = settings.host
+    port = settings.port
 
     # Best-effort: parse lsof output (macOS/linux) to get PID listening on port
     try:

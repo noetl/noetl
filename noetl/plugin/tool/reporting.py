@@ -10,11 +10,29 @@ import socket
 import json
 import httpx
 from decimal import Decimal
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from noetl.core.logger import setup_logger
+from noetl.core.config import WorkerSettings, get_worker_settings
 
 logger = setup_logger(__name__, include_location=True)
+
+# Module-level worker settings cache for performance
+_cached_worker_settings: Optional[WorkerSettings] = None
+
+def _get_worker_settings() -> Optional[WorkerSettings]:
+    """
+    Get cached worker settings or return None if not available.
+    Uses try-except to handle cases where worker settings aren't initialized.
+    """
+    global _cached_worker_settings
+    if _cached_worker_settings is None:
+        try:
+            _cached_worker_settings = get_worker_settings()
+        except Exception:
+            # Worker settings not available (e.g., running in server context)
+            pass
+    return _cached_worker_settings
 
 
 def _decimal_serializer(obj):
@@ -93,6 +111,8 @@ def _enrich_event_metadata(event_data: Dict[str, Any]) -> None:
     """
     Enrich event metadata with worker pool and runtime information.
     
+    Uses centralized WorkerSettings configuration instead of direct os.environ access.
+    
     Args:
         event_data: Event data to enrich (modified in place)
     """
@@ -100,9 +120,16 @@ def _enrich_event_metadata(event_data: Dict[str, Any]) -> None:
         meta = event_data.get('meta') or {}
         if not isinstance(meta, dict):
             meta = {}
-            
-        worker_pool = os.environ.get('NOETL_WORKER_POOL_NAME')
-        worker_runtime = os.environ.get('NOETL_WORKER_POOL_RUNTIME')
+        
+        # Try to get worker settings, fallback to os.environ for backwards compatibility
+        worker_settings = _get_worker_settings()
+        if worker_settings:
+            worker_pool = worker_settings.resolved_pool_name
+            worker_runtime = worker_settings.pool_runtime
+        else:
+            # Fallback to environment variables if settings not available
+            worker_pool = os.environ.get('NOETL_WORKER_POOL_NAME')
+            worker_runtime = os.environ.get('NOETL_WORKER_POOL_RUNTIME')
         
         if worker_pool and not meta.get('worker_pool'):
             meta['worker_pool'] = worker_pool
@@ -119,6 +146,7 @@ def _enrich_trace_component(event_data: Dict[str, Any]) -> None:
     """
     Attach trace component with worker details.
     
+    Uses centralized WorkerSettings configuration instead of direct os.environ access.
     Adds worker information including pool, runtime, pid, hostname, and id.
     Only sets fields if not already present to avoid overwriting upstream info.
     
@@ -133,11 +161,20 @@ def _enrich_trace_component(event_data: Dict[str, Any]) -> None:
         worker_tc = trace_component.get('worker') or {}
         if not isinstance(worker_tc, dict):
             worker_tc = {}
-            
-        # Get worker environment variables
-        worker_pool = os.environ.get('NOETL_WORKER_POOL_NAME')
-        worker_runtime = os.environ.get('NOETL_WORKER_POOL_RUNTIME')
-        worker_id = os.environ.get('NOETL_WORKER_ID')
+        
+        # Try to get worker settings, fallback to os.environ for backwards compatibility
+        worker_settings = _get_worker_settings()
+        if worker_settings:
+            worker_pool = worker_settings.resolved_pool_name
+            worker_runtime = worker_settings.pool_runtime
+            worker_id = worker_settings.worker_id
+            hostname = worker_settings.hostname
+        else:
+            # Fallback to environment variables if settings not available
+            worker_pool = os.environ.get('NOETL_WORKER_POOL_NAME')
+            worker_runtime = os.environ.get('NOETL_WORKER_POOL_RUNTIME')
+            worker_id = os.environ.get('NOETL_WORKER_ID')
+            hostname = socket.gethostname()
         
         # Set fields if not already present
         if worker_pool and 'pool' not in worker_tc:
@@ -149,7 +186,7 @@ def _enrich_trace_component(event_data: Dict[str, Any]) -> None:
         if 'pid' not in worker_tc:
             worker_tc['pid'] = os.getpid()
         if 'hostname' not in worker_tc:
-            worker_tc['hostname'] = socket.gethostname()
+            worker_tc['hostname'] = hostname
             
         trace_component['worker'] = worker_tc
         event_data['trace_component'] = trace_component
@@ -161,6 +198,8 @@ def _enrich_trace_component(event_data: Dict[str, Any]) -> None:
 def _build_event_url(server_url: str) -> str:
     """
     Build the complete event API URL from the server base URL.
+    
+    Kept for backward compatibility. For new code, use worker_settings.endpoint_events.
     
     Args:
         server_url: Base URL of the NoETL server

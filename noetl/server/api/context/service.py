@@ -14,9 +14,12 @@ from noetl.server.api.broker.service import EventService
 logger = setup_logger(__name__, include_location=True)
 
 
-async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
+async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
     """
     Fetch execution context from database.
+    
+    Args:
+        execution_id: Execution ID as integer (not string path)
     
     Returns:
         Dictionary with:
@@ -26,6 +29,10 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
         - playbook_version: Version of playbook
         - steps: Workflow steps definition
     """
+    # Validate execution_id is an integer
+    if not isinstance(execution_id, int):
+        raise TypeError(f"execution_id must be an integer, got {type(execution_id).__name__}: {execution_id}")
+    
     logger.debug(f"Fetching execution context for {execution_id}")
     
     workload = {}
@@ -312,14 +319,27 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
         # Render 'task' with strict mode
         if 'task' in template:
             task_tpl = template.get('task')
-            logger.info(f"RENDER_TASK_DEBUG: About to render task template: {task_tpl}")
-            logger.info(f"RENDER_TASK_DEBUG: Context keys available: {list(context.keys())}")
-            logger.info(f"RENDER_TASK_DEBUG: Workload in context: {'workload' in context}")
-            if 'workload' in context:
-                logger.info(f"RENDER_TASK_DEBUG: Workload value: {context['workload']}")
+            logger.debug(f"RENDER_TASK_DEBUG: Preparing to render task template")
+            logger.debug(f"RENDER_TASK_DEBUG: Context keys available: {list(context.keys())}")
+            logger.debug(f"RENDER_TASK_DEBUG: Workload in context: {'workload' in context}")
             try:
+                # Extract and preserve 'save' block for worker-side rendering
+                # The save block may reference 'result' which doesn't exist until after execution
+                task_tpl_copy = dict(task_tpl) if isinstance(task_tpl, dict) else task_tpl
+                save_block = None
+                if isinstance(task_tpl_copy, dict) and 'save' in task_tpl_copy:
+                    save_block = task_tpl_copy.pop('save')
+                    logger.debug(f"RENDER_TASK_DEBUG: Extracted save block: {save_block}")
+                    logger.debug(f"RENDER_TASK_DEBUG: Remaining keys in task_tpl_copy: {list(task_tpl_copy.keys())}")
+                
                 # Strict rendering keeps unresolved variables for worker-side rendering
-                task_rendered = render_template(env, task_tpl, context, rules=None, strict_keys=True)
+                task_rendered = render_template(env, task_tpl_copy, context, rules=None, strict_keys=False)
+                
+                # Re-attach the save block after rendering (unrendered for worker-side processing)
+                if save_block is not None and isinstance(task_rendered, dict):
+                    task_rendered['save'] = save_block
+                    logger.debug("RENDER_TASK_DEBUG: Re-attached save block to rendered task")
+                
                 logger.info(f"RENDER_TASK_DEBUG: Task rendered successfully: {task_rendered}")
             except Exception as e:
                 logger.warning(f"Failed to render task section: {e}")
@@ -352,7 +372,7 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
 
 
 async def render_context(
-    execution_id: str,
+    execution_id: int,
     template: Any,
     extra_context: Optional[Dict[str, Any]] = None,
     strict: bool = True
@@ -361,7 +381,7 @@ async def render_context(
     Main service function to render a template against execution context.
     
     Args:
-        execution_id: Execution ID to fetch context for
+        execution_id: Execution ID as integer (not string path)
         template: Template to render
         extra_context: Additional context to merge
         strict: Whether to use strict undefined handling
@@ -369,10 +389,20 @@ async def render_context(
     Returns:
         Tuple of (rendered_result, context_keys)
     """
+    # Validate execution_id is an integer
+    if not isinstance(execution_id, int):
+        raise TypeError(f"execution_id must be an integer, got {type(execution_id).__name__}: {execution_id}")
+    
     logger.info(f"Rendering template for execution {execution_id}")
     
     # Fetch execution context
     exec_ctx = await fetch_execution_context(execution_id)
+    
+    # Ensure execution_id is in extra_context
+    if extra_context is None:
+        extra_context = {}
+    if 'execution_id' not in extra_context:
+        extra_context['execution_id'] = execution_id
     
     # Build rendering context
     render_ctx = build_rendering_context(

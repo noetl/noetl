@@ -4,12 +4,12 @@ PostgreSQL storage delegation for save operations.
 Handles building SQL statements and delegating to postgres plugin.
 """
 
-import os
 import base64
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
 from noetl.core.logger import setup_logger
+from noetl.core.config import get_worker_settings
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -17,6 +17,8 @@ logger = setup_logger(__name__, include_location=True)
 def resolve_credential(credential_ref: Optional[str], spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Resolve credential from server and merge with spec.
+    
+    Uses centralized worker settings for server API URL.
     
     Args:
         credential_ref: Credential key reference
@@ -29,14 +31,17 @@ def resolve_credential(credential_ref: Optional[str], spec: Dict[str, Any]) -> D
         return spec
     
     try:
-        server_url = os.getenv('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
-        if not server_url.endswith('/api'):
-            server_url = server_url + '/api'
-        
+        # Get credential URL from worker settings
         cred_key = str(credential_ref)
         import httpx
         
-        url = f"{server_url}/credentials/{cred_key}?include_data=true"
+        try:
+            worker_settings = get_worker_settings()
+            url = worker_settings.endpoint_credential_by_key(cred_key, include_data=True)
+        except Exception:
+            # Fallback for cases where settings aren't initialized
+            url = f"http://localhost:8082/api/credentials/{cred_key}?include_data=true"
+        
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(url)
             if resp.status_code == 200:
@@ -49,8 +54,8 @@ def resolve_credential(credential_ref: Optional[str], spec: Dict[str, Any]) -> D
                             if v is not None:
                                 merged[k] = v
                     return merged
-    except Exception:
-        pass
+    except (TypeError, ValueError, KeyError, AttributeError) as e:
+        logger.warning(f"Could not resolve credential for postgres save: {e}")
     
     return spec
 
@@ -98,8 +103,8 @@ def build_sql_statement(
             try:
                 for k in bind_keys:
                     sql_text = sql_text.replace(f":{k}", f"{{{{ data.{k} }}}}")
-            except Exception:
-                pass
+            except (TypeError, ValueError, AttributeError) as e:
+                logger.warning(f"Could not replace bind parameters in SQL: {e}")
         
         return sql_text
     else:
@@ -173,8 +178,8 @@ def build_postgres_with_params(
     try:
         if isinstance(task_with, dict):
             pg_with.update(task_with)
-    except Exception:
-        pass
+    except (TypeError, ValueError, AttributeError) as e:
+        logger.warning(f"Could not merge task_with into pg_with: {e}")
     
     # Map storage spec to expected postgres plugin keys
     try:
@@ -192,8 +197,8 @@ def build_postgres_with_params(
             ):
                 if spec.get(src) is not None and not pg_with.get(dst):
                     pg_with[dst] = spec.get(src)
-    except Exception:
-        pass
+    except (TypeError, AttributeError, KeyError) as e:
+        logger.warning(f"Could not map storage spec to postgres plugin keys: {e}")
     
     # Provide data to rendering context for the postgres plugin renderer
     # Canonical mapping: pass as 'data' for the postgres plugin to render

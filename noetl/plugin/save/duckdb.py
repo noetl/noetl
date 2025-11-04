@@ -103,14 +103,19 @@ def handle_duckdb_storage(
     Returns:
         Save result envelope
     """
+    import base64
+    
     # Build DuckDB commands
     commands = build_duckdb_commands(storage_config, statement, rendered_data)
+    
+    # Base64 encode commands for duckdb plugin (required by plugin interface)
+    commands_b64 = base64.b64encode(commands.encode('utf-8')).decode('utf-8')
     
     # Build task config for duckdb plugin
     duck_task = {
         'type': 'duckdb',
         'task': 'save_duckdb',
-        'commands': commands,
+        'commands_b64': commands_b64,
     }
     
     # Build with-params for duckdb plugin

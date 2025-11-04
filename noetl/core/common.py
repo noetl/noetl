@@ -549,32 +549,22 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def get_async_db_connection(optional: bool = False):
     """
-    Get an async database connection from the async pool or create a direct async connection.
+    Get an async database connection from the async pool.
+    No fallbacks - fails fast if pool connection cannot be established.
 
     Args:
         optional (bool): If True, yields None instead of raising an exception when connection fails.
     """
     pool = await initialize_async_db_pool()
-    if pool:
-        try:
-            async with pool.connection() as conn:
-                yield conn
-                return
-        except Exception as pool_error:
-            logger.exception(f"Async connection pool error: {pool_error}. Falling back to direct connection.")
-    
-    # Direct connection fallback
-    conn = None
-    try:
-        conn = await psycopg.AsyncConnection.connect(get_pgdb_connection())
-        yield conn
-    except Exception as e:
-        logger.exception(f"Async connection failed: {e}")
+    if not pool:
+        error_msg = "Database connection pool not initialized"
+        logger.error(error_msg)
         if optional:
-            logger.warning("Async database connection is optional, continuing without it.")
             yield None
+            return
         else:
-            raise
-    finally:
-        if conn:
-            await conn.close()
+            raise RuntimeError(error_msg)
+    
+    # Use pool connection - no fallbacks
+    async with pool.connection() as conn:
+        yield conn
