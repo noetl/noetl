@@ -399,7 +399,7 @@ async def _dispatch_first_step(execution_id: str) -> None:
     pass
 
 
-async def _process_transitions(execution_id: str) -> None:
+async def _process_transitions(execution_id: int) -> None:
     """
     Analyze completed steps and publish next actionable tasks to queue.
     
@@ -414,7 +414,7 @@ async def _process_transitions(execution_id: str) -> None:
     logger.info(f"Processing transitions for execution {execution_id}")
     
     # Find completed steps without step_completed event using async executor
-    completed_steps = await OrchestratorQueries.get_completed_steps_without_step_completed(int(execution_id))
+    completed_steps = await OrchestratorQueries.get_completed_steps_without_step_completed(execution_id)
     
     if not completed_steps:
         logger.debug(f"No new completed steps found for execution {execution_id}")
@@ -426,7 +426,7 @@ async def _process_transitions(execution_id: str) -> None:
     catalog_id = await EventService.get_catalog_id_from_execution(execution_id)
     
     # Get execution metadata using async executor
-    metadata = await OrchestratorQueries.get_execution_metadata(int(execution_id))
+    metadata = await OrchestratorQueries.get_execution_metadata(execution_id)
     if not metadata:
         logger.warning(f"No execution metadata found for {execution_id}")
         return
@@ -452,7 +452,7 @@ async def _process_transitions(execution_id: str) -> None:
             by_name[step_name] = step_def
     
     # Query all transitions using async executor
-    transition_rows = await OrchestratorQueries.get_transitions(int(execution_id))
+    transition_rows = await OrchestratorQueries.get_transitions(execution_id)
     
     # Group transitions by from_step
     transitions_by_step = {}
@@ -464,7 +464,7 @@ async def _process_transitions(execution_id: str) -> None:
     
     # Build evaluation context with all step results using async executor
     eval_ctx = {"workload": workload}
-    result_rows = await OrchestratorQueries.get_step_results(int(execution_id))
+    result_rows = await OrchestratorQueries.get_step_results(execution_id)
     for res_row in result_rows:
         if res_row["node_name"] and res_row["result"]:
             # Normalize result: if it has 'data' field, use that instead of the envelope
@@ -494,7 +494,7 @@ async def _process_transitions(execution_id: str) -> None:
                 parent_event_id = None
                 try:
                     action_meta = await OrchestratorQueries.get_action_completed_meta(
-                        int(execution_id), step_name
+                        execution_id, step_name
                     )
                     if action_meta and isinstance(action_meta, dict):
                         queue_meta = action_meta.get("queue_meta", {})

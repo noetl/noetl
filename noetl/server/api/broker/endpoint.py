@@ -59,7 +59,7 @@ async def emit_event(payload: EventEmitRequest):
 async def get_event(event_id: str = Path(..., description="Event ID to retrieve")):
     """Retrieve a specific event by ID."""
     try:
-        return await EventService.get_event(event_id)
+        return await EventService.get_event(int(event_id))
     except ValueError as e:
         logger.error(f"Event not found: {e}")
         raise HTTPException(status_code=404, detail=str(e))

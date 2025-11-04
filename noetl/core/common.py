@@ -290,6 +290,27 @@ async def mkdir(dir_path):
 # serialization
 #===================================
 
+def get_val(d: dict | list, keys, default=None):
+    """
+    return value or none from dicts structures
+    Example:
+    ```python
+    obj = {
+        "foo": [
+            {
+                "bar": "bazz"
+            }
+        ]
+    }
+    get_val(obj, ["foo", 0, "bar"]) --> "bazz"
+    ```
+    """
+    if not keys:
+        return d
+    try:
+        return get_val(d[keys[0]], keys[1:], default)
+    except Exception:
+        return default
 
 def make_serializable(value):
     # Handle Jinja2 Undefined objects

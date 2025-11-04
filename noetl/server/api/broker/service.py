@@ -5,13 +5,15 @@ Simple event emission service without business logic - direct database operation
 Similar pattern to run/catalog services.
 """
 
+import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
+from noetl.core.common import get_val
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
-from .schema import EventEmitRequest, EventEmitResponse, EventQuery, EventResponse, EventListResponse
+from .schema import EventEmitRequest, EventEmitResponse, EventQuery, EventResponse, EventListResponse, WorkloadData
 
 
 logger = setup_logger(__name__, include_location=True)
@@ -61,7 +63,7 @@ class EventService:
         result = Json(request.result) if request.result else None
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
@@ -138,7 +140,7 @@ class EventService:
         )
     
     @staticmethod
-    async def get_event(event_id: str) -> Optional[EventResponse]:
+    async def get_event(event_id: int) -> Optional[EventResponse]:
         """
         Retrieve a single event by ID.
         
@@ -148,10 +150,9 @@ class EventService:
         Returns:
             EventResponse or None if not found
         """
-        event_id_int = int(event_id)
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     SELECT
@@ -171,7 +172,7 @@ class EventService:
                     FROM noetl.event
                     WHERE event_id = %(event_id)s
                     """,
-                    {"event_id": event_id_int}
+                    {"event_id": event_id}
                 )
                 
                 row = await cur.fetchone()
@@ -249,7 +250,7 @@ class EventService:
         params["offset"] = query.offset
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 # Get total count
                 count_sql = f"""
                     SELECT COUNT(*) as total
@@ -315,14 +316,14 @@ class EventService:
                 )
     
     @staticmethod
-    async def get_catalog_id_from_execution(execution_id: int | str) -> int:
+    async def get_catalog_id_from_execution(execution_id: int) -> int:
         """
         Get catalog_id from the first event of an execution.
         
         This is useful for queue operations that need to associate jobs with catalogs.
         
         Args:
-            execution_id: Execution ID (int or string)
+            execution_id: Execution ID (int)
             
         Returns:
             Catalog ID as integer
@@ -330,10 +331,9 @@ class EventService:
         Raises:
             ValueError: If no catalog_id found for the execution
         """
-        execution_id_int = int(execution_id)
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     SELECT catalog_id 
@@ -342,7 +342,7 @@ class EventService:
                     ORDER BY created_at 
                     LIMIT 1
                     """,
-                    {"execution_id": execution_id_int}
+                    {"execution_id": execution_id}
                 )
                 row = await cur.fetchone()
                 
@@ -352,22 +352,36 @@ class EventService:
                     raise ValueError(f"No catalog_id found for execution {execution_id}")
     
     @staticmethod
-    async def get_earliest_context(execution_id: int | str) -> Optional[Dict[str, Any]]:
+    async def get_workload(execution_id: int) -> Optional[WorkloadData]:    
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT data FROM noetl.workload
+                    WHERE execution_id = %(execution_id)s 
+                    """,
+                    {"execution_id": execution_id}
+                )
+                row = await cur.fetchone()
+                if row and row.get("data"):
+                    return WorkloadData(**json.loads(row.get("data")))
+
+    @staticmethod
+    async def get_context_workload(execution_id: int) -> Optional[Dict[str, Any]]:
         """
         Get the context from the earliest event of an execution.
         
         Useful for retrieving initial workload configuration.
         
         Args:
-            execution_id: Execution ID (int or string)
+            execution_id: Execution ID (int)
             
         Returns:
             Context dictionary from the first event, or None if not found
         """
-        execution_id_int = int(execution_id)
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     SELECT context 
@@ -376,28 +390,29 @@ class EventService:
                     ORDER BY created_at ASC 
                     LIMIT 1
                     """,
-                    {"execution_id": execution_id_int}
+                    {"execution_id": execution_id}
                 )
                 row = await cur.fetchone()
-                return row['context'] if row else None
+                if row and row.get("context"):
+                    workload = get_val(json.loads(row.get("context")), ["workload"], None)
+                    return workload
     
     @staticmethod
-    async def get_all_node_results(execution_id: int | str) -> Dict[str, Any]:
+    async def get_all_node_results(execution_id: int) -> Dict[str, Any]:
         """
         Get all node results from events for an execution.
         
         Returns a map of node_name -> result for all events with non-empty results.
         
         Args:
-            execution_id: Execution ID (int or string)
+            execution_id: Execution ID (int)
             
         Returns:
             Dictionary mapping node names to their results
         """
-        execution_id_int = int(execution_id)
         
         async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     SELECT node_name, result 
@@ -408,7 +423,7 @@ class EventService:
                       AND result != 'null'::jsonb
                     ORDER BY created_at ASC
                     """,
-                    {"execution_id": execution_id_int}
+                    {"execution_id": execution_id}
                 )
                 rows = await cur.fetchall()
                 
@@ -416,8 +431,8 @@ class EventService:
                 results = {}
                 for row in rows:
                     if row['node_name']:
-                        results[row['node_name']] = row['result']
-                
+                        if row['result']:
+                            results[row['node_name']] = json.loads(row['result'])               
                 return results
 
 

@@ -277,6 +277,22 @@ class EventListResponse(BaseModel):
         description="Whether more results exist"
     )
 
+class WorkloadData(BaseModel):
+    """
+    Workload data structure for context workload retrieval.
+    """
+    workload: Dict[str, Any] = Field(
+        ...,
+        description="Workload data as a dictionary"
+    )
+    path: str = Field(
+        ...,
+        description="Path associated with the workload"
+    )
+    version: str = Field(
+        ...,
+        description="Version of the workload"
+    )
 
 __all__ = [
     "EventType",
