@@ -9,7 +9,6 @@ Handles:
 - TTL management
 """
 
-import os
 import time
 import json
 from typing import List, Dict, Any, Optional, Tuple
@@ -20,6 +19,7 @@ from psycopg.rows import dict_row
 
 from noetl.core.common import get_async_db_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.core.config import get_settings, get_worker_settings
 from .schema import (
     MetricData,
     MetricsPayload,
@@ -371,11 +371,13 @@ class MetricsService:
         """
         # Determine component name
         if not component_name:
-            component_name = (
-                os.environ.get("NOETL_WORKER_POOL_NAME") or 
-                os.environ.get("NOETL_SERVER_NAME", "noetl-server")
-            )
-        
+            worker_settings = get_worker_settings()
+            pool_name = (worker_settings.pool_name or "").strip()
+            if pool_name:
+                component_name = pool_name
+            else:
+                component_name = get_settings().server_name
+
         # Collect system metrics
         system_metrics = MetricsService.collect_system_metrics()
         

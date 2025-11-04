@@ -9,10 +9,10 @@ Handles:
 """
 
 import json
-import os
 from typing import Optional, Dict, Any, Tuple
 from fastapi import HTTPException
 from noetl.core.logger import setup_logger
+from noetl.core.config import get_worker_settings
 from noetl.core.common import get_async_db_connection, get_snowflake_id
 from noetl.core.config import get_settings
 from .schema import (
@@ -192,8 +192,10 @@ class RuntimeService:
         Raises:
             HTTPException: If component not found and auto-recreation disabled
         """
-        # Get name from request or environment
-        name = request.name or os.environ.get("NOETL_WORKER_POOL_NAME", "").strip()
+        worker_settings = get_worker_settings()
+
+        # Get name from request or configuration
+        name = request.name or worker_settings.resolved_pool_name
         
         if not name:
             # For backward compatibility, return ok without DB update

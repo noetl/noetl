@@ -16,8 +16,17 @@ from jinja2 import Environment, StrictUndefined, BaseLoader
 from noetl.core.common import convert_snowflake_ids_for_api, get_async_db_connection
 from noetl.core.status import validate_status
 from noetl.core.logger import setup_logger
+from noetl.core.config import get_settings, get_worker_settings, Settings, WorkerSettings
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _resolve_server_settings(settings: Optional[Settings] = None) -> Settings:
+    return settings or get_settings()
+
+
+def _resolve_worker_settings(settings: Optional[WorkerSettings] = None) -> WorkerSettings:
+    return settings or get_worker_settings()
 
 
 class TaskExecutionError(RuntimeError):
@@ -47,7 +56,7 @@ def _normalize_server_url(url: Optional[str], ensure_api: bool = True) -> str:
         return "http://localhost:8082/api" if ensure_api else "http://localhost:8082"
 
 
-def register_server_from_env() -> None:
+def register_server_from_env(settings: Optional[Settings] = None) -> None:
     """Register this server instance with the server registry using environment variables.
     Required envs to trigger:
       - NOETL_SERVER_URL: server URL (will be auto-detected if not set)
@@ -58,19 +67,11 @@ def register_server_from_env() -> None:
       - NOETL_SERVER_LABELS (CSV)
     """
     try:
-        server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-        if not server_url:
-            host = os.environ.get("NOETL_HOST", "localhost").strip()
-            port = os.environ.get("NOETL_PORT", "8082").strip()
-            server_url = f"http://{host}:{port}"
-        server_url = _normalize_server_url(server_url, ensure_api=True)
-
-        name = os.environ.get("NOETL_SERVER_NAME") or f"server-{socket.gethostname()}"
-        labels = os.environ.get("NOETL_SERVER_LABELS")
-        if labels:
-            labels = [s.strip() for s in labels.split(',') if s.strip()]
-
-        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+        settings = _resolve_server_settings(settings)
+        server_url = settings.server_api_url
+        name = settings.server_name or f"server-{socket.gethostname()}"
+        labels = settings.server_labels or None
+        hostname = settings.hostname
 
         payload = {
             "name": name,
@@ -103,9 +104,10 @@ def register_server_from_env() -> None:
         logger.exception("Unexpected error during server registration")
 
 
-def deregister_server_from_env() -> None:
+def deregister_server_from_env(settings: Optional[Settings] = None) -> None:
     """Deregister server using stored name via HTTP (no DB fallback)."""
     try:
+        settings = _resolve_server_settings(settings)
         name: Optional[str] = None
         if os.path.exists('/tmp/noetl_server_name'):
             try:
@@ -114,11 +116,11 @@ def deregister_server_from_env() -> None:
             except Exception:
                 name = None
         if not name:
-            name = os.environ.get('NOETL_SERVER_NAME')
+            name = settings.server_name
         if not name:
             return
 
-        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
+        server_url = settings.server_api_url
         try:
             resp = httpx.request(
                 "DELETE",
@@ -141,7 +143,7 @@ def deregister_server_from_env() -> None:
         logger.exception(f"Server deregistration exception details: {e}")
 
 
-def register_worker_pool_from_env() -> None:
+def register_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = None) -> None:
     """Register this worker pool with the server registry using environment variables.
     Required envs to trigger:
       - NOETL_WORKER_POOL_RUNTIME: cpu|gpu|qpu
@@ -153,26 +155,17 @@ def register_worker_pool_from_env() -> None:
       - NOETL_WORKER_BASE_URL (defaults to dummy value for queue-based workers)
     """
     try:
-        runtime = os.environ.get("NOETL_WORKER_POOL_RUNTIME", "").strip().lower()
-        if not runtime:
-            # Default to 'cpu' if not specified for backward compatibility
-            runtime = "cpu"
-            logger.info("NOETL_WORKER_POOL_RUNTIME not set, defaulting to 'cpu'")
-            
-        base_url = os.environ.get("NOETL_WORKER_BASE_URL", "http://queue-worker").strip()
-        name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
-        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
-        if not server_url.endswith('/api'):
-            server_url = server_url + '/api'
-        capacity = os.environ.get("NOETL_WORKER_CAPACITY")
-        labels = os.environ.get("NOETL_WORKER_LABELS")
-        if labels:
-            labels = [s.strip() for s in labels.split(',') if s.strip()]
-
-        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+        worker_settings = _resolve_worker_settings(worker_settings)
+        runtime = worker_settings.pool_runtime or "cpu"
+        base_url = worker_settings.worker_base_url
+        name = worker_settings.resolved_pool_name
+        server_url = worker_settings.server_api_url
+        capacity = worker_settings.worker_capacity
+        labels = worker_settings.worker_labels or None
+        hostname = worker_settings.hostname
         
         # Generate worker URI based on environment (k8s or local)
-        namespace = os.environ.get("POD_NAMESPACE")
+        namespace = worker_settings.namespace
         if namespace:
             # Running in Kubernetes
             worker_uri = f"k8s://{namespace}/{hostname}"
@@ -185,7 +178,7 @@ def register_worker_pool_from_env() -> None:
             "runtime": runtime,
             "uri": worker_uri,
             "status": "ready",
-            "capacity": int(capacity) if capacity and str(capacity).isdigit() else None,
+            "capacity": capacity,
             "labels": labels,
             "pid": os.getpid(),
             "hostname": hostname,
@@ -210,15 +203,15 @@ def register_worker_pool_from_env() -> None:
         raise
 
 
-def deregister_worker_pool_from_env() -> None:
+def deregister_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = None) -> None:
     """Attempt to deregister worker pool using stored name (HTTP only)."""
     logger.info("Worker deregistration starting...")
     try:
-        name: Optional[str] = None
+        worker_settings = _resolve_worker_settings(worker_settings)
+        name: Optional[str] = (worker_settings.pool_name or "").strip()
 
-        name = os.environ.get('NOETL_WORKER_POOL_NAME')
         if name:
-            logger.info(f"Using worker name from env: {name}")
+            logger.info(f"Using worker name from config: {name}")
             worker_file = f'/tmp/noetl_worker_pool_name_{name}'
             if os.path.exists(worker_file):
                 with open(worker_file, 'r') as f:
@@ -228,10 +221,10 @@ def deregister_worker_pool_from_env() -> None:
         if not name:
             logger.warning("No worker name found for deregistration")
             return
-        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
+
+        server_url = worker_settings.server_api_url
         logger.info(f"Attempting to deregister worker {name} via {server_url}")
 
-    
         resp = httpx.request(
             "DELETE",
             f"{server_url}/worker/pool/deregister",
@@ -255,12 +248,13 @@ def deregister_worker_pool_from_env() -> None:
 def on_worker_terminate(signum):
     logger.info(f"Worker pool process received signal {signum}")
     try:
-        retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
-        backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
+        worker_settings = _resolve_worker_settings()
+        retries = worker_settings.deregister_retries
+        backoff_base = worker_settings.deregister_backoff
         for attempt in range(1, retries + 1):
             try:
                 logger.info(f"Worker deregister attempt {attempt}")
-                deregister_worker_pool_from_env()
+                deregister_worker_pool_from_env(worker_settings)
                 logger.info(f"Worker: deregister succeeded (attempt {attempt})")
                 break
             except Exception as e:
@@ -272,7 +266,8 @@ def on_worker_terminate(signum):
         sys.exit(1)
 
 def _get_server_url() -> str:
-    return _normalize_server_url(os.environ.get("NOETL_SERVER_URL", "http://localhost:8082"), ensure_api=True)
+    worker_settings = _resolve_worker_settings()
+    return worker_settings.server_api_url
 
 
 # ------------------------------------------------------------------
@@ -291,12 +286,13 @@ class QueueWorker:
             process_pool: Optional[ProcessPoolExecutor] = None,
             deregister_on_exit: bool = True,
             register_on_init: bool = True,
+            settings: Optional[WorkerSettings] = None,
     ) -> None:
-        self.server_url = _normalize_server_url(
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
-            ensure_api=True,
-        )
-        self.worker_id = worker_id or os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
+        self._settings = _resolve_worker_settings(settings)
+
+        resolved_server_url = server_url or self._settings.normalized_server_url
+        self.server_url = _normalize_server_url(resolved_server_url, ensure_api=True)
+        self.worker_id = worker_id or self._settings.worker_id or str(uuid.uuid4())
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
         self._process_pool = process_pool or ProcessPoolExecutor()
@@ -325,7 +321,7 @@ class QueueWorker:
     def _register_pool(self) -> None:
         """Best-effort registration of this worker pool."""
         try:
-            register_worker_pool_from_env()
+            register_worker_pool_from_env(self._settings)
         except Exception:  # pragma: no cover - best effort
             logger.debug("Worker registration failed", exc_info=True)
 
@@ -562,7 +558,7 @@ class QueueWorker:
                 "execution_id": job.get("execution_id"),
                 "template": {"work": raw_context, "task": action_cfg_raw},
                 "extra_context": {
-                    "env": dict(os.environ),
+                    "env": dict(self._settings.raw_env),
                     "job": {
                         "id": job.get("queue_id"),
                         # Provide uuid alias for templates expecting {{ job.uuid }}
@@ -937,7 +933,7 @@ class QueueWorker:
                     pass
                 try:
                     if 'env' not in exec_ctx:
-                        exec_ctx['env'] = dict(os.environ)
+                        exec_ctx['env'] = dict(self._settings.raw_env)
                 except Exception:
                     pass
                 try:
@@ -1176,7 +1172,7 @@ class QueueWorker:
     async def _report_simple_worker_metrics(self) -> None:
         """Report simple worker metrics for standalone QueueWorker instances."""
         # Check if metrics are disabled
-        metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+        metrics_disabled = self._settings.metrics_disabled
         if metrics_disabled:
             # logger.debug("Simple metric reporting disabled")
             return
@@ -1220,7 +1216,7 @@ class QueueWorker:
                 logger.debug(f"Error collecting worker metrics: {e}")
             
             # Get component name from environment or use worker_id
-            component_name = os.environ.get('NOETL_WORKER_POOL_NAME') or f'worker-{self.worker_id}'
+            component_name = (self._settings.pool_name or '').strip() or f'worker-{self.worker_id}'
             
             # Report to server
             payload = {
@@ -1235,7 +1231,7 @@ class QueueWorker:
                         "labels": {
                             "component": component_name,
                             "worker_id": self.worker_id,
-                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                            "hostname": self._settings.hostname
                         },
                         "help_text": m.get("help_text", ""),
                         "unit": m.get("unit", "")
@@ -1268,7 +1264,7 @@ class QueueWorker:
             dynamically.
         """
         # Metrics reporting interval (default 60 seconds)
-        metrics_interval = float(os.environ.get("NOETL_WORKER_METRICS_INTERVAL", "60"))
+        metrics_interval = self._settings.worker_metrics_interval
         last_metrics_time = 0.0
         
         try:
@@ -1309,16 +1305,16 @@ class ScalableQueueWorkerPool:
             check_interval: float = 5.0,
             worker_poll_interval: float = 1.0,
             max_processes: Optional[int] = None,
+            settings: Optional[WorkerSettings] = None,
     ) -> None:
-        self.server_url = _normalize_server_url(
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
-            ensure_api=True,
-        )
-        self.max_workers = max_workers or int(os.getenv("NOETL_MAX_WORKERS", "8"))
+        self._settings = _resolve_worker_settings(settings)
+        resolved_server_url = server_url or self._settings.normalized_server_url
+        self.server_url = _normalize_server_url(resolved_server_url, ensure_api=True)
+        self.max_workers = max_workers or self._settings.max_workers
         self.check_interval = check_interval
         self.worker_poll_interval = worker_poll_interval
         self.max_processes = max_processes or self.max_workers
-        self.worker_id = os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
+        self.worker_id = self._settings.worker_id or str(uuid.uuid4())
         self._thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
         self._process_pool = ProcessPoolExecutor(max_workers=self.max_processes)
         self._tasks: List[Tuple[asyncio.Task, asyncio.Event]] = []
@@ -1345,6 +1341,7 @@ class ScalableQueueWorkerPool:
             process_pool=self._process_pool,
             deregister_on_exit=False,
             register_on_init=False,
+            settings=self._settings,
         )
         task = asyncio.create_task(
             worker.run_forever(self.worker_poll_interval, stop_evt)
@@ -1354,7 +1351,7 @@ class ScalableQueueWorkerPool:
     async def _report_worker_metrics(self, component_name: str) -> None:
         """Report worker metrics to the server."""
         # Check if metrics are disabled
-        metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+        metrics_disabled = self._settings.metrics_disabled
         if metrics_disabled:
             logger.debug(f"Metric reporting disabled for {component_name}")
             return
@@ -1455,7 +1452,7 @@ class ScalableQueueWorkerPool:
                         "labels": {
                             "component": component_name,
                             "worker_id": self.worker_id,
-                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                            "hostname": self._settings.hostname
                         },
                         "help_text": m.get("help_text", ""),
                         "unit": m.get("unit", "")
@@ -1489,7 +1486,7 @@ class ScalableQueueWorkerPool:
         # Ensure single registration for the pool
         registration_success = False
         try:
-            register_worker_pool_from_env()
+            register_worker_pool_from_env(self._settings)
             registration_success = True
             logger.info("Worker pool registration completed successfully")
         except Exception as e:
@@ -1499,16 +1496,16 @@ class ScalableQueueWorkerPool:
         if not registration_success:
             logger.info("Retrying worker pool registration...")
             try:
-                register_worker_pool_from_env()
+                register_worker_pool_from_env(self._settings)
                 logger.info("Worker pool registration retry succeeded")
             except Exception as e:
                 logger.error(f"Worker pool registration retry failed: {e}")
 
         # Heartbeat loop task
-        heartbeat_interval = float(os.environ.get("NOETL_WORKER_HEARTBEAT_INTERVAL", "15"))
+        heartbeat_interval = self._settings.worker_heartbeat_interval
 
         async def _heartbeat_loop():
-            name = os.environ.get('NOETL_WORKER_POOL_NAME') or 'worker-cpu'
+            name = (self._settings.pool_name or '').strip() or 'worker-cpu'
             payload = {"name": name}
             url = f"{self.server_url}/worker/pool/heartbeat"
             consecutive_failures = 0
@@ -1525,8 +1522,7 @@ class ScalableQueueWorkerPool:
                             consecutive_failures = 0
                     
                     # Report metrics with heartbeat (if enabled)
-                    metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
-                    if not metrics_disabled:
+                    if not self._settings.metrics_disabled:
                         try:
                             await self._report_worker_metrics(name)
                         except Exception as metrics_error:
