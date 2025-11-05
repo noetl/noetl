@@ -1,1 +1,1 @@
-export { default as duckdbNode } from './duckdb';
+export { default as duckdbNode } from './DuckDbNode';

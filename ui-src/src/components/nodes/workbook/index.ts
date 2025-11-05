@@ -1,1 +1,1 @@
-export { default as workbookNode } from './workbook';
+export { default as workbookNode } from './WorkbookNode';
