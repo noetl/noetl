@@ -254,3 +254,105 @@ These test playbooks can be extended for:
 - Integration with external systems
 
 The modular design allows easy addition of new test scenarios and storage types as the NoETL platform evolves.
+
+## How to make sure these playbooks work correctly
+
+Follow this quick checklist to ensure reliable runs on any environment (local Docker, K8s, or CI):
+
+1) Pick the Postgres credential name used by the playbooks
+- These playbooks reference a Postgres credential through `workload.pg_auth`.
+- Some variants use `pg_local` (local/dev) while others may reference `pg_k8s` (cluster test env). Either:
+  - Register a credential with that exact name, or
+  - Edit the playbook’s `workload.pg_auth` to match your existing credential name.
+
+Examples to register credentials:
+```bash
+# Local Postgres (pg_local)
+noetl credential create pg_local --type postgres --data '{
+  "host": "localhost",
+  "port": 5432,
+  "user": "demo",
+  "password": "demo",
+  "database": "demo"
+}'
+
+# K8s Postgres (pg_k8s)
+noetl credential create pg_k8s --type postgres --data '{
+  "host": "postgres.postgres.svc.cluster.local",
+  "port": 5432,
+  "user": "demo",
+  "password": "demo",
+  "database": "demo"
+}'
+```
+
+2) Ensure the NoETL services are running
+- Local Docker Compose:
+```bash
+# From the project root
+docker compose up -d postgres server worker
+# Export the API URL if needed
+export NOETL_SERVER_URL=http://localhost:8083
+```
+- Or ensure your K8s deployment is healthy and the CLI points to the correct server URL.
+
+3) Create required database tables
+You can do any one of the following:
+- Run the bundled SQL manually (see the "Required Database Tables" section above) in your target Postgres.
+- Use the helper shell script at project root:
+```bash
+./create_test_tables.sh  # creates required test tables in your configured Postgres
+```
+- Or run the table-creation playbook in this folder:
+```bash
+noetl playbook register tests/fixtures/playbooks/save_storage_test/create_tables.yaml
+noetl execution create tests/save_storage/create_tables --data '{}'
+```
+
+4) Register the test playbooks
+```bash
+noetl playbook register tests/fixtures/playbooks/save_storage_test/save_simple_test.yaml
+noetl playbook register tests/fixtures/playbooks/save_storage_test/save_all_storage_types.yaml
+noetl playbook register tests/fixtures/playbooks/save_storage_test/save_edge_cases.yaml
+```
+
+5) Execute the tests
+```bash
+noetl execution create tests/save_storage/simple --data '{}'
+noetl execution create tests/save_storage/all_types --data '{}'
+noetl execution create tests/save_storage/edge_cases --data '{}'
+```
+
+6) Validate results automatically (recommended)
+A convenience script validates that required rows were inserted and that basic invariants hold:
+```bash
+# From the project root
+bash tests/fixtures/playbooks/save_storage_test/validate_tests.sh
+```
+- The script will:
+  - Check server reachability
+  - Confirm credential existence
+  - Verify tables exist
+  - Execute the playbooks (if not executed yet)
+  - Query Postgres to verify rows were saved
+
+7) Validate results manually (optional)
+- Query your Postgres directly. Examples:
+```bash
+psql -h localhost -U demo -d demo -c "SELECT * FROM test_mixed_types LIMIT 5;"
+psql -h localhost -U demo -d demo -c "SELECT * FROM test_special_chars LIMIT 5;"
+psql -h localhost -U demo -d demo -c "SELECT * FROM simple_test_flat LIMIT 5;"
+```
+- Review events/logs:
+```bash
+# Worker logs (Docker)
+docker logs noetl-worker 2>&1 | grep -i "save"
+# Or K8s
+kubectl logs -n noetl deployment/noetl-worker --tail=200 | grep -i "save"
+```
+
+Troubleshooting tips:
+- Missing tables: ensure Step 3 completed (use the script or the create_tables playbook).
+- Auth failures: verify the credential name in `workload.pg_auth` matches a registered credential.
+- Connection issues: check `NOETL_SERVER_URL` and that `server` and `worker` containers/pods are running.
+- Event visibility: if executions complete but you don’t see failure events, ensure the `catalog_id` is set on queue jobs and propagated in events (register playbooks via the CLI so the server sets `catalog_id`).

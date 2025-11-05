@@ -23,11 +23,16 @@ register_playbook() {
     
     echo "Registering: $relative_path"
     
-    if .venv/bin/noetl register "$playbook_path" --host "$HOST" --port "$PORT" 2>/dev/null; then
+    # Capture output and errors
+    output=$(.venv/bin/noetl register "$playbook_path" --host "$HOST" --port "$PORT" 2>&1)
+    exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
         echo "  SUCCESS"
         ((success_count++))
     else
         echo "  ERROR"
+        echo "  $output" | head -3  # Show first 3 lines of error
         ((error_count++))
     fi
     

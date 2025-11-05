@@ -7,23 +7,38 @@ when include_data=true is supported by the server endpoint.
 
 from __future__ import annotations
 
-import os
 from typing import Dict, List
+import logging
 
 import httpx
+from noetl.core.config import get_worker_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _server_base() -> str:
-    base = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
-    if not base.endswith('/api'):
-        base = base + '/api'
-    return base
+    """
+    Get server API base URL from centralized worker settings.
+    Falls back to localhost if settings unavailable.
+    """
+    try:
+        worker_settings = get_worker_settings()
+        return worker_settings.server_api_url
+    except Exception:
+        # Fallback for cases where settings aren't initialized
+        return 'http://localhost:8082/api'
 
 
 def fetch_credential_by_key(key: str) -> Dict:
     if not key:
         return {}
-    url = f"{_server_base()}/credentials/{key}?include_data=true"
+    # Try to use endpoint property, fallback to old URL building
+    try:
+        worker_settings = get_worker_settings()
+        url = worker_settings.endpoint_credential_by_key(key, include_data=True)
+    except Exception:
+        url = f"{_server_base()}/credentials/{key}?include_data=true"
+    
     try:
         with httpx.Client(timeout=5.0) as c:
             r = c.get(url)
@@ -48,8 +63,8 @@ def fetch_credential_by_key(key: str) -> Dict:
                     # Avoid overwriting normalized meta keys
                     if k not in rec:
                         rec[k] = v
-            except Exception:
-                pass
+            except (TypeError, AttributeError) as e:
+                logger.warning(f"Could not flatten credential payload fields: {e}")
             # If service missing, infer from type
             if not rec['service']:
                 t = rec['type']

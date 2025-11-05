@@ -12,4 +12,6 @@ data:
   NOETL_USER: noetl
   NOETL_SCHEMA: noetl
   PGDATA: /var/lib/postgresql/data/pgdata
-  TZ: America/Chicago
+  # Timezone - Change to America/Chicago or other timezone if needed
+  # Note: Changing timezone requires rebuilding postgres image and redeploying
+  TZ: UTC

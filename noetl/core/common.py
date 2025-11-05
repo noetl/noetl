@@ -11,13 +11,60 @@ from datetime import datetime, timedelta, timezone, date
 import random
 import string
 from decimal import Decimal
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Type, TypeVar
 import psycopg
 from contextlib import contextmanager
+from pydantic import BaseModel, ConfigDict, ValidationError
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
+
+# =============================================================================
+# Pydantic Common Models and Utilities
+# =============================================================================
+
+class AppBaseModel(BaseModel):
+    """
+    Base Pydantic model with common configuration.
+    
+    Used across all NoETL API schemas to provide consistent:
+    - ORM mode support (from_attributes=True)
+    - Automatic string coercion for numeric types
+    """
+    model_config = ConfigDict(from_attributes=True, coerce_numbers_to_str=True)
+
+
+T = TypeVar("T", bound=BaseModel)
+
+
+def transform(class_constructor: Type[T], arg: dict) -> T:
+    """
+    Generic function to transform a dict into a Pydantic model instance with error logging.
+
+    Args:
+        class_constructor: Any Pydantic model class.
+        arg: Dictionary of data to pass to the model.
+
+    Returns:
+        An instance of the model.
+
+    Raises:
+        ValidationError: If the data does not conform to the model.
+    """
+    try:
+        return class_constructor(**arg)
+    except ValidationError as e:
+        logger.error(
+            f"{class_constructor.__name__} Validation error: "
+            f"{json.dumps(e.errors(include_input=False, include_url=False))}"
+        )
+        raise
+
+
+# =============================================================================
+# Snowflake ID Generation
+# =============================================================================
 
 
 try:
@@ -243,6 +290,27 @@ async def mkdir(dir_path):
 # serialization
 #===================================
 
+def get_val(d: dict | list, keys, default=None):
+    """
+    return value or none from dicts structures
+    Example:
+    ```python
+    obj = {
+        "foo": [
+            {
+                "bar": "bazz"
+            }
+        ]
+    }
+    get_val(obj, ["foo", 0, "bar"]) --> "bazz"
+    ```
+    """
+    if not keys:
+        return d
+    try:
+        return get_val(d[keys[0]], keys[1:], default)
+    except Exception:
+        return default
 
 def make_serializable(value):
     # Handle Jinja2 Undefined objects
@@ -430,7 +498,7 @@ def initialize_db_pool():
     if db_pool is None and ConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            db_pool = ConnectionPool(conninfo=connection_string, min_size=2, max_size=20, open=False)
+            db_pool = ConnectionPool(conninfo=connection_string, min_size=2, max_size=20, name="sync_legacy_noetl_server_connection", open=False)
             db_pool.open()
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
@@ -445,7 +513,7 @@ async def initialize_async_db_pool():
     if async_db_pool is None and AsyncConnectionPool:
         try:
             connection_string = get_pgdb_connection()
-            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=2, max_size=20, open=False)
+            async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=2, max_size=20, name="legacy_noetl_server_connection", open=False)
             await async_db_pool.open()
             logger.info("Async database connection pool initialized successfully")
         except Exception as e:
@@ -502,32 +570,22 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def get_async_db_connection(optional: bool = False):
     """
-    Get an async database connection from the async pool or create a direct async connection.
+    Get an async database connection from the async pool.
+    No fallbacks - fails fast if pool connection cannot be established.
 
     Args:
         optional (bool): If True, yields None instead of raising an exception when connection fails.
     """
     pool = await initialize_async_db_pool()
-    if pool:
-        try:
-            async with pool.connection() as conn:
-                yield conn
-                return
-        except Exception as pool_error:
-            logger.exception(f"Async connection pool error: {pool_error}. Falling back to direct connection.")
-    
-    # Direct connection fallback
-    conn = None
-    try:
-        conn = await psycopg.AsyncConnection.connect(get_pgdb_connection())
-        yield conn
-    except Exception as e:
-        logger.exception(f"Async connection failed: {e}")
+    if not pool:
+        error_msg = "Database connection pool not initialized"
+        logger.error(error_msg)
         if optional:
-            logger.warning("Async database connection is optional, continuing without it.")
             yield None
+            return
         else:
-            raise
-    finally:
-        if conn:
-            await conn.close()
+            raise RuntimeError(error_msg)
+    
+    # Use pool connection - no fallbacks
+    async with pool.connection() as conn:
+        yield conn

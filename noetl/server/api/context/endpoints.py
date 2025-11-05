@@ -54,6 +54,13 @@ async def render_context_endpoint(request: Request) -> Dict[str, Any]:
         if "template" not in body:
             raise HTTPException(status_code=400, detail="template is required")
         
+        # Validate execution_id is an integer
+        if not isinstance(execution_id, int):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"execution_id must be an integer, got {type(execution_id).__name__}: {execution_id}"
+            )
+        
         # Render template
         rendered, context_keys = await render_context(
             execution_id=execution_id,

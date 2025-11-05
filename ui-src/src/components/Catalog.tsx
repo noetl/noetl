@@ -95,9 +95,9 @@ const Catalog: React.FC = () => {
           );
           const filteredPlaybooks = allPlaybooks.filter(
             (playbook) =>
-              playbook.name.toLowerCase().includes(query.toLowerCase()) ||
-              (playbook.description &&
-                playbook.description
+              playbook.path.toLowerCase().includes(query.toLowerCase()) ||
+              (playbook.payload?.metadata?.description &&
+                playbook.payload.metadata.description
                   .toLowerCase()
                   .includes(query.toLowerCase())),
           );
@@ -147,9 +147,9 @@ const Catalog: React.FC = () => {
     debounceSearch(value);
   };
 
-  const handleExecutePlaybook = async (playbookId: string) => {
+  const handleExecutePlaybook = async (catalog_id: string) => {
     try {
-      await apiService.executePlaybook(playbookId);
+      await apiService.executePlaybook(catalog_id);
       message.success("Playbook execution started successfully!");
       // Redirect to execution page
       navigate("/execution");
@@ -287,7 +287,7 @@ const Catalog: React.FC = () => {
         {/* Playbooks list */}
         <Space direction="vertical" size="middle" className="catalog-playbooks-space">
           {playbooks.map((playbook) => (
-            <Card key={playbook.id} size="small" className="catalog-playbook-card">
+            <Card key={playbook.catalog_id} size="small" className="catalog-playbook-card">
               <Row align="middle" gutter={16}>
                 <Col flex="auto">
                   <Space
@@ -297,7 +297,7 @@ const Catalog: React.FC = () => {
                   >
                     <div>
                       <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
-                        {playbook.name}
+                        {playbook.path.split("/").pop()}
                         <Tag
                           color={getStatusColor(playbook.status)}
                           style={{ marginLeft: 8 }}
@@ -306,21 +306,21 @@ const Catalog: React.FC = () => {
                         </Tag>
                       </Title>
                       <Space direction="horizontal" size="large">
-                        <Text type="secondary">Path: {playbook.id}</Text>
+                        <Text type="secondary">Path: {playbook.path}</Text>
                         <Text type="secondary">
                           Version: {playbook.version}
                         </Text>
                         <Text type="secondary">
-                          Tasks: {playbook.tasks_count}
+                          Tasks: {playbook.payload?.workflow?.length || 0}
                         </Text>
                         <Text type="secondary">
                           Updated:{" "}
-                          {new Date(playbook.updated_at).toLocaleDateString()}
+                          {new Date(playbook.meta?.registered_at).toLocaleDateString()}
                         </Text>
                       </Space>
-                      {playbook.description && (
+                      {playbook.payload?.metadata?.description && (
                         <div style={{ marginTop: 4 }}>
-                          <Text type="secondary">{playbook.description}</Text>
+                          <Text type="secondary">{playbook.payload.metadata.description}</Text>
                         </div>
                       )}
                     </div>
@@ -331,14 +331,14 @@ const Catalog: React.FC = () => {
                     <Button
                       type="text"
                       icon={<EyeOutlined />}
-                      onClick={() => handleViewFlow(playbook.id, playbook.name)}
+                      onClick={() => handleViewFlow(playbook.catalog_id, playbook.path)}
                     >
                       View
                     </Button>
                     <Button
                       type="text"
                       icon={<EditOutlined />}
-                      onClick={() => navigate(`/editor?id=${playbook.id}`)}
+                      onClick={() => navigate(`/editor?id=${playbook.path}`)}
                     >
                       Edit
                     </Button>
@@ -347,7 +347,7 @@ const Catalog: React.FC = () => {
                       icon={<FileTextOutlined />}
                       onClick={() =>
                         handleViewPayload(
-                          playbook.id,
+                          playbook.path,
                           playbook.version.toString(),
                         )
                       }
@@ -357,7 +357,7 @@ const Catalog: React.FC = () => {
                     <Button
                       type="primary"
                       icon={<PlayCircleOutlined />}
-                      onClick={() => handleExecutePlaybook(playbook.id)}
+                      onClick={() => handleExecutePlaybook(playbook.catalog_id)}
                       disabled={playbook.status !== "active"}
                     >
                       Execute

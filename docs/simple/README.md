@@ -12,6 +12,7 @@ Quick navigation:
   - Workload (inputs): ./workload.md
   - Workflow (steps and control flow): ./workflow.md
   - Workbook (reusable tasks): ./workbook.md
+  - Credentials (auth): ./credentials.md
 - Step types (focused set)
   - Overview: ./steps/index.md
   - HTTP: ./steps/http.md
@@ -19,6 +20,7 @@ Quick navigation:
   - Loop (iterator): ./steps/iterator.md
   - DuckDB: ./steps/duckdb.md
   - Postgres: ./steps/postgres.md
+  - Snowflake: ./steps/snowflake.md
   - Saving results: ./steps/save.md
   - Playbook composition: ./steps/playbook.md
   - Retry policy: ./steps/retry.md

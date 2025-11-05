@@ -6,6 +6,7 @@ metadata:
   description: "Test playbook for save storage edge cases and error scenarios"
 
 workload:
+  pg_auth: pg_local
   test_scenarios:
     - "mixed_data_types"
     - "large_payload"
@@ -22,27 +23,27 @@ workflow:
           import datetime
           import decimal
           
-          mixed_data = {
-              "string_field": "test_string",
-              "integer_field": 12345,
-              "float_field": 3.14159,
-              "boolean_field": True,
-              "null_field": None,
-              "datetime_field": datetime.datetime.now().isoformat(),
-              "list_field": [1, 2, 3, "mixed", True],
-              "dict_field": {"nested": "value", "count": 42},
-              "decimal_field": float(decimal.Decimal("99.99"))
+          mixed_data = { 
+            "string_field": "test_string",
+            "integer_field": 12345,
+            "float_field": 3.14159,
+            "boolean_field": True,
+            "null_field": None,
+            "datetime_field": datetime.datetime.now().isoformat(),
+            "list_field": [1, 2, 3, "mixed", True],
+            "dict_field": {"nested": "value", "count": 42},
+            "decimal_field": float(decimal.Decimal("99.99"))
           }
           
           return {"status": "success", "data": mixed_data}
+    args:
+      input_data: {}
     save:
       storage:
         type: postgres
         args: "{{ result.data }}"
         table: test_mixed_types
-        auth:
-          type: postgres
-          credential: pg_k8s
+        auth: "{{ workload.pg_auth }}"
     next:
       - step: test_special_characters
 
@@ -62,16 +63,15 @@ workflow:
           }
           
           return {"status": "success", "data": special_data}
-    args: "{{ start }}"
+    args:
+      input_data: "{{ start }}"
     save:
       storage:
         type: postgres
         args: "{{ result.data }}"
         table: test_special_chars
         mode: insert
-        auth:
-          type: postgres
-          credential: pg_k8s
+        auth: "{{ workload.pg_auth }}"
     next:
       - step: test_empty_data
 

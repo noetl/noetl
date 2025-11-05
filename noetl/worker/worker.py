@@ -13,11 +13,20 @@ from typing import Any, Dict, List, Optional, Tuple
 import sys
 from jinja2 import Environment, StrictUndefined, BaseLoader
 
-from noetl.core.common import convert_snowflake_ids_for_api, get_async_db_connection
+from noetl.core.common import convert_snowflake_ids_for_api
 from noetl.core.status import validate_status
 from noetl.core.logger import setup_logger
+from noetl.core.config import get_settings, get_worker_settings, Settings, WorkerSettings
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _resolve_server_settings(settings: Optional[Settings] = None) -> Settings:
+    return settings or get_settings()
+
+
+def _resolve_worker_settings(settings: Optional[WorkerSettings] = None) -> WorkerSettings:
+    return settings or get_worker_settings()
 
 
 class TaskExecutionError(RuntimeError):
@@ -47,54 +56,36 @@ def _normalize_server_url(url: Optional[str], ensure_api: bool = True) -> str:
         return "http://localhost:8082/api" if ensure_api else "http://localhost:8082"
 
 
-def register_server_from_env() -> None:
-    """Register this server instance with the server registry using environment variables.
-    Required envs to trigger:
-      - NOETL_SERVER_URL: server URL (will be auto-detected if not set)
-    Optional:
-      - NOETL_SERVER_NAME
-      - NOETL_HOST (default localhost)
-      - NOETL_PORT (default 8082)
-      - NOETL_SERVER_LABELS (CSV)
+def register_server_from_env(settings: Optional[Settings] = None) -> None:
+    """Register this server instance with the server registry using settings configuration.
+    
+    Uses centralized settings from noetl.core.config instead of direct environment access.
+    Settings provide: server_api_url, server_name, server_labels, hostname
     """
     try:
-        server_url = os.environ.get("NOETL_SERVER_URL", "").strip()
-        if not server_url:
-            host = os.environ.get("NOETL_HOST", "localhost").strip()
-            port = os.environ.get("NOETL_PORT", "8082").strip()
-            server_url = f"http://{host}:{port}"
-        server_url = _normalize_server_url(server_url, ensure_api=True)
-
-        name = os.environ.get("NOETL_SERVER_NAME") or f"server-{socket.gethostname()}"
-        labels = os.environ.get("NOETL_SERVER_LABELS")
-        if labels:
-            labels = [s.strip() for s in labels.split(',') if s.strip()]
-
-        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
-
+        settings = _resolve_server_settings(settings)
+        
         payload = {
-            "name": name,
+            "name": settings.server_name or f"server-{settings.hostname}",
             "component_type": "server_api",
             "runtime": "server",
-            "base_url": server_url,
+            "base_url": settings.server_api_url,
             "status": "ready",
             "capacity": None,
-            "labels": labels,
+            "labels": settings.server_labels or None,
             "pid": os.getpid(),
-            "hostname": hostname,
+            "hostname": settings.hostname,
         }
-
-        url = f"{server_url}/runtime/register"
         try:
             with httpx.Client(timeout=5.0) as client:
-                resp = client.post(url, json=payload)
+                resp = client.post(settings.endpoint_runtime_register, json=payload)
                 if resp.status_code == 200:
-                    logger.info(f"Server registered: {name} -> {server_url}")
+                    logger.info(f"Server registered: {payload['name']} -> {settings.server_api_url}")
                     try:
                         with open('/tmp/noetl_server_name', 'w') as f:
-                            f.write(name)
-                    except Exception:
-                        pass
+                            f.write(payload['name'])
+                    except (IOError, OSError, PermissionError) as e:
+                        logger.warning(f"Could not write server name to /tmp/noetl_server_name: {e}")
                 else:
                     logger.warning(f"Server register failed ({resp.status_code}): {resp.text}")
         except Exception as e:
@@ -103,9 +94,13 @@ def register_server_from_env() -> None:
         logger.exception("Unexpected error during server registration")
 
 
-def deregister_server_from_env() -> None:
-    """Deregister server using stored name via HTTP (no DB fallback)."""
+def deregister_server_from_env(settings: Optional[Settings] = None) -> None:
+    """Deregister server using stored name via HTTP (no DB fallback).
+    
+    Uses centralized settings from noetl.core.config for server_api_url and server_name.
+    """
     try:
+        settings = _resolve_server_settings(settings)
         name: Optional[str] = None
         if os.path.exists('/tmp/noetl_server_name'):
             try:
@@ -114,177 +109,133 @@ def deregister_server_from_env() -> None:
             except Exception:
                 name = None
         if not name:
-            name = os.environ.get('NOETL_SERVER_NAME')
+            name = settings.server_name
         if not name:
             return
 
-        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
         try:
             resp = httpx.request(
                 "DELETE",
-                f"{server_url}/runtime/deregister",
+                settings.endpoint_runtime_deregister,
                 json={"name": name, "component_type": "server_api"},
                 timeout=5.0,
             )
             logger.info(f"Server deregister response: {resp.status_code} - {resp.text}")
         except Exception as e:
-            logger.error(f"Server deregister HTTP error: {e}")
+            logger.exception(f"Server deregister HTTP error: {e}")
 
         try:
             os.remove('/tmp/noetl_server_name')
         except FileNotFoundError:
             pass  # Expected if file doesn't exist
         except Exception as e:
-            logger.error(f"Failed to remove server name file: {e}")
+            logger.exception(f"Failed to remove server name file: {e}")
         logger.info(f"Deregistered server: {name}")
     except Exception as e:
-        logger.error(f"Critical error during server deregistration: {e}")
-        logger.exception("Server deregistration exception details:")
+        logger.exception(f"Server deregistration exception details: {e}")
 
 
-def register_worker_pool_from_env() -> None:
-    """Register this worker pool with the server registry using environment variables.
-    Required envs to trigger:
-      - NOETL_WORKER_POOL_RUNTIME: cpu|gpu|qpu
-    Optional:
-      - NOETL_WORKER_POOL_NAME
-      - NOETL_SERVER_URL (default http://localhost:8082)
-      - NOETL_WORKER_CAPACITY
-      - NOETL_WORKER_LABELS (CSV)
-      - NOETL_WORKER_BASE_URL (defaults to dummy value for queue-based workers)
+def register_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = None) -> None:
+    """Register this worker pool with the server registry using worker settings.
+    
+    Uses centralized settings from noetl.core.config.WorkerSettings for all configuration:
+    - pool_runtime, resolved_pool_name, worker_base_url
+    - server_api_url, worker_capacity, worker_labels
+    - hostname, namespace
     """
     try:
-        runtime = os.environ.get("NOETL_WORKER_POOL_RUNTIME", "").strip().lower()
-        if not runtime:
-            # Default to 'cpu' if not specified for backward compatibility
-            runtime = "cpu"
-            logger.info("NOETL_WORKER_POOL_RUNTIME not set, defaulting to 'cpu'")
-            
-        base_url = os.environ.get("NOETL_WORKER_BASE_URL", "http://queue-worker").strip()
-        name = os.environ.get("NOETL_WORKER_POOL_NAME") or f"worker-{runtime}"
-        server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
-        if not server_url.endswith('/api'):
-            server_url = server_url + '/api'
-        capacity = os.environ.get("NOETL_WORKER_CAPACITY")
-        labels = os.environ.get("NOETL_WORKER_LABELS")
-        if labels:
-            labels = [s.strip() for s in labels.split(',') if s.strip()]
-
-        hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+        worker_settings = _resolve_worker_settings(worker_settings)
         
         # Generate worker URI based on environment (k8s or local)
-        namespace = os.environ.get("POD_NAMESPACE")
-        if namespace:
+        if worker_settings.namespace:
             # Running in Kubernetes
-            worker_uri = f"k8s://{namespace}/{hostname}"
+            worker_uri = f"k8s://{worker_settings.namespace}/{worker_settings.hostname}"
         else:
             # Running locally
-            worker_uri = f"local://{hostname}"
+            worker_uri = f"local://{worker_settings.hostname}"
 
         payload = {
-            "name": name,
-            "runtime": runtime,
+            "name": worker_settings.resolved_pool_name,
+            "runtime": worker_settings.pool_runtime,
             "uri": worker_uri,
             "status": "ready",
-            "capacity": int(capacity) if capacity and str(capacity).isdigit() else None,
-            "labels": labels,
+            "capacity": worker_settings.worker_capacity,
+            "labels": worker_settings.worker_labels or None,
             "pid": os.getpid(),
-            "hostname": hostname,
+            "hostname": worker_settings.hostname,
         }
-        url = f"{server_url}/worker/pool/register"
         
-        logger.info(f"Registering worker pool '{name}' with runtime '{runtime}' at {url}")
-        
-        try:
-            with httpx.Client(timeout=10.0) as client:  # Increased timeout
-                resp = client.post(url, json=payload)
-                if resp.status_code == 200:
-                    logger.info(f"Worker pool registered: {name} ({runtime}) -> {worker_uri}")
-                    try:
-                        with open(f'/tmp/noetl_worker_pool_name_{name}', 'w') as f:
-                            f.write(name)
-                    except Exception:
-                        pass
-                else:
-                    logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
-                    raise Exception(f"Registration failed with status {resp.status_code}: {resp.text}")
-        except Exception as e:
-            logger.error(f"Worker pool register exception: {e}")
-            raise
+        logger.info(f"Registering worker pool '{worker_settings.resolved_pool_name}' with runtime '{worker_settings.pool_runtime}' at {worker_settings.endpoint_worker_pool_register}")
+
+        with httpx.Client(timeout=10.0) as client:  # Increased timeout
+            resp = client.post(worker_settings.endpoint_worker_pool_register, json=payload)
+            if resp.status_code == 200:
+                logger.info(f"Worker pool registered: {payload['name']} ({payload['runtime']}) -> {payload['uri']}")
+                with open(f'/tmp/noetl_worker_pool_name_{payload["name"]}', 'w') as f:
+                    f.write(payload['name'])
+            else:
+                logger.warning(f"Worker pool register failed ({resp.status_code}): {resp.text}")
+                raise Exception(f"Registration failed with status {resp.status_code}: {resp.text}")
+
     except Exception as e:
         logger.exception(f"Unexpected error during worker pool registration: {e}")
         raise
 
 
-def deregister_worker_pool_from_env() -> None:
-    """Attempt to deregister worker pool using stored name (HTTP only)."""
+def deregister_worker_pool_from_env(worker_settings: Optional[WorkerSettings] = None) -> None:
+    """Attempt to deregister worker pool using stored name (HTTP only).
+    
+    Uses centralized settings from noetl.core.config.WorkerSettings for server_api_url and pool_name.
+    """
     logger.info("Worker deregistration starting...")
     try:
-        name: Optional[str] = None
+        worker_settings = _resolve_worker_settings(worker_settings)
+        name: Optional[str] = (worker_settings.pool_name or "").strip()
 
-        name = os.environ.get('NOETL_WORKER_POOL_NAME')
         if name:
-            logger.info(f"Using worker name from env: {name}")
+            logger.info(f"Using worker name from config: {name}")
             worker_file = f'/tmp/noetl_worker_pool_name_{name}'
             if os.path.exists(worker_file):
-                try:
-                    with open(worker_file, 'r') as f:
-                        file_name = f.read().strip()
-                    logger.info(f"Found worker name from file: {file_name}")
-                    name = file_name
-                except Exception:
-                    logger.warning("Failed to read worker name from file")
-                    pass
-
-        if not name and os.path.exists('/tmp/noetl_worker_pool_name'):
-            try:
-                with open('/tmp/noetl_worker_pool_name', 'r') as f:
+                with open(worker_file, 'r') as f:
                     name = f.read().strip()
-                logger.info(f"Found worker name from legacy file: {name}")
-            except Exception:
-                name = None
+                logger.info(f"Found worker name from file: {name}")
 
         if not name:
             logger.warning("No worker name found for deregistration")
             return
-        server_url = _normalize_server_url(os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'), ensure_api=True)
-        logger.info(f"Attempting to deregister worker {name} via {server_url}")
 
-        try:
-            resp = httpx.request(
-                "DELETE",
-                f"{server_url}/worker/pool/deregister",
-                json={"name": name},
-                timeout=5.0,
-            )
-            logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
-        except Exception as e:
-            logger.error(f"Worker deregister HTTP error: {e}")
+        logger.info(f"Attempting to deregister worker {name} via {worker_settings.endpoint_worker_pool_deregister}")
 
-        try:
-            worker_file = f'/tmp/noetl_worker_pool_name_{name}'
-            if os.path.exists(worker_file):
-                os.remove(worker_file)
-                logger.info("Removed worker-specific name file")
-            elif os.path.exists('/tmp/noetl_worker_pool_name'):
-                os.remove('/tmp/noetl_worker_pool_name')
-                logger.info("Removed legacy worker name file")
-        except Exception:
-            pass
+        resp = httpx.request(
+            "DELETE",
+            worker_settings.endpoint_worker_pool_deregister,
+            json={"name": name},
+            timeout=5.0,
+        )
+        logger.info(f"Worker deregister response: {resp.status_code} - {resp.text}")
+
+        worker_file = f'/tmp/noetl_worker_pool_name_{name}'
+        if os.path.exists(worker_file):
+            os.remove(worker_file)
+            logger.info("Removed worker-specific name file")
+        elif os.path.exists('/tmp/noetl_worker_pool_name'):
+            os.remove('/tmp/noetl_worker_pool_name')
+            logger.info("Removed legacy worker name file")
         logger.info(f"Deregistered worker pool: {name}")
     except Exception as e:
-        logger.error(f"Worker deregister general error: {e}")
+        logger.exception(f"Worker deregister general error: {e}")
 
 
 def on_worker_terminate(signum):
     logger.info(f"Worker pool process received signal {signum}")
     try:
-        retries = int(os.environ.get('NOETL_DEREGISTER_RETRIES', '3'))
-        backoff_base = float(os.environ.get('NOETL_DEREGISTER_BACKOFF', '0.5'))
+        worker_settings = _resolve_worker_settings()
+        retries = worker_settings.deregister_retries
+        backoff_base = worker_settings.deregister_backoff
         for attempt in range(1, retries + 1):
             try:
                 logger.info(f"Worker deregister attempt {attempt}")
-                deregister_worker_pool_from_env()
+                deregister_worker_pool_from_env(worker_settings)
                 logger.info(f"Worker: deregister succeeded (attempt {attempt})")
                 break
             except Exception as e:
@@ -296,7 +247,8 @@ def on_worker_terminate(signum):
         sys.exit(1)
 
 def _get_server_url() -> str:
-    return _normalize_server_url(os.environ.get("NOETL_SERVER_URL", "http://localhost:8082"), ensure_api=True)
+    worker_settings = _resolve_worker_settings()
+    return worker_settings.server_api_url
 
 
 # ------------------------------------------------------------------
@@ -315,12 +267,13 @@ class QueueWorker:
             process_pool: Optional[ProcessPoolExecutor] = None,
             deregister_on_exit: bool = True,
             register_on_init: bool = True,
+            settings: Optional[WorkerSettings] = None,
     ) -> None:
-        self.server_url = _normalize_server_url(
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
-            ensure_api=True,
-        )
-        self.worker_id = worker_id or os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
+        self._settings = _resolve_worker_settings(settings)
+
+        resolved_server_url = server_url or self._settings.normalized_server_url
+        self.server_url = _normalize_server_url(resolved_server_url, ensure_api=True)
+        self.worker_id = worker_id or self._settings.worker_id or str(uuid.uuid4())
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
         self._process_pool = process_pool or ProcessPoolExecutor()
@@ -349,7 +302,7 @@ class QueueWorker:
     def _register_pool(self) -> None:
         """Best-effort registration of this worker pool."""
         try:
-            register_worker_pool_from_env()
+            register_worker_pool_from_env(self._settings)
         except Exception:  # pragma: no cover - best effort
             logger.debug("Worker registration failed", exc_info=True)
 
@@ -357,7 +310,7 @@ class QueueWorker:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
-                    f"{self.server_url}/queue/lease",
+                    self._settings.endpoint_queue_lease,
                     json={"worker_id": self.worker_id, "lease_seconds": lease_seconds},
                 )
                 resp.raise_for_status()
@@ -373,7 +326,7 @@ class QueueWorker:
         try:
             logger.debug(f"WORKER: Completing job {queue_id}")
             async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(f"{self.server_url}/queue/{queue_id}/complete")
+                await client.post(self._settings.endpoint_queue_complete_by_id(queue_id))
         except Exception:  # pragma: no cover - network best effort
             logger.debug("Failed to complete job %s", queue_id, exc_info=True)
 
@@ -396,7 +349,7 @@ class QueueWorker:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 await client.post(
-                    f"{self.server_url}/queue/{queue_id}/fail", 
+                    self._settings.endpoint_queue_fail_by_id(queue_id), 
                     json={
                         "retry": should_retry,
                         "retry_delay_seconds": retry_delay_seconds
@@ -423,7 +376,7 @@ class QueueWorker:
                     retry_event = {
                         "execution_id": execution_id,
                         "event_type": "action_retry",
-                        "status": "RETRYING",
+                        "status": "RUNNING",
                         "node_id": node_id,
                         "node_name": context.get("step_name"),
                         "node_type": "step",
@@ -439,10 +392,10 @@ class QueueWorker:
                     report_event(retry_event, self.server_url)
                     logger.info(f"Emitted action_retry event for job {queue_id}, attempt {attempts}/{max_attempts}")
                 except Exception as e:
-                    logger.debug(f"Failed to emit action_retry event: {e}", exc_info=True)
+                    logger.exception(f"Failed to emit action_retry event: {e}")
                     
         except Exception as e:  # pragma: no cover - network best effort
-            logger.warning(f"Failed to mark job {queue_id} failed: {e}", exc_info=True)
+            logger.exception(f"Failed to mark job {queue_id} failed: {e}")
 
     async def _evaluate_retry_policy(
         self, 
@@ -467,8 +420,8 @@ class QueueWorker:
             if isinstance(action_cfg_raw, str):
                 try:
                     action_cfg = json.loads(action_cfg_raw)
-                except json.JSONDecodeError:
-                    logger.debug(f"Failed to parse action config for retry evaluation")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse action config for retry evaluation: {e}")
                     return (False, 60)
             elif isinstance(action_cfg_raw, dict):
                 action_cfg = action_cfg_raw
@@ -492,7 +445,7 @@ class QueueWorker:
                 # Max attempts only
                 retry_config = {'max_attempts': retry_config}
             elif not isinstance(retry_config, dict):
-                logger.warning(f"Invalid retry configuration type: {type(retry_config)}")
+                logger.error(f"Invalid retry configuration type: {type(retry_config)}")
                 return (False, 60)
             
             # Get current attempt info
@@ -509,7 +462,7 @@ class QueueWorker:
             attempt_number = current_attempts + 1
             
             # Import retry policy evaluator
-            from noetl.plugin.tool.retry import RetryPolicy
+            from noetl.plugin.runtime import RetryPolicy
             from jinja2 import Environment
             
             # Create Jinja2 environment for condition evaluation
@@ -586,7 +539,7 @@ class QueueWorker:
                 "execution_id": job.get("execution_id"),
                 "template": {"work": raw_context, "task": action_cfg_raw},
                 "extra_context": {
-                    "env": dict(os.environ),
+                    "env": dict(self._settings.raw_env),
                     "job": {
                         "id": job.get("queue_id"),
                         # Provide uuid alias for templates expecting {{ job.uuid }}
@@ -614,17 +567,43 @@ class QueueWorker:
                 else:
                     logger.warning(f"WORKER: server render failed {resp.status_code}: {resp.text}")
         except Exception:
-            logger.debug("WORKER: server-side render exception; using raw context", exc_info=True)
+            logger.exception("WORKER: server-side render exception; using raw context")
             context = raw_context
         execution_id = job.get("execution_id")
         catalog_id = job.get("catalog_id")
         
-        # Fallback: get catalog_id from context if not present in job
+        # Catalog ID Resolution Chain (defense-in-depth):
+        # 1. Job record from queue table (set by QueueService.enqueue_job)
+        # 2. Context metadata (legacy/backward compatibility)
+        # 3. Server lookup by execution_id (final fallback to prevent event failures)
+        
+        # Fallback 1: get catalog_id from context if not present in job
         if not catalog_id:
             try:
                 catalog_id = context.get("catalog_id") if isinstance(context, dict) else None
-            except Exception:
-                pass
+            except (AttributeError, TypeError, KeyError) as e:
+                logger.debug(f"Could not extract catalog_id from context: {e}")
+        
+        # Fallback 2: fetch catalog_id from server by execution_id (final defense)
+        # This prevents event emission failures and lost telemetry
+        if not catalog_id and execution_id:
+            try:
+                logger.debug(f"WORKER: catalog_id missing, fetching from server for execution {execution_id}")
+                with httpx.Client(timeout=5.0) as client:
+                    resp = client.get(
+                        self._settings.endpoint_events,
+                        params={"execution_id": execution_id, "limit": 1}
+                    )
+                    if resp.status_code == 200:
+                        events_data = resp.json()
+                        if isinstance(events_data, dict) and events_data.get("events"):
+                            first_event = events_data["events"][0]
+                            if isinstance(first_event, dict):
+                                catalog_id = first_event.get("catalog_id")
+                                if catalog_id:
+                                    logger.info(f"WORKER: Retrieved catalog_id {catalog_id} from server for execution {execution_id}")
+            except Exception as e:
+                logger.warning(f"WORKER: Failed to fetch catalog_id from server: {e}")
         
         node_id = job.get("node_id") or f"job_{job.get('id')}"
 
@@ -684,9 +663,41 @@ class QueueWorker:
                 act_type = str(action_cfg.get('type') or '').strip().lower()
             except Exception:
                 act_type = ''
+            
+            # Defensive: treat router as non-actionable; complete immediately
+            if act_type in ('router', 'start'):
+                logger.info(f"WORKER: Skipping non-actionable job of type '{act_type}' for node {node_id}")
+                from noetl.plugin import report_event
+                # Emit minimal started/completed pair for trace consistency
+                start_event = {
+                    "execution_id": execution_id,
+                    "catalog_id": catalog_id,
+                    "event_type": "action_started",
+                    "status": "RUNNING",
+                    "node_id": node_id,
+                    "node_name": action_cfg.get('name') or node_id,
+                    "node_type": "task",
+                    "context": {"work": context, "task": action_cfg},
+                }
+                start_response = report_event(self._validate_event_status(start_event), self.server_url)
+                parent_eid = start_response.get('event_id') if isinstance(start_response, dict) else None
+                complete_event = {
+                    "execution_id": execution_id,
+                    "catalog_id": catalog_id,
+                    "event_type": "action_completed",
+                    "status": "SUCCEEDED",
+                    "node_id": node_id,
+                    "node_name": action_cfg.get('name') or node_id,
+                    "node_type": "task",
+                    "parent_event_id": parent_eid,
+                    "context": {"result": {"skipped": True, "reason": "router"}},
+                }
+                report_event(self._validate_event_status(complete_event), self.server_url)
+                return
+            
             if act_type == 'result_aggregation':
                 # Process loop result aggregation job via worker-side coroutine
-                from noetl.plugin.result import process_loop_aggregation_job
+                from noetl.plugin.controller.result import process_loop_aggregation_job
                 import asyncio as _a
                 try:
                     _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
@@ -709,21 +720,24 @@ class QueueWorker:
 
             task_name = action_cfg.get("name") or node_id
             
-            # Extract step name from node_id for event node_name (orchestration)
-            # node_id format: "{execution_id}:{step_name}"
+            # Extract step name from context for event node_name (orchestration)
+            # Priority: context.step_name > node_id extraction > task_name
             event_node_name = task_name  # Default to task name
-            if ":" in node_id:
-                try:
+            try:
+                if isinstance(context, dict) and context.get('step_name'):
+                    event_node_name = context['step_name']
+                elif ":" in node_id:
                     event_node_name = node_id.split(":", 1)[1]
-                except Exception:
-                    pass
+            except (KeyError, TypeError, AttributeError, IndexError) as e:
+                logger.debug(f"Could not extract step name from context/node_id: {e}")
 
             logger.debug(f"WORKER: raw input_context: {json.dumps(raw_context, default=str)[:500]}")
             try:
                 if not isinstance(action_cfg.get('with'), dict):
                     action_cfg['with'] = {}
-            except Exception:
-                pass
+            except (TypeError, AttributeError, KeyError) as e:
+                logger.warning(f"Could not validate/initialize action_cfg 'with' field: {e}")
+                raise
 
             try:
                 logger.debug(f"WORKER: evaluated input_context (server): {json.dumps(context, default=str)[:500]}")
@@ -745,17 +759,41 @@ class QueueWorker:
             except Exception:
                 loop_meta = None
 
-            # Extract parent_event_id from context metadata when provided (e.g., loop iteration parent)
+            # Extract parent_event_id and parent_execution_id from queue meta or context
             parent_event_id = None
+            parent_execution_id = None
+            job_meta = None
+            
+            # First priority: check queue meta (set by server when enqueueing)
             try:
-                if isinstance(context, dict):
-                    meta = context.get('noetl_meta') or {}
-                    if isinstance(meta, dict):
-                        peid = meta.get('parent_event_id')
-                        if peid:
-                            parent_event_id = peid
-            except Exception:
-                parent_event_id = None
+                job_meta = job.get('meta')
+                if isinstance(job_meta, dict):
+                    parent_event_id = job_meta.get('parent_event_id')
+                    parent_execution_id = job_meta.get('parent_execution_id')
+                elif isinstance(job_meta, str):
+                    # meta might be JSON string
+                    job_meta_parsed = json.loads(job_meta)
+                    if isinstance(job_meta_parsed, dict):
+                        job_meta = job_meta_parsed  # Update to parsed dict
+                        parent_event_id = job_meta_parsed.get('parent_event_id')
+                        parent_execution_id = job_meta_parsed.get('parent_execution_id')
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.debug(f"Could not parse job metadata JSON: {e}")
+            
+            # Second priority: check context metadata (legacy/backward compat)
+            if not parent_event_id:
+                try:
+                    if isinstance(context, dict):
+                        ctx_meta = context.get('noetl_meta') or {}
+                        if isinstance(ctx_meta, dict):
+                            peid = ctx_meta.get('parent_event_id')
+                            if peid:
+                                parent_event_id = peid
+                            pexec_id = ctx_meta.get('parent_execution_id')
+                            if pexec_id:
+                                parent_execution_id = pexec_id
+                except (KeyError, TypeError, AttributeError) as e:
+                    logger.debug(f"Could not extract parent metadata from context: {e}")
 
             # Determine node_type for events (iterator vs task)
             node_type_val = "iterator" if act_type == "iterator" else "task"
@@ -773,7 +811,7 @@ class QueueWorker:
                 "execution_id": execution_id,
                 "catalog_id": catalog_id,
                 "event_type": "action_started",
-                "status": "STARTED",
+                "status": "RUNNING",
                 "node_id": node_id,
                 "node_name": event_node_name,  # Use step name for orchestration
                 "node_type": node_type_val,
@@ -787,12 +825,19 @@ class QueueWorker:
                     }
                 },
                 "trace_component": {"worker_raw_context": raw_context},
-                
             }
+            # Attach queue meta to event for server-side context tracking
+            if job_meta and isinstance(job_meta, dict):
+                if "meta" not in start_event:
+                    start_event["meta"] = {}
+                start_event["meta"]["queue_meta"] = job_meta
+                
             if loop_meta:
                 start_event.update(loop_meta)
             if parent_event_id:
                 start_event["parent_event_id"] = parent_event_id
+            if parent_execution_id:
+                start_event["parent_execution_id"] = parent_execution_id
             
             from noetl.plugin import report_event
             start_event = self._validate_event_status(start_event)
@@ -803,8 +848,8 @@ class QueueWorker:
             try:
                 if isinstance(start_response, dict):
                     action_started_event_id = start_response.get('event_id')
-            except Exception:
-                pass
+            except (TypeError, AttributeError, KeyError) as e:
+                logger.debug(f"Could not extract event_id from start_response: {e}")
 
             try:
                 # Normalize payloads: canonical 'args' with legacy aliases
@@ -822,57 +867,58 @@ class QueueWorker:
                         w = action_cfg.get('with') if isinstance(action_cfg.get('with'), dict) else None
                         if w:
                             task_data = {**w, **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.warning(f"Could not merge 'with' field into task_data: {e}")
                     try:
                         p = action_cfg.get('payload') if isinstance(action_cfg.get('payload'), dict) else None
                         if p:
                             task_data = {**p, **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.warning(f"Could not merge 'payload' field into task_data: {e}")
                     try:
                         i = action_cfg.get('input') if isinstance(action_cfg.get('input'), dict) else None
                         if i:
                             task_data = {**i, **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.warning(f"Could not merge 'input' field into task_data: {e}")
                     # Migration support: also read from 'data' if present and no 'args'
                     # TODO: Remove after migration period
                     try:
                         if isinstance(action_cfg.get('data'), dict) and not action_cfg.get('args'):
                             task_data = {**action_cfg.get('data'), **task_data}
-                    except Exception:
-                        pass
+                    except (TypeError, AttributeError, KeyError) as e:
+                        logger.debug(f"Could not merge 'data' field into task_data (migration path): {e}")
                 if not isinstance(task_data, dict):
                     task_data = {}
                 try:
                     exec_ctx = dict(context) if isinstance(context, dict) else {}
-                except Exception:
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Could not convert context to dict, using empty dict: {e}")
                     exec_ctx = {}
                 # Expose unified payload under exec_ctx['input'] for template convenience
                 try:
                     if isinstance(exec_ctx, dict):
                         exec_ctx['input'] = dict(task_data)
                         exec_ctx['data'] = dict(task_data)
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Could not set input/data in exec_ctx: {e}")
                 # Flatten work.workload to top-level workload for template convenience
                 try:
                     if isinstance(exec_ctx.get('work'), dict) and isinstance(exec_ctx['work'].get('workload'), dict):
                         exec_ctx['workload'] = exec_ctx['work']['workload']
-                except Exception:
-                    pass
+                except (TypeError, AttributeError, KeyError) as e:
+                    logger.debug(f"Could not flatten workload to exec_ctx: {e}")
                 try:
                     # Ensure execution_id is present and non-empty in context
                     if not exec_ctx.get('execution_id'):
                         exec_ctx['execution_id'] = execution_id
-                except Exception:
-                    pass
+                except (TypeError, AttributeError) as e:
+                    logger.warning(f"Could not set execution_id in exec_ctx: {e}")
                 try:
                     if 'env' not in exec_ctx:
-                        exec_ctx['env'] = dict(os.environ)
-                except Exception:
-                    pass
+                        exec_ctx['env'] = dict(self._settings.raw_env)
+                except (TypeError, AttributeError, ValueError) as e:
+                    logger.warning(f"Could not set env in exec_ctx: {e}")
                 try:
                     if 'job' not in exec_ctx:
                         exec_ctx['job'] = {
@@ -882,11 +928,15 @@ class QueueWorker:
                             'node_id': node_id,
                             'worker_id': self.worker_id,
                         }
-                except Exception:
-                    pass
+                except (TypeError, AttributeError, KeyError) as e:
+                    logger.warning(f"Could not set job metadata in exec_ctx: {e}")
                 
                 from noetl.plugin import execute_task
+                import time
+                action_start_time = time.time()
                 result = execute_task(action_cfg, task_name, exec_ctx, self._jinja, task_data)
+                action_end_time = time.time()
+                action_duration = action_end_time - action_start_time
 
                 # Inline save: if the action config declares a `save` block, perform the save on worker
                 inline_save = None
@@ -908,9 +958,9 @@ class QueueWorker:
                                 exec_ctx_with_result['data'] = _current
                             logger.debug(f"WORKER: Added result context variables - result keys: {list(_current.keys()) if isinstance(_current, dict) else type(_current)}, this keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
                         except Exception as ctx_err:
-                            logger.warning(f"WORKER: Failed to add result context variables, falling back to original context: {ctx_err}")
+                            logger.exception(f"WORKER: Failed to add result context variables, falling back to original context: {ctx_err}")
                             exec_ctx_with_result = exec_ctx
-                        from ..plugin.save import execute_save_task as _do_save
+                        from noetl.plugin.shared.storage import execute_save_task as _do_save
                         save_payload = {'save': inline_save}
                         logger.debug(f"WORKER: About to call save plugin with context keys: {list(exec_ctx_with_result.keys()) if isinstance(exec_ctx_with_result, dict) else type(exec_ctx_with_result)}")
                         if isinstance(exec_ctx_with_result, dict) and 'result' in exec_ctx_with_result:
@@ -925,6 +975,7 @@ class QueueWorker:
                                 result['meta'] = {'save': save_out}
                     except Exception as _e:
                         # Attach error under meta.save_error but do not fail the action
+                        logger.exception("WORKER: Inline save operation failed")
                         if isinstance(result, dict):
                             if 'meta' in result and isinstance(result['meta'], dict):
                                 result['meta']['save_error'] = str(_e)
@@ -941,20 +992,28 @@ class QueueWorker:
                     error_event = {
                         "execution_id": execution_id,
                         "catalog_id": catalog_id,
-                        "event_type": "action_error",
+                        "event_type": "action_failed",
                         "status": "FAILED",
                         "node_id": node_id,
                         "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
+                        "duration": action_duration,
                         "error": err_msg,
-                        "traceback": tb_text,
+                        "stack_trace": tb_text,
                         "result": result,
-                        
                     }
+                    # Attach queue meta to event for server-side context tracking
+                    if job_meta and isinstance(job_meta, dict):
+                        if "meta" not in error_event:
+                            error_event["meta"] = {}
+                        error_event["meta"]["queue_meta"] = job_meta
+                        
                     if loop_meta:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    if parent_execution_id:
+                        error_event["parent_execution_id"] = parent_execution_id
                     
                     from noetl.plugin import report_event
                     error_event = self._validate_event_status(error_event)
@@ -970,8 +1029,15 @@ class QueueWorker:
                         "node_id": node_id,
                         "node_name": event_node_name,  # Use step name for orchestration
                         "node_type": node_type_val,
+                        "duration": action_duration,
                         "result": result,
                     }
+                    # Attach queue meta to event for server-side context tracking
+                    if job_meta and isinstance(job_meta, dict):
+                        if "meta" not in complete_event:
+                            complete_event["meta"] = {}
+                        complete_event["meta"]["queue_meta"] = job_meta
+                        
                     if loop_meta:
                         complete_event.update(loop_meta)
                     # Use action_started event_id as parent for action_completed
@@ -980,6 +1046,8 @@ class QueueWorker:
                     elif parent_event_id:
                         # Fallback to context parent_event_id for iterator/nested cases
                         complete_event["parent_event_id"] = parent_event_id
+                    if parent_execution_id:
+                        complete_event["parent_execution_id"] = parent_execution_id
                     
                     from noetl.plugin import report_event
                     complete_event = self._validate_event_status(complete_event)
@@ -998,9 +1066,15 @@ class QueueWorker:
                             "node_id": node_id,
                             "node_name": event_node_name,  # Use step name for orchestration
                             "node_type": node_type_val,
+                            "duration": action_duration,
                             "result": norm_result,
-                            
                         }
+                        # Attach queue meta to event for server-side context tracking
+                        if job_meta and isinstance(job_meta, dict):
+                            if "meta" not in step_result_event:
+                                step_result_event["meta"] = {}
+                            step_result_event["meta"]["queue_meta"] = job_meta
+                            
                         if loop_meta:
                             step_result_event.update(loop_meta)
                         
@@ -1011,6 +1085,8 @@ class QueueWorker:
                         elif parent_event_id:
                             # Fallback to context parent_event_id for iterator/nested cases
                             step_result_event["parent_event_id"] = parent_event_id
+                        if parent_execution_id:
+                            step_result_event["parent_execution_id"] = parent_execution_id
                         
                         from noetl.plugin import report_event
                         step_result_event = self._validate_event_status(step_result_event)
@@ -1019,6 +1095,7 @@ class QueueWorker:
                         logger.debug("WORKER: Failed to emit step_result companion event", exc_info=True)
 
             except Exception as e:
+                logger.exception(f"WORKER: Exception during task execution for job {e}")
                 try:
                     import traceback as _tb
                     tb_text = _tb.format_exc()
@@ -1028,20 +1105,30 @@ class QueueWorker:
                     error_event = {
                         "execution_id": execution_id,
                         "catalog_id": catalog_id,
-                        "event_type": "action_error",
+                        "event_type": "action_failed",
                         "status": "FAILED",
                         "node_id": node_id,
                         "node_name": task_name,
                         "node_type": node_type_val,
                         "error": f"{type(e).__name__}: {str(e)}",
-                        "traceback": tb_text,
-                        "result": {"error": str(e), "traceback": tb_text},
-                        
+                        "stack_trace": tb_text,
+                        "result": {"error": str(e), "stack_trace": tb_text},
                     }
+                    # Add duration if action_duration was captured (error during/after execute_task)
+                    if 'action_duration' in locals():
+                        error_event["duration"] = action_duration
+                    # Attach queue meta to event for server-side context tracking
+                    if job_meta and isinstance(job_meta, dict):
+                        if "meta" not in error_event:
+                            error_event["meta"] = {}
+                        error_event["meta"]["queue_meta"] = job_meta
+                        
                     if loop_meta:
                         error_event.update(loop_meta)
                     if parent_event_id:
                         error_event["parent_event_id"] = parent_event_id
+                    if parent_execution_id:
+                        error_event["parent_execution_id"] = parent_execution_id
                     
                     from noetl.plugin import report_event
                     error_event = self._validate_event_status(error_event)
@@ -1068,9 +1155,9 @@ class QueueWorker:
     async def _report_simple_worker_metrics(self) -> None:
         """Report simple worker metrics for standalone QueueWorker instances."""
         # Check if metrics are disabled
-        metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+        metrics_disabled = self._settings.metrics_disabled
         if metrics_disabled:
-            logger.debug("Simple metric reporting disabled")
+            # logger.debug("Simple metric reporting disabled")
             return
         
         try:
@@ -1112,7 +1199,7 @@ class QueueWorker:
                 logger.debug(f"Error collecting worker metrics: {e}")
             
             # Get component name from environment or use worker_id
-            component_name = os.environ.get('NOETL_WORKER_POOL_NAME') or f'worker-{self.worker_id}'
+            component_name = (self._settings.pool_name or '').strip() or f'worker-{self.worker_id}'
             
             # Report to server
             payload = {
@@ -1127,7 +1214,7 @@ class QueueWorker:
                         "labels": {
                             "component": component_name,
                             "worker_id": self.worker_id,
-                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                            "hostname": self._settings.hostname
                         },
                         "help_text": m.get("help_text", ""),
                         "unit": m.get("unit", "")
@@ -1160,7 +1247,7 @@ class QueueWorker:
             dynamically.
         """
         # Metrics reporting interval (default 60 seconds)
-        metrics_interval = float(os.environ.get("NOETL_WORKER_METRICS_INTERVAL", "60"))
+        metrics_interval = self._settings.worker_metrics_interval
         last_metrics_time = 0.0
         
         try:
@@ -1187,8 +1274,8 @@ class QueueWorker:
             if self._deregister_on_exit:
                 try:
                     await asyncio.to_thread(deregister_worker_pool_from_env)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to deregister worker pool on exit: {e}", exc_info=True)
 
 
 class ScalableQueueWorkerPool:
@@ -1201,16 +1288,16 @@ class ScalableQueueWorkerPool:
             check_interval: float = 5.0,
             worker_poll_interval: float = 1.0,
             max_processes: Optional[int] = None,
+            settings: Optional[WorkerSettings] = None,
     ) -> None:
-        self.server_url = _normalize_server_url(
-            server_url or os.getenv("NOETL_SERVER_URL", "http://localhost:8082"),
-            ensure_api=True,
-        )
-        self.max_workers = max_workers or int(os.getenv("NOETL_MAX_WORKERS", "8"))
+        self._settings = _resolve_worker_settings(settings)
+        resolved_server_url = server_url or self._settings.normalized_server_url
+        self.server_url = _normalize_server_url(resolved_server_url, ensure_api=True)
+        self.max_workers = max_workers or self._settings.max_workers
         self.check_interval = check_interval
         self.worker_poll_interval = worker_poll_interval
         self.max_processes = max_processes or self.max_workers
-        self.worker_id = os.getenv("NOETL_WORKER_ID") or str(uuid.uuid4())
+        self.worker_id = self._settings.worker_id or str(uuid.uuid4())
         self._thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
         self._process_pool = ProcessPoolExecutor(max_workers=self.max_processes)
         self._tasks: List[Tuple[asyncio.Task, asyncio.Event]] = []
@@ -1221,7 +1308,7 @@ class ScalableQueueWorkerPool:
     async def _queue_size(self) -> int:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.server_url}/queue/size")
+                resp = await client.get(self._settings.endpoint_queue_size)
                 resp.raise_for_status()
                 data = resp.json()
                 return int(data.get("queued") or data.get("count") or 0)
@@ -1237,6 +1324,7 @@ class ScalableQueueWorkerPool:
             process_pool=self._process_pool,
             deregister_on_exit=False,
             register_on_init=False,
+            settings=self._settings,
         )
         task = asyncio.create_task(
             worker.run_forever(self.worker_poll_interval, stop_evt)
@@ -1246,7 +1334,7 @@ class ScalableQueueWorkerPool:
     async def _report_worker_metrics(self, component_name: str) -> None:
         """Report worker metrics to the server."""
         # Check if metrics are disabled
-        metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+        metrics_disabled = self._settings.metrics_disabled
         if metrics_disabled:
             logger.debug(f"Metric reporting disabled for {component_name}")
             return
@@ -1347,7 +1435,7 @@ class ScalableQueueWorkerPool:
                         "labels": {
                             "component": component_name,
                             "worker_id": self.worker_id,
-                            "hostname": os.environ.get("HOSTNAME") or socket.gethostname()
+                            "hostname": self._settings.hostname
                         },
                         "help_text": m.get("help_text", ""),
                         "unit": m.get("unit", "")
@@ -1381,7 +1469,7 @@ class ScalableQueueWorkerPool:
         # Ensure single registration for the pool
         registration_success = False
         try:
-            register_worker_pool_from_env()
+            register_worker_pool_from_env(self._settings)
             registration_success = True
             logger.info("Worker pool registration completed successfully")
         except Exception as e:
@@ -1391,18 +1479,18 @@ class ScalableQueueWorkerPool:
         if not registration_success:
             logger.info("Retrying worker pool registration...")
             try:
-                register_worker_pool_from_env()
+                register_worker_pool_from_env(self._settings)
                 logger.info("Worker pool registration retry succeeded")
             except Exception as e:
                 logger.error(f"Worker pool registration retry failed: {e}")
 
         # Heartbeat loop task
-        heartbeat_interval = float(os.environ.get("NOETL_WORKER_HEARTBEAT_INTERVAL", "15"))
+        heartbeat_interval = self._settings.worker_heartbeat_interval
 
         async def _heartbeat_loop():
-            name = os.environ.get('NOETL_WORKER_POOL_NAME') or 'worker-cpu'
+            name = (self._settings.pool_name or '').strip() or 'worker-cpu'
             payload = {"name": name}
-            url = f"{self.server_url}/worker/pool/heartbeat"
+            url = self._settings.endpoint_worker_pool_heartbeat
             consecutive_failures = 0
             max_failures = 5
             
@@ -1417,8 +1505,7 @@ class ScalableQueueWorkerPool:
                             consecutive_failures = 0
                     
                     # Report metrics with heartbeat (if enabled)
-                    metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
-                    if not metrics_disabled:
+                    if not self._settings.metrics_disabled:
                         try:
                             await self._report_worker_metrics(name)
                         except Exception as metrics_error:
@@ -1442,10 +1529,10 @@ class ScalableQueueWorkerPool:
             await self.stop()
             try:
                 hb_task.cancel()
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(asyncio.CancelledError):
                     await hb_task
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error cancelling heartbeat task: {e}", exc_info=True)
 
     async def stop(self) -> None:
         """Request the scaling loop and all workers to stop."""

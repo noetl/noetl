@@ -6,17 +6,22 @@ import json
 from typing import Dict, Any, Optional, Tuple
 from psycopg.rows import dict_row
 
-from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id
+from noetl.core.common import get_async_db_connection, get_snowflake_id_str, get_snowflake_id, get_val
+from noetl.core.db.pool import get_pool_connection
 from noetl.core.logger import setup_logger
 from noetl.server.api.catalog import get_catalog_service
-from noetl.server.api.event.event_log import EventLog
+from noetl.server.api.broker.service import EventService
+from noetl.server.api.catalog.service import CatalogService
 
 logger = setup_logger(__name__, include_location=True)
 
 
-async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
+async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
     """
     Fetch execution context from database.
+    
+    Args:
+        execution_id: Execution ID as integer (not string path)
     
     Returns:
         Dictionary with:
@@ -26,134 +31,77 @@ async def fetch_execution_context(execution_id: str) -> Dict[str, Any]:
         - playbook_version: Version of playbook
         - steps: Workflow steps definition
     """
+    # Validate execution_id is an integer
+    if not isinstance(execution_id, int):
+        raise TypeError(f"execution_id must be an integer, got {type(execution_id).__name__}: {execution_id}")
+    
     logger.debug(f"Fetching execution context for {execution_id}")
     
-    workload = {}
-    results: Dict[str, Any] = {}
-    playbook_path = None
-    playbook_version = None
-    steps = []
+
     
-    # Initialize DAO for event log access
-    dao = EventLog()
-    
-    # Fetch workload from noetl.workload table (primary source of truth)
-    async with get_async_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                """
-                SELECT data FROM noetl.workload
-                WHERE execution_id = %s
-                """,
-                (execution_id,)
-            )
-            row = await cur.fetchone()
-            if row and row.get('data'):
-                try:
-                    workload_data = row['data'] if isinstance(row['data'], dict) else json.loads(row['data'])
-                    # The workload table stores: {"path": "...", "version": "...", "workload": {...}}
-                    # Extract the actual workload dict from the nested structure
-                    workload = workload_data.get("workload", {}) if isinstance(workload_data, dict) else {}
-                    logger.debug(f"Loaded workload from noetl.workload table: {list(workload.keys()) if isinstance(workload, dict) else type(workload)}")
-                except Exception as e:
-                    logger.warning(f"Failed to parse workload from noetl.workload table: {e}")
-                    workload = {}
-    
-    # Fallback: try to fetch from earliest event context if workload table had no data
-    if not workload:
-        first_ctx = await dao.get_earliest_context(execution_id)
-        if first_ctx:
-            try:
-                ctx_first = json.loads(first_ctx) if isinstance(first_ctx, str) else first_ctx
-                workload = ctx_first.get("workload", {}) if isinstance(ctx_first, dict) else {}
-                logger.debug(f"Fallback: loaded workload from event context: {list(workload.keys()) if isinstance(workload, dict) else type(workload)}")
-            except Exception as e:
-                logger.warning(f"Failed to parse earliest context: {e}")
-                workload = {}
+    workload_data = await EventService.get_workload(execution_id) 
+    resource_template = await CatalogService.fetch_resource_template(
+        resource_path=workload_data.path,
+        version=workload_data.version
+    )   
+    # if not workload:
+    #     workload = await EventService.get_context_workload(execution_id)
     
     # Fetch results from all completed steps
-    node_results = await dao.get_all_node_results(execution_id)
-    if isinstance(node_results, dict):
-        for node_name, out in node_results.items():
-            if not node_name or out is None:
-                continue
-            try:
-                results[node_name] = json.loads(out) if isinstance(out, str) else out
-            except Exception:
-                results[node_name] = out
-    else:
-        # Fallback for list/tuple format
-        try:
-            for row in node_results or []:
-                try:
-                    node_name, out = row
-                except Exception:
-                    try:
-                        node_name = row.get('node_name')
-                        out = row.get('result')
-                    except Exception:
-                        continue
-                if not node_name or out is None:
-                    continue
-                try:
-                    results[node_name] = json.loads(out) if isinstance(out, str) else out
-                except Exception:
-                    results[node_name] = out
-        except Exception as e:
-            logger.warning(f"Failed to process node results: {e}")
+    results: Dict[str, Any] = await EventService.get_all_node_results(execution_id)
+
     
     # Fetch playbook metadata and steps
-    async with get_async_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                """
-                SELECT context, meta FROM event
-                WHERE execution_id = %s
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (execution_id,)
-            )
-            row = await cur.fetchone()
-            if row:
-                try:
-                    context = json.loads(row["context"]) if row.get("context") else {}
-                except Exception:
-                    context = row.get("context") or {}
-                try:
-                    metadata = json.loads(row.get("meta")) if row.get("meta") else {}
-                except Exception:
-                    metadata = row.get("meta") or {}
+    # async with get_pool_connection() as conn:
+    #     async with conn.cursor() as cur:
+    #         await cur.execute(
+    #             """
+    #             SELECT context, meta FROM event
+    #             WHERE execution_id = %(execution_id)s
+    #             ORDER BY created_at ASC
+    #             LIMIT 1
+    #                 """,
+    #                 {"execution_id": execution_id}
+    #         )
+    #         row = await cur.fetchone()
+    #         if row:
+    #             try:
+    #                 context = json.loads(row["context"]) if row.get("context") else {}
+    #             except Exception:
+    #                 context = row.get("context") or {}
+    #             try:
+    #                 metadata = json.loads(row.get("meta")) if row.get("meta") else {}
+    #             except Exception:
+    #                 metadata = row.get("meta") or {}
                 
-                playbook_path = (
-                    context.get('path') or
-                    (metadata.get('playbook_path') if isinstance(metadata, dict) else None) or
-                    (metadata.get('path') if isinstance(metadata, dict) else None)
-                )
-                playbook_version = (
-                    context.get('version') or
-                    (metadata.get('version') if isinstance(metadata, dict) else None)
-                )
+    #             playbook_path = (
+    #                 context.get('path') or
+    #                 (metadata.get('playbook_path') if isinstance(metadata, dict) else None) or
+    #                 (metadata.get('path') if isinstance(metadata, dict) else None)
+    #             )
+    #             playbook_version = (
+    #                 context.get('version') or
+    #                 (metadata.get('version') if isinstance(metadata, dict) else None)
+    #             )
     
     # Fetch playbook workflow steps if path available
-    if playbook_path:
-        try:
-            catalog = get_catalog_service()
-            entry = await catalog.fetch_entry(playbook_path, playbook_version or '')
-            if entry:
-                import yaml
-                pb = yaml.safe_load(entry.get('content') or '') or {}
-                workflow = pb.get('workflow', [])
-                steps = pb.get('steps') or pb.get('tasks') or workflow
-        except Exception as e:
-            logger.warning(f"Failed to fetch playbook steps: {e}")
+    # if playbook_path:
+    #     try:
+    #         catalog = get_catalog_service()
+    #         entry = await catalog.fetch_entry(workload_data.path, workload_data.version)
+    #         if entry:
+    #             import yaml
+    #             pb = yaml.safe_load(entry.get('content'))
+    #             workflow = pb.get('workflow')
+    #     except Exception as e:
+    #         logger.exception(f"Failed to fetch playbook steps: {e}")
     
     return {
-        'workload': workload,
+        'workload': workload_data.workload,
         'results': results,
-        'playbook_path': playbook_path,
-        'playbook_version': playbook_version,
-        'steps': steps,
+        'playbook_path': workload_data.path,
+        'playbook_version': workload_data.version,
+        'steps': resource_template.get('workflow', []),
     }
 
 
@@ -183,14 +131,28 @@ def build_rendering_context(
     
     # Allow direct references to prior step names
     if isinstance(results, dict):
-        base_ctx.update(results)
-        # Flatten common result wrappers (e.g., {'status': 'success', 'data': {...}})
-        for k, v in list(results.items()):
+        # Add results with wrapper objects that support both direct access and .data attribute
+        for k, v in results.items():
             try:
+                # If result has 'data' key, create a wrapper that supports both patterns
                 if isinstance(v, dict) and 'data' in v:
-                    base_ctx[k] = v.get('data')
-            except Exception:
-                pass
+                    # Create a dict-like object that allows both step.data and step.field access
+                    class ResultWrapper(dict):
+                        """Wrapper that allows accessing both the full result dict and the data field."""
+                        def __init__(self, result_dict):
+                            super().__init__(result_dict)
+                            self.data = result_dict.get('data')
+                            # Also expose other common fields
+                            self.status = result_dict.get('status')
+                            self.message = result_dict.get('message')
+                    
+                    base_ctx[k] = ResultWrapper(v)
+                else:
+                    # For results without 'data' key, use as-is
+                    base_ctx[k] = v
+            except (TypeError, AttributeError, KeyError) as e:
+                logger.debug(f"Could not wrap result for key '{k}': {e}")
+                base_ctx[k] = v
     
     # Alias workbook task results under their workflow step names
     if isinstance(steps, list):
@@ -211,8 +173,8 @@ def build_rendering_context(
     if isinstance(workload, dict):
         try:
             base_ctx.update(workload)
-        except Exception:
-            pass
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Could not update context with workload: {e}")
     
     # Merge extra context
     if isinstance(extra_context, dict):
@@ -226,23 +188,27 @@ def build_rendering_context(
                 else:
                     try:
                         job_obj["uuid"] = get_snowflake_id_str()
-                    except Exception:
+                    except (RuntimeError, OSError) as e:
+                        logger.debug(f"Could not get snowflake ID string: {e}")
                         try:
                             job_obj["uuid"] = str(get_snowflake_id())
-                        except Exception:
+                        except (RuntimeError, OSError) as e2:
+                            logger.debug(f"Could not get snowflake ID: {e2}")
                             from uuid import uuid4
                             job_obj["uuid"] = str(uuid4())
-        except Exception:
-            pass
+        except (TypeError, ValueError, KeyError) as e:
+            logger.warning(f"Could not merge extra context: {e}")
     
     # Ensure job exists
     if "job" not in base_ctx:
         try:
             base_ctx["job"] = {"uuid": get_snowflake_id_str()}
-        except Exception:
+        except (RuntimeError, OSError) as e:
+            logger.debug(f"Could not get snowflake ID string for job: {e}")
             try:
                 base_ctx["job"] = {"uuid": str(get_snowflake_id())}
-            except Exception:
+            except (RuntimeError, OSError) as e2:
+                logger.debug(f"Could not get snowflake ID for job: {e2}")
                 from uuid import uuid4
                 base_ctx["job"] = {"uuid": str(uuid4())}
     
@@ -315,14 +281,27 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
         # Render 'task' with strict mode
         if 'task' in template:
             task_tpl = template.get('task')
-            logger.info(f"RENDER_TASK_DEBUG: About to render task template: {task_tpl}")
-            logger.info(f"RENDER_TASK_DEBUG: Context keys available: {list(context.keys())}")
-            logger.info(f"RENDER_TASK_DEBUG: Workload in context: {'workload' in context}")
-            if 'workload' in context:
-                logger.info(f"RENDER_TASK_DEBUG: Workload value: {context['workload']}")
+            logger.debug(f"RENDER_TASK_DEBUG: Preparing to render task template")
+            logger.debug(f"RENDER_TASK_DEBUG: Context keys available: {list(context.keys())}")
+            logger.debug(f"RENDER_TASK_DEBUG: Workload in context: {'workload' in context}")
             try:
+                # Extract and preserve 'save' block for worker-side rendering
+                # The save block may reference 'result' which doesn't exist until after execution
+                task_tpl_copy = dict(task_tpl) if isinstance(task_tpl, dict) else task_tpl
+                save_block = None
+                if isinstance(task_tpl_copy, dict) and 'save' in task_tpl_copy:
+                    save_block = task_tpl_copy.pop('save')
+                    logger.debug(f"RENDER_TASK_DEBUG: Extracted save block: {save_block}")
+                    logger.debug(f"RENDER_TASK_DEBUG: Remaining keys in task_tpl_copy: {list(task_tpl_copy.keys())}")
+                
                 # Strict rendering keeps unresolved variables for worker-side rendering
-                task_rendered = render_template(env, task_tpl, context, rules=None, strict_keys=True)
+                task_rendered = render_template(env, task_tpl_copy, context, rules=None, strict_keys=False)
+                
+                # Re-attach the save block after rendering (unrendered for worker-side processing)
+                if save_block is not None and isinstance(task_rendered, dict):
+                    task_rendered['save'] = save_block
+                    logger.debug("RENDER_TASK_DEBUG: Re-attached save block to rendered task")
+                
                 logger.info(f"RENDER_TASK_DEBUG: Task rendered successfully: {task_rendered}")
             except Exception as e:
                 logger.warning(f"Failed to render task section: {e}")
@@ -334,7 +313,8 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
                 try:
                     import json
                     out['task'] = json.loads(task_rendered)
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError) as e:
+                    logger.debug(f"Could not parse task as JSON: {e}")
                     out['task'] = task_rendered
             else:
                 out['task'] = task_rendered
@@ -355,7 +335,7 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
 
 
 async def render_context(
-    execution_id: str,
+    execution_id: int,
     template: Any,
     extra_context: Optional[Dict[str, Any]] = None,
     strict: bool = True
@@ -364,7 +344,7 @@ async def render_context(
     Main service function to render a template against execution context.
     
     Args:
-        execution_id: Execution ID to fetch context for
+        execution_id: Execution ID as integer (not string path)
         template: Template to render
         extra_context: Additional context to merge
         strict: Whether to use strict undefined handling
@@ -372,10 +352,20 @@ async def render_context(
     Returns:
         Tuple of (rendered_result, context_keys)
     """
+    # Validate execution_id is an integer
+    if not isinstance(execution_id, int):
+        raise TypeError(f"execution_id must be an integer, got {type(execution_id).__name__}: {execution_id}")
+    
     logger.info(f"Rendering template for execution {execution_id}")
     
     # Fetch execution context
     exec_ctx = await fetch_execution_context(execution_id)
+    
+    # Ensure execution_id is in extra_context
+    if extra_context is None:
+        extra_context = {}
+    if 'execution_id' not in extra_context:
+        extra_context['execution_id'] = execution_id
     
     # Build rendering context
     render_ctx = build_rendering_context(

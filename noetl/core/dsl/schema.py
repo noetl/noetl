@@ -89,11 +89,11 @@ class DatabaseSchema:
                     self.is_postgres = True
                     logger.info("Connected to Postgres database as noetl user after creating infrastructure (async).")
                 except Exception as conn_error:
-                    logger.error(f"FATAL: Failed to connect after schema creation: {conn_error}")
+                    logger.exception(f"FATAL: Failed to connect after schema creation: {conn_error}")
                     raise
 
         except Exception as e:
-            logger.error(f"FATAL: Failed to establish async connection to Postgres: {e}")
+            logger.exception(f"FATAL: Failed to establish async connection to Postgres: {e}")
             raise
 
 
@@ -666,67 +666,67 @@ class DatabaseSchema:
             logger.error(f"Failed to get errors from error_log table: {e}", exc_info=True)
             return []
     
-    async def log_error_async(self, 
-                error_type: str, 
-                error_message: str, 
-                execution_id: str = None, 
-                step_id: str = None, 
-                step_name: str = None,
-                template_string: str = None,
-                context_data: Dict = None,
-                stack_trace: str = None,
-                input_data: Any = None,
-                output_data: Any = None,
-                severity: str = "error") -> Optional[int]:
-        try:
-            if stack_trace is None and error_type == "template_rendering":
-                stack_trace = ''.join(traceback.format_stack())
+    # async def log_error_async(self, 
+    #             error_type: str, 
+    #             error_message: str, 
+    #             execution_id: str = None, 
+    #             step_id: str = None, 
+    #             step_name: str = None,
+    #             template_string: str = None,
+    #             context_data: Dict = None,
+    #             stack_trace: str = None,
+    #             input_data: Any = None,
+    #             output_data: Any = None,
+    #             severity: str = "error") -> Optional[int]:
+    #     try:
+    #         if stack_trace is None and error_type == "template_rendering":
+    #             stack_trace = ''.join(traceback.format_stack())
 
-            context_data_json = json.dumps(make_serializable(context_data)) if context_data else None
-            input_data_json = json.dumps(make_serializable(input_data)) if input_data else None
-            output_data_json = json.dumps(make_serializable(output_data)) if output_data else None
+    #         context_data_json = json.dumps(make_serializable(context_data)) if context_data else None
+    #         input_data_json = json.dumps(make_serializable(input_data)) if input_data else None
+    #         output_data_json = json.dumps(make_serializable(output_data)) if output_data else None
 
-            if not self.conn or getattr(self.conn, 'closed', False):
-                await self.initialize_connection()
+    #         if not self.conn or getattr(self.conn, 'closed', False):
+    #             await self.initialize_connection()
 
-            async with self.conn.cursor() as cursor:
-                try:
-                    from noetl.core.common import get_snowflake_id
-                except Exception:
-                    get_snowflake_id = lambda: int(datetime.datetime.now().timestamp() * 1000)
-                event_id = get_snowflake_id()
-                meta_env = json.dumps(make_serializable({
-                    'error_type': error_type,
-                    'severity': severity,
-                    'template_string': template_string,
-                    'input_data': make_serializable(input_data),
-                    'output_data': make_serializable(output_data)
-                }))
-                await cursor.execute(f"""
-                    INSERT INTO {self.noetl_schema}.event (
-                        execution_id, event_id, created_at, event_type, node_id, node_name, status,
-                        context, result, meta, error, stack_trace
-                    ) VALUES (
-                        %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s
-                    ) RETURNING event_id
-                """, (
-                    execution_id, event_id, 'error', step_id, step_name, 'FAILED',
-                    context_data_json, output_data_json, meta_env, error_message, stack_trace
-                ))
-                row = await cursor.fetchone()
-                await self.conn.commit()
-                event_row_id = row[0] if row else None
-                logger.info(f"Logged error event with event_id: {event_row_id}")
-                return event_row_id
-        except Exception as e:
-            logger.error(f"Failed to log error (async): {e}", exc_info=True)
-            try:
-                if self.conn and not getattr(self.conn, 'autocommit', False):
-                    await self.conn.rollback()
-            except Exception:
-                pass
-            return None
+    #         async with self.conn.cursor() as cursor:
+    #             try:
+    #                 from noetl.core.common import get_snowflake_id
+    #             except Exception:
+    #                 get_snowflake_id = lambda: int(datetime.datetime.now().timestamp() * 1000)
+    #             event_id = get_snowflake_id()
+    #             meta_env = json.dumps(make_serializable({
+    #                 'error_type': error_type,
+    #                 'severity': severity,
+    #                 'template_string': template_string,
+    #                 'input_data': make_serializable(input_data),
+    #                 'output_data': make_serializable(output_data)
+    #             }))
+    #             await cursor.execute(f"""
+    #                 INSERT INTO {self.noetl_schema}.event (
+    #                     execution_id, event_id, created_at, event_type, node_id, node_name, status,
+    #                     context, result, meta, error, stack_trace
+    #                 ) VALUES (
+    #                     %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s,
+    #                     %s, %s, %s, %s, %s
+    #                 ) RETURNING event_id
+    #             """, (
+    #                 execution_id, event_id, 'error', step_id, step_name, 'FAILED',
+    #                 context_data_json, output_data_json, meta_env, error_message, stack_trace
+    #             ))
+    #             row = await cursor.fetchone()
+    #             await self.conn.commit()
+    #             event_row_id = row[0] if row else None
+    #             logger.info(f"Logged error event with event_id: {event_row_id}")
+    #             return event_row_id
+    #     except Exception as e:
+    #         logger.exception(f"Failed to log error (async): {e}")
+    #         try:
+    #             if self.conn and not getattr(self.conn, 'autocommit', False):
+    #                 await self.conn.rollback()
+    #         except Exception:
+    #             pass
+    #         return None
 
     async def mark_error_resolved_async(self, error_event_id: int, resolution_notes: str = None) -> bool:
         try:

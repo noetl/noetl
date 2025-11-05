@@ -1,0 +1,54 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: http_to_postgres_direct
+  path: examples/data_transfer/http_to_postgres_direct
+
+workload:
+  api_url: "https://jsonplaceholder.typicode.com/posts"
+  pg_credential: pg_local
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: create_table
+
+  - step: create_table
+    desc: Create table for storing HTTP data
+    type: postgres
+    auth: "{{ workload.pg_credential }}"
+    command: |
+      CREATE TABLE IF NOT EXISTS public.http_posts (
+        id SERIAL PRIMARY KEY,
+        data JSONB NOT NULL,
+        fetched_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    next:
+      - step: fetch_and_store
+
+  - step: fetch_and_store
+    desc: Fetch HTTP data and store in PostgreSQL
+    type: http
+    method: GET
+    url: "{{ workload.api_url }}"
+    save:
+      storage: postgres
+      auth: "{{ workload.pg_credential }}"
+      table: http_posts
+      data:
+        data: data
+    next:
+      - step: show_count
+
+  - step: show_count
+    desc: Verify record count
+    type: postgres
+    auth: "{{ workload.pg_credential }}"
+    command: |
+      SELECT COUNT(*) as records FROM public.http_posts;
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

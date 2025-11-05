@@ -1,0 +1,27 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: broken_sql
+  path: tests/fixtures/playbooks/broken_sql
+
+workload:
+  pg_auth: pg_local
+
+workflow:
+  - step: start
+    desc: Start data transfer pipeline
+    next:
+      - step: verify_pg_data
+  - step: verify_pg_data
+    desc: Verify data was transferred to PostgreSQL
+    type: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT 
+        COUNT(*) as row_count,
+      FROM patient_info;
+    next:
+      - step: end
+  - step: end
+    desc: End data transfer test pipeline

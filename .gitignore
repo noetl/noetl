@@ -56,3 +56,4 @@ env/
 # --- Kind ---
 # Ignore folder with postgres data
 ci/kind/cache
+/scratches/
