@@ -36,7 +36,11 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({ widget }) => {
             <Title level={5}>{widget.title}</Title>
             <Progress
               percent={widget.data.percent}
-              status={widget.data.status}
+              status={
+                ["active", "success", "normal", "exception"].includes(widget.data.status as string)
+                  ? (widget.data.status as "active" | "success" | "normal" | "exception")
+                  : undefined
+              }
               strokeColor={widget.config.color}
               showInfo={true}
             />
@@ -100,7 +104,7 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({ widget }) => {
         return (
           <Space direction="vertical" style={{ width: "100%" }}>
             <Title level={5}>{widget.title}</Title>
-            <div dangerouslySetInnerHTML={{ __html: widget.data.html }} />
+            <div dangerouslySetInnerHTML={{ __html: widget.data.html ?? "" }} />
           </Space>
         );
 

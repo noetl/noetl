@@ -1,12 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 
-interface LoopData {
-    name?: string;
-    scope?: string;
-    overJSON?: string;
-    [key: string]: unknown;
-}
+interface LoopData { name?: string; scope?: string; overJSON?: string;[key: string]: unknown; }
 
 function LoopNode({ id, data }: NodeProps<Node<LoopData>>) {
     const { updateNodeData } = useReactFlow();

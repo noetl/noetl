@@ -1,11 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 
-interface PlaybooksData {
-    name?: string;
-    catalogPath?: string;
-    [key: string]: unknown;
-}
+interface PlaybooksData { name?: string; catalogPath?: string;[key: string]: unknown; }
 
 function PlaybooksNode({ id, data }: NodeProps<Node<PlaybooksData>>) {
     const { updateNodeData } = useReactFlow();

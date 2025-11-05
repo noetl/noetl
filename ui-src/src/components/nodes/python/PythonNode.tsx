@@ -1,12 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 
-interface PythonData {
-    name?: string;
-    module?: string;
-    code?: string;
-    [key: string]: unknown;
-}
+interface PythonData { name?: string; module?: string; code?: string;[key: string]: unknown; }
 
 function PythonNode({ id, data }: NodeProps<Node<PythonData>>) {
     const { updateNodeData } = useReactFlow();

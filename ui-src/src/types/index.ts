@@ -106,3 +106,31 @@ export interface ChartConfig {
   grid?: boolean;
   responsive?: boolean;
 }
+
+// Visualization widget definition used by WidgetRenderer
+export interface VisualizationWidget {
+  id: string;
+  type: 'metric' | 'progress' | 'table' | 'list' | 'text' | 'chart';
+  title: string;
+  // Data payload varies by widget type; keep flexible with typed common fields
+  data: {
+    value?: number;
+    percent?: number;
+    status?: string;
+    description?: string;
+    rows?: any[];        // table rows
+    items?: any[];       // list items
+    html?: string;       // rich text / markdown rendered as HTML
+    [key: string]: any;  // allow future extensions
+  };
+  // Configuration block controlling display and formatting
+  config: {
+    format?: 'percentage' | 'number' | string;
+    color?: string;
+    pagination?: any;         // Ant Design table pagination settings or false
+    columns?: TableColumn[];  // Table column definitions
+    height?: number;          // Chart / container height
+    chartType?: string;       // For chart placeholder (line, bar, etc.)
+    [key: string]: any;       // Additional feature flags
+  };
+}
