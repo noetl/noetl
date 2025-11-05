@@ -131,14 +131,28 @@ def build_rendering_context(
     
     # Allow direct references to prior step names
     if isinstance(results, dict):
-        base_ctx.update(results)
-        # Flatten common result wrappers (e.g., {'status': 'success', 'data': {...}})
-        for k, v in list(results.items()):
+        # Add results with wrapper objects that support both direct access and .data attribute
+        for k, v in results.items():
             try:
+                # If result has 'data' key, create a wrapper that supports both patterns
                 if isinstance(v, dict) and 'data' in v:
-                    base_ctx[k] = v.get('data')
-            except Exception:
-                pass
+                    # Create a dict-like object that allows both step.data and step.field access
+                    class ResultWrapper(dict):
+                        """Wrapper that allows accessing both the full result dict and the data field."""
+                        def __init__(self, result_dict):
+                            super().__init__(result_dict)
+                            self.data = result_dict.get('data')
+                            # Also expose other common fields
+                            self.status = result_dict.get('status')
+                            self.message = result_dict.get('message')
+                    
+                    base_ctx[k] = ResultWrapper(v)
+                else:
+                    # For results without 'data' key, use as-is
+                    base_ctx[k] = v
+            except (TypeError, AttributeError, KeyError) as e:
+                logger.debug(f"Could not wrap result for key '{k}': {e}")
+                base_ctx[k] = v
     
     # Alias workbook task results under their workflow step names
     if isinstance(steps, list):
@@ -159,8 +173,8 @@ def build_rendering_context(
     if isinstance(workload, dict):
         try:
             base_ctx.update(workload)
-        except Exception:
-            pass
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Could not update context with workload: {e}")
     
     # Merge extra context
     if isinstance(extra_context, dict):
@@ -174,23 +188,27 @@ def build_rendering_context(
                 else:
                     try:
                         job_obj["uuid"] = get_snowflake_id_str()
-                    except Exception:
+                    except (RuntimeError, OSError) as e:
+                        logger.debug(f"Could not get snowflake ID string: {e}")
                         try:
                             job_obj["uuid"] = str(get_snowflake_id())
-                        except Exception:
+                        except (RuntimeError, OSError) as e2:
+                            logger.debug(f"Could not get snowflake ID: {e2}")
                             from uuid import uuid4
                             job_obj["uuid"] = str(uuid4())
-        except Exception:
-            pass
+        except (TypeError, ValueError, KeyError) as e:
+            logger.warning(f"Could not merge extra context: {e}")
     
     # Ensure job exists
     if "job" not in base_ctx:
         try:
             base_ctx["job"] = {"uuid": get_snowflake_id_str()}
-        except Exception:
+        except (RuntimeError, OSError) as e:
+            logger.debug(f"Could not get snowflake ID string for job: {e}")
             try:
                 base_ctx["job"] = {"uuid": str(get_snowflake_id())}
-            except Exception:
+            except (RuntimeError, OSError) as e2:
+                logger.debug(f"Could not get snowflake ID for job: {e2}")
                 from uuid import uuid4
                 base_ctx["job"] = {"uuid": str(uuid4())}
     
@@ -295,7 +313,8 @@ def render_template_object(template: Any, context: Dict[str, Any], strict: bool 
                 try:
                     import json
                     out['task'] = json.loads(task_rendered)
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError) as e:
+                    logger.debug(f"Could not parse task as JSON: {e}")
                     out['task'] = task_rendered
             else:
                 out['task'] = task_rendered

@@ -364,7 +364,11 @@ class EventService:
                 )
                 row = await cur.fetchone()
                 if row and row.get("data"):
-                    return WorkloadData(**json.loads(row.get("data")))
+                    data = row.get("data")
+                    # Handle both string (JSON) and dict (JSONB) from PostgreSQL
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    return WorkloadData(**data)
 
     @staticmethod
     async def get_context_workload(execution_id: int) -> Optional[Dict[str, Any]]:
@@ -394,7 +398,11 @@ class EventService:
                 )
                 row = await cur.fetchone()
                 if row and row.get("context"):
-                    workload = get_val(json.loads(row.get("context")), ["workload"], None)
+                    context = row.get("context")
+                    # Handle both string (JSON) and dict (JSONB) from PostgreSQL
+                    if isinstance(context, str):
+                        context = json.loads(context)
+                    workload = get_val(context, ["workload"], None)
                     return workload
     
     @staticmethod
@@ -432,7 +440,11 @@ class EventService:
                 for row in rows:
                     if row['node_name']:
                         if row['result']:
-                            results[row['node_name']] = json.loads(row['result'])               
+                            result = row['result']
+                            # Handle both string (JSON) and dict (JSONB) from PostgreSQL
+                            if isinstance(result, str):
+                                result = json.loads(result)
+                            results[row['node_name']] = result
                 return results
 
 

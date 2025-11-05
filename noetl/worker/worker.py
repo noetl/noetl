@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import sys
 from jinja2 import Environment, StrictUndefined, BaseLoader
 
-from noetl.core.common import convert_snowflake_ids_for_api, get_async_db_connection
+from noetl.core.common import convert_snowflake_ids_for_api
 from noetl.core.status import validate_status
 from noetl.core.logger import setup_logger
 from noetl.core.config import get_settings, get_worker_settings, Settings, WorkerSettings

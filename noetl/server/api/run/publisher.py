@@ -265,8 +265,12 @@ class QueuePublisher:
                     
                     queue_id = await get_snowflake_id()
 
-                    # Parse step config
-                    step_cfg = json.loads(step_def["raw_config"])
+                    # Parse step config - handle both string (JSON) and dict (JSONB) from PostgreSQL
+                    raw_config = step_def["raw_config"]
+                    if isinstance(raw_config, str):
+                        step_cfg = json.loads(raw_config)
+                    else:
+                        step_cfg = raw_config or {}
                     
                     # Expand workbook references (if type='workbook')
                     step_cfg = await expand_workbook_reference(step_cfg, catalog_id)

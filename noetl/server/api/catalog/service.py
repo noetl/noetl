@@ -128,6 +128,21 @@ class CatalogService:
                 row = await cur.fetchone()
                 return CatalogEntry(**row) if row else None
 
+    
+    @staticmethod
+    async def fetch_resource_template(
+        resource_path: str,
+        version: Optional[int] = None
+    ) -> Optional[dict[str, Any]]:
+        """Fetch catalog entry by path and version (None for latest)"""
+        entry = await CatalogService.fetch_entry(
+            path=resource_path,
+            version=version
+        )
+        if entry and entry.content:
+            return yaml.safe_load(entry.content)
+        return None
+    
     @staticmethod
     async def get_catalog_id(resource_path: str, version: str | int) -> Optional[int]:
         """Get catalog_id for a given path and version"""

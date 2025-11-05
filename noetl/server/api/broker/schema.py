@@ -289,10 +289,24 @@ class WorkloadData(BaseModel):
         ...,
         description="Path associated with the workload"
     )
-    version: str = Field(
-        ...,
-        description="Version of the workload"
+    version: Optional[int] = Field(
+        None,
+        description="Version of the workload (integer or None for latest)"
     )
+    
+    @field_validator('version', mode='before')
+    @classmethod
+    def coerce_version_to_int(cls, v):
+        """Convert version to int if it's not None."""
+        if v is None:
+            return None
+        # Handle both string and int inputs
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                raise ValueError(f"version must be convertible to int, got: {v}")
+        return int(v)
 
 __all__ = [
     "EventType",

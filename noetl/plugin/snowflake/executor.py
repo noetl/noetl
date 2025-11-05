@@ -16,7 +16,7 @@ import datetime
 from typing import Dict
 from jinja2 import Environment
 from noetl.core.common import make_serializable
-from noetl.core.logger import setup_logger, log_error
+from noetl.core.logger import setup_logger
 
 from .auth import resolve_snowflake_auth, validate_and_render_connection_params
 from .command import escape_task_with_params, decode_base64_commands, render_and_split_commands
@@ -161,22 +161,8 @@ def execute_snowflake_task(
                 {'with_params': task_with}, event_id
             )
 
-        # Step 12: Log errors to database if any
+        # Step 12: Return error response if any (error logged via event system)
         if has_error:
-            try:
-                log_error(
-                    error=Exception(error_message),
-                    error_type="snowflake_execution",
-                    template_string=str(commands),
-                    context_data=make_serializable(context),
-                    input_data=make_serializable(task_with),
-                    execution_id=context.get('execution_id'),
-                    step_id=task_id,
-                    step_name=task_name
-                )
-            except Exception as e:
-                logger.error(f"Failed to log error to database: {e}")
-
             return format_error_response(task_id, error_message, results)
         else:
             return format_success_response(task_id, results)

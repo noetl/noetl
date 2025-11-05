@@ -142,7 +142,11 @@ class MetricsService:
                 
                 metrics = []
                 for row in rows:
-                    labels_data = json.loads(row[7]) if row[7] else None
+                    labels_data = row[7]
+                    if labels_data:
+                        # Handle both string (JSON) and dict (JSONB) from PostgreSQL
+                        if isinstance(labels_data, str):
+                            labels_data = json.loads(labels_data)
                     metrics.append({
                         "metric_id": row[0],
                         "runtime_id": row[1],
