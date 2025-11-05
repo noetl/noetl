@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
+import './PostgresNode.less';
 
 interface PostgresData { name?: string; sql?: string;[key: string]: unknown; }
 
@@ -9,19 +10,18 @@ function PostgresNode({ id, data }: NodeProps<Node<PostgresData>>) {
     const sql = (data?.sql || '').toString();
     const preview = sql ? (sql.length > 46 ? sql.slice(0, 43) + '…' : sql) : '';
     return (
-        <div style={{ padding: 8, border: '1px solid #336791', borderRadius: 8, fontSize: 12, background: '#fff', maxWidth: 220 }}>
+        <div className="PostgresNode">
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>🐘 {name}</div>
+            <div className="PostgresNode__title">🐘 {name}</div>
             <textarea
-                style={{ width: '100%', fontSize: 10, fontFamily: 'monospace', marginBottom: 4 }}
+                className="xy-theme__input PostgresNode__sql"
                 rows={3}
                 value={sql}
                 placeholder="SELECT 1;"
                 onChange={(e) => updateNodeData(id, { sql: e.target.value })}
-                className="xy-theme__input"
             />
-            {preview && <div style={{ fontSize: 10, opacity: 0.6 }}>{preview}</div>}
+            {preview && <div className="PostgresNode__preview">{preview}</div>}
         </div>
     );
 }

@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import { Button, Modal } from 'antd';
+import './WorkbookNode.less';
 
 interface WorkbookData { name?: string; task?: string; withJSON?: string;[key: string]: unknown; }
 
@@ -13,12 +14,12 @@ function WorkbookNode({ id, data }: NodeProps<Node<WorkbookData>>) {
     const withPreview = withJSON ? (withJSON.length > 40 ? withJSON.slice(0, 37) + '…' : withJSON) : '';
     return (
         <>
-            <div style={{ padding: 8, border: '1px solid #ff6b35', borderRadius: 8, fontSize: 12, background: '#fff' }}>
+            <div className="WorkbookNode">
                 <Handle type="target" position={Position.Left} />
                 <Handle type="source" position={Position.Right} />
                 <Button onClick={() => setIsModalOpen(true)} className="edit-node-btn">Edit</Button>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>📊 {name}</div>
-                {withPreview && <div style={{ fontSize: 10, opacity: 0.6 }}>{withPreview}</div>}
+                <div className="WorkbookNode__title">📊 {name}</div>
+                {withPreview && <div className="WorkbookNode__preview">{withPreview}</div>}
             </div>
             <Modal
                 title={`test title`}
@@ -31,19 +32,17 @@ function WorkbookNode({ id, data }: NodeProps<Node<WorkbookData>>) {
                 cancelText="Cancel"
             >
                 <input
-                    style={{ width: '100%', fontSize: 11, marginBottom: 4 }}
+                    className="xy-theme__input WorkbookNode__input"
                     value={task}
                     placeholder="task name"
                     onChange={(e) => updateNodeData(id, { task: e.target.value })}
-                    className="xy-theme__input"
                 />
                 <textarea
-                    style={{ width: '100%', fontSize: 10, fontFamily: 'monospace', marginBottom: 4 }}
+                    className="xy-theme__input WorkbookNode__textarea"
                     rows={3}
                     value={withJSON}
                     placeholder="with JSON"
                     onChange={(e) => updateNodeData(id, { withJSON: e.target.value })}
-                    className="xy-theme__input"
                 />
             </Modal>
         </>
