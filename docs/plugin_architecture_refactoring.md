@@ -105,7 +105,7 @@ from ..auth import resolve_*_auth
 
 ## Proposed Refactoring
 
-### Option 1: Three-Tier Structure (Recommended)
+### Three-Tier Structure (Recommended)
 
 ```
 noetl/plugin/
@@ -130,14 +130,14 @@ noetl/plugin/
 │   │   ├── http.py
 │   │   ├── duckdb.py
 │   │   └── utils.py
-│   ├── storage/                    # Renamed from 'save'
+│   ├── save/                    # from 'save' attribute
 │   │   ├── __init__.py
 │   │   ├── config.py
 │   │   ├── executor.py
 │   │   ├── postgres.py
 │   │   ├── duckdb.py
 │   │   ├── http.py
-│   │   └── python.py
+│   │   └── google_storage.py
 │   └── secrets/                    # External secret manager integration
 │       ├── __init__.py
 │       ├── executor.py
@@ -202,34 +202,6 @@ noetl/plugin/
 │           └── executor.py
 ```
 
-### Option 2: Flat with Prefixes (Simpler Migration)
-
-```
-noetl/plugin/
-├── __init__.py
-
-# Shared infrastructure (prefix: core_)
-├── core_runtime/                   # Renamed from tool
-├── core_auth/                      # Shared auth
-├── core_storage/                   # Renamed from save
-├── core_secrets/                   # Shared secrets
-
-# Controller (prefix: flow_)
-├── flow_iterator/
-├── flow_workbook/
-├── flow_result/
-├── flow_playbook/
-
-# Actions (no prefix needed - clear context)
-├── postgres/
-├── http/
-├── python/
-├── duckdb/
-├── snowflake/
-└── transfer/
-```
-
-## Recommended Approach: Option 1 (Three-Tier)
 
 ### Rationale
 
