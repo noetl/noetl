@@ -1,6 +1,91 @@
 version: '3.45'
 
 tasks:
+  tshoot:local:check-dependencies:
+    desc: "Verify required tools for dev bootstrap are installed"
+    aliases: [deps, check-deps]
+    silent: true
+    cmds:
+      - |
+        #!/usr/bin/env bash
+        set -e
+
+        missing=()
+        hints=()
+        warnings=()
+
+        os_name=""
+        pkg_hint=""
+        uname_out="$(uname -s 2>/dev/null || echo "")"
+        case "$uname_out" in
+          Darwin)
+            os_name="macOS"
+            pkg_hint="brew install"
+            ;;
+          Linux)
+            if [ -f /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null; then
+              os_name="WSL2"
+              pkg_hint="sudo apt-get install"
+            else
+              os_name="Linux"
+              pkg_hint="sudo apt-get install"
+            fi
+            ;;
+          *)
+            os_name="Unknown OS"
+            pkg_hint="your package manager"
+            ;;
+        esac
+
+        require_cmd() {
+          local cmd="$1"
+          shift
+          local hint="$*"
+          if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing+=("$cmd")
+            hints+=("$cmd: $hint")
+          fi
+        }
+
+        require_any() {
+          local label="$1"; shift
+          local candidate
+          for candidate in "$@"; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+              return 0
+            fi
+          done
+          warnings+=("Install one of [$*] to enable $label checks.")
+        }
+
+        require_cmd docker "Install Docker (Mac: https://docs.docker.com/desktop/install/mac; Linux/WSL2: https://docs.docker.com/engine/install/)."
+        require_cmd kind "Install kind (Mac: brew install kind; Linux/WSL2: $pkg_hint kind or follow https://kind.sigs.k8s.io/)."
+        require_cmd kubectl "Install kubectl (Mac: brew install kubectl; Linux/WSL2: $pkg_hint kubectl or see https://kubernetes.io/docs/tasks/tools/)."
+        require_cmd helm "Install Helm (Mac: brew install helm; Linux/WSL2: $pkg_hint helm or https://helm.sh/docs/intro/install/)."
+        require_cmd yq "Install yq v4+ (Mac: brew install yq; Linux/WSL2: $pkg_hint yq or https://github.com/mikefarah/yq)."
+        require_cmd task "Install go-task (Mac: brew install go-task/tap/go-task; Linux/WSL2: $pkg_hint task or see https://taskfile.dev/)."
+
+        require_any "port availability" lsof ss netstat nc
+
+        echo "Detected platform: $os_name"
+
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "Missing required commands for dev bootstrap:"
+          for idx in "${!hints[@]}"; do
+            echo "  - ${hints[$idx]}"
+          done
+          exit 1
+        fi
+
+        if [ "${#warnings[@]}" -gt 0 ]; then
+          echo "Optional tools not found:"
+          for warning in "${warnings[@]}"; do
+            echo "  - $warning"
+          done
+        fi
+
+        echo "All required dependencies are available."
+
   tshoot:local:check-ports:
     desc: "Check if required ports are free (54321, 3000, 9428, 8082)"
     aliases: [p, check-ports]
@@ -11,11 +96,50 @@ tasks:
         set -e
 
         ports=(54321 3000 9428 8082)
-        output=$(lsof -nP -iTCP -sTCP:LISTEN)
-
         error=0
+
+        # Platform-agnostic port check function
+        check_port() {
+            local port=$1
+            
+            # Try multiple methods for maximum compatibility
+            # Return 0 if port is busy, 1 if free (for bash if statement)
+            
+            # Method 1: Try lsof (macOS, Linux)
+            if command -v lsof >/dev/null 2>&1; then
+                if lsof -nP -iTCP:${port} -sTCP:LISTEN >/dev/null 2>&1; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            # Method 2: Try ss (modern Linux, WSL2)
+            if command -v ss >/dev/null 2>&1; then
+                if ss -ltn 2>/dev/null | grep -q ":${port} "; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            # Method 3: Try netstat (fallback for older systems)
+            if command -v netstat >/dev/null 2>&1; then
+                # Different netstat flags for different platforms
+                if netstat -an 2>/dev/null | grep -q "[:.]${port}.*LISTEN"; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            # Method 4: Try nc (netcat) as last resort - attempt connection
+            if command -v nc >/dev/null 2>&1; then
+                if nc -z localhost ${port} 2>/dev/null; then
+                    return 0  # Port is busy
+                fi
+            fi
+            
+            return 1  # Port is free
+        }
+
+        # Check each port
         for port in "${ports[@]}"; do
-            if echo "$output" | grep -q ":$port "; then
+            if check_port $port; then
                 echo "ERROR: Port $port is already LISTENING (busy)"
                 error=1
             else

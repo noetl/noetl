@@ -1,4 +1,4 @@
-from noetl.core.config import get_settings
+from noetl.core.config import get_settings, Settings
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,11 +39,13 @@ def create_app() -> FastAPI:
         level=logging.INFO
     )
 
-    return _create_app(settings.enable_ui)
+    return _create_app(settings=settings)
 
 
-def _create_app(enable_ui: bool = True) -> FastAPI:
+def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI:
     from contextlib import asynccontextmanager
+    if enable_ui is None:
+        enable_ui = settings.enable_ui
 
     # Simple in-process metrics without external deps
     _process_start_time = time.time()
@@ -52,26 +54,10 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
     def register_server_directly() -> None:
         from noetl.core.common import get_db_connection, get_snowflake_id
-        import socket as _socket
-
-        settings = get_settings()
-        server_url = (getattr(settings, 'server_url', '') or '').strip()
-        if not server_url:
-            raise RuntimeError("settings.server_url is required but not set")
-        if not server_url.endswith('/api'):
-            server_url = server_url + '/api'
-
-        name = (getattr(settings, 'server_name', '') or '').strip()
-        if not name:
-            raise RuntimeError("settings.server_name is required but not set")
-
-        labels_env = os.environ.get("NOETL_SERVER_LABELS")
-        if labels_env:
-            labels = [s.strip() for s in labels_env.split(',') if s.strip()]
-        else:
-            labels = None
-
-        hostname = os.environ.get("HOSTNAME") or _socket.gethostname()
+        server_url = settings.server_api_url
+        name = settings.server_name
+        labels = settings.server_labels or None
+        hostname = settings.hostname
 
         import datetime as _dt
         try:
@@ -118,10 +104,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
                 except Exception:
                     name = None
             if not name:
-                try:
-                    name = get_settings().server_name
-                except Exception:
-                    name = os.environ.get('NOETL_SERVER_NAME')
+                name = settings.server_name
             if not name:
                 return
             with get_db_connection() as conn:
@@ -148,25 +131,17 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
             # Background runtime sweeper / server heartbeat
             # --------------------------------------------------
             stop_event = asyncio.Event()
-            sweep_interval = float(os.environ.get("NOETL_RUNTIME_SWEEP_INTERVAL", "15"))
-            offline_after = int(os.environ.get("NOETL_RUNTIME_OFFLINE_SECONDS", "60"))
-            try:
-                server_settings = get_settings()
-                server_name = server_settings.server_name
-                auto_recreate_runtime = getattr(server_settings, 'auto_recreate_runtime', False)
-                server_url = server_settings.server_url.rstrip('/')
-            except Exception:
-                server_name = os.environ.get("NOETL_SERVER_NAME", "server-local")
-                auto_recreate_runtime = False
-                server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
-            if not server_url.endswith('/api'):
-                server_url = server_url + '/api'
-            hostname = os.environ.get("HOSTNAME") or socket.gethostname()
+            sweep_interval = settings.runtime_sweep_interval
+            offline_after = settings.runtime_offline_seconds
+            server_name = settings.server_name
+            auto_recreate_runtime = getattr(settings, 'auto_recreate_runtime', False)
+            server_url = settings.server_api_url
+            hostname = settings.hostname
 
             async def _report_server_metrics(component_name: str):
                 """Report server metrics periodically."""
                 # Check if metrics are disabled
-                metrics_disabled = os.environ.get("NOETL_DISABLE_METRICS", "true").lower() == "true"
+                metrics_disabled = settings.disable_metrics
                 if metrics_disabled:
                     logger.debug(f"Server metric reporting disabled for {component_name}")
                     return
@@ -252,7 +227,7 @@ def _create_app(enable_ui: bool = True) -> FastAPI:
 
             async def _runtime_sweeper():
                 last_metrics_time = 0.0
-                metrics_interval = float(os.environ.get("NOETL_SERVER_METRICS_INTERVAL", "60"))
+                metrics_interval = settings.server_metrics_interval
 
                 while not stop_event.is_set():
                     try:

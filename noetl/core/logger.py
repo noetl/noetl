@@ -1,9 +1,13 @@
+from datetime import datetime
 import re
 import sys
 import json
 import logging
+import time
 from typing import Dict, TYPE_CHECKING
 import traceback
+
+from noetl.core.logging_context import ContextFilter, LoggingContext
 
 if TYPE_CHECKING:
     from noetl.core.dsl.schema import DatabaseSchema
@@ -175,6 +179,8 @@ class CustomFormatter(logging.Formatter):
 
             metadata_line = f"{level_color}[{level_name}]{RESET_COLOR} {scope_highlight} {location}".strip()
         else:
+            
+
             if hasattr(record, "scope"):
                 scope_highlight = f"{record.scope}"
             else:
@@ -187,7 +193,7 @@ class CustomFormatter(logging.Formatter):
             
             location = f"{vs_code_navigation}\n{location}"
 
-            metadata_line = f"[{level_name}] {scope_highlight} {location}".strip()
+            metadata_line = f"{datetime.now().isoformat()} [{level_name}] {scope_highlight} {location}".strip()
 
         if isinstance(record.msg, (dict, list)):
             message = str(record.msg)
@@ -251,6 +257,7 @@ class JSONFormatter(logging.Formatter):
 def setup_logger(name: str, include_location=False, use_json=False):
     logging.setLoggerClass(CustomLogger)
     logger = logging.getLogger(name)
+    logger.addFilter(ContextFilter())
 
     if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
         stream_handler = logging.StreamHandler(sys.stdout)
@@ -269,6 +276,17 @@ def setup_logger(name: str, include_location=False, use_json=False):
 logger = setup_logger(__name__, include_location=True)
 
 if __name__ == "__main__":
+    logger.info("outside")
+
+    with LoggingContext(logger, my_param1="outer"):
+        logger.info("inside outer")
+        with LoggingContext(logger, my_param2="inner"):
+            logger.info("inside inner")
+        logger.info("back to outer")
+
+    logger.info("outside again")
+
+
     test_logger = setup_logger("test_logger", include_location=True)
     # test_logger.debug("This is a debug message", extra={"scope": "test_scope", "user_id": 123})
     # test_logger.info("This is an info message", extra={"scope": "test_scope", "operation": "data_fetch"})

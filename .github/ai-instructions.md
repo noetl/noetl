@@ -126,11 +126,23 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - `NOETL_*` prefixed settings (see `noetl/core/config.py`)
 - Worker pool configuration via `NOETL_WORKER_POOL_*`
 - Database connection via standard `POSTGRES_*` variables
+- **Timezone**: `TZ` must match across all components (Postgres, server, worker) - default is `UTC`
 
 **Deployment Modes:**
 - Local: Direct Python execution with file-based logs
 - Docker: Containerized with environment-based configuration
 - Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics)
+
+**Timezone Configuration** (CRITICAL):
+- **Default**: UTC for all components (Postgres, server, worker)
+- **Requirement**: `TZ` environment variable must match between database and application
+- **Python Code**: Always use timezone-aware datetimes: `datetime.now(timezone.utc)`
+- **Never Use**: `datetime.utcnow()` or `datetime.now()` without timezone - causes timestamp offset bugs
+- **Config Files**: 
+  - `ci/manifests/postgres/configmap.yaml` - Postgres TZ
+  - `ci/manifests/noetl/configmap.yaml` - Server/Worker TZ
+  - `docker/postgres/Dockerfile` - Container TZ
+- **Documentation**: See `docs/timezone_configuration.md` for complete guide
 
 ## Writing Style Guidelines
 

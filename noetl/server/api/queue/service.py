@@ -13,13 +13,11 @@ Handles:
 import json
 import asyncio
 from typing import Any, Dict, List, Optional, Tuple
-from psycopg.rows import dict_row
 
-from noetl.core.common import (
-    get_async_db_connection,
-    normalize_execution_id_for_db
-)
+from noetl.core.db.pool import get_pool_connection
+from noetl.core.common import normalize_execution_id_for_db
 from noetl.core.logger import setup_logger
+from noetl.server.api.broker.service import EventService
 from .schema import (
     EnqueueResponse,
     LeaseResponse,
@@ -57,54 +55,45 @@ class QueueService:
         return normalize_execution_id_for_db(execution_id)
     
     @staticmethod
-    async def get_catalog_id_from_execution(execution_id: int) -> int:
-        """
-        Get catalog_id from the first event of an execution.
-        
-        Args:
-            execution_id: Execution ID
-            
-        Returns:
-            Catalog ID
-            
-        Raises:
-            ValueError: If no catalog_id found
-        """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT catalog_id FROM noetl.event WHERE execution_id = %s ORDER BY created_at LIMIT 1",
-                    (execution_id,)
-                )
-                row = await cur.fetchone()
-                if row:
-                    return row[0]
-                else:
-                    raise ValueError(f"No catalog_id found for execution {execution_id}")
-    
-    @staticmethod
     async def enqueue_job(
         execution_id: str | int,
         node_id: str,
         action: str,
+        catalog_id: Optional[int] = None,
         context: Optional[Dict[str, Any]] = None,
         input_context: Optional[Dict[str, Any]] = None,
+        node_name: Optional[str] = None,
+        node_type: Optional[str] = None,
         priority: int = 0,
         max_attempts: int = 5,
-        available_at: Optional[str] = None
+        available_at: Optional[Any] = None,
+        parent_event_id: Optional[str] = None,
+        parent_execution_id: Optional[str] = None,
+        event_id: Optional[str] = None,
+        queue_id: Optional[int] = None,
+        status: str = "queued",
+        metadata: Optional[Dict[str, Any]] = None
     ) -> EnqueueResponse:
         """
         Enqueue a job into the queue table.
         
         Args:
             execution_id: Execution ID
-            node_id: Node ID
-            action: Action to execute
+            node_id: Node ID (or step_id)
+            action: Action to execute (JSON string)
+            catalog_id: Catalog ID (if None, will query from EventService)
             context: Job context/input data
             input_context: Legacy field for context (backward compatibility)
+            node_name: Node name (step name)
+            node_type: Node type (step type)
             priority: Job priority (higher = more priority)
             max_attempts: Maximum retry attempts
-            available_at: Timestamp when job becomes available
+            available_at: Timestamp when job becomes available (datetime or string)
+            parent_event_id: Parent event ID that triggered this job
+            parent_execution_id: Parent execution ID (for sub-playbook calls)
+            event_id: Associated event ID
+            queue_id: Pre-generated queue ID (if None, will auto-generate)
+            status: Job status (default: "queued")
             
         Returns:
             EnqueueResponse with queue ID
@@ -116,26 +105,82 @@ class QueueService:
         # Convert execution_id from string to int for database storage
         execution_id_int = QueueService.normalize_execution_id(execution_id)
         
-        # Get catalog_id from the execution's first event
-        catalog_id = await QueueService.get_catalog_id_from_execution(execution_id_int)
+        # Get catalog_id if not provided
+        if catalog_id is None:
+            catalog_id = await EventService.get_catalog_id_from_execution(execution_id_int)
         
-        async with get_async_db_connection() as conn:
+        # Generate queue_id if not provided
+        if queue_id is None:
+            from noetl.core.db.pool import get_snowflake_id
+            queue_id = await get_snowflake_id()
+        
+        # Handle available_at - convert to proper timestamp
+        from datetime import datetime, timezone
+        if available_at is None:
+            available_at = datetime.now(timezone.utc)
+        elif isinstance(available_at, str):
+            # Keep as string for database conversion
+            pass
+        
+        async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
+                # Build metadata for queue entry
+                meta = {}
+                if parent_event_id:
+                    meta['parent_event_id'] = str(parent_event_id)
+                if parent_execution_id:
+                    meta['parent_execution_id'] = str(parent_execution_id)
+                
+                # Include iterator/execution metadata if provided
+                if metadata:
+                    meta.update(metadata)
+                
+                # Build INSERT query with all fields including meta
                 await cur.execute(
                     """
-                    INSERT INTO noetl.queue (execution_id, catalog_id, node_id, action, context, priority, max_attempts, available_at)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()))
+                    INSERT INTO noetl.queue (
+                        queue_id, execution_id, catalog_id,
+                        node_id, node_name, node_type,
+                        action, context, status, priority,
+                        attempts, max_attempts, available_at,
+                        parent_event_id, event_id, meta, created_at, updated_at
+                    ) VALUES (
+                        %(queue_id)s, %(execution_id)s, %(catalog_id)s,
+                        %(node_id)s, %(node_name)s, %(node_type)s,
+                        %(action)s, %(context)s, %(status)s, %(priority)s,
+                        %(attempts)s, %(max_attempts)s, %(available_at)s,
+                        %(parent_event_id)s, %(event_id)s, %(meta)s, %(created_at)s, %(updated_at)s
+                    )
                     ON CONFLICT (execution_id, node_id) DO NOTHING
                     RETURNING queue_id
                     """,
-                    (execution_id_int, catalog_id, node_id, action, json.dumps(context), priority, max_attempts, available_at)
+                    {
+                        "queue_id": queue_id,
+                        "execution_id": execution_id_int,
+                        "catalog_id": catalog_id,
+                        "node_id": node_id,
+                        "node_name": node_name or node_id,
+                        "node_type": node_type,
+                        "action": action if isinstance(action, str) else json.dumps(action),
+                        "context": json.dumps(context) if isinstance(context, dict) else context,
+                        "status": status,
+                        "priority": priority,
+                        "attempts": 0,
+                        "max_attempts": max_attempts,
+                        "available_at": available_at,
+                        "parent_event_id": parent_event_id,
+                        "event_id": event_id,
+                        "meta": json.dumps(meta) if meta else None,
+                        "created_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc)
+                    }
                 )
                 row = await cur.fetchone()
                 await conn.commit()
         
         return EnqueueResponse(
             status="ok",
-            id=row[0] if row else None
+            id=row["queue_id"] if row else queue_id
         )
     
     @staticmethod
@@ -150,8 +195,8 @@ class QueueService:
         Returns:
             LeaseResponse with job details or empty status
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     WITH cte AS (
@@ -206,8 +251,8 @@ class QueueService:
         Returns:
             CompleteResponse with status
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     "UPDATE noetl.queue SET status='done', lease_until = NULL WHERE queue_id = %s RETURNING queue_id, execution_id, context",
                     (queue_id,)
@@ -277,9 +322,10 @@ class QueueService:
         if parent_execution_id and parent_step and parent_execution_id != exec_id:
             logger.info(f"COMPLETION_HANDLER: Child execution {exec_id} completed for parent {parent_execution_id} step {parent_step}")
             try:
-                from noetl.server.api.event import get_event_service
+                # TODO: Use new event API for event sourcing
+                # from noetl.server.api.event import EventService
                 
-                async with get_async_db_connection() as conn:
+                async with get_pool_connection() as conn:
                     async with conn.cursor() as cur:
                         # Resolve return_step from queue.action
                         return_step = await QueueService._resolve_return_step(cur, queue_id, return_step)
@@ -294,28 +340,20 @@ class QueueService:
                             cur, parent_execution_id, parent_step, exec_id
                         )
                         
-                        # Emit per-iteration result event
-                        await get_event_service().emit({
-                            'execution_id': parent_execution_id,
-                            'event_type': 'result',
-                            'status': 'COMPLETED',
-                            'node_id': iter_data['node_id'],
-                            'node_name': parent_step,
-                            'node_type': 'task',
-                            'result': child_result,
-                            'iterator': iter_data.get('iterator'),
-                            'current_index': iter_data.get('current_index'),
-                            'current_item': iter_data.get('current_item'),
-                            'loop_id': iter_data.get('loop_id'),
-                            'loop_name': iter_data.get('loop_name'),
-                            'context': {
-                                'child_execution_id': exec_id,
-                                'parent_step': parent_step,
-                                'return_step': return_step
-                            }
-                        })
+                        # TODO: Emit per-iteration result event using new event API
+                        # await EventService.emit_event(EventEmitRequest(
+                        #     execution_id=parent_execution_id,
+                        #     event_type='result',
+                        #     status='completed',
+                        #     node_id=iter_data['node_id'],
+                        #     node_name=parent_step,
+                        #     node_type='task',
+                        #     context={'result': child_result, 'iterator': iter_data}
+                        # ))
                         
-                        logger.info(f"COMPLETION_HANDLER: Emitted action_completed for parent {parent_execution_id} step {parent_step} from child {exec_id}")
+                        logger.debug(f"Child execution {exec_id} result collected for parent {parent_execution_id}")
+                        
+                        logger.info(f"COMPLETION_HANDLER: Collected result for parent {parent_execution_id} step {parent_step} from child {exec_id}")
                         
                         # Check if all iterations are complete and emit aggregated result
                         await QueueService._check_and_emit_aggregated_result(
@@ -493,178 +531,30 @@ class QueueService:
     async def _check_and_emit_aggregated_result(
         cur,
         conn,
-        parent_execution_id: int,
+        parent_execution_id: str,
         parent_step: str
     ):
-        """Check if all iterations complete and emit aggregated result."""
-        try:
-            # Count expected iterations
-            await cur.execute(
-                """
-                SELECT COUNT(*) FROM noetl.event
-                WHERE execution_id = %s AND event_type = 'loop_iteration' AND node_name = %s
-                """,
-                (parent_execution_id, parent_step)
-            )
-            row_ct = await cur.fetchone()
-            expected = (row_ct[0] if isinstance(row_ct, tuple) else row_ct.get('count')) if row_ct else 0
-            
-            # Count completed iterations
-            await cur.execute(
-                """
-                SELECT COUNT(*) FROM noetl.event
-                WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
-                  AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
-                  AND result IS NOT NULL AND result != '{}'
-                  AND NOT (result::text LIKE '%%"skipped": true%%')
-                  AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                """,
-                (parent_execution_id, parent_step)
-            )
-            row_done = await cur.fetchone()
-            done = row_done[0] if row_done else 0
-            
-            # Check if final aggregate already exists
-            await cur.execute(
-                """
-                SELECT COUNT(*) FROM noetl.event
-                WHERE execution_id = %s AND event_type = 'action_completed' AND node_name = %s
-                  AND context::text LIKE '%%loop_completed%%' AND context::text LIKE '%%true%%'
-                """,
-                (parent_execution_id, parent_step)
-            )
-            row_final = await cur.fetchone()
-            already_final = (row_final[0] if row_final else 0) > 0
-            
-            if expected > 0 and done >= expected and not already_final:
-                from noetl.server.api.event import get_event_service
-                
-                # Collect results from each iteration
-                await cur.execute(
-                    """
-                    SELECT result FROM noetl.event
-                    WHERE execution_id = %s AND node_name = %s AND event_type IN ('result','action_completed')
-                      AND node_id LIKE '%%-iter-%%' AND lower(status) IN ('completed','success')
-                      AND result IS NOT NULL AND result != '{}'
-                      AND NOT (result::text LIKE '%%"skipped": true%%')
-                      AND NOT (result::text LIKE '%%"reason": "control_step"%%')
-                    ORDER BY created_at
-                    """,
-                    (parent_execution_id, parent_step)
-                )
-                rows_res = await cur.fetchall()
-                
-                final_results = []
-                for rr in rows_res or []:
-                    val = rr[0] if isinstance(rr, tuple) else rr.get('result')
-                    try:
-                        parsed = json.loads(val) if isinstance(val, str) else val
-                    except Exception:
-                        parsed = val
-                    if parsed is not None:
-                        final_results.append(parsed)
-                
-                result_data = {
-                    'data': {
-                        'results': final_results,
-                        'result': final_results,
-                        'count': len(final_results)
-                    },
-                    'results': final_results,
-                    'result': final_results,
-                    'count': len(final_results)
-                }
-                
-                # Emit final aggregated action_completed
-                await get_event_service().emit({
-                    'execution_id': parent_execution_id,
-                    'event_type': 'action_completed',
-                    'node_name': parent_step,
-                    'node_type': 'loop',
-                    'status': 'COMPLETED',
-                    'result': result_data,
-                    'context': {
-                        'loop_completed': True,
-                        'total_iterations': expected
-                    },
-                    'loop_id': f"{parent_execution_id}:{parent_step}",
-                    'loop_name': parent_step
-                })
-                
-                # Emit result marker event
-                await get_event_service().emit({
-                    'execution_id': parent_execution_id,
-                    'event_type': 'result',
-                    'node_name': parent_step,
-                    'node_type': 'loop',
-                    'status': 'COMPLETED',
-                    'result': result_data,
-                    'context': {
-                        'loop_completed': True,
-                        'total_iterations': expected
-                    },
-                    'loop_id': f"{parent_execution_id}:{parent_step}",
-                    'loop_name': parent_step
-                })
-                
-                # Emit loop_completed marker
-                try:
-                    await get_event_service().emit({
-                        'execution_id': parent_execution_id,
-                        'event_type': 'loop_completed',
-                        'node_name': parent_step,
-                        'node_type': 'loop_control',
-                        'status': 'COMPLETED',
-                        'result': result_data,
-                        'context': {
-                            'loop_completed': True,
-                            'total_iterations': expected,
-                            'aggregated_results': final_results
-                        },
-                        'loop_id': f"{parent_execution_id}:{parent_step}",
-                        'loop_name': parent_step
-                    })
-                except Exception:
-                    logger.debug("Failed to emit loop_completed marker event", exc_info=True)
-                
-                logger.info(f"COMPLETION_HANDLER: Emitted final aggregated event for {parent_step} with {len(final_results)} results")
-                
-                # Mark parent iterator job as done
-                try:
-                    await cur.execute(
-                        """
-                        UPDATE noetl.queue
-                        SET status='done', lease_until=NULL
-                        WHERE execution_id = %s
-                          AND node_id = %s
-                          AND status = 'leased'
-                        """,
-                        (parent_execution_id, f"{parent_execution_id}:{parent_step}")
-                    )
-                    await conn.commit()
-                except Exception:
-                    logger.debug("COMPLETION_HANDLER: Failed to mark parent iterator job done", exc_info=True)
-                
-                # Trigger broker for parent - USE NEW SERVICE LAYER BROKER
-                try:
-                    from noetl.server.api.event.service import evaluate_execution
-                    if asyncio.get_event_loop().is_running():
-                        asyncio.create_task(evaluate_execution(str(parent_execution_id)))
-                    else:
-                        await evaluate_execution(str(parent_execution_id))
-                except Exception:
-                    logger.debug("Failed to schedule broker evaluation after aggregated event", exc_info=True)
-        except Exception:
-            logger.debug("Failed to emit aggregated loop completion", exc_info=True)
+        """
+        Check if all iterations complete and emit aggregated result.
+        
+        TODO: Reimplement using new event sourcing API (noetl.server.api.event)
+        This function is temporarily disabled during event API refactoring.
+        """
+        logger.debug(
+            f"Aggregated result check disabled - TODO: implement with new event API. "
+            f"parent_execution_id={parent_execution_id}, parent_step={parent_step}"
+        )
+        # Old implementation disabled - will be reimplemented with new event sourcing model
+        pass
     
     @staticmethod
     async def _schedule_broker_evaluation(
         exec_id: int,
         parent_execution_id: Optional[int]
     ):
-        """Schedule broker evaluation for execution(s) - USE NEW SERVICE LAYER BROKER."""
+        """Schedule broker evaluation for execution(s) - USE NEW ORCHESTRATOR FROM RUN PACKAGE."""
         try:
-            from noetl.server.api.event.service import evaluate_execution
+            from noetl.server.api.run import evaluate_execution
             
             if asyncio.get_event_loop().is_running():
                 asyncio.create_task(evaluate_execution(str(exec_id)))
@@ -701,8 +591,8 @@ class QueueService:
         job_is_dead = False
         job_info = None
         
-        async with get_async_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 # Get job info including execution context
                 await cur.execute(
                     "SELECT queue_id, execution_id, node_id, attempts, max_attempts, context, catalog_id FROM noetl.queue WHERE queue_id = %s",
@@ -756,8 +646,12 @@ class QueueService:
         Args:
             job_info: Job dictionary with execution_id, node_id, context, etc.
         """
+        # TODO: Use new event API for emitting step_started events
+        # from noetl.server.api.event import EventService
+        # await EventService.emit_event(EventEmitRequest(...))
+        logger.debug(f"Step started event emission TODO - execution_id={job_info.get('execution_id')}")
+        
         try:
-            from noetl.server.api.event import get_event_service
             import json
             
             execution_id = job_info.get("execution_id")
@@ -778,13 +672,13 @@ class QueueService:
             last_error_result = None
             
             try:
-                async with get_async_db_connection() as conn:
-                    async with conn.cursor(row_factory=dict_row) as cur:
+                async with get_pool_connection() as conn:
+                    async with conn.cursor() as cur:
                         await cur.execute(
                             """
-                            SELECT error, result, traceback 
+                            SELECT error, result, stack_trace 
                             FROM noetl.event 
-                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_error'
+                            WHERE execution_id = %s AND node_name = %s AND event_type = 'action_failed'
                             ORDER BY created_at DESC 
                             LIMIT 1
                             """,
@@ -801,40 +695,21 @@ class QueueService:
             if not last_error:
                 last_error = "Task failed after all retry attempts"
             
-            # Emit step_failed event
-            event_service = get_event_service()
-            step_failed_payload = {
-                "execution_id": execution_id,
-                "catalog_id": catalog_id,
-                "event_type": "step_failed",
-                "status": "FAILED",
-                "node_id": node_id,
-                "node_name": step_name,
-                "node_type": "step",
-                "error": last_error,
-                "result": last_error_result or {},
-            }
+            # TODO: Emit step_failed and execution_failed events using new event API
+            # from noetl.server.api.event import EventService
+            # await EventService.emit_event(EventEmitRequest(
+            #     execution_id=execution_id,
+            #     event_type='step_failed',
+            #     status='failed',
+            #     node_id=node_id,
+            #     node_name=step_name,
+            #     context={'error': last_error, 'result': last_error_result}
+            # ))
+            logger.warning(f"Step '{step_name}' failed in execution {execution_id}: {last_error}")
+            logger.debug(f"TODO: Emit step_failed and execution_failed events for execution {execution_id}")
             
-            await event_service.emit(step_failed_payload)
-            logger.info(f"Emitted step_failed event for step '{step_name}' in execution {execution_id}")
-            
-            # Emit execution_failed event
-            execution_failed_payload = {
-                "execution_id": execution_id,
-                "catalog_id": catalog_id,
-                "event_type": "execution_failed",
-                "status": "FAILED",
-                "node_id": execution_id,
-                "node_name": step_name,
-                "node_type": "execution",
-                "error": f"Execution failed at step '{step_name}': {last_error}",
-                "result": {"failed_step": step_name, "reason": last_error},
-            }
-            
-            await event_service.emit(execution_failed_payload)
-            logger.info(f"Emitted execution_failed event for execution {execution_id}")
         except Exception as e:
-            logger.error(f"Error in _emit_final_failure_events: {e}", exc_info=True)
+            logger.exception(f"Error in _emit_final_failure_events: {e}")
             raise
     
     @staticmethod
@@ -854,7 +729,7 @@ class QueueService:
         Returns:
             HeartbeatResponse with status
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 if extend_seconds:
                     await cur.execute(
@@ -908,8 +783,8 @@ class QueueService:
         
         where = f"WHERE {' AND '.join(filters)}" if filters else ''
         
-        async with get_async_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     f"SELECT * FROM noetl.queue {where} ORDER BY priority DESC, queue_id LIMIT %s",
                     params + [limit]
@@ -933,18 +808,16 @@ class QueueService:
         Returns:
             QueueSizeResponse with count
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT count(*) FROM noetl.queue WHERE status = %s",
+                    "SELECT count(*) as count FROM noetl.queue WHERE status = %s",
                     (status,)
                 )
                 row = await cur.fetchone()
-                logger.debug(f"Queue size for status '{status}': {row}")
-                if isinstance(row, tuple):
-                    row = row[0]
+                count = row["count"] if row else 0
         
-        return QueueSizeResponse(status="ok", count=row)
+        return QueueSizeResponse(status="ok", count=count)
     
     @staticmethod
     async def reserve_job(worker_id: str, lease_seconds: int = 60) -> ReserveResponse:
@@ -958,14 +831,14 @@ class QueueService:
         Returns:
             ReserveResponse with job details
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     WITH cte AS (
-                      SELECT id FROM noetl.queue
+                      SELECT queue_id FROM noetl.queue
                       WHERE status IN ('queued', 'retry') AND available_at <= now()
-                      ORDER BY priority DESC, id
+                      ORDER BY priority DESC, queue_id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
                     )
@@ -976,7 +849,7 @@ class QueueService:
                         last_heartbeat=now(),
                         attempts = q.attempts + 1
                     FROM cte
-                    WHERE q.id = cte.id
+                    WHERE q.queue_id = cte.queue_id
                     RETURNING q.*;
                     """,
                     (worker_id, str(lease_seconds))
@@ -1004,8 +877,8 @@ class QueueService:
         Returns:
             AckResponse with status
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT worker_id FROM noetl.queue WHERE queue_id = %s",
                     (queue_id,)
@@ -1042,8 +915,8 @@ class QueueService:
         Returns:
             NackResponse with status
         """
-        async with get_async_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT worker_id, attempts, max_attempts FROM noetl.queue WHERE queue_id = %s",
                     (queue_id,)
@@ -1080,7 +953,7 @@ class QueueService:
         Returns:
             ReapResponse with count of reclaimed jobs
         """
-        async with get_async_db_connection() as conn:
+        async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
