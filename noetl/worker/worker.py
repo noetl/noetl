@@ -462,7 +462,7 @@ class QueueWorker:
             attempt_number = current_attempts + 1
             
             # Import retry policy evaluator
-            from noetl.plugin.tool.retry import RetryPolicy
+            from noetl.plugin.runtime import RetryPolicy
             from jinja2 import Environment
             
             # Create Jinja2 environment for condition evaluation
@@ -697,7 +697,7 @@ class QueueWorker:
             
             if act_type == 'result_aggregation':
                 # Process loop result aggregation job via worker-side coroutine
-                from noetl.plugin.result import process_loop_aggregation_job
+                from noetl.plugin.controller.result import process_loop_aggregation_job
                 import asyncio as _a
                 try:
                     _a.run(process_loop_aggregation_job(job))  # Python >=3.11 has asyncio.run alias
@@ -960,7 +960,7 @@ class QueueWorker:
                         except Exception as ctx_err:
                             logger.exception(f"WORKER: Failed to add result context variables, falling back to original context: {ctx_err}")
                             exec_ctx_with_result = exec_ctx
-                        from ..plugin.save import execute_save_task as _do_save
+                        from noetl.plugin.shared.storage import execute_save_task as _do_save
                         save_payload = {'save': inline_save}
                         logger.debug(f"WORKER: About to call save plugin with context keys: {list(exec_ctx_with_result.keys()) if isinstance(exec_ctx_with_result, dict) else type(exec_ctx_with_result)}")
                         if isinstance(exec_ctx_with_result, dict) and 'result' in exec_ctx_with_result:
