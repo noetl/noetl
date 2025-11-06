@@ -12,6 +12,6 @@ The transfer plugin uses a generic source/target pattern where:
 - No need for explicit auth mappings - each side has its own auth
 """
 
-from noetl.plugin.actions.transfer.executor import execute_transfer_action
+from noetl.plugin.tools.transfer.executor import execute_transfer_action
 
 __all__ = ["execute_transfer_action"]

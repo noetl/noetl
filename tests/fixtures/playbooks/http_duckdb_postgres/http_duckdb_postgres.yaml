@@ -29,7 +29,7 @@ workflow:
 
 - step: ensure_pg_table
   desc: Ensure raw HTTP results table exists in Postgres
-  type: postgres
+  tool: postgres
   auth: "{{ workload.pg_auth }}"
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_http_raw (
@@ -49,12 +49,12 @@ workflow:
 
 - step: http_loop
   desc: Fetch hourly temperatures for each city and save raw rows
-  type: iterator
+  tool: iterator
   collection: '{{ workload.cities }}'
   element: city
   mode: async
   task:
-    type: http
+    tool: http
     args:
       latitude: '{{ city.lat }}'
       longitude: '{{ city.lon }}'
@@ -94,15 +94,15 @@ workflow:
   args:
     require_cloud_output: true
   desc: Read Postgres rows in DuckDB, aggregate, write to GCS using unified auth dictionary
-  type: duckdb
+  tool: duckdb
   auth:
     pg_db:
       source: credential
-      type: postgres
+      tool: postgres
       key: "{{ workload.pg_auth }}"
     gcs_secret:
       source: credential
-      type: hmac
+      tool: hmac
       key: gcs_hmac_local
       scope: gs://{{ workload.gcs_bucket }}
   assert:
@@ -142,7 +142,7 @@ workflow:
   - step: ensure_metrics_table
 - step: ensure_metrics_table
   desc: Ensure metrics table exists in Postgres
-  type: postgres
+  tool: postgres
   auth: "{{ workload.pg_auth }}"
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_pipeline_metrics (
@@ -157,7 +157,7 @@ workflow:
 
 - step: end
   desc: Finish
-  type: postgres
+  tool: postgres
   auth: "{{ workload.pg_auth }}"
   command: |
     INSERT INTO public.weather_pipeline_metrics (execution_id, pg_rows_saved, gcs_flat_uri, gcs_agg_uri)

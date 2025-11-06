@@ -16,7 +16,7 @@ workflow:
 
   - step: create_table
     desc: Create table for storing HTTP data
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_credential }}"
     command: |
       DROP TABLE IF EXISTS public.http_posts;
@@ -34,7 +34,7 @@ workflow:
 
   - step: fetch_http_data
     desc: Fetch data from HTTP API
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.api_url }}"
     next:
@@ -42,11 +42,11 @@ workflow:
 
   - step: insert_posts
     desc: Insert posts into PostgreSQL
-    type: iterator
+    tool: iterator
     collection: "{{ steps.fetch_http_data.data }}"
     element: item
     task:
-      type: postgres
+      tool: postgres
       auth: "{{ workload.pg_credential }}"
       command: |
         INSERT INTO public.http_posts (post_id, user_id, title, body)
@@ -61,7 +61,7 @@ workflow:
 
   - step: show_count
     desc: Verify record count
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_credential }}"
     command: |
       SELECT COUNT(*) as records FROM public.http_posts;

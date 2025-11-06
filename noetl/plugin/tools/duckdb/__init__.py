@@ -22,14 +22,14 @@ from noetl.core.logger import setup_logger
 from noetl.worker.auth_compatibility import validate_auth_transition, transform_credentials_to_auth
 
 # Import refactored modules
-from noetl.plugin.actions.duckdb.config import create_connection_config, create_task_config, preprocess_task_with
-from noetl.plugin.actions.duckdb.connections import get_duckdb_connection as _get_connection_new, create_standalone_connection
-from noetl.plugin.actions.duckdb.extensions import get_required_extensions, install_and_load_extensions, install_database_extensions
-from noetl.plugin.actions.duckdb.auth import resolve_unified_auth, resolve_credentials, generate_duckdb_secrets
-from noetl.plugin.actions.duckdb.sql import render_commands, execute_sql_commands, serialize_results, create_task_result
-from noetl.plugin.actions.duckdb.cloud import detect_uri_scopes, configure_cloud_credentials, validate_cloud_output_requirement
-from noetl.plugin.actions.duckdb.types import JinjaEnvironment, ContextDict, LogEventCallback
-from noetl.plugin.actions.duckdb.errors import DuckDBPluginError
+from noetl.plugin.tools.duckdb.config import create_connection_config, create_task_config, preprocess_task_with
+from noetl.plugin.tools.duckdb.connections import get_duckdb_connection as _get_connection_new, create_standalone_connection
+from noetl.plugin.tools.duckdb.extensions import get_required_extensions, install_and_load_extensions, install_database_extensions
+from noetl.plugin.tools.duckdb.auth import resolve_unified_auth, resolve_credentials, generate_duckdb_secrets
+from noetl.plugin.tools.duckdb.sql import render_commands, execute_sql_commands, serialize_results, create_task_result
+from noetl.plugin.tools.duckdb.cloud import detect_uri_scopes, configure_cloud_credentials, validate_cloud_output_requirement
+from noetl.plugin.tools.duckdb.types import JinjaEnvironment, ContextDict, LogEventCallback
+from noetl.plugin.tools.duckdb.errors import DuckDBPluginError
 
 logger = setup_logger(__name__, include_location=True)
 

@@ -10,8 +10,8 @@ import httpx
 from noetl.core.logger import setup_logger
 from noetl.worker.auth_resolver import resolve_auth
 
-from noetl.plugin.actions.duckdb.types import JinjaEnvironment, ContextDict, CredentialData, AuthType
-from noetl.plugin.actions.duckdb.errors import AuthenticationError
+from noetl.plugin.tools.duckdb.types import JinjaEnvironment, ContextDict, CredentialData, AuthType
+from noetl.plugin.tools.duckdb.errors import AuthenticationError
 
 logger = setup_logger(__name__, include_location=True)
 

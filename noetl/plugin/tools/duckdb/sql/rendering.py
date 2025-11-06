@@ -7,8 +7,8 @@ from typing import Union, List, Any, Dict
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
 
-from noetl.plugin.actions.duckdb.types import JinjaEnvironment, ContextDict
-from noetl.plugin.actions.duckdb.errors import SQLExecutionError
+from noetl.plugin.tools.duckdb.types import JinjaEnvironment, ContextDict
+from noetl.plugin.tools.duckdb.errors import SQLExecutionError
 
 logger = setup_logger(__name__, include_location=True)
 

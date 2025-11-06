@@ -21,7 +21,7 @@ workflow:
 
   - step: create_sf_database
     desc: Create Snowflake database if it does not exist
-    type: snowflake
+    tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
       CREATE DATABASE IF NOT EXISTS TEST_DB;
@@ -32,7 +32,7 @@ workflow:
 
   - step: setup_pg_table
     desc: Create PostgreSQL target table
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS {{ workload.test_table_pg }} (
@@ -49,7 +49,7 @@ workflow:
 
   - step: setup_sf_table
     desc: Create and populate Snowflake source table
-    type: snowflake
+    tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
       CREATE OR REPLACE TABLE {{ workload.test_table_sf }} (
@@ -76,19 +76,19 @@ workflow:
 
   - step: transfer_sf_to_pg
     desc: Transfer data from Snowflake to PostgreSQL using generic transfer action
-    type: transfer
+    tool: transfer
     source:
-      type: snowflake
+      tool: snowflake
       auth:
         source: credential
-        type: snowflake
+        tool: snowflake
         key: "{{ workload.sf_auth }}"
       query: "SELECT * FROM TEST_DATA ORDER BY id"
     target:
-      type: postgres
+      tool: postgres
       auth:
         source: credential
-        type: postgres
+        tool: postgres
         key: "{{ workload.pg_auth }}"
       # Using custom query for UPSERT
       query: |
@@ -105,7 +105,7 @@ workflow:
 
   - step: verify_pg_data
     desc: Verify data was transferred to PostgreSQL
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT 
@@ -119,7 +119,7 @@ workflow:
 
   - step: setup_pg_source
     desc: Create PostgreSQL source table for reverse transfer
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS public.test_pg_source (
@@ -142,7 +142,7 @@ workflow:
 
   - step: setup_sf_target
     desc: Create Snowflake target table for reverse transfer
-    type: snowflake
+    tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
       CREATE OR REPLACE TABLE PG_IMPORTED_DATA (
@@ -156,19 +156,19 @@ workflow:
 
   - step: transfer_pg_to_sf
     desc: Transfer data from PostgreSQL to Snowflake using generic transfer action
-    type: transfer
+    tool: transfer
     source:
-      type: postgres
+      tool: postgres
       auth:
         source: credential
-        type: postgres
+        tool: postgres
         key: "{{ workload.pg_auth }}"
       query: "SELECT * FROM public.test_pg_source ORDER BY id"
     target:
-      type: snowflake
+      tool: snowflake
       auth:
         source: credential
-        type: snowflake
+        tool: snowflake
         key: "{{ workload.sf_auth }}"
       # Using custom MERGE query for Snowflake
       query: |
@@ -189,7 +189,7 @@ workflow:
 
   - step: verify_sf_data
     desc: Verify data was transferred to Snowflake
-    type: snowflake
+    tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
       SELECT 
@@ -203,7 +203,7 @@ workflow:
 
   - step: cleanup
     desc: Clean up test tables
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       DROP TABLE IF EXISTS {{ workload.test_table_pg }};

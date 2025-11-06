@@ -7,8 +7,8 @@ from typing import Dict, Set, List, Optional
 
 from noetl.core.logger import setup_logger
 
-from noetl.plugin.actions.duckdb.types import CloudScope
-from noetl.plugin.actions.duckdb.errors import CloudStorageError
+from noetl.plugin.tools.duckdb.types import CloudScope
+from noetl.plugin.tools.duckdb.errors import CloudStorageError
 
 logger = setup_logger(__name__, include_location=True)
 

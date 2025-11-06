@@ -18,7 +18,7 @@ workflow:
 
   - step: fetch_posts
     desc: Fetch posts from JSONPlaceholder API
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.api_url }}"
     next:
@@ -26,7 +26,7 @@ workflow:
 
   - step: create_pg_table
     desc: Create PostgreSQL table for posts
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS public.http_posts (
@@ -42,7 +42,7 @@ workflow:
 
   - step: transform_and_insert
     desc: Transform and insert posts into PostgreSQL
-    type: python
+    tool: python
     code: |
       def main(input_data):
           """Transform JSON posts and insert into PostgreSQL."""
@@ -76,7 +76,7 @@ workflow:
 
   - step: execute_inserts
     desc: Execute INSERT statements
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: "{{ transform_and_insert.sql_statements | join('\n') }}"
     next:
@@ -84,7 +84,7 @@ workflow:
 
   - step: verify_data
     desc: Verify data was inserted
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT 
@@ -97,7 +97,7 @@ workflow:
 
   - step: show_sample
     desc: Show sample posts
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT id, user_id, title, LEFT(body, 50) || '...' as body_preview

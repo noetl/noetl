@@ -53,6 +53,26 @@ tasks:
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"
 
+  noetl:local:venv-create:
+    desc: Create virtual environment and install NoETL with dev dependencies
+    aliases: [venv-create, create-venv]
+    cmds:
+      - |
+        set -e
+        if [ -d ".venv" ]; then
+          echo "Virtual environment already exists at .venv"
+          echo "To recreate, remove it first: rm -rf .venv"
+        else
+          echo "Creating virtual environment at .venv..."
+          python3 -m venv .venv
+          echo "Virtual environment created successfully"
+        fi
+        echo "Installing NoETL in editable mode with dev dependencies..."
+        .venv/bin/pip install --upgrade pip
+        .venv/bin/pip install -e ".[dev]"
+        echo "Installation complete"
+        echo "Activate with: source .venv/bin/activate"
+
   noetl:local:install:
     desc: Install NoETL in editable mode
     aliases: [install]
@@ -500,6 +520,7 @@ tasks:
     desc: Setup test environment, reset postgres, register credentials and playbooks
     aliases: [local-setup-test, lste]
     cmds:
+      - task: noetl:local:venv-create
       - |
         set -e
         echo "=== Setting up test environment using local NoETL service (port 8083) ==="

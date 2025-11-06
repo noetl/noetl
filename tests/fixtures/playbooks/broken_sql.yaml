@@ -15,7 +15,7 @@ workflow:
       - step: verify_pg_data
   - step: verify_pg_data
     desc: Verify data was transferred to PostgreSQL
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT 

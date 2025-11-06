@@ -16,7 +16,7 @@ workflow:
   
   - step: process_data
     desc: Process data
-    type: python
+    tool: python
     code: |
       def main(input_data):
           return {
@@ -34,7 +34,7 @@ workflow:
         
   - step: end
     desc: End step with cleanup action
-    type: python
+    tool: python
     code: |
       def main(input_data):
           temp_table = input_data.get('temp_table', 'unknown')

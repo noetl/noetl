@@ -16,7 +16,7 @@ workflow:
 
   - step: create_table
     desc: Create table for storing HTTP data
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_credential }}"
     command: |
       DROP TABLE IF EXISTS public.http_posts;
@@ -34,7 +34,7 @@ workflow:
 
   - step: fetch_http_data
     desc: Fetch data from HTTP API
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.api_url }}"
     next:
@@ -42,7 +42,7 @@ workflow:
 
   - step: bulk_insert
     desc: Bulk insert posts into PostgreSQL
-    type: python
+    tool: python
     code: |
       import psycopg2
       import json
@@ -87,7 +87,7 @@ workflow:
 
   - step: show_count
     desc: Verify record count
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_credential }}"
     command: |
       SELECT COUNT(*) as records FROM public.http_posts;

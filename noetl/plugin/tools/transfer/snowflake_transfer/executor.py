@@ -12,8 +12,8 @@ from jinja2 import Environment
 
 from noetl.core.logger import setup_logger
 from noetl.core.common import make_serializable
-from noetl.plugin.actions.snowflake.transfer import transfer_snowflake_to_postgres, transfer_postgres_to_snowflake
-from noetl.plugin.actions.snowflake.execution import connect_to_snowflake
+from noetl.plugin.tools.snowflake.transfer import transfer_snowflake_to_postgres, transfer_postgres_to_snowflake
+from noetl.plugin.tools.snowflake.execution import connect_to_snowflake
 import psycopg
 
 logger = setup_logger(__name__, include_location=True)

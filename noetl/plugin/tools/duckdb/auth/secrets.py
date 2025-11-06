@@ -6,8 +6,8 @@ from typing import List, Dict, Any
 
 from noetl.core.logger import setup_logger
 
-from noetl.plugin.actions.duckdb.sql.rendering import escape_sql
-from noetl.plugin.actions.duckdb.errors import AuthenticationError
+from noetl.plugin.tools.duckdb.sql.rendering import escape_sql
+from noetl.plugin.tools.duckdb.errors import AuthenticationError
 
 logger = setup_logger(__name__, include_location=True)
 

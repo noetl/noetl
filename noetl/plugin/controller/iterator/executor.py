@@ -47,7 +47,7 @@ def execute_loop_task(
     7. Executes optional step-level save
     
     Expected task_config keys (standard only):
-      - type: iterator
+      - tool: iterator
       - data|collection: expression or list of items
       - element: name of the per-item variable
       - mode: 'sequential' (default) or 'async'

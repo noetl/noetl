@@ -1,9 +1,10 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Tuple
-import copy
 
-from .plan_types import StepSpec, Edge, ResourceCap
+import copy
+from typing import Any, Dict, List, Tuple
+
 from .duration_model import estimate_duration_ms
+from .plan_types import Edge, ResourceCap, StepSpec
 
 DEFAULT_DEMANDS: Dict[str, Dict[str, int]] = {
     "http": {"http_pool": 1},
@@ -16,7 +17,7 @@ DEFAULT_DEMANDS: Dict[str, Dict[str, int]] = {
 def _infer_resources(step: Dict[str, Any]) -> Dict[str, int]:
     # explicit resources on the step override defaults
     res = step.get("resources") or {}
-    stype = step.get("type")
+    stype = step.get("tool")
     if res:
         return {str(k): int(v) for k, v in res.items()}
     if stype in DEFAULT_DEMANDS:
@@ -29,7 +30,9 @@ def _normalize_playbook(pb: Dict[str, Any]) -> Dict[str, Any]:
     return pb
 
 
-def build_plan(playbook: Dict[str, Any], resource_caps: Dict[str, int]) -> tuple[list[StepSpec], list[Edge], list[ResourceCap]]:
+def build_plan(
+    playbook: Dict[str, Any], resource_caps: Dict[str, int]
+) -> tuple[list[StepSpec], list[Edge], list[ResourceCap]]:
     pb = _normalize_playbook(playbook)
     workflow: List[Dict[str, Any]] = pb.get("workflow", [])
 
@@ -38,12 +41,14 @@ def build_plan(playbook: Dict[str, Any], resource_caps: Dict[str, int]) -> tuple
 
     # Map logical step name -> produced concrete node ids (list)
     produced: Dict[str, List[str]] = {}
-    step_index: Dict[str, Dict[str, Any]] = {s.get("step"): s for s in workflow if "step" in s}
+    step_index: Dict[str, Dict[str, Any]] = {
+        s.get("step"): s for s in workflow if "step" in s
+    }
 
     # First pass: expand steps
     for s in workflow:
         name = s.get("step")
-        stype = s.get("type")
+        stype = s.get("tool")
         if stype == "iterator":
             # Expand collection items into separate steps
             coll_expr = s.get("collection")
@@ -57,18 +62,37 @@ def build_plan(playbook: Dict[str, Any], resource_caps: Dict[str, int]) -> tuple
                 iter_id = f"{name}/{_safe_id(item, idx)}"
                 # The task under iterator has its own type; inherit resources and estimate
                 task = s.get("task", {})
-                task_type = task.get("type", "http")
-                resources = task.get("resources") or DEFAULT_DEMANDS.get(task_type, {"http_pool": 1})
+                task_type = task.get("tool", "http")
+                resources = task.get("resources") or DEFAULT_DEMANDS.get(
+                    task_type, {"http_pool": 1}
+                )
                 dur = estimate_duration_ms(iter_id, task_type)
-                steps.append(StepSpec(id=iter_id, type=task_type, resources=resources, duration_ms=dur, tags={"parent": name, "iter_index": str(idx)}))
+                steps.append(
+                    StepSpec(
+                        id=iter_id,
+                        type=task_type,
+                        resources=resources,
+                        duration_ms=dur,
+                        tags={"parent": name, "iter_index": str(idx)},
+                    )
+                )
                 produced[name].append(iter_id)
         else:
             # Regular single step
             node_id = name
             produced[name] = [node_id]
             resources = _infer_resources(s)
-            dur = estimate_duration_ms(node_id, stype or name)
-            steps.append(StepSpec(id=node_id, type=stype or "task", resources=resources, duration_ms=dur, tags={}))
+            step_kind = stype or "router"
+            dur = estimate_duration_ms(node_id, step_kind)
+            steps.append(
+                StepSpec(
+                    id=node_id,
+                    type=step_kind,
+                    resources=resources,
+                    duration_ms=dur,
+                    tags={},
+                )
+            )
 
     # Second pass: edges and barriers
     for s in workflow:
@@ -89,7 +113,15 @@ def build_plan(playbook: Dict[str, Any], resource_caps: Dict[str, int]) -> tuple
                 barrier_id = f"barrier::{name}"
                 # Ensure barrier exists as zero-duration step once
                 if barrier_id not in [st.id for st in steps]:
-                    steps.append(StepSpec(id=barrier_id, type="barrier", resources={}, duration_ms=0, tags={"for": name}))
+                    steps.append(
+                        StepSpec(
+                            id=barrier_id,
+                            type="barrier",
+                            resources={},
+                            duration_ms=0,
+                            tags={"for": name},
+                        )
+                    )
                 for c in curr_nodes:
                     edges.append(Edge(u=c, v=barrier_id))
                 # barrier -> each successor node
@@ -101,7 +133,9 @@ def build_plan(playbook: Dict[str, Any], resource_caps: Dict[str, int]) -> tuple
                     for v in succ_nodes:
                         edges.append(Edge(u=u, v=v))
 
-    caps = [ResourceCap(name=k, capacity=int(v)) for k, v in (resource_caps or {}).items()]
+    caps = [
+        ResourceCap(name=k, capacity=int(v)) for k, v in (resource_caps or {}).items()
+    ]
     return steps, edges, caps
 
 
@@ -111,7 +145,9 @@ def _safe_id(item: Any, idx: int) -> str:
     return f"{idx}"
 
 
-def _eval_collection(pb: Dict[str, Any], step: Dict[str, Any], coll_expr: Any) -> List[Any]:
+def _eval_collection(
+    pb: Dict[str, Any], step: Dict[str, Any], coll_expr: Any
+) -> List[Any]:
     # Very small evaluator to support {{ workload.cities }} and {{ cities }} or direct lists
     if isinstance(coll_expr, list):
         return coll_expr
@@ -137,7 +173,9 @@ def _eval_collection(pb: Dict[str, Any], step: Dict[str, Any], coll_expr: Any) -
                 cities_expr = inp.get("cities")
                 if isinstance(cities_expr, list):
                     return cities_expr
-                if isinstance(cities_expr, str) and cities_expr.strip().startswith("{{"):
+                if isinstance(cities_expr, str) and cities_expr.strip().startswith(
+                    "{{"
+                ):
                     # resolve against workload as well
                     return _eval_collection(pb, step, cities_expr)
         # Non-templated string unsupported; return empty

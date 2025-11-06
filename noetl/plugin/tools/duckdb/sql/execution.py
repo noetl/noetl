@@ -9,8 +9,8 @@ import datetime
 from noetl.core.common import DateTimeEncoder
 from noetl.core.logger import setup_logger
 
-from noetl.plugin.actions.duckdb.types import TaskResult
-from noetl.plugin.actions.duckdb.errors import SQLExecutionError
+from noetl.plugin.tools.duckdb.types import TaskResult
+from noetl.plugin.tools.duckdb.errors import SQLExecutionError
 
 logger = setup_logger(__name__, include_location=True)
 
