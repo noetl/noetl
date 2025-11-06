@@ -296,7 +296,7 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"ITERATOR.CONFIG: Extracted nested_task with keys: {list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}, has_save={bool(nested_task.get('save'))}")
     
     if iterator_name is None:
-        raise ValueError("Iterator requires 'element' key (type: iterator)")
+        raise ValueError("Iterator requires 'element' key (tool: iterator)")
     
     if not isinstance(nested_task, dict) or not nested_task:
         raise ValueError(

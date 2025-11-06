@@ -11,7 +11,7 @@ workload:
 workflow:
   - step: start
     desc: Fetch URL that returns 503 and retry on 5xx status codes
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.test_url }}"
     retry:

@@ -20,7 +20,7 @@ workflow:
 
   - step: fetch_http_data
     desc: Fetch user data from JSONPlaceholder API
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.api_url }}"
     next:
@@ -28,7 +28,7 @@ workflow:
 
   - step: create_sf_database
     desc: Create Snowflake database and schema
-    type: snowflake
+    tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
       CREATE DATABASE IF NOT EXISTS TEST_DB;
@@ -39,7 +39,7 @@ workflow:
 
   - step: setup_pg_table
     desc: Create PostgreSQL table for HTTP data
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS public.http_users_pg (
@@ -59,7 +59,7 @@ workflow:
 
   - step: setup_sf_table
     desc: Create Snowflake table for HTTP data
-    type: snowflake
+    tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
       CREATE OR REPLACE TABLE HTTP_USERS_SF (
@@ -77,7 +77,7 @@ workflow:
 
   - step: setup_duckdb_table
     desc: Create DuckDB table for HTTP data
-    type: duckdb
+    tool: duckdb
     command: |
       CREATE TABLE IF NOT EXISTS http_users_duckdb (
         id INTEGER PRIMARY KEY,
@@ -96,7 +96,7 @@ workflow:
 
   - step: transform_http_to_pg
     desc: Transform HTTP JSON data and prepare for database insertion
-    type: python
+    tool: python
     code: |
       def main(input_data):
           """Transform HTTP API response and prepare for database insertion."""
@@ -134,13 +134,13 @@ workflow:
 
   - step: insert_to_postgres
     desc: Insert transformed data into PostgreSQL using iterator
-    type: iterator
+    tool: iterator
     collection: "{{ transform_http_to_pg.rows }}"
     element: user
     mode: sequential
     workbook:
       - name: insert_user_pg
-        type: postgres
+        tool: postgres
         auth: "{{ workload.pg_auth }}"
         command: |
           INSERT INTO public.http_users_pg (id, name, username, email, phone, website, company_name, city)
@@ -167,7 +167,7 @@ workflow:
 
   - step: verify_pg_data
     desc: Verify data in PostgreSQL
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT 
@@ -180,13 +180,13 @@ workflow:
 
   - step: insert_to_snowflake
     desc: Insert transformed data into Snowflake using iterator
-    type: iterator
+    tool: iterator
     collection: "{{ transform_http_to_pg.rows }}"
     element: user
     mode: sequential
     workbook:
       - name: insert_user_sf
-        type: snowflake
+        tool: snowflake
         auth: "{{ workload.sf_auth }}"
         command: |
           MERGE INTO HTTP_USERS_SF AS target
@@ -218,7 +218,7 @@ workflow:
 
   - step: verify_sf_data
     desc: Verify data in Snowflake
-    type: snowflake
+    tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
       SELECT 
@@ -231,13 +231,13 @@ workflow:
 
   - step: insert_to_duckdb
     desc: Insert transformed data into DuckDB using iterator
-    type: iterator
+    tool: iterator
     collection: "{{ transform_http_to_pg.rows }}"
     element: user
     mode: sequential
     workbook:
       - name: insert_user_duckdb
-        type: duckdb
+        tool: duckdb
         command: |
           INSERT INTO http_users_duckdb (id, name, username, email, phone, website, company_name, city)
           VALUES (
@@ -263,7 +263,7 @@ workflow:
 
   - step: verify_duckdb_data
     desc: Verify data in DuckDB
-    type: duckdb
+    tool: duckdb
     command: |
       SELECT 
         COUNT(*) as total_users,
@@ -275,7 +275,7 @@ workflow:
 
   - step: cross_verify
     desc: Cross-verify data across all three databases
-    type: python
+    tool: python
     code: |
       def main(input_data):
           """Compare results across PostgreSQL, Snowflake, and DuckDB."""
@@ -320,7 +320,7 @@ workflow:
 
   - step: cleanup
     desc: Clean up test tables (optional - comment out to keep data)
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       -- DROP TABLE IF EXISTS public.http_users_pg;

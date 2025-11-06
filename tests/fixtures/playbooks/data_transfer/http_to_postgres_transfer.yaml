@@ -16,7 +16,7 @@ workflow:
 
   - step: create_table
     desc: Create table for storing HTTP data
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       DROP TABLE IF EXISTS public.http_posts;
@@ -34,13 +34,13 @@ workflow:
 
   - step: transfer_http_to_pg
     desc: Transfer HTTP API data to PostgreSQL
-    type: transfer
+    tool: transfer
     source:
-      type: http
+      tool: http
       url: "{{ workload.api_url }}"
       method: GET
     target:
-      type: postgres
+      tool: postgres
       auth: "{{ workload.pg_auth }}"
       table: public.http_posts
       mode: insert
@@ -54,7 +54,7 @@ workflow:
 
   - step: show_count
     desc: Verify record count
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT COUNT(*) as records FROM public.http_posts;

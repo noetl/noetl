@@ -15,7 +15,7 @@ workflow:
       - step: boolean_retry
   - step: boolean_retry
     desc: Simple boolean retry (uses defaults)
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.test_url }}"
     retry: true
@@ -24,7 +24,7 @@ workflow:
         
   - step: integer_retry
     desc: Integer retry (max attempts only)
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.test_url }}"
     retry: 5
@@ -33,7 +33,7 @@ workflow:
       
   - step: full_config_retry
     desc: Full configuration retry
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.test_url }}"
     retry:

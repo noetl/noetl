@@ -38,7 +38,7 @@ workflow:
 
   - step: setup_storage
     desc: "Ensure results table exists"
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS public.user_profile_results (
@@ -54,14 +54,14 @@ workflow:
 
   - step: process_users
     desc: "Process each user through profile scoring sub-playbook"
-    type: iterator
+    tool: iterator
     collection: "{{ workload.users }}"
     element: user
     mode: sequential
     task:
       # Provide an explicit task identifier so nested playbook propagates correct parent_step
       task: process_users
-      type: playbook
+      tool: playbook
       path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
       return_step: finalize_result
       args:
@@ -84,7 +84,7 @@ workflow:
 
   - step: validate_results
     desc: "Validate all profile scores are within expected range and categories are correct"
-    type: python
+    tool: python
     args:
       user_results: "{{ process_users.data }}"
       expected_min_score: 0.0
@@ -174,7 +174,7 @@ workflow:
 
   - step: end
     desc: "Complete profile processing pipeline"
-    type: python
+    tool: python
     args:
       validation_result: "{{ validate_results.data }}"
       user_count: "{{ workload.users | length }}"
