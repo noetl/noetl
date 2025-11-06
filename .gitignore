@@ -3,7 +3,6 @@
 *.iml
 *.pyc
 target
-secrets
 .classpath
 .settings
 .project
