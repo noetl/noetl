@@ -89,13 +89,13 @@ def execute_task(
         ValueError: If task type is unknown or not supported
     """
     # Import plugin executors here to avoid circular imports
-    from noetl.plugin.actions.http import execute_http_task
-    from noetl.plugin.actions.python import execute_python_task
-    from noetl.plugin.actions.duckdb import execute_duckdb_task
-    from noetl.plugin.actions.postgres import execute_postgres_task
-    from noetl.plugin.actions.snowflake import execute_snowflake_task
-    from noetl.plugin.actions.transfer.snowflake_transfer import execute_snowflake_transfer_action
-    from noetl.plugin.actions.transfer import execute_transfer_action
+    from noetl.plugin.tools.http import execute_http_task
+    from noetl.plugin.tools.python import execute_python_task
+    from noetl.plugin.tools.duckdb import execute_duckdb_task
+    from noetl.plugin.tools.postgres import execute_postgres_task
+    from noetl.plugin.tools.snowflake import execute_snowflake_task
+    from noetl.plugin.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
+    from noetl.plugin.tools.transfer import execute_transfer_action
     from noetl.plugin.shared.secrets import execute_secrets_task
     from noetl.plugin.controller.playbook import execute_playbook_task
     from noetl.plugin.controller.workbook import execute_workbook_task

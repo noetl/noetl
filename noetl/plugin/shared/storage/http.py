@@ -86,7 +86,7 @@ def handle_http_storage(
     
     # Delegate to http plugin
     try:
-        from noetl.plugin.actions.http import execute_http_task
+        from noetl.plugin.tools.http import execute_http_task
         http_result = execute_http_task(
             http_task, context, jinja_env, http_with, log_event_callback
         )

@@ -27,7 +27,7 @@ import json
 from typing import Dict, Any, Optional, Callable
 import httpx
 from noetl.core.logger import setup_logger
-from noetl.plugin.actions.snowflake.transfer import (
+from noetl.plugin.tools.snowflake.transfer import (
     transfer_snowflake_to_postgres,
     transfer_postgres_to_snowflake
 )

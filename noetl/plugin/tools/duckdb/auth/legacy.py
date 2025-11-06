@@ -12,9 +12,9 @@ import httpx
 
 from noetl.core.logger import setup_logger
 
-from noetl.plugin.actions.duckdb.sql.rendering import escape_sql, render_deep
-from noetl.plugin.actions.duckdb.types import JinjaEnvironment, ContextDict
-from noetl.plugin.actions.duckdb.errors import AuthenticationError
+from noetl.plugin.tools.duckdb.sql.rendering import escape_sql, render_deep
+from noetl.plugin.tools.duckdb.types import JinjaEnvironment, ContextDict
+from noetl.plugin.tools.duckdb.errors import AuthenticationError
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -41,7 +41,7 @@ def build_legacy_credential_prelude(
     Returns:
         List of SQL statements to create DuckDB secrets and load extensions
     """
-    from noetl.plugin.actions.duckdb.cloud.scopes import infer_object_store_scope
+    from noetl.plugin.tools.duckdb.cloud.scopes import infer_object_store_scope
     
     params = dict(params or {})
     step_creds = (task_config or {}).get("credentials") or {}

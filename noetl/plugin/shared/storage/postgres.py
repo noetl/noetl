@@ -311,7 +311,7 @@ def handle_postgres_storage(
     
     # Delegate to postgres plugin
     try:
-        from noetl.plugin.actions.postgres import execute_postgres_task
+        from noetl.plugin.tools.postgres import execute_postgres_task
         pg_result = execute_postgres_task(
             pg_task, context, jinja_env, pg_with, log_event_callback
         )

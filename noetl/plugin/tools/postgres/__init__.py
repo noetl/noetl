@@ -10,7 +10,7 @@ This package provides PostgreSQL database task execution capabilities with:
 - Result formatting and error handling
 
 Usage:
-    from noetl.plugin.actions.postgres import execute_postgres_task
+    from noetl.plugin.tools.postgres import execute_postgres_task
     
     result = execute_postgres_task(
         task_config={'command_b64': '<base64-encoded-sql>'},
@@ -26,6 +26,6 @@ Usage:
     )
 """
 
-from noetl.plugin.actions.postgres.executor import execute_postgres_task
+from noetl.plugin.tools.postgres.executor import execute_postgres_task
 
 __all__ = ['execute_postgres_task']

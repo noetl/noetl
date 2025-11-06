@@ -23,6 +23,6 @@ Usage:
         pg: { key: "pg_credential_name" }
 """
 
-from noetl.plugin.actions.transfer.snowflake_transfer.executor import execute_snowflake_transfer_action
+from noetl.plugin.tools.transfer.snowflake_transfer.executor import execute_snowflake_transfer_action
 
 __all__ = ['execute_snowflake_transfer_action']

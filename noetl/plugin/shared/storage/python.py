@@ -89,7 +89,7 @@ def main(data):
     
     # Delegate to python plugin
     try:
-        from noetl.plugin.actions.python import execute_python_task
+        from noetl.plugin.tools.python import execute_python_task
         py_result = execute_python_task(
             py_task, context, jinja_env, py_with, log_event_callback
         )

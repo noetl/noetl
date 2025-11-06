@@ -142,7 +142,7 @@ def handle_duckdb_storage(
     
     # Delegate to duckdb plugin
     try:
-        from noetl.plugin.actions.duckdb import execute_duckdb_task
+        from noetl.plugin.tools.duckdb import execute_duckdb_task
         duck_result = execute_duckdb_task(
             duck_task, context, jinja_env, duck_with, log_event_callback
         )

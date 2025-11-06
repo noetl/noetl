@@ -10,8 +10,8 @@ import httpx
 
 from noetl.core.logger import setup_logger
 
-from noetl.plugin.actions.duckdb.sql.rendering import escape_sql
-from noetl.plugin.actions.duckdb.errors import CloudStorageError, AuthenticationError
+from noetl.plugin.tools.duckdb.sql.rendering import escape_sql
+from noetl.plugin.tools.duckdb.errors import CloudStorageError, AuthenticationError
 
 logger = setup_logger(__name__, include_location=True)
 
