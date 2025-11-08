@@ -1,1 +1,1 @@
-export { default as playbooksNode } from './PlaybooksNode';
+export { PlaybooksNode } from './PlaybooksNode';

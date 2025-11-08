@@ -12,15 +12,15 @@ import {
 import '@xyflow/react/dist/style.css';
 
 // Minimal node component imports (keep existing implementation files)
-import StartNode from '../nodes/start/StartNode';
-import EndNode from '../nodes/end/EndNode';
-import HttpNode from '../nodes/http/HttpNode';
-import PythonNode from '../nodes/python/PythonNode';
-import DuckDbNode from '../nodes/duckdb/DuckDbNode';
-import PostgresNode from '../nodes/postgres/PostgresNode';
-import PlaybooksNode from '../nodes/playbooks/PlaybooksNode';
+import { StartNode } from '../nodes/start/StartNode';
+import { EndNode } from '../nodes/end/EndNode';
+import { HttpNode } from '../nodes/http/HttpNode';
+import { PythonNode } from '../nodes/python/PythonNode';
+import { DuckDbNode } from '../nodes/duckdb/DuckDbNode';
+import { PostgresNode } from '../nodes/postgres/PostgresNode';
+import { PlaybooksNode } from '../nodes/playbooks/PlaybooksNode';
 import { LoopNode } from '../nodes/loop';
-import WorkbookNode from '../nodes/workbook/WorkbookNode';
+import { WorkbookNode } from '../nodes/workbook/WorkbookNode';
 
 // Direct mapping (no adapter) using new NodeProps-style components
 export const nodeTypes = {

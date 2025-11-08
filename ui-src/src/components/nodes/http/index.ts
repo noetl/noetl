@@ -1,1 +1,1 @@
-export { default as httpNode } from './HttpNode';
+export { HttpNode } from './HttpNode';

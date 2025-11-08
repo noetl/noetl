@@ -4,7 +4,7 @@ import './PythonNode.less';
 
 interface PythonData { name?: string; module?: string; code?: string;[key: string]: unknown; }
 
-function PythonNode({ id, data }: NodeProps<Node<PythonData>>) {
+function PythonNodeInternal({ id, data }: NodeProps<Node<PythonData>>) {
     const { updateNodeData } = useReactFlow();
     const name = data?.name || 'python';
     const module = data?.module || '';
@@ -25,4 +25,4 @@ function PythonNode({ id, data }: NodeProps<Node<PythonData>>) {
     );
 }
 
-export default memo(PythonNode);
+export const PythonNode = memo(PythonNodeInternal);

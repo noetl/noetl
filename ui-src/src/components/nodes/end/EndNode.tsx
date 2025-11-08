@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './EndNode.less';
 
-function EndNode({ id, data }: NodeProps<Node<{ name?: string }>>) {
+function EndNodeInternal({ id, data }: NodeProps<Node<{ name?: string }>>) {
     const { updateNodeData } = useReactFlow();
     const name = data?.name || 'end';
     return (
@@ -20,4 +20,4 @@ function EndNode({ id, data }: NodeProps<Node<{ name?: string }>>) {
     );
 }
 
-export default memo(EndNode);
+export const EndNode = memo(EndNodeInternal);

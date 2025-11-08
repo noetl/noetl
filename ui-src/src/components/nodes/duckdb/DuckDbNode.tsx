@@ -4,7 +4,7 @@ import './DuckDbNode.less';
 
 interface DuckDbData { name?: string; sql?: string;[key: string]: unknown; }
 
-function DuckDbNode({ id, data }: NodeProps<Node<DuckDbData>>) {
+function DuckDbNodeInternal({ id, data }: NodeProps<Node<DuckDbData>>) {
     const { updateNodeData } = useReactFlow();
     const name = data?.name || 'duckdb';
     const sql = (data?.sql || '').toString();
@@ -26,4 +26,4 @@ function DuckDbNode({ id, data }: NodeProps<Node<DuckDbData>>) {
     );
 }
 
-export default memo(DuckDbNode);
+export const DuckDbNode = memo(DuckDbNodeInternal);

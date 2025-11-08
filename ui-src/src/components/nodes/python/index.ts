@@ -1,1 +1,1 @@
-export { default as pythonNode } from './PythonNode';
+export { PythonNode } from './PythonNode';

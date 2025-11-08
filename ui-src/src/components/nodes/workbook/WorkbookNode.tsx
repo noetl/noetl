@@ -5,7 +5,7 @@ import './WorkbookNode.less';
 
 interface WorkbookData { name?: string; task?: string; withJSON?: string;[key: string]: unknown; }
 
-function WorkbookNode({ id, data }: NodeProps<Node<WorkbookData>>) {
+function WorkbookNodeInternal({ id, data }: NodeProps<Node<WorkbookData>>) {
     const { updateNodeData } = useReactFlow();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const name = data?.name || 'workbook';
@@ -49,4 +49,4 @@ function WorkbookNode({ id, data }: NodeProps<Node<WorkbookData>>) {
     );
 }
 
-export default memo(WorkbookNode);
+export const WorkbookNode = memo(WorkbookNodeInternal);

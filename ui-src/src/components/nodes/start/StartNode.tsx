@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './StartNode.less';
 
-function StartNode({ id, data }: NodeProps<Node<{ name?: string }>>) {
+function StartNodeInternal({ id, data }: NodeProps<Node<{ name?: string }>>) {
     const { updateNodeData } = useReactFlow();
     const name = data?.name || 'start';
     return (
@@ -20,4 +20,4 @@ function StartNode({ id, data }: NodeProps<Node<{ name?: string }>>) {
     );
 }
 
-export default memo(StartNode);
+export const StartNode = memo(StartNodeInternal);

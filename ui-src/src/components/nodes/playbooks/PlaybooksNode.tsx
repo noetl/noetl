@@ -4,7 +4,7 @@ import './PlaybooksNode.less';
 
 interface PlaybooksData { name?: string; catalogPath?: string;[key: string]: unknown; }
 
-function PlaybooksNode({ id, data }: NodeProps<Node<PlaybooksData>>) {
+function PlaybooksNodeInternal({ id, data }: NodeProps<Node<PlaybooksData>>) {
     const { updateNodeData } = useReactFlow();
     const name = data?.name || 'playbooks';
     const path = data?.catalogPath || '';
@@ -24,4 +24,4 @@ function PlaybooksNode({ id, data }: NodeProps<Node<PlaybooksData>>) {
     );
 }
 
-export default memo(PlaybooksNode);
+export const PlaybooksNode = memo(PlaybooksNodeInternal);

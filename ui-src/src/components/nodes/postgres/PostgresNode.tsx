@@ -4,7 +4,7 @@ import './PostgresNode.less';
 
 interface PostgresData { name?: string; sql?: string;[key: string]: unknown; }
 
-function PostgresNode({ id, data }: NodeProps<Node<PostgresData>>) {
+function PostgresNodeInternal({ id, data }: NodeProps<Node<PostgresData>>) {
     const { updateNodeData } = useReactFlow();
     const name = data?.name || 'postgres';
     const sql = (data?.sql || '').toString();
@@ -26,4 +26,4 @@ function PostgresNode({ id, data }: NodeProps<Node<PostgresData>>) {
     );
 }
 
-export default memo(PostgresNode);
+export const PostgresNode = memo(PostgresNodeInternal);

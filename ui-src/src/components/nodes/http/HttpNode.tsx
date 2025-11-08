@@ -15,7 +15,7 @@ interface HttpData {
     [key: string]: unknown;
 }
 
-function HttpNode({ id, data = {} }: NodeProps<Node<HttpData>>) {
+function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState({ method: 'GET', url: '', query: '', headers: {}, body: '', timeout: '' as string | number });
@@ -179,4 +179,4 @@ function HttpNode({ id, data = {} }: NodeProps<Node<HttpData>>) {
     );
 }
 
-export default memo(HttpNode);
+export const HttpNode = memo(HttpNodeInternal);
