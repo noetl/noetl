@@ -29,7 +29,7 @@ This test playbook validates the critical functionality of HTTP calls within an 
    - Saves each response to Postgres with upsert mode
 3. **Verify Results**: Counts records and checks all cities have data
 4. **Show Details**: Displays all saved records
-5. **Validate Data**: Python validation to confirm expected records exist
+5. **Validate Data**: Python validation receives data via `args:` in `next:` block
 
 ## Key Features Tested
 
@@ -38,7 +38,8 @@ This test playbook validates the critical functionality of HTTP calls within an 
 - **Per-Item Save Block**: Save configuration on the HTTP task itself
 - **Postgres Storage**: Save delegation to postgres with upsert mode
 - **Jinja2 Templating**: Dynamic values using execution_id, city data, and result data
-- **Data Validation**: Post-execution verification of saved records
+- **Args-Based Data Passing**: Parameters passed via `args:` in `next:` block
+- **Data Validation**: Post-execution verification with step result references
 
 ## Running the Test
 
@@ -51,33 +52,41 @@ This test playbook validates the critical functionality of HTTP calls within an 
 ### Quick Run
 
 ```bash
-# Complete test workflow (register + execute)
-task test-http-iterator-save-full
-
-# Or using full name
-task test:local:http-iterator-save-full
+# Complete reset and execute workflow
+task noetl:local:reset && sleep 2 && \
+  task playbook:local:execute \
+    PLAYBOOK=tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
+    PORT=8083
 ```
 
 ### Step-by-Step
 
 ```bash
-# 1. Register the playbook
-task test-register-http-iterator-save
+# 1. Start services (if not running)
+task noetl:local:start
 
-# 2. Execute the playbook
-task test-execute-http-iterator-save
+# 2. Re-register the playbook (if updated)
+.venv/bin/noetl catalog register \
+  tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres/http_iterator_save_postgres.yaml \
+  --host localhost --port 8083
+
+# 3. Execute the playbook
+task playbook:local:execute \
+  PLAYBOOK=tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
+  PORT=8083
 ```
 
 ### Manual Execution
 
 ```bash
-# Register
-noetl register tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres.yaml \
-  --host localhost --port 8083
-
-# Execute
-noetl execute playbook "tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres" \
-  --host localhost --port 8083 --json
+# Execute via CLI
+.venv/bin/noetl execute playbook \
+  tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
+  --host localhost \
+  --port 8083 \
+  --payload '{"pg_auth": "pg_local"}' \
+  --merge \
+  --json
 ```
 
 ## Expected Results
@@ -96,12 +105,16 @@ noetl execute playbook "tests/fixtures/playbooks/data_transfer/http_iterator_sav
    - `created_at`: Timestamp
 
 4. **Events Generated**: 
-   - `iterator_started`
-   - `iteration_started` (x3)
-   - `save_started` (x3)
-   - `save_completed` (x3)
-   - `iteration_completed` (x3)
-   - `iterator_completed`
+   - `step_started`, `step_completed` for each workflow step
+   - `action_started`, `action_completed` for each task execution
+   - `iteration_started`, `iteration_completed` for each loop iteration
+   - Save operations tracked in action events
+   - `execution_completed` for successful workflow completion
+
+5. **Validation Success**:
+   - `validate_data` step completes with status: "success"
+   - All validation checks return true
+   - Message: "Validation passed: 3 records saved for 3 cities"
 
 ### Validation Query
 
@@ -115,6 +128,34 @@ WHERE execution_id = '<your_execution_id>';
 ```
 
 Expected: `total_records=3, unique_cities=3`
+
+### Check Validation Result
+
+```sql
+SELECT result 
+FROM noetl.event 
+WHERE execution_id = '<your_execution_id>' 
+  AND node_id = 'validate_data' 
+  AND event_type = 'step_result';
+```
+
+Expected output:
+```json
+{
+  "status": "success",
+  "validation": {
+    "total_records_match": true,
+    "unique_cities_match": true,
+    "all_cities_saved": true
+  },
+  "counts": {
+    "expected": 3,
+    "actual_total": 3,
+    "actual_unique": 3
+  },
+  "message": "Validation passed: 3 records saved for 3 cities"
+}
+```
 
 ## Troubleshooting
 
@@ -224,9 +265,38 @@ For aggregated results after all iterations:
     # ... save config for aggregated results ...
 ```
 
+### Data Passing Between Steps
+
+The playbook demonstrates passing data between steps using `args:` in the `next:` block:
+
+```yaml
+- step: show_details
+  tool: postgres
+  command: "SELECT * FROM table WHERE ..."
+  next:
+    - step: validate_data
+      args:                              # Pass args to next step
+        verify_results: "{{ verify_results }}"  # Reference previous step by name
+
+- step: validate_data
+  tool: python
+  code: |
+    def main(verify_results):          # Function parameter receives args
+        # verify_results contains the result from verify_results step
+        verify_result = verify_results.get('command_0')...
+```
+
+**Key Points**:
+- Use `args:` in `next:` block to pass parameters to target steps
+- Reference previous steps by name using Jinja2: `{{ step_name }}`
+- The orchestrator automatically unwraps the `data` field from step results
+- Python function parameters map to args keys via signature inspection
+- No need to use `.data` suffix - orchestrator handles unwrapping
+
 ## References
 
-- [Iterator Documentation](../../docs/simple/steps/iterator.md)
-- [Save Block Documentation](../../docs/simple/steps/save.md)
-- [Iterator Lifecycle Events](../../docs/ITERATOR_LIFECYCLE_EVENTS_IMPLEMENTATION.md)
-- [Save Storage Test README](../../save_storage_test/README.md)
+- **Bug Fix Summary**: [HTTP_ITERATOR_SAVE_SUMMARY.md](./HTTP_ITERATOR_SAVE_SUMMARY.md)
+- **Playbook DSL Spec**: [docs/dsl_spec.md](../../../../docs/dsl_spec.md)
+- **Iterator Plugin**: [noetl/plugin/controller/iterator/](../../../../noetl/plugin/controller/iterator/)
+- **Save Storage**: [noetl/plugin/shared/storage/](../../../../noetl/plugin/shared/storage/)
+- **Data Passing**: Uses `args:` in `next:` block (planner.py)

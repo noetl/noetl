@@ -61,17 +61,45 @@ elif isinstance(value, (datetime, date, time)):
 
 **Fix**: Removed unnecessary try-except wrapper - let errors propagate naturally.
 
-### 4. **Python Validation Step**
-**Problem**: Function parameter name didn't match data dictionary key.
+### 4. **Data Passing via Args in Next Block**
+**File**: `noetl/server/api/run/planner.py` (lines 142, 156-160)
 
-**Fix**: Updated playbook to use matching parameter name:
-```yaml
-data:
-  verify_results: "{{ verify_results }}"
-code: |
-  def main(verify_results):  # Parameter name matches data key
-      verify_result = verify_results.get('command_0')...
+**Problem**: NoETL planner only recognized `data:` or `with:` in the `next:` block for passing arguments, but not `args:`.
+
+**Fix**: Updated planner to recognize `args:` as the primary parameter passing mechanism:
+```python
+# Line 142 - Added args as first option
+with_params = next_item.get("args") or next_item.get("data") or next_item.get("with") or {}
+
+# Lines 156-160 - Also for conditional then blocks
+"with_params": then_item.get("args")
+               or then_item.get("data")
+               or then_item.get("with")
+               or {},
 ```
+
+**Usage in Playbook**: Parameters passed via `args:` in `next:` block:
+```yaml
+- step: show_details
+  tool: postgres
+  command: "SELECT * FROM ..."
+  next:
+    - step: validate_data
+      args:                              # Pass args to next step
+        verify_results: "{{ verify_results }}"  # Reference previous step by name
+
+- step: validate_data
+  tool: python
+  code: |
+    def main(verify_results):          # Function parameter receives args
+        verify_result = verify_results.get('command_0')...
+```
+
+**Key Points**:
+- Use `args:` in the `next:` block to pass data to target steps
+- Reference previous step results by step name (e.g., `{{ verify_results }}`)
+- The orchestrator unwraps the `data` field from step results automatically
+- Function parameters map directly to args keys via signature inspection
 
 ## Created Files
 
@@ -97,6 +125,7 @@ Complete documentation with problem description, workflow, and troubleshooting.
 # Reset environment and execute playbook
 task noetl:local:reset
 
+# Wait for services to be ready, then execute
 task playbook:local:execute \
   PLAYBOOK=tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
   PORT=8083
@@ -128,7 +157,7 @@ PGPASSWORD=demo psql -h localhost -p 54321 -U demo -d demo_noetl \
 
 ### Successful Test Run (2025-11-08)
 
-**Execution ID**: `490844582452658234`
+**Execution ID**: `490869469632266329`
 
 **Database Results**:
 ```
@@ -148,6 +177,15 @@ PGPASSWORD=demo psql -h localhost -p 54321 -U demo -d demo_noetl \
     "total_records_match": true,
     "unique_cities_match": true,
     "all_cities_saved": true
+  },
+  "counts": {
+    "expected": 3,
+    "actual_total": 3,
+    "actual_unique": 3
+  },
+  "message": "Validation passed: 3 records saved for 3 cities"
+}
+```
   },
   "counts": {
     "expected": 3,
@@ -237,9 +275,10 @@ This addresses the original issue: "Loop with HTTP calls doesn't save data in po
 2. ✅ 3 save operations executed (logs show save_task calls)
 3. ✅ 3 records in PostgreSQL table with actual temperature data
 4. ✅ Events: save_started, save_completed for each iteration
-5. ✅ Validation step confirms all data present
-6. ✅ DateTime values serialized as ISO format strings
-7. ✅ Python validation receives data correctly via parameter matching
+- ✅ Validation step confirms all data present
+- ✅ DateTime values serialized as ISO format strings
+- ✅ Python validation receives data correctly via args in next block
+- ✅ Data flow works: verify_results → args → validate_data
 
 ## Verification Queries
 
@@ -323,8 +362,11 @@ Multiple issues needed fixing in sequence:
 5. **DateTime Serialization**: JSON serialization error
    - Fixed: Added `isinstance(value, (datetime, date, time))` check with `.isoformat()`
 
-6. **Python Data Passing**: Parameter name mismatch
-   - Fixed: Changed `def main(input_data)` to `def main(verify_results)`
+6. **Data Passing Pattern**: Args not recognized in next block
+   - Fixed: Updated planner to check `args` first, before `data` or `with`
+
+7. **Template Reference**: Using `.data` when already unwrapped
+   - Fixed: Changed `{{ verify_results.data }}` to `{{ verify_results }}`
 
 ## Comparison with Existing Tests
 
@@ -361,21 +403,27 @@ Perfect for catching iterator + HTTP + save integration bugs!
    - Import `from datetime import datetime, date, time`
    - Convert to ISO format strings
 
-3. **`noetl/plugin/tools/http/request.py`** (earlier fix)
+3. **`noetl/server/api/run/planner.py`**
+   - Added `args:` support in next block (line 142)
+   - Added `args:` support in conditional then blocks (lines 156-160)
+   - Priority order: args → data → with
+
+4. **`noetl/plugin/tools/http/request.py`** (earlier fix)
    - Fixed empty dict params fallback
 
-4. **`noetl/plugin/tools/http/executor.py`** (earlier fix)
+5. **`noetl/plugin/tools/http/executor.py`** (earlier fix)
    - Fixed exception handling in URL validation
 
 ### Test Files
-1. **`tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres.yaml`**
+1. **`tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres/http_iterator_save_postgres.yaml`**
    - Complete test playbook
-   - Python validation with correct parameter naming
+   - Uses args in next block to pass data between steps
+   - Python validation with signature-based parameter mapping
 
-2. **`tests/fixtures/playbooks/data_transfer/HTTP_ITERATOR_SAVE_SUMMARY.md`** (this file)
+2. **`tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres/HTTP_ITERATOR_SAVE_SUMMARY.md`** (this file)
    - Test documentation and bug analysis
 
-3. **`tests/fixtures/playbooks/data_transfer/README_http_iterator_save.md`**
+3. **`tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres/README.md`**
    - Detailed usage documentation
 
 ### Documentation Updates
@@ -397,20 +445,22 @@ Perfect for catching iterator + HTTP + save integration bugs!
    - 4-space indentation is standard
    - Misalignment can make code unreachable
 
-3. **Type Handling for Serialization**
+4. **Type Handling for Serialization**
    - Always handle datetime/decimal types for JSON
    - Use `.isoformat()` for datetime objects
    - Check types before serialization
 
-4. **Parameter Name Matching**
-   - Python function parameters must match data dict keys
-   - Use inspection to understand framework behavior
-   - Test data flow with logging
+5. **Data Passing Patterns**
+   - Use `args:` in `next:` block for passing parameters to target steps
+   - Reference previous step results by step name: `{{ step_name }}`
+   - Orchestrator automatically unwraps `data` field from step results
+   - Python function parameters map to args keys via signature inspection
 
-5. **Template Path Validation**
+6. **Template Path Validation**
    - Verify template paths match actual data structure
    - Use logging to inspect runtime values
    - Document expected data shapes
+   - Remember orchestrator unwrapping: `{{ step.data }}` may already be `{{ step }}`
 
 ## Success Criteria
 

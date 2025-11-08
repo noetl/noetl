@@ -110,12 +110,12 @@ workflow:
       ORDER BY city_name;
     next:
       - step: validate_data
+        args:
+          verify_results: "{{ verify_results }}"
 
   - step: validate_data
     desc: Validate that all cities have data
     tool: python
-    data:
-      verify_results: "{{ verify_results }}"
     code: |
       def main(verify_results):
           """Validate that all expected cities have data saved."""

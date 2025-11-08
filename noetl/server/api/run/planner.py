@@ -139,7 +139,7 @@ class ExecutionPlanner:
                     # Structured next with condition and parameters
                     to_step = next_item.get("step")
                     condition = next_item.get("when", "")
-                    with_params = next_item.get("data") or next_item.get("with") or {}
+                    with_params = next_item.get("args") or next_item.get("data") or next_item.get("with") or {}
 
                     # Handle 'then' array for conditional transitions
                     then_items = next_item.get("then", [])
@@ -153,7 +153,8 @@ class ExecutionPlanner:
                                             "from_step": from_step,
                                             "to_step": then_step,
                                             "condition": condition,
-                                            "with_params": then_item.get("data")
+                                            "with_params": then_item.get("args")
+                                            or then_item.get("data")
                                             or then_item.get("with")
                                             or {},
                                         }
