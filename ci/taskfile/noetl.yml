@@ -14,11 +14,38 @@ tasks:
       - task: kubectl:local:context-set-kind
       - kubectl apply -f ci/manifests/noetl/namespace/namespace.yaml
       - sleep 2
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
+      # Update server deployment image (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml > ci/manifests/noetl/server-deployment.yaml.tmp
+          mv ci/manifests/noetl/server-deployment.yaml.tmp ci/manifests/noetl/server-deployment.yaml
+        fi
+      # Update worker deployment image (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml > ci/manifests/noetl/worker-deployment.yaml.tmp
+          mv ci/manifests/noetl/worker-deployment.yaml.tmp ci/manifests/noetl/worker-deployment.yaml
+        fi
       - kubectl apply -f ci/manifests/noetl/
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+      # Restore original image placeholders (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml > ci/manifests/noetl/server-deployment.yaml.tmp
+          mv ci/manifests/noetl/server-deployment.yaml.tmp ci/manifests/noetl/server-deployment.yaml
+        fi
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml > ci/manifests/noetl/worker-deployment.yaml.tmp
+          mv ci/manifests/noetl/worker-deployment.yaml.tmp ci/manifests/noetl/worker-deployment.yaml
+        fi
 
   noetl:k8s:remove:
     desc: Remove noetl from the noetl kind cluster
