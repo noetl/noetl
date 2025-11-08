@@ -1,1 +1,1 @@
-export { default as loopNode } from './LoopNode';
+export { LoopNode } from './LoopNode';

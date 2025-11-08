@@ -14,8 +14,34 @@ function HttpNode({ id, data }: NodeProps<Node<HttpData>>) {
     const [draft, setDraft] = useState<HttpConfigDraft>(() => ({ method: (cfg.method || 'GET').toUpperCase(), url: cfg.url || '', query: cfg.query || '', headers: cfg.headers || {}, body: cfg.body || '', timeout: cfg.timeout ?? '' }));
     const [headerInput, setHeaderInput] = useState<string>(() => { try { return draft.headers && Object.keys(draft.headers).length ? JSON.stringify(draft.headers, null, 2) : ''; } catch { return ''; } });
     const [headerError, setHeaderError] = useState<string | null>(null);
-    useEffect(() => { const newCfg = data || {}; setDraft({ method: (newCfg.method || 'GET').toUpperCase(), url: newCfg.url || '', query: newCfg.query || '', headers: newCfg.headers || {}, body: newCfg.body || '', timeout: newCfg.timeout ?? '' }); try { setHeaderInput(newCfg.headers && Object.keys(newCfg.headers).length ? JSON.stringify(newCfg.headers, null, 2) : ''); } catch { setHeaderInput(''); } }, [data]);
-    const openEditor = useCallback(() => { const current = data || {}; setDraft({ method: (current.method || 'GET').toUpperCase(), url: current.url || '', query: current.query || '', headers: current.headers || {}, body: current.body || '', timeout: current.timeout ?? '' }); try { setHeaderInput(current.headers && Object.keys(current.headers).length ? JSON.stringify(current.headers, null, 2) : ''); } catch { setHeaderInput(''); } setHeaderError(null); setModalOpen(true); }, [data]);
+    useEffect(() => {
+        const newCfg = data || {};
+        setDraft({
+            method: (newCfg.method || 'GET').toUpperCase(),
+            url: newCfg.url || '',
+            query: newCfg.query || '',
+            headers: newCfg.headers || {},
+            body: newCfg.body || '',
+            timeout: newCfg.timeout ?? '',
+        });
+        try {
+            setHeaderInput(newCfg.headers && Object.keys(newCfg.headers).length ? JSON.stringify(newCfg.headers, null, 2) : '');
+        } catch {
+            setHeaderInput('');
+        }
+    }, [data]);
+    const openEditor = useCallback(() => {
+        const current = data || {};
+        setDraft({
+            method: (current.method || 'GET').toUpperCase(),
+            url: current.url || '',
+            query: current.query || '',
+            headers: current.headers || {},
+            body: current.body || '',
+            timeout: current.timeout ?? '',
+        });
+        try { setHeaderInput(current.headers && Object.keys(current.headers).length ? JSON.stringify(current.headers, null, 2) : ''); } catch { setHeaderInput(''); } setHeaderError(null); setModalOpen(true);
+    }, [data]);
     const commit = useCallback(() => { let headersObj: Record<string, any> = draft.headers || {}; if (headerInput && !headerError) { try { headersObj = JSON.parse(headerInput); } catch { } } updateNodeData(id, { method: draft.method || 'GET', url: draft.url || '', query: draft.query || '', headers: headersObj, body: draft.body || '', timeout: draft.timeout === '' ? undefined : Number(draft.timeout) }); setModalOpen(false); }, [draft, headerInput, headerError, id, updateNodeData]);
     const handleHeaderChange = (val: string) => { setHeaderInput(val); if (!val.trim()) { setHeaderError(null); setDraft(d => ({ ...d, headers: {} })); return; } try { const parsed = JSON.parse(val); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) { setHeaderError(null); setDraft(d => ({ ...d, headers: parsed })); } else { setHeaderError('Headers must be a JSON object'); } } catch (e: any) { setHeaderError(e.message || 'Invalid JSON'); } };
     const summaryUrl: string = (() => { const u = (data?.url || '').trim(); if (!u) return ''; if (u.length < 34) return u; return u.slice(0, 31) + '…'; })();

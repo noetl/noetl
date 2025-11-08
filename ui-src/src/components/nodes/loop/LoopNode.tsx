@@ -4,7 +4,7 @@ import './LoopNode.less';
 
 interface LoopData { name?: string; scope?: string; overJSON?: string;[key: string]: unknown; }
 
-function LoopNode({ id, data }: NodeProps<Node<LoopData>>) {
+function LoopNodeInternal({ id, data }: NodeProps<Node<LoopData>>) {
     const { updateNodeData } = useReactFlow();
     const name = data?.name || 'loop';
     const scope = data?.scope || '';
@@ -33,4 +33,4 @@ function LoopNode({ id, data }: NodeProps<Node<LoopData>>) {
     );
 }
 
-export default memo(LoopNode);
+export const LoopNode = memo(LoopNodeInternal);

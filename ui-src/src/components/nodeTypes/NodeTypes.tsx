@@ -19,7 +19,7 @@ import PythonNode from '../nodes/python/PythonNode';
 import DuckDbNode from '../nodes/duckdb/DuckDbNode';
 import PostgresNode from '../nodes/postgres/PostgresNode';
 import PlaybooksNode from '../nodes/playbooks/PlaybooksNode';
-import LoopNode from '../nodes/loop/LoopNode';
+import { LoopNode } from '../nodes/loop';
 import WorkbookNode from '../nodes/workbook/WorkbookNode';
 
 // Direct mapping (no adapter) using new NodeProps-style components
