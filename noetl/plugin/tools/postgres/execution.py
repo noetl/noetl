@@ -11,6 +11,7 @@ This module handles:
 import psycopg
 from typing import Dict, List
 from decimal import Decimal
+from datetime import datetime, date, time
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -144,6 +145,7 @@ def _fetch_result_rows(cursor) -> List[Dict]:
     
     Handles special data types:
     - Decimal -> float
+    - datetime/date/time -> ISO format string
     - JSON strings -> preserve as-is
     - Other types -> preserve as-is
     
@@ -172,6 +174,9 @@ def _fetch_result_rows(cursor) -> List[Dict]:
             # Convert Decimal to float for JSON serialization
             elif isinstance(value, Decimal):
                 row_dict[col_name] = float(value)
+            # Convert datetime objects to ISO format strings for JSON serialization
+            elif isinstance(value, (datetime, date, time)):
+                row_dict[col_name] = value.isoformat()
             else:
                 row_dict[col_name] = value
         

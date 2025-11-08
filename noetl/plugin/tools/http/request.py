@@ -16,19 +16,27 @@ def build_request_args(
     method: str,
     headers: Dict[str, str],
     data_map: Dict[str, Any],
-    params_legacy: Dict[str, Any],
-    payload_legacy: Any
+    params: Dict[str, Any],
+    payload: Any
 ) -> Dict[str, Any]:
     """
     Build HTTP request arguments from task configuration.
+    
+    Supports two configuration styles:
+    1. Unified data model: step.data with optional data.query/data.body
+    2. Direct params/payload: step.params and step.payload
+    
+    Priority/fallback chain:
+    - GET/DELETE: data.query → data (auto) → params → nothing
+    - POST/PUT/PATCH: data.body → data (auto) → payload → nothing
     
     Args:
         endpoint: Target URL
         method: HTTP method (GET, POST, PUT, DELETE, PATCH)
         headers: HTTP headers
-        data_map: Unified data map from task configuration
-        params_legacy: Legacy params (backward compatibility)
-        payload_legacy: Legacy payload (backward compatibility)
+        data_map: Unified data from step.data
+        params: Direct params from step.params (query parameters)
+        payload: Direct payload from step.payload (request body)
         
     Returns:
         Dictionary of request arguments for httpx
@@ -39,34 +47,35 @@ def build_request_args(
     }
     
     # Route data to query/body automatically with overrides
-    params = None
+    query_params = None
     json_body = None
     
-    try:
-        # Explicit overrides
-        if 'query' in data_map:
-            params = data_map.get('query') if isinstance(data_map.get('query'), dict) else None
-        if 'body' in data_map:
-            json_body = data_map.get('body')
-    except Exception:
-        pass
+    # Explicit overrides from data.query/data.body
+    if not isinstance(data_map, dict):
+        raise ValueError(f"data_map must be a dict, got {type(data_map).__name__}")
+    
+    if 'query' in data_map:
+        query_params = data_map.get('query') if isinstance(data_map.get('query'), dict) else None
+    if 'body' in data_map:
+        json_body = data_map.get('body')
     
     if method in ['GET', 'DELETE']:
         # GET/DELETE methods use query parameters
-        if params is None:  # default: use whole data_map as query when no explicit query/body
+        if query_params is None:  # Auto-route: use whole data_map as query when no explicit query/body
             if 'query' not in data_map and 'body' not in data_map:
-                params = {k: v for k, v in data_map.items()}
-        if params is None and isinstance(params_legacy, dict) and params_legacy:
-            params = params_legacy
-        if params:
-            request_args['params'] = params
+                query_params = {k: v for k, v in data_map.items()}
+        # Fallback to direct params configuration if data_map is empty
+        if (not query_params) and isinstance(params, dict) and params:
+            query_params = params
+        if query_params:
+            request_args['params'] = query_params
     else:
         # POST/PUT/PATCH methods use request body
         if json_body is None:
             if 'query' not in data_map and 'body' not in data_map:
                 json_body = data_map
-            elif isinstance(payload_legacy, (dict, list)) and not json_body:
-                json_body = payload_legacy
+            elif isinstance(payload, (dict, list)) and not json_body:
+                json_body = payload
         
         if json_body is not None:
             # Honor content-type if user set form/multipart; otherwise default to JSON

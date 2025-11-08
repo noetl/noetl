@@ -267,17 +267,15 @@ def execute_per_item_save(
         )
 
     ctx_for_save = dict(iter_ctx)
-    try:
-        ctx_for_save["this"] = nested_result
-        if isinstance(nested_result, dict):
-            ctx_for_save.setdefault("data", nested_result.get("data"))
-    except Exception:
-        pass
+    ctx_for_save["this"] = nested_result
+    if isinstance(nested_result, dict):
+        ctx_for_save.setdefault("data", nested_result.get("data"))
+        # Add 'result' to context for template access in save blocks
+        # For HTTP tasks: result.data contains the response body
+        # For other tasks: result contains the full task result
+        ctx_for_save["result"] = nested_result
 
-    logger.critical(f"ITERATOR.SAVE: About to call execute_save_task")
-    logger.critical(f"ITERATOR.SAVE: Save task_config={{'save': nested_save}}")
-    logger.critical(f"ITERATOR.SAVE: Context keys={list(ctx_for_save.keys())}")
-
+    # Delegate to storage save executor
     try:
         from noetl.plugin.shared.storage import execute_save_task as _do_save
 

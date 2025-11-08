@@ -76,9 +76,9 @@ def execute_http_task(
             data_map = {}
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered data={data_map}")
 
-        # Legacy back-compat: also accept params/payload when provided
-        params_legacy = render_template(jinja_env, task_config.get('params', {}), context)
-        payload_legacy = render_template(jinja_env, task_config.get('payload', {}), context)
+        # Direct params/payload (alternative to data.query/data.body)
+        params = render_template(jinja_env, task_config.get('params', {}), context)
+        payload = render_template(jinja_env, task_config.get('payload', {}), context)
 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers={headers}")
@@ -105,7 +105,7 @@ def execute_http_task(
             # Check for local domain mocking
             if _should_mock_request(endpoint):
                 logger.info(f"HTTP.EXECUTE_HTTP_TASK: Mocking request to local domain: {endpoint}")
-                mock_data = create_mock_response(endpoint, method, params_legacy, payload_legacy, data_map)
+                mock_data = create_mock_response(endpoint, method, params, payload, data_map)
                 return _complete_task(
                     task_id, task_name, start_time, 'success', mock_data,
                     method, endpoint, task_with, context, event_id, log_event_callback,
@@ -116,7 +116,7 @@ def execute_http_task(
             logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Creating HTTP client with timeout={timeout}")
             with httpx.Client(timeout=timeout) as client:
                 request_args = build_request_args(
-                    endpoint, method, headers, data_map, params_legacy, payload_legacy
+                    endpoint, method, headers, data_map, params, payload
                 )
                 
                 # Log request with redacted sensitive headers
@@ -156,7 +156,7 @@ def execute_http_task(
             logger.error(f"HTTP.EXECUTE_HTTP_TASK: RequestError - {error_msg}")
             # Optionally mock on error in dev
             if _should_mock_on_error():
-                mock_data = create_mock_response(endpoint, method, params_legacy, payload_legacy, data_map, "error_fallback")
+                mock_data = create_mock_response(endpoint, method, params, payload, data_map, "error_fallback")
                 mock_data['data']['error'] = error_msg
                 return _complete_task(
                     task_id, task_name, start_time, 'success', mock_data,
@@ -240,11 +240,11 @@ def _should_mock_request(endpoint: str) -> bool:
     Returns:
         True if request should be mocked
     """
-    try:
-        parsed = urlparse(str(endpoint))
-        host = (parsed.hostname or '').lower() if parsed else ''
-    except Exception:
-        return False
+    if not isinstance(endpoint, str):
+        raise ValueError(f"endpoint must be a string, got {type(endpoint).__name__}")
+    
+    parsed = urlparse(endpoint)
+    host = (parsed.hostname or '').lower() if parsed else ''
     
     mock_local = os.getenv('NOETL_HTTP_MOCK_LOCAL')
     if mock_local is None:
