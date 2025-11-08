@@ -27,7 +27,7 @@ async def get_executions():
                 WITH latest_events AS (
                     SELECT 
                         execution_id,
-                        MAX(created_at) as latest_timestamp
+                        MAX(event_id) as latest_event_id
                     FROM event
                     GROUP BY execution_id
                 )
@@ -45,7 +45,7 @@ async def get_executions():
                     c.path,
                     c.version
                 FROM event e
-                JOIN latest_events le ON e.execution_id = le.execution_id AND e.created_at = le.latest_timestamp
+                JOIN latest_events le ON e.execution_id = le.execution_id AND e.event_id = le.latest_event_id
                 JOIN catalog c on c.catalog_id = e.catalog_id
                 ORDER BY e.created_at DESC
             """)

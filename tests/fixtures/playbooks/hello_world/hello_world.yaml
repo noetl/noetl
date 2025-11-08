@@ -18,7 +18,7 @@ workflow:
 
   - step: test_step
     desc: "Hello world test step"
-    type: python
+    tool: python
     code: |
       def main(message):
           print(f"HELLO_WORLD: {message}")
@@ -29,9 +29,9 @@ workflow:
 
   - step: end
     desc: "End hello world test"
-    type: end
+    tool: end
     save:
-      type: event_log
+      tool: event_log
       args:
         status: "success"
         message: "{{ test_step.result.data.message }}"

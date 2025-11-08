@@ -14,11 +14,38 @@ tasks:
       - task: kubectl:local:context-set-kind
       - kubectl apply -f ci/manifests/noetl/namespace/namespace.yaml
       - sleep 2
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
+      # Update server deployment image (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml > ci/manifests/noetl/server-deployment.yaml.tmp
+          mv ci/manifests/noetl/server-deployment.yaml.tmp ci/manifests/noetl/server-deployment.yaml
+        fi
+      # Update worker deployment image (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml > ci/manifests/noetl/worker-deployment.yaml.tmp
+          mv ci/manifests/noetl/worker-deployment.yaml.tmp ci/manifests/noetl/worker-deployment.yaml
+        fi
       - kubectl apply -f ci/manifests/noetl/
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+      # Restore original image placeholders (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml > ci/manifests/noetl/server-deployment.yaml.tmp
+          mv ci/manifests/noetl/server-deployment.yaml.tmp ci/manifests/noetl/server-deployment.yaml
+        fi
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml > ci/manifests/noetl/worker-deployment.yaml.tmp
+          mv ci/manifests/noetl/worker-deployment.yaml.tmp ci/manifests/noetl/worker-deployment.yaml
+        fi
 
   noetl:k8s:remove:
     desc: Remove noetl from the noetl kind cluster
@@ -52,6 +79,26 @@ tasks:
       - task: test:k8s:create-tables
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"
+
+  noetl:local:venv-create:
+    desc: Create virtual environment and install NoETL with dev dependencies
+    aliases: [venv-create, create-venv]
+    cmds:
+      - |
+        set -e
+        if [ -d ".venv" ]; then
+          echo "Virtual environment already exists at .venv"
+          echo "To recreate, remove it first: rm -rf .venv"
+        else
+          echo "Creating virtual environment at .venv..."
+          python3 -m venv .venv
+          echo "Virtual environment created successfully"
+        fi
+        echo "Installing NoETL in editable mode with dev dependencies..."
+        .venv/bin/pip install --upgrade pip
+        .venv/bin/pip install -e ".[dev]"
+        echo "Installation complete"
+        echo "Activate with: source .venv/bin/activate"
 
   noetl:local:install:
     desc: Install NoETL in editable mode
@@ -500,6 +547,7 @@ tasks:
     desc: Setup test environment, reset postgres, register credentials and playbooks
     aliases: [local-setup-test, lste]
     cmds:
+      - task: noetl:local:venv-create
       - |
         set -e
         echo "=== Setting up test environment using local NoETL service (port 8083) ==="

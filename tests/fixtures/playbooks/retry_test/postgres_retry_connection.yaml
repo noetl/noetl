@@ -11,9 +11,9 @@ workload:
 workflow:
   - step: start
     desc: Execute query with retry on errors
-    type: postgres
+    tool: postgres
     auth:
-      type: postgres
+      tool: postgres
       credential: test_postgres
     query: "{{ workload.query }}"
     retry:

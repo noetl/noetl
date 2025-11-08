@@ -18,7 +18,7 @@ workflow:
 
   - step: event_test
     desc: "Test event storage delegation"
-    type: python
+    tool: python
     code: |
       # Simple function that doesn't need input_data parameter
       def main(**kwargs):
@@ -38,7 +38,7 @@ workflow:
   # Test 2: Postgres storage delegation
   - step: postgres_test  
     desc: "Test postgres storage delegation"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -51,7 +51,7 @@ workflow:
           }
     save:
       storage:
-        type: postgres
+        tool: postgres
         table: simple_test_flat
         auth: "{{ workload.pg_auth }}"
       args:
@@ -64,7 +64,7 @@ workflow:
   # Test 3: DuckDB storage delegation
   - step: duckdb_test
     desc: "Test duckdb storage delegation"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -76,7 +76,7 @@ workflow:
           }
     save:
       storage:
-        type: duckdb
+        tool: duckdb
         commands: |
           CREATE OR REPLACE TABLE test_duckdb AS 
           SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
@@ -88,7 +88,7 @@ workflow:
   # Test 4: HTTP storage delegation  
   - step: http_test
     desc: "Test http storage delegation"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -100,7 +100,7 @@ workflow:
           }
     save:
       storage:
-        type: http
+        tool: http
         url: "https://httpbin.org/post"
         method: POST
         headers:

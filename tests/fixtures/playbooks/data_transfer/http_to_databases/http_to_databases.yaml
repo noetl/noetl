@@ -1,0 +1,350 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: http_to_databases
+  path: tests/fixtures/playbooks/data_transfer/http_to_databases
+
+workload:
+  sf_auth: sf_test
+  pg_auth: pg_local
+  message: Fetch data from HTTP API and store in PostgreSQL, Snowflake, and DuckDB
+  api_url: https://jsonplaceholder.typicode.com/users
+  chunk_size: 1000
+
+workflow:
+  - step: start
+    desc: Start HTTP to databases transfer pipeline
+    next:
+      - step: fetch_http_data
+
+  - step: fetch_http_data
+    desc: Fetch user data from JSONPlaceholder API
+    tool: http
+    method: GET
+    url: "{{ workload.api_url }}"
+    next:
+      - step: create_sf_database
+
+  - step: create_sf_database
+    desc: Create Snowflake database and schema
+    tool: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      CREATE DATABASE IF NOT EXISTS TEST_DB;
+      USE DATABASE TEST_DB;
+      USE SCHEMA PUBLIC;
+    next:
+      - step: setup_pg_table
+
+  - step: setup_pg_table
+    desc: Create PostgreSQL table for HTTP data
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      CREATE TABLE IF NOT EXISTS public.http_users_pg (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        username TEXT,
+        email TEXT,
+        phone TEXT,
+        website TEXT,
+        company_name TEXT,
+        city TEXT
+      );
+      
+      TRUNCATE TABLE public.http_users_pg;
+    next:
+      - step: setup_sf_table
+
+  - step: setup_sf_table
+    desc: Create Snowflake table for HTTP data
+    tool: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      CREATE OR REPLACE TABLE HTTP_USERS_SF (
+        id INTEGER PRIMARY KEY,
+        name STRING,
+        username STRING,
+        email STRING,
+        phone STRING,
+        website STRING,
+        company_name STRING,
+        city STRING
+      );
+    next:
+      - step: setup_duckdb_table
+
+  - step: setup_duckdb_table
+    desc: Create DuckDB table for HTTP data
+    tool: duckdb
+    command: |
+      CREATE TABLE IF NOT EXISTS http_users_duckdb (
+        id INTEGER PRIMARY KEY,
+        name VARCHAR,
+        username VARCHAR,
+        email VARCHAR,
+        phone VARCHAR,
+        website VARCHAR,
+        company_name VARCHAR,
+        city VARCHAR
+      );
+      
+      DELETE FROM http_users_duckdb;
+    next:
+      - step: transform_http_to_pg
+
+  - step: transform_http_to_pg
+    desc: Transform HTTP JSON data and prepare for database insertion
+    tool: python
+    code: |
+      def main(fetch_http_data):
+          """Transform HTTP API response and prepare for database insertion."""
+          import json
+          
+          # When passing the step name, we get the result.data object
+          # The HTTP result structure is: result.data.data = array of users
+          users = []
+          if isinstance(fetch_http_data, dict):
+              # fetch_http_data is the 'data' part of the result
+              # which contains {url, data, elapsed, headers, status_code}
+              users = fetch_http_data.get('data', [])
+          
+          # Transform data for database insertion
+          transformed_rows = []
+          for user in users:
+              if not user or not isinstance(user, dict):
+                  continue
+              row = {
+                  'id': user.get('id'),
+                  'name': (user.get('name') or '').replace("'", "''"),  # Escape single quotes
+                  'username': (user.get('username') or '').replace("'", "''"),
+                  'email': (user.get('email') or '').replace("'", "''"),
+                  'phone': (user.get('phone') or '').replace("'", "''"),
+                  'website': (user.get('website') or '').replace("'", "''"),
+                  'company_name': ((user.get('company') or {}).get('name') or '').replace("'", "''"),
+                  'city': ((user.get('address') or {}).get('city') or '').replace("'", "''")
+              }
+              transformed_rows.append(row)
+          
+          return {
+              'status': 'success',
+              'rows': transformed_rows,
+              'count': len(transformed_rows)
+          }
+    args:
+      fetch_http_data: "{{ fetch_http_data.data }}"
+    next:
+      - step: insert_to_postgres
+
+  - step: insert_to_postgres
+    desc: Insert transformed data into PostgreSQL using iterator
+    tool: iterator
+    collection: "{{ transform_http_to_pg.rows }}"
+    element: user
+    mode: sequential
+    task:
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        INSERT INTO public.http_users_pg (id, name, username, email, phone, website, company_name, city)
+        VALUES (
+          {{ user.id }},
+          '{{ user.name }}',
+          '{{ user.username }}',
+          '{{ user.email }}',
+          '{{ user.phone }}',
+          '{{ user.website }}',
+          '{{ user.company_name }}',
+          '{{ user.city }}'
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          username = EXCLUDED.username,
+          email = EXCLUDED.email,
+          phone = EXCLUDED.phone,
+          website = EXCLUDED.website,
+          company_name = EXCLUDED.company_name,
+          city = EXCLUDED.city;
+    next:
+      - step: verify_pg_data
+
+  - step: verify_pg_data
+    desc: Verify data in PostgreSQL
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT 
+        COUNT(*) as total_users,
+        COUNT(DISTINCT city) as unique_cities,
+        COUNT(DISTINCT company_name) as unique_companies
+      FROM public.http_users_pg;
+    next:
+      - step: insert_to_snowflake
+
+  - step: insert_to_snowflake
+    desc: Insert transformed data into Snowflake using iterator
+    tool: iterator
+    collection: "{{ transform_http_to_pg.rows }}"
+    element: user
+    mode: sequential
+    task:
+      tool: snowflake
+      auth: "{{ workload.sf_auth }}"
+      command: |
+        MERGE INTO HTTP_USERS_SF AS target
+        USING (SELECT 
+          {{ user.id }} AS id,
+          '{{ user.name }}' AS name,
+          '{{ user.username }}' AS username,
+          '{{ user.email }}' AS email,
+          '{{ user.phone }}' AS phone,
+          '{{ user.website }}' AS website,
+          '{{ user.company_name }}' AS company_name,
+          '{{ user.city }}' AS city
+        ) AS source
+        ON target.id = source.id
+        WHEN MATCHED THEN
+          UPDATE SET
+            name = source.name,
+            username = source.username,
+            email = source.email,
+            phone = source.phone,
+            website = source.website,
+            company_name = source.company_name,
+            city = source.city
+        WHEN NOT MATCHED THEN
+          INSERT (id, name, username, email, phone, website, company_name, city)
+          VALUES (source.id, source.name, source.username, source.email, source.phone, source.website, source.company_name, source.city);
+    next:
+      - step: verify_sf_data
+
+  - step: verify_sf_data
+    desc: Verify data in Snowflake
+    tool: snowflake
+    auth: "{{ workload.sf_auth }}"
+    command: |
+      SELECT 
+        COUNT(*) as total_users,
+        COUNT(DISTINCT city) as unique_cities,
+        COUNT(DISTINCT company_name) as unique_companies
+      FROM HTTP_USERS_SF;
+    next:
+      - step: insert_to_duckdb
+
+  - step: insert_to_duckdb
+    desc: Insert transformed data into DuckDB using iterator
+    tool: iterator
+    collection: "{{ transform_http_to_pg.rows }}"
+    element: user
+    mode: sequential
+    task:
+      tool: duckdb
+      command: |
+        INSERT INTO http_users_duckdb (id, name, username, email, phone, website, company_name, city)
+        VALUES (
+          {{ user.id }},
+          '{{ user.name }}',
+          '{{ user.username }}',
+          '{{ user.email }}',
+          '{{ user.phone }}',
+          '{{ user.website }}',
+          '{{ user.company_name }}',
+          '{{ user.city }}'
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          username = EXCLUDED.username,
+          email = EXCLUDED.email,
+          phone = EXCLUDED.phone,
+          website = EXCLUDED.website,
+          company_name = EXCLUDED.company_name,
+          city = EXCLUDED.city;
+    next:
+      - step: verify_duckdb_data
+
+  - step: verify_duckdb_data
+    desc: Verify data in DuckDB
+    tool: duckdb
+    command: |
+      SELECT 
+        COUNT(*) as total_users,
+        COUNT(DISTINCT city) as unique_cities,
+        COUNT(DISTINCT company_name) as unique_companies
+      FROM http_users_duckdb;
+    next:
+      - step: cross_verify
+
+  - step: cross_verify
+    desc: Cross-verify data across all three databases
+    tool: python
+    code: |
+      def main(verify_pg_data, verify_sf_data, verify_duckdb_data):
+          """Compare results across PostgreSQL, Snowflake, and DuckDB."""
+          
+          # PostgreSQL result structure
+          pg_result = {}
+          if verify_pg_data and isinstance(verify_pg_data, dict):
+              pg_result = verify_pg_data.get('data', {}).get('command_0', {}).get('rows', [{}])[0] if verify_pg_data.get('data') else {}
+          
+          # Snowflake result structure  
+          sf_result = {}
+          if verify_sf_data and isinstance(verify_sf_data, dict):
+              sf_result = verify_sf_data.get('data', {}).get('statement_0', {}).get('result', [{}])[0] if verify_sf_data.get('data') else {}
+          
+          # DuckDB result structure
+          duckdb_result = {}
+          if verify_duckdb_data and isinstance(verify_duckdb_data, dict):
+              duckdb_result = verify_duckdb_data.get('data', {}).get('result', [{}])[0] if verify_duckdb_data.get('data') else {}
+          
+          comparison = {
+              'postgresql': {
+                  'total_users': pg_result.get('total_users', 0),
+                  'unique_cities': pg_result.get('unique_cities', 0),
+                  'unique_companies': pg_result.get('unique_companies', 0)
+              },
+              'snowflake': {
+                  'total_users': sf_result.get('TOTAL_USERS', 0),
+                  'unique_cities': sf_result.get('UNIQUE_CITIES', 0),
+                  'unique_companies': sf_result.get('UNIQUE_COMPANIES', 0)
+              },
+              'duckdb': {
+                  'total_users': duckdb_result.get('total_users', 0),
+                  'unique_cities': duckdb_result.get('unique_cities', 0),
+                  'unique_companies': duckdb_result.get('unique_companies', 0)
+              }
+          }
+          
+          # Check if all databases have the same counts
+          pg_count = comparison['postgresql']['total_users']
+          sf_count = comparison['snowflake']['total_users']
+          duckdb_count = comparison['duckdb']['total_users']
+          
+          all_match = (pg_count == sf_count == duckdb_count)
+          
+          return {
+              'status': 'success' if all_match else 'warning',
+              'comparison': comparison,
+              'all_databases_match': all_match,
+              'message': f'All databases have {pg_count} users' if all_match else 'Database counts do not match'
+          }
+    args:
+      verify_pg_data: "{{ verify_pg_data }}"
+      verify_sf_data: "{{ verify_sf_data }}"
+      verify_duckdb_data: "{{ verify_duckdb_data }}"
+    next:
+      - step: cleanup
+
+  - step: cleanup
+    desc: Clean up test tables (optional - comment out to keep data)
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      -- DROP TABLE IF EXISTS public.http_users_pg;
+      -- Commented out to keep data for inspection
+      SELECT 'Cleanup skipped - tables preserved for inspection' as message;
+    next:
+      - step: end
+
+  - step: end
+    desc: End HTTP to databases transfer pipeline
