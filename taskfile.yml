@@ -33,6 +33,109 @@ tasks:
     cmds:
       - task --list
 
+# === WSL2 Dependencies Installation ===
+
+  wsl2:install:dependencies:
+    desc: Install required tools for WSL2 (psql, kubectl, helm, yq)
+    aliases: [wsl2-setup, install-wsl2-deps]
+    cmds:
+      - |
+        set -e
+        echo "=== Installing WSL2 Dependencies ==="
+        echo ""
+        
+        # Detect OS
+        if ! grep -qi microsoft /proc/version 2>/dev/null; then
+          echo "WARNING: This script is designed for WSL2"
+          echo "Current OS: $(uname -a)"
+          read -p "Continue anyway? (y/N) " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+          fi
+        fi
+        
+        echo "Updating package lists..."
+        sudo apt-get update
+        echo ""
+        
+        # Install PostgreSQL client (psql)
+        echo "Installing PostgreSQL client (psql)..."
+        if ! command -v psql >/dev/null 2>&1; then
+          sudo apt-get install -y postgresql-client
+          echo "✓ psql installed: $(psql --version)"
+        else
+          echo "✓ psql already installed: $(psql --version)"
+        fi
+        echo ""
+        
+        # Install kubectl
+        echo "Installing kubectl..."
+        if ! command -v kubectl >/dev/null 2>&1; then
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          rm kubectl
+          echo "✓ kubectl installed: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+        else
+          echo "✓ kubectl already installed: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+        fi
+        echo ""
+        
+        # Install Helm
+        echo "Installing Helm..."
+        if ! command -v helm >/dev/null 2>&1; then
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          echo "✓ Helm installed: $(helm version --short)"
+        else
+          echo "✓ Helm already installed: $(helm version --short)"
+        fi
+        echo ""
+        
+        # Install yq (Go-based mikefarah/yq, NOT Python yq)
+        echo "Installing yq (mikefarah/yq - Go version)..."
+        if command -v yq >/dev/null 2>&1; then
+          if yq --version 2>&1 | grep -q "mikefarah"; then
+            echo "✓ yq (mikefarah) already installed: $(yq --version)"
+          else
+            echo "WARNING: Found Python-based yq, will install Go-based yq (mikefarah/yq)"
+            echo "The Python yq will remain but /usr/local/bin/yq will be the Go version"
+            YQ_VERSION=$(curl -s https://api.github.com/repos/mikefarah/yq/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            YQ_BINARY="yq_linux_amd64"
+            sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
+            sudo chmod +x /usr/local/bin/yq
+            echo "✓ yq (mikefarah) installed: $(yq --version)"
+          fi
+        else
+          YQ_VERSION=$(curl -s https://api.github.com/repos/mikefarah/yq/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          YQ_BINARY="yq_linux_amd64"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
+          sudo chmod +x /usr/local/bin/yq
+          echo "✓ yq installed: $(yq --version)"
+        fi
+        echo ""
+        
+        # Install additional useful tools
+        echo "Installing additional tools (curl, jq, git)..."
+        sudo apt-get install -y curl jq git
+        echo "✓ Additional tools installed"
+        echo ""
+        
+        echo "=== Installation Summary ==="
+        echo "psql:    $(psql --version 2>/dev/null || echo 'Not found')"
+        echo "kubectl: $(kubectl version --client --short 2>/dev/null || kubectl version --client 2>/dev/null || echo 'Not found')"
+        echo "helm:    $(helm version --short 2>/dev/null || echo 'Not found')"
+        echo "yq:      $(yq --version 2>/dev/null || echo 'Not found')"
+        echo "curl:    $(curl --version 2>/dev/null | head -n1 || echo 'Not found')"
+        echo "jq:      $(jq --version 2>/dev/null || echo 'Not found')"
+        echo "git:     $(git --version 2>/dev/null || echo 'Not found')"
+        echo ""
+        echo "✓ All dependencies installed successfully!"
+        echo ""
+        echo "Next steps:"
+        echo "  - Install Docker Desktop for Windows with WSL2 backend"
+        echo "  - Enable Kubernetes in Docker Desktop settings"
+        echo "  - Run: task dev:k8s:bootstrap"
+
 # === Clean up local file cache ===
 
   cache:local:postgres-clear:
