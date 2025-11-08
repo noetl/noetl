@@ -35,6 +35,8 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
+      DROP TABLE IF EXISTS {{ workload.test_table_pg }};
+      DROP TABLE IF EXISTS public.test_pg_source;
       CREATE TABLE IF NOT EXISTS {{ workload.test_table_pg }} (
         id INTEGER PRIMARY KEY,
         name TEXT,
@@ -42,7 +44,7 @@ workflow:
         created_at TIMESTAMPTZ,
         metadata JSONB
       );
-      
+
       TRUNCATE TABLE {{ workload.test_table_pg }};
     next:
       - step: setup_sf_table
@@ -59,7 +61,7 @@ workflow:
         created_at TIMESTAMP_TZ,
         metadata VARIANT
       );
-      
+
       -- Insert test data
       INSERT INTO {{ workload.test_table_sf }}
       SELECT 1, 'Record 1', 100.50, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
@@ -78,14 +80,14 @@ workflow:
     desc: Transfer data from Snowflake to PostgreSQL using generic transfer action
     tool: transfer
     source:
-      tool: snowflake
+      type: snowflake
       auth:
         source: credential
         tool: snowflake
         key: "{{ workload.sf_auth }}"
       query: "SELECT * FROM TEST_DATA ORDER BY id"
     target:
-      tool: postgres
+      type: postgres
       auth:
         source: credential
         tool: postgres
@@ -108,7 +110,7 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT 
+      SELECT
         COUNT(*) as row_count,
         MIN(id) as min_id,
         MAX(id) as max_id,
@@ -128,9 +130,9 @@ workflow:
         amount NUMERIC(10,2),
         status TEXT
       );
-      
+
       TRUNCATE TABLE public.test_pg_source;
-      
+
       INSERT INTO public.test_pg_source VALUES
         (101, 'PG Record 1', 1000.00, 'active'),
         (102, 'PG Record 2', 2000.50, 'pending'),
@@ -158,14 +160,14 @@ workflow:
     desc: Transfer data from PostgreSQL to Snowflake using generic transfer action
     tool: transfer
     source:
-      tool: postgres
+      type: postgres
       auth:
         source: credential
         tool: postgres
         key: "{{ workload.pg_auth }}"
       query: "SELECT * FROM public.test_pg_source ORDER BY id"
     target:
-      tool: snowflake
+      type: snowflake
       auth:
         source: credential
         tool: snowflake
@@ -192,14 +194,14 @@ workflow:
     tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
-      SELECT 
+      SELECT
         COUNT(*) as row_count,
         MIN(id) as min_id,
         MAX(id) as max_id,
         SUM(amount) as total_amount
       FROM PG_IMPORTED_DATA;
     next:
-      - step: cleanup
+      - step: end
 
   - step: cleanup
     desc: Clean up test tables
