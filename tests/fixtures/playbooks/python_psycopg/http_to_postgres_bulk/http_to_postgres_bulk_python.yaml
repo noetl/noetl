@@ -1,0 +1,114 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: http_to_postgres_bulk_python
+  path: tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
+
+workload:
+  api_url: "https://jsonplaceholder.typicode.com/posts"
+  pg_credential: pg_local
+  # PostgreSQL connection details for psycopg
+  pg_host: localhost
+  pg_port: 54321
+  pg_user: demo
+  pg_password: demo
+  pg_database: demo_noetl
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: create_table
+
+  - step: create_table
+    desc: Create table for storing HTTP data
+    tool: postgres
+    auth: "{{ workload.pg_credential }}"
+    command: |
+      DROP TABLE IF EXISTS public.http_posts;
+      
+      CREATE TABLE public.http_posts (
+        id SERIAL PRIMARY KEY,
+        post_id INTEGER,
+        user_id INTEGER,
+        title TEXT,
+        body TEXT,
+        fetched_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    next:
+      - step: fetch_http_data
+
+  - step: fetch_http_data
+    desc: Fetch data from HTTP API
+    tool: http
+    method: GET
+    url: "{{ workload.api_url }}"
+    next:
+      - step: bulk_insert
+
+  - step: bulk_insert
+    desc: Bulk insert posts into PostgreSQL using Python and psycopg
+    tool: python
+    code: |
+      def main(http_data, pg_host, pg_port, pg_user, pg_password, pg_database):
+          """
+          Bulk insert HTTP posts into PostgreSQL.
+          Demonstrates direct psycopg (v3) usage for bulk operations.
+          """
+          # Import psycopg inside function to avoid module-level import issues
+          import psycopg
+          
+          # Extract posts array from HTTP response
+          posts = []
+          if isinstance(http_data, dict) and 'data' in http_data:
+              posts = http_data['data']
+          
+          if not posts:
+              return {'inserted': 0, 'total': 0, 'message': 'No posts to insert'}
+          
+          # Build connection string for psycopg3
+          conninfo = f"host={pg_host} port={pg_port or 5432} user={pg_user} password={pg_password} dbname={pg_database}"
+          
+          # Connect to PostgreSQL using context manager
+          with psycopg.connect(conninfo) as conn:
+              with conn.cursor() as cursor:
+                  # Bulk insert with transaction
+                  inserted = 0
+                  for post in posts:
+                      cursor.execute(
+                          """
+                          INSERT INTO public.http_posts (post_id, user_id, title, body)
+                          VALUES (%s, %s, %s, %s)
+                          """,
+                          (post['id'], post['userId'], post['title'], post['body'])
+                      )
+                      inserted += 1
+                  
+                  conn.commit()
+          
+          return {
+              'inserted': inserted, 
+              'total': len(posts),
+              'message': f'Successfully inserted {inserted} posts'
+          }
+    data:
+      http_data: "{{ fetch_http_data }}"
+      pg_host: "{{ workload.pg_host }}"
+      pg_port: "{{ workload.pg_port }}"
+      pg_user: "{{ workload.pg_user }}"
+      pg_password: "{{ workload.pg_password }}"
+      pg_database: "{{ workload.pg_database }}"
+    next:
+      - step: show_count
+
+  - step: show_count
+    desc: Verify record count
+    tool: postgres
+    auth: "{{ workload.pg_credential }}"
+    command: |
+      SELECT COUNT(*) as records FROM public.http_posts;
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
