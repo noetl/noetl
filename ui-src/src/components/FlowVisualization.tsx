@@ -361,24 +361,39 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             playbookName.toLowerCase().includes("weather")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Fetch Weather Data", type: 'http', enabled: true },
-              { id: "demo-2", name: "Process Weather Info", type: 'python', enabled: true },
-              { id: "demo-3", name: "Generate Weather Report", type: 'workbook', enabled: true },
+              { id: "demo-1", name: "Start Weather Pipeline", type: 'start', enabled: true },
+              { id: "demo-2", name: "Fetch Weather API", type: 'http', enabled: true },
+              { id: "demo-3", name: "Transform Weather Data", type: 'python', enabled: true },
+              { id: "demo-4", name: "Analyze with DuckDB", type: 'duckdb', enabled: true },
+              { id: "demo-5", name: "Store in Postgres", type: 'postgres', enabled: true },
+              { id: "demo-6", name: "Generate Report", type: 'workbook', enabled: true },
+              { id: "demo-7", name: "End Pipeline", type: 'end', enabled: true },
             ];
           } else if (
             playbookId.toLowerCase().includes("database") ||
             playbookId.toLowerCase().includes("sql")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Connect to Database", type: 'duckdb', enabled: true },
-              { id: "demo-2", name: "Query Data", type: 'duckdb', enabled: true },
-              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
+              { id: "demo-1", name: "Start", type: 'start', enabled: true },
+              { id: "demo-2", name: "Load Secrets", type: 'secrets', enabled: true },
+              { id: "demo-3", name: "Query DuckDB", type: 'duckdb', enabled: true },
+              { id: "demo-4", name: "Query Postgres", type: 'postgres', enabled: true },
+              { id: "demo-5", name: "Process Results", type: 'python', enabled: true },
+              { id: "demo-6", name: "Loop Through Records", type: 'loop', enabled: true },
+              { id: "demo-7", name: "Export Data", type: 'workbook', enabled: true },
+              { id: "demo-8", name: "End", type: 'end', enabled: true },
             ];
           } else {
             demoTasks = [
-              { id: "demo-1", name: "Initialize Process", type: 'start', enabled: true },
-              { id: "demo-2", name: "Process Data", type: 'python', enabled: true },
-              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
+              { id: "demo-1", name: "Start Workflow", type: 'start', enabled: true },
+              { id: "demo-2", name: "HTTP Request", type: 'http', enabled: true },
+              { id: "demo-3", name: "Python Transform", type: 'python', enabled: true },
+              { id: "demo-4", name: "DuckDB Analytics", type: 'duckdb', enabled: true },
+              { id: "demo-5", name: "Postgres Storage", type: 'postgres', enabled: true },
+              { id: "demo-6", name: "Call Sub-Playbook", type: 'playbooks', enabled: true },
+              { id: "demo-7", name: "Workbook Task", type: 'workbook', enabled: true },
+              { id: "demo-8", name: "Iterator Loop", type: 'loop', enabled: true },
+              { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
             ];
           }
 
@@ -405,7 +420,15 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       } else {
         messageApi.warning(`No content found for playbook: ${playbookName}`);
         const demoTasks: EditableTaskNode[] = [
-          { id: "empty-1", name: "No Content Available", type: 'start', enabled: true },
+          { id: "empty-1", name: "Start", type: 'start', enabled: true },
+          { id: "empty-2", name: "HTTP Example", type: 'http', enabled: true },
+          { id: "empty-3", name: "Python Example", type: 'python', enabled: true },
+          { id: "empty-4", name: "DuckDB Example", type: 'duckdb', enabled: true },
+          { id: "empty-5", name: "Postgres Example", type: 'postgres', enabled: true },
+          { id: "empty-6", name: "Playbooks Example", type: 'playbooks', enabled: true },
+          { id: "empty-7", name: "Workbook Example", type: 'workbook', enabled: true },
+          { id: "empty-8", name: "Loop Example", type: 'loop', enabled: true },
+          { id: "empty-9", name: "End", type: 'end', enabled: true },
         ];
         setTasks(demoTasks);
         const { nodes: flowNodes, edges: flowEdges } =

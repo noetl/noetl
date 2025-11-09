@@ -190,13 +190,13 @@ const PlaybookEditor: React.FC = () => {
       } else {
         // Create new playbooks
         const newPlaybook = await apiService.createPlaybook({
-          name: "New Playbook",
-          description: "Created from editor",
+          path: "new/playbook",
+          version: "1.0.0",
           status: "draft",
         });
-        await apiService.savePlaybookContent(newPlaybook.id, content);
+        await apiService.savePlaybookContent(newPlaybook.catalog_id, content);
         setPlaybook(newPlaybook);
-        window.history.pushState({}, "", `/editor?id=${newPlaybook.id}`);
+        window.history.pushState({}, "", `/editor?id=${newPlaybook.catalog_id}`);
         message.success("New playbooks created and saved");
       }
     } catch (err) {
@@ -275,8 +275,8 @@ const PlaybookEditor: React.FC = () => {
             <Title level={2}>✏️ Playbook Editor</Title>
             {playbook ? (
               <Text type="secondary">
-                Editing: {playbook.name} (ID:{" "}
-                {playbookId || playbook.id || "New"})
+                Editing: {playbook.path} (ID:{" "}
+                {playbookId || playbook.catalog_id || "New"})
               </Text>
             ) : playbookId ? (
               <Text type="secondary">
@@ -355,8 +355,8 @@ const PlaybookEditor: React.FC = () => {
         <FlowVisualization
           visible={showFlowVisualization}
           onClose={() => setShowFlowVisualization(false)}
-          playbookId={playbookId || playbook?.id || "new"}
-          playbookName={playbook?.name || "New Playbook"}
+          playbookId={playbookId || playbook?.catalog_id || "new"}
+          playbookName={playbook?.path || "New Playbook"}
           content={content}
           onUpdateContent={(newYaml) => setContent(newYaml)}
         />
