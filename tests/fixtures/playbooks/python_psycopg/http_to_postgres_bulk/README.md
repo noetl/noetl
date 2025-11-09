@@ -82,9 +82,9 @@ This playbook validates NoETL's ability to execute custom Python code with direc
   ```python
   def main(http_data, pg_host, pg_port, pg_user, pg_password, pg_database):
   ```
-- **Data Mapping**:
+- **Args Mapping**:
   ```yaml
-  data:
+  args:
     http_data: "{{ fetch_http_data }}"  # Full step result
     pg_host: "{{ workload.pg_host }}"
     pg_port: "{{ workload.pg_port }}"
@@ -92,7 +92,7 @@ This playbook validates NoETL's ability to execute custom Python code with direc
     pg_password: "{{ workload.pg_password }}"
     pg_database: "{{ workload.pg_database }}"
   ```
-  **Note**: Python plugin doesn't support `auth` property like postgres/duckdb plugins. Connection details are passed via workload variables or could be fetched using a separate secrets step.
+  **Note**: Python plugin now supports `args` field with Jinja2 template rendering. Connection details are passed via workload variables.
 - **Process**:
   1. Extract posts array from `http_data['data']`
   2. Create psycopg connection

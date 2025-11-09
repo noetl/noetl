@@ -91,7 +91,7 @@ workflow:
               'total': len(posts),
               'message': f'Successfully inserted {inserted} posts'
           }
-    data:
+    args:
       http_data: "{{ fetch_http_data }}"
       pg_host: "{{ workload.pg_host }}"
       pg_port: "{{ workload.pg_port }}"

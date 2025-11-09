@@ -66,6 +66,19 @@ def execute_python_task(
     task_name = task_config.get('name', 'unnamed_python_task')
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task ID={task_id}, name={task_name}")
 
+    # Extract args from task_config if not provided as parameter
+    # This allows 'args' field in YAML to be used
+    if not args:
+        args = task_config.get('args', {})
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Extracted args from task_config: {list(args.keys())}")
+    else:
+        # Merge task_config args with provided args (provided args take precedence)
+        config_args = task_config.get('args', {})
+        if config_args:
+            merged_args = {**config_args, **args}
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Merged config args with provided args")
+            args = merged_args
+    
     # Use args if provided, otherwise empty dict
     args = args or {}
 
