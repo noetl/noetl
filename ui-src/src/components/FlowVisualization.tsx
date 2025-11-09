@@ -22,9 +22,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
-import { nodeTypes, orderedNodeTypes } from './nodeTypes';
+import { nodeTypes } from './nodeTypes'; // simplified source
 import { EditableTaskNode, TaskNode } from "./types";
-import MonacoEditor from '@monaco-editor/react';
 // @ts-ignore
 import yaml from 'js-yaml';
 
@@ -68,14 +67,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // Minimal global edit modal state (only type change + delete)
   const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
-  const [editorTab, setEditorTab] = useState<'config' | 'code' | 'json' | 'raw'>('config');
   const [messageApi, contextHolder] = message.useMessage();
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
   // Provide nodeTypes directly (already a stable object export)
-  const customNodeTypes = useMemo(() => nodeTypes, []);
+  // React Flow expects a mapping of type -> React component receiving {id, data, ...}; our adapted components satisfy this
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -129,7 +128,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         return n;
       }));
       setHasChanges(true);
-      setActiveTask((prev) => (prev && prev.id === updatedTask.id ? { ...prev, ...updatedTask, id: prev.id } : prev)); // keep modal in sync
     },
     [setNodes, readOnly]
   );
@@ -173,7 +171,7 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             onEdit: handleEditTask,
             onDelete: handleDeleteTask,
             readOnly,
-            onOpen: () => setActiveTask(task),
+            // onOpen not used (click handler below)
           },
           className: "react-flow__node",
         });
@@ -363,24 +361,39 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
             playbookName.toLowerCase().includes("weather")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Fetch Weather Data", type: 'http', enabled: true },
-              { id: "demo-2", name: "Process Weather Info", type: 'python', enabled: true },
-              { id: "demo-3", name: "Generate Weather Report", type: 'workbook', enabled: true },
+              { id: "demo-1", name: "Start Weather Pipeline", type: 'start', enabled: true },
+              { id: "demo-2", name: "Fetch Weather API", type: 'http', enabled: true },
+              { id: "demo-3", name: "Transform Weather Data", type: 'python', enabled: true },
+              { id: "demo-4", name: "Analyze with DuckDB", type: 'duckdb', enabled: true },
+              { id: "demo-5", name: "Store in Postgres", type: 'postgres', enabled: true },
+              { id: "demo-6", name: "Generate Report", type: 'workbook', enabled: true },
+              { id: "demo-7", name: "End Pipeline", type: 'end', enabled: true },
             ];
           } else if (
             playbookId.toLowerCase().includes("database") ||
             playbookId.toLowerCase().includes("sql")
           ) {
             demoTasks = [
-              { id: "demo-1", name: "Connect to Database", type: 'duckdb', enabled: true },
-              { id: "demo-2", name: "Query Data", type: 'duckdb', enabled: true },
-              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
+              { id: "demo-1", name: "Start", type: 'start', enabled: true },
+              { id: "demo-2", name: "Load Secrets", type: 'secrets', enabled: true },
+              { id: "demo-3", name: "Query DuckDB", type: 'duckdb', enabled: true },
+              { id: "demo-4", name: "Query Postgres", type: 'postgres', enabled: true },
+              { id: "demo-5", name: "Process Results", type: 'python', enabled: true },
+              { id: "demo-6", name: "Loop Through Records", type: 'loop', enabled: true },
+              { id: "demo-7", name: "Export Data", type: 'workbook', enabled: true },
+              { id: "demo-8", name: "End", type: 'end', enabled: true },
             ];
           } else {
             demoTasks = [
-              { id: "demo-1", name: "Initialize Process", type: 'start', enabled: true },
-              { id: "demo-2", name: "Process Data", type: 'python', enabled: true },
-              { id: "demo-3", name: "Export Results", type: 'workbook', enabled: true },
+              { id: "demo-1", name: "Start Workflow", type: 'start', enabled: true },
+              { id: "demo-2", name: "HTTP Request", type: 'http', enabled: true },
+              { id: "demo-3", name: "Python Transform", type: 'python', enabled: true },
+              { id: "demo-4", name: "DuckDB Analytics", type: 'duckdb', enabled: true },
+              { id: "demo-5", name: "Postgres Storage", type: 'postgres', enabled: true },
+              { id: "demo-6", name: "Call Sub-Playbook", type: 'playbooks', enabled: true },
+              { id: "demo-7", name: "Workbook Task", type: 'workbook', enabled: true },
+              { id: "demo-8", name: "Iterator Loop", type: 'loop', enabled: true },
+              { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
             ];
           }
 
@@ -407,7 +420,15 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       } else {
         messageApi.warning(`No content found for playbook: ${playbookName}`);
         const demoTasks: EditableTaskNode[] = [
-          { id: "empty-1", name: "No Content Available", type: 'start', enabled: true },
+          { id: "empty-1", name: "Start", type: 'start', enabled: true },
+          { id: "empty-2", name: "HTTP Example", type: 'http', enabled: true },
+          { id: "empty-3", name: "Python Example", type: 'python', enabled: true },
+          { id: "empty-4", name: "DuckDB Example", type: 'duckdb', enabled: true },
+          { id: "empty-5", name: "Postgres Example", type: 'postgres', enabled: true },
+          { id: "empty-6", name: "Playbooks Example", type: 'playbooks', enabled: true },
+          { id: "empty-7", name: "Workbook Example", type: 'workbook', enabled: true },
+          { id: "empty-8", name: "Loop Example", type: 'loop', enabled: true },
+          { id: "empty-9", name: "End", type: 'end', enabled: true },
         ];
         setTasks(demoTasks);
         const { nodes: flowNodes, edges: flowEdges } =
@@ -507,8 +528,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                onNodeClick={(e, node) => { const task = (node.data as any)?.task; if (task) setActiveTask(task); }}
-                nodeTypes={customNodeTypes}
+                // onNodeClick={(e, node) => {
+                //   const target = e.target as HTMLElement;
+                //   console.log('Node click target:', target);
+                //   if (target && target.closest('.edit-node-btn')) return;
+                //   const task = (node.data as any)?.task;
+                //   if (task) setActiveTask(task);
+                // }}
+                nodeTypes={nodeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
                 connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
                 fitView
@@ -549,95 +576,28 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     <Modal
       open={!!activeTask}
       onCancel={() => setActiveTask(null)}
-      onOk={() => setActiveTask(null)}
-      width={900}
-      title={activeTask ? `Edit: ${activeTask.name}` : ''}
-      okText="Close"
-      cancelButtonProps={{ style: { display: 'none' } }}
+      footer={null}
+      title={activeTask ? `Node: ${activeTask.name}` : ''}
+      width={420}
     >
       {activeTask && (
-        <div className="node-modal-body">
-          <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ fontSize: 12, fontWeight: 500 }}>Type</label>
             <Select
               disabled={!!readOnly}
               value={activeTask.type}
               onChange={(val) => handleEditTask({ ...activeTask, type: val })}
-              options={orderedNodeTypes.map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
-              style={{ width: 180 }}
-            />
-            <Select
-              value={editorTab}
-              onChange={(v) => setEditorTab(v as any)}
-              options={[
-                { value: 'config', label: 'Config Fields' },
-                { value: 'code', label: 'Code' },
-                { value: 'json', label: 'Config JSON' },
-                { value: 'raw', label: 'Raw Task' },
-              ]}
-              style={{ width: 160 }}
+              options={Object.keys(nodeMeta).map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
+              style={{ width: '100%' }}
             />
           </div>
-          <div style={{ marginBottom: 12 }}>
-            <input
-              disabled={!!readOnly}
-              value={activeTask.name}
-              onChange={(e) => handleEditTask({ ...activeTask, name: e.target.value })}
-              placeholder="Step name"
-              className="xy-theme__input"
-              style={{ width: '100%', padding: '6px 8px' }}
-            />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+            <Button onClick={() => setActiveTask(null)}>Close</Button>
+            {!readOnly && (
+              <Button danger onClick={() => { if (activeTask) { handleDeleteTask(activeTask.id); setActiveTask(null); } }}>Delete</Button>
+            )}
           </div>
-          {editorTab === 'config' && (
-            <div style={{ padding: 8 }}>No structured editor for this node type. Use JSON or Code tabs.</div>
-          )}
-          {editorTab === 'code' && (
-            <div style={{ height: 300 }}>
-              <MonacoEditor
-                height="300px"
-                defaultLanguage={activeTask.type === 'python' ? 'python' : (activeTask.type === 'duckdb' || activeTask.type === 'postgres') ? 'sql' : 'javascript'}
-                value={(activeTask.config?.code) || activeTask.config?.sql || ''}
-                onChange={(val) => {
-                  if (readOnly) return;
-                  const cfg = { ...(activeTask.config || {}) } as any;
-                  if (activeTask.type === 'python') cfg.code = val || '';
-                  if (activeTask.type === 'duckdb' || activeTask.type === 'postgres') cfg.sql = val || '';
-                  handleEditTask({ ...activeTask, config: cfg });
-                }}
-                theme="vs-dark"
-                options={{ minimap: { enabled: false }, fontSize: 13 }}
-              />
-            </div>
-          )}
-          {editorTab === 'json' && (
-            <div style={{ height: 300 }}>
-              <MonacoEditor
-                height="300px"
-                defaultLanguage="json"
-                value={JSON.stringify(activeTask.config || {}, null, 2)}
-                onChange={(val) => {
-                  if (readOnly) return;
-                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...activeTask, config: parsed }); } catch { }
-                }}
-                theme="vs-dark"
-                options={{ minimap: { enabled: false }, fontSize: 13 }}
-              />
-            </div>
-          )}
-          {editorTab === 'raw' && (
-            <div style={{ height: 300 }}>
-              <MonacoEditor
-                height="300px"
-                defaultLanguage="json"
-                value={JSON.stringify(activeTask, null, 2)}
-                onChange={(val) => {
-                  if (readOnly) return;
-                  try { const parsed = JSON.parse(val || '{}'); handleEditTask({ ...(parsed as any), id: activeTask.id }); } catch { }
-                }}
-                theme="vs-dark"
-                options={{ minimap: { enabled: false }, fontSize: 13 }}
-              />
-            </div>
-          )}
         </div>
       )}
     </Modal>
