@@ -19,9 +19,9 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      DROP TABLE IF EXISTS public.http_posts;
-      
-      CREATE TABLE public.http_posts (
+      DROP TABLE IF EXISTS public.http_to_postgres_transfer;
+
+      CREATE TABLE public.http_to_postgres_transfer (
         id SERIAL PRIMARY KEY,
         post_id INTEGER,
         user_id INTEGER,
@@ -36,13 +36,13 @@ workflow:
     desc: Transfer HTTP API data to PostgreSQL
     tool: transfer
     source:
-      tool: http
+      type: http
       url: "{{ workload.api_url }}"
       method: GET
     target:
-      tool: postgres
+      type: postgres
       auth: "{{ workload.pg_auth }}"
-      table: public.http_posts
+      table: public.http_to_postgres_transfer
       mode: insert
       mapping:
         post_id: id
@@ -57,7 +57,7 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT COUNT(*) as records FROM public.http_posts;
+      SELECT COUNT(*) as records FROM public.http_to_postgres_transfer;
     next:
       - step: end
 
