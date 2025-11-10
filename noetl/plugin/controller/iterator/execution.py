@@ -69,8 +69,11 @@ def build_iteration_context(
 
         # Set parent binding
         iter_ctx["parent"] = context
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            f"Failed to set parent binding or copy work section: {e}",
+            exc_info=True
+        )
 
     # Set element variable
     try:
@@ -88,10 +91,14 @@ def build_iteration_context(
 
         # Expose <loop_step>.result_index during the body
         try:
-            step_nm = task_config.get("name") or task_config.get("task") or "iterator"
+            # Use step_name from parent context (e.g., 'http_loop'), not nested task config
+            step_nm = context.get("step_name") or task_config.get("name") or task_config.get("task") or "iterator"
             iter_ctx[str(step_nm)] = {"result_index": iter_index}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                f"Failed to expose step result_index in iteration context: {e}",
+                exc_info=True
+            )
 
         # Expose top-level index if enumerate flag set
         if enumerate_flag:
@@ -327,6 +334,11 @@ def execute_per_item_save(
         from noetl.plugin.shared.storage import execute_save_task as _do_save
 
         logger.critical(f"ITERATOR.SAVE: Imported execute_save_task, calling now...")
+        logger.critical(f"ITERATOR.SAVE: Context keys available: {list(ctx_for_save.keys())}")
+        # Check if step name is in context
+        step_nm = nested_with.get("name") or nested_with.get("task") or "iterator"
+        if step_nm in ctx_for_save:
+            logger.critical(f"ITERATOR.SAVE: {step_nm} = {ctx_for_save[step_nm]}")
         save_result = _do_save(
             {"save": nested_save}, ctx_for_save, jinja_env, nested_with
         )
