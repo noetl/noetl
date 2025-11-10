@@ -6,7 +6,7 @@ metadata:
 
 workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"
-  pg_credential: pg_local
+  pg_auth: pg_local
 
 workflow:
   - step: start
@@ -17,11 +17,11 @@ workflow:
   - step: create_table
     desc: Create table for storing HTTP data
     tool: postgres
-    auth: "{{ workload.pg_credential }}"
+    auth: "{{ workload.pg_auth }}"
     command: |
-      DROP TABLE IF EXISTS public.http_posts;
-      
-      CREATE TABLE public.http_posts (
+      DROP TABLE IF EXISTS public.http_to_postgres_iterator;
+
+      CREATE TABLE public.http_to_postgres_iterator (
         id SERIAL PRIMARY KEY,
         post_id INTEGER,
         user_id INTEGER,
@@ -43,13 +43,13 @@ workflow:
   - step: insert_posts
     desc: Insert posts into PostgreSQL
     tool: iterator
-    collection: "{{ steps.fetch_http_data.data }}"
+    collection: "{{ fetch_http_data.data }}"
     element: item
     task:
       tool: postgres
-      auth: "{{ workload.pg_credential }}"
+      auth: "{{ workload.pg_auth }}"
       command: |
-        INSERT INTO public.http_posts (post_id, user_id, title, body)
+        INSERT INTO public.http_to_postgres_iterator (post_id, user_id, title, body)
         VALUES (
           {{ item.id }},
           {{ item.userId }},
@@ -62,9 +62,9 @@ workflow:
   - step: show_count
     desc: Verify record count
     tool: postgres
-    auth: "{{ workload.pg_credential }}"
+    auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT COUNT(*) as records FROM public.http_posts;
+      SELECT COUNT(*) as records FROM public.http_to_postgres_iterator;
     next:
       - step: end
 
