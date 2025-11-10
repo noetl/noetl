@@ -487,7 +487,7 @@ tasks:
           exit 1
         fi
 
-        # Install deps if missing
+        # Install deps if missing or incomplete
         if [ ! -d node_modules ]; then
           echo "node_modules not found; installing dependencies"
           if ! command -v npm >/dev/null 2>&1; then
@@ -502,6 +502,14 @@ tasks:
             echo "No package-lock.json -> running: npm install"
             npm install
           fi
+        elif [ ! -d node_modules/less ]; then
+          echo "Dependencies incomplete (less preprocessor missing); reinstalling"
+          if ! command -v npm >/dev/null 2>&1; then
+            echo "npm is not installed. Please install Node.js and npm."
+            exit 1
+          fi
+          echo "Running: npm install"
+          npm install
         fi
 
         # Determine API base URL - always use local server on port 8083
