@@ -152,6 +152,50 @@ def build_nested_with_params(
     return nested_with
 
 
+def _encode_nested_task(nested_task: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Encode nested task configuration for execution.
+    
+    Applies base64 encoding to code/command fields required by some tools
+    (postgres, duckdb, python) when executing nested tasks directly without
+    going through the queue publisher.
+    
+    Args:
+        nested_task: Nested task configuration
+        
+    Returns:
+        Encoded nested task configuration
+    """
+    import base64
+    
+    if not isinstance(nested_task, dict):
+        return nested_task
+    
+    encoded = dict(nested_task)
+    
+    try:
+        # Encode Python code if present
+        code_val = encoded.get("code")
+        if isinstance(code_val, str) and code_val.strip():
+            encoded["code_b64"] = base64.b64encode(
+                code_val.encode("utf-8")
+            ).decode("ascii")
+            encoded.pop("code", None)
+        
+        # Encode command/commands for PostgreSQL and DuckDB
+        for field in ("command", "commands"):
+            cmd_val = encoded.get(field)
+            if isinstance(cmd_val, str) and cmd_val.strip():
+                encoded[f"{field}_b64"] = base64.b64encode(
+                    cmd_val.encode("utf-8")
+                ).decode("ascii")
+                encoded.pop(field, None)
+    except Exception as e:
+        logger.debug(f"Failed to encode nested task fields: {e}", exc_info=True)
+    
+    return encoded
+
+
 def execute_nested_task(
     nested_task: Dict[str, Any],
     iter_ctx: Dict[str, Any],
@@ -182,8 +226,11 @@ def execute_nested_task(
         f"path={nested_task.get('path')}, iter_index={iter_index}"
     )
 
+    # Encode nested task configuration (base64 encode code/command fields)
+    encoded_nested_task = _encode_nested_task(nested_task)
+
     result = _plugin.execute_task(
-        nested_task,
+        encoded_nested_task,
         nested_task.get("name") or nested_task.get("task") or "nested",
         iter_ctx,
         jinja_env,

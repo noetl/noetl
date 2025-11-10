@@ -641,7 +641,7 @@ class QueueService:
     @staticmethod
     async def _emit_final_failure_events(job_info: Dict[str, Any]) -> None:
         """
-        Emit step_failed and execution_failed events when a job permanently fails.
+        Emit step_failed and playbook_failed events when a job permanently fails.
         
         Args:
             job_info: Job dictionary with execution_id, node_id, context, etc.
@@ -695,7 +695,7 @@ class QueueService:
             if not last_error:
                 last_error = "Task failed after all retry attempts"
             
-            # TODO: Emit step_failed and execution_failed events using new event API
+            # TODO: Emit step_failed and playbook_failed events using new event API
             # from noetl.server.api.event import EventService
             # await EventService.emit_event(EventEmitRequest(
             #     execution_id=execution_id,
@@ -706,7 +706,7 @@ class QueueService:
             #     context={'error': last_error, 'result': last_error_result}
             # ))
             logger.warning(f"Step '{step_name}' failed in execution {execution_id}: {last_error}")
-            logger.debug(f"TODO: Emit step_failed and execution_failed events for execution {execution_id}")
+            logger.debug(f"TODO: Emit step_failed and playbook_failed events for execution {execution_id}")
             
         except Exception as e:
             logger.exception(f"Error in _emit_final_failure_events: {e}")

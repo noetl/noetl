@@ -39,9 +39,9 @@ workflow:
         http_status INTEGER,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
-      
+
       -- Clean up any previous test data for this execution
-      DELETE FROM public.http_iterator_save_test 
+      DELETE FROM public.http_iterator_save_test
       WHERE execution_id = '{{ execution_id }}';
     next:
       - step: fetch_weather_data
@@ -82,7 +82,7 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT 
+      SELECT
         COUNT(*) as total_records,
         COUNT(DISTINCT city_name) as unique_cities,
         AVG(temperature) as avg_temperature,
@@ -98,7 +98,7 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT 
+      SELECT
         city_name,
         temperature,
         latitude,
@@ -119,24 +119,24 @@ workflow:
     code: |
       def main(verify_results):
           """Validate that all expected cities have data saved."""
-          
+
           # Get verification results - verify_results is already the dict with command_0
           verify_result = verify_results.get('command_0', {}).get('rows', [{}])[0]
           total_records = verify_result.get('total_records', 0)
           unique_cities = verify_result.get('unique_cities', 0)
-          
+
           # Expected counts
           expected_cities = 3
-          
+
           # Validation checks
           checks = {
               'total_records_match': total_records == expected_cities,
               'unique_cities_match': unique_cities == expected_cities,
               'all_cities_saved': total_records >= expected_cities
           }
-          
+
           all_valid = all(checks.values())
-          
+
           return {
               'status': 'success' if all_valid else 'failed',
               'validation': checks,

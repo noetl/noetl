@@ -138,7 +138,7 @@ class ExecutionEventEmitter:
                         "event_id": event_id,
                         "parent_event_id": parent_event_id_int,
                         "parent_execution_id": parent_execution_id_int,
-                        "event_type": "execution_started",
+                        "event_type": "playbook_started",
                         "node_id": "playbook",
                         "node_name": path,
                         "node_type": "execution",

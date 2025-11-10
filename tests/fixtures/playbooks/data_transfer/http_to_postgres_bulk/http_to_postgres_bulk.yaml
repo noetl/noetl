@@ -6,7 +6,7 @@ metadata:
 
 workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"
-  pg_credential: pg_local
+  pg_auth: pg_local
 
 workflow:
   - step: start
@@ -17,11 +17,11 @@ workflow:
   - step: create_table
     desc: Create table for storing HTTP data
     tool: postgres
-    auth: "{{ workload.pg_credential }}"
+    auth: "{{ workload.pg_auth }}"
     command: |
-      DROP TABLE IF EXISTS public.http_posts;
+      DROP TABLE IF EXISTS public.http_to_postgres_bulk;
 
-      CREATE TABLE public.http_posts (
+      CREATE TABLE public.http_to_postgres_bulk (
         id SERIAL PRIMARY KEY,
         post_id INTEGER,
         user_id INTEGER,
@@ -44,8 +44,8 @@ workflow:
       auth:
         source: credential
         tool: postgres
-        key: "{{ workload.pg_credential }}"
-      table: public.http_posts
+        key: "{{ workload.pg_auth }}"
+      table: public.http_to_postgres_bulk
       mapping:
         post_id: id
         user_id: userId
@@ -58,9 +58,9 @@ workflow:
   - step: show_count
     desc: Verify record count
     tool: postgres
-    auth: "{{ workload.pg_credential }}"
+    auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT COUNT(*) as records FROM public.http_posts;
+      SELECT COUNT(*) as records FROM public.http_to_postgres_bulk;
     next:
       - step: end
 

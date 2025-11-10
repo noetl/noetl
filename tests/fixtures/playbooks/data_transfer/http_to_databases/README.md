@@ -96,15 +96,18 @@ Cross-Verify Results
 
 ### 6. **transform_http_to_pg**
 - Python transformation step
-- Extracts user data from HTTP response
-- Escapes single quotes in string fields
+- Extracts user data from HTTP response structure
+- Escapes single quotes in string fields for SQL safety
 - Flattens nested company and address objects
-- Returns: Array of transformed row dictionaries
+- Returns: `{status: 'success', rows: [...], count: N}`
+- The `rows` array contains transformed dictionaries ready for database insertion
 
 ### 7. **insert_to_postgres**
-- Iterator-based insertion (10 users)
-- Uses INSERT ... ON CONFLICT DO UPDATE
-- Sequential mode for data consistency
+- Iterator-based insertion (10 users, sequential mode)
+- Iterates over `transform_http_to_pg.rows` collection
+- Each iteration: INSERT with ON CONFLICT DO UPDATE (upsert pattern)
+- Nested postgres tool task with base64-encoded commands
+- Result: 10 successful insertions (1 row affected per iteration)
 
 ### 8. **verify_pg_data**
 - Validates PostgreSQL data
@@ -191,27 +194,25 @@ The playbook uses `args:` blocks to pass data between steps:
     verify_duckdb_data: "{{ verify_duckdb_data }}"
 ```
 
-## Known Issues
-
-### Data Passing with Nested Structures
-
-There is currently an issue with passing nested HTTP response data through Jinja2 templates to Python functions. The HTTP tool returns data in this structure:
-
-```
-result.data.data = [array of records]
-```
-
-When using `{{ fetch_http_data.data }}` in the args block, the data may not be correctly passed to the Python function parameter. This is under investigation.
-
-**Workaround:** Use direct database queries or simplify the data structure in intermediate steps.
-
 ## Expected Results
 
-When fully working:
 - 10 users fetched from HTTP API
-- 10 records inserted into each database
-- All databases have matching counts
+- 10 records inserted into PostgreSQL via iterator
+- 10 records inserted into Snowflake via iterator with MERGE
+- 10 records inserted into DuckDB via iterator with UPSERT
+- All databases have matching counts (10 users each)
 - Cross-verify returns: "All databases have 10 users"
+
+## Technical Notes
+
+### Iterator Base64 Encoding
+
+The iterator controller automatically encodes nested task configurations when executing tasks directly within the worker process. This ensures that PostgreSQL `command`, DuckDB `command`, and Python `code` fields are properly base64-encoded before execution, matching the behavior of tasks published through the queue system.
+
+This encoding happens in `noetl/plugin/controller/iterator/execution.py` via the `_encode_nested_task()` function, which:
+1. Base64-encodes `code`, `command`, and `commands` fields
+2. Removes the original plain-text fields
+3. Ensures consistent handling regardless of execution path (queue vs direct)
 
 ## Verification Queries
 
@@ -257,20 +258,27 @@ command: |
 ## Troubleshooting
 
 ### No Data Inserted
-- Check transform step output: Should show `count > 0`
-- Verify HTTP API response structure
-- Check worker logs for Python function execution
-- Validate Jinja2 template resolution
+- Check transform step output: Should show `count: 10` and non-empty `rows` array
+- Verify HTTP API response structure in fetch_http_data result
+- Check worker logs (`logs/worker-debug.log`) for Python function execution details
+- Validate Jinja2 template resolution in step context
+
+### Iterator Errors with "No command_b64 found"
+- **Fixed in v1.0+**: Iterator now automatically base64-encodes nested task commands
+- If you see this error on older versions, upgrade to latest NoETL release
+- The fix is in `noetl/plugin/controller/iterator/execution.py`
 
 ### Database Connection Errors
-- Verify credentials are registered
-- Check database connectivity
-- Ensure tables don't have conflicting constraints
+- Verify credentials are registered: `.venv/bin/noetl credential list`
+- Check database connectivity from worker host
+- Ensure PostgreSQL is running on localhost:54321
+- Verify Snowflake account access and credentials
 
 ### Iterator Failures
 - Confirm `task:` block syntax (not `workbook:`)
-- Validate collection reference resolves to array
-- Check element variable usage in SQL
+- Validate collection reference resolves to array: check transform step result
+- Verify element variable usage in SQL templates (e.g., `{{ user.id }}`)
+- Check for SQL injection risks: ensure proper escaping in transform step
 
 ## Files
 

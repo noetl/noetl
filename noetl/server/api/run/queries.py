@@ -73,7 +73,7 @@ class OrchestratorQueries:
         """Check if execution has failed."""
         query, params = OrchestratorQueries._build_event_check_query(
             execution_id=execution_id,
-            event_types=["execution_failed", "workflow_failed"]
+            event_types=["playbook_failed", "workflow_failed"]
         )
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
@@ -140,11 +140,11 @@ class OrchestratorQueries:
     
     @staticmethod
     async def get_execution_metadata(execution_id: int) -> Optional[Dict[str, Any]]:
-        """Get execution metadata from execution_started event."""
+        """Get execution metadata from playbook_started event."""
         query = """
             SELECT meta FROM noetl.event
             WHERE execution_id = %(execution_id)s
-              AND event_type = 'execution_started'
+              AND event_type = 'playbook_started'
             ORDER BY created_at LIMIT 1
         """
         async with get_pool_connection() as conn:

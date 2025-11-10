@@ -11,9 +11,9 @@ from pydantic import BaseModel, Field, field_validator
 
 # Event types - past tense to describe what happened
 EventType = Literal[
-    "execution_started",
-    "execution_completed",
-    "execution_failed",
+    "playbook_started",
+    "playbook_completed",
+    "playbook_failed",
     "workflow_initialized",
     "step_started",
     "step_completed",

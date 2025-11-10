@@ -52,7 +52,7 @@ workflow:
         company_name TEXT,
         city TEXT
       );
-      
+
       TRUNCATE TABLE public.http_users_pg;
     next:
       - step: setup_sf_table
@@ -89,7 +89,7 @@ workflow:
         company_name VARCHAR,
         city VARCHAR
       );
-      
+
       DELETE FROM http_users_duckdb;
     next:
       - step: transform_http_to_pg
@@ -100,16 +100,16 @@ workflow:
     code: |
       def main(fetch_http_data):
           """Transform HTTP API response and prepare for database insertion."""
-          import json
-          
-          # When passing the step name, we get the result.data object
-          # The HTTP result structure is: result.data.data = array of users
-          users = []
+
+          # fetch_http_data is the full result object
+          # Extract the actual data array
           if isinstance(fetch_http_data, dict):
-              # fetch_http_data is the 'data' part of the result
-              # which contains {url, data, elapsed, headers, status_code}
-              users = fetch_http_data.get('data', [])
-          
+              users = fetch_http_data.get('data', {}).get('data', [])
+          elif isinstance(fetch_http_data, list):
+              users = fetch_http_data
+          else:
+              users = []
+
           # Transform data for database insertion
           transformed_rows = []
           for user in users:
@@ -126,14 +126,14 @@ workflow:
                   'city': ((user.get('address') or {}).get('city') or '').replace("'", "''")
               }
               transformed_rows.append(row)
-          
+
           return {
               'status': 'success',
               'rows': transformed_rows,
               'count': len(transformed_rows)
           }
     args:
-      fetch_http_data: "{{ fetch_http_data.data }}"
+      fetch_http_data: "{{ fetch_http_data }}"
     next:
       - step: insert_to_postgres
 
@@ -174,7 +174,7 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT 
+      SELECT
         COUNT(*) as total_users,
         COUNT(DISTINCT city) as unique_cities,
         COUNT(DISTINCT company_name) as unique_companies
@@ -193,7 +193,7 @@ workflow:
       auth: "{{ workload.sf_auth }}"
       command: |
         MERGE INTO HTTP_USERS_SF AS target
-        USING (SELECT 
+        USING (SELECT
           {{ user.id }} AS id,
           '{{ user.name }}' AS name,
           '{{ user.username }}' AS username,
@@ -224,7 +224,7 @@ workflow:
     tool: snowflake
     auth: "{{ workload.sf_auth }}"
     command: |
-      SELECT 
+      SELECT
         COUNT(*) as total_users,
         COUNT(DISTINCT city) as unique_cities,
         COUNT(DISTINCT company_name) as unique_companies
@@ -267,7 +267,7 @@ workflow:
     desc: Verify data in DuckDB
     tool: duckdb
     command: |
-      SELECT 
+      SELECT
         COUNT(*) as total_users,
         COUNT(DISTINCT city) as unique_cities,
         COUNT(DISTINCT company_name) as unique_companies
@@ -281,22 +281,22 @@ workflow:
     code: |
       def main(verify_pg_data, verify_sf_data, verify_duckdb_data):
           """Compare results across PostgreSQL, Snowflake, and DuckDB."""
-          
+
           # PostgreSQL result structure
           pg_result = {}
           if verify_pg_data and isinstance(verify_pg_data, dict):
               pg_result = verify_pg_data.get('data', {}).get('command_0', {}).get('rows', [{}])[0] if verify_pg_data.get('data') else {}
-          
-          # Snowflake result structure  
+
+          # Snowflake result structure
           sf_result = {}
           if verify_sf_data and isinstance(verify_sf_data, dict):
               sf_result = verify_sf_data.get('data', {}).get('statement_0', {}).get('result', [{}])[0] if verify_sf_data.get('data') else {}
-          
+
           # DuckDB result structure
           duckdb_result = {}
           if verify_duckdb_data and isinstance(verify_duckdb_data, dict):
               duckdb_result = verify_duckdb_data.get('data', {}).get('result', [{}])[0] if verify_duckdb_data.get('data') else {}
-          
+
           comparison = {
               'postgresql': {
                   'total_users': pg_result.get('total_users', 0),
@@ -314,14 +314,14 @@ workflow:
                   'unique_companies': duckdb_result.get('unique_companies', 0)
               }
           }
-          
+
           # Check if all databases have the same counts
           pg_count = comparison['postgresql']['total_users']
           sf_count = comparison['snowflake']['total_users']
           duckdb_count = comparison['duckdb']['total_users']
-          
+
           all_match = (pg_count == sf_count == duckdb_count)
-          
+
           return {
               'status': 'success' if all_match else 'warning',
               'comparison': comparison,
@@ -333,7 +333,7 @@ workflow:
       verify_sf_data: "{{ verify_sf_data }}"
       verify_duckdb_data: "{{ verify_duckdb_data }}"
     next:
-      - step: cleanup
+      - step: end
 
   - step: cleanup
     desc: Clean up test tables (optional - comment out to keep data)
