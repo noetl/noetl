@@ -91,12 +91,11 @@ tasks:
           echo "To recreate, remove it first: rm -rf .venv"
         else
           echo "Creating virtual environment at .venv..."
-          python3 -m venv .venv
+          uv venv --python 3.13
           echo "Virtual environment created successfully"
         fi
         echo "Installing NoETL in editable mode with dev dependencies..."
-        .venv/bin/pip install --upgrade pip
-        .venv/bin/pip install -e ".[dev]"
+        uv pip install --editable .
         echo "Installation complete"
         echo "Activate with: source .venv/bin/activate"
 
