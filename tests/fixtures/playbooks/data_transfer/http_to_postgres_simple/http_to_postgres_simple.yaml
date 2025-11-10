@@ -70,7 +70,7 @@ workflow:
               'count': len(insert_statements)
           }
     args:
-      input_data: "{{ fetch_posts.data }}"
+      input_data: "{{ fetch_posts }}"
     next:
       - step: execute_inserts
 

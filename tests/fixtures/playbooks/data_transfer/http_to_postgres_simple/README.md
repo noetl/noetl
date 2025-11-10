@@ -49,7 +49,7 @@ This is ideal for moderate-sized datasets (hundreds to thousands of records) whe
 
 ### 3. Transform and Prepare INSERT Statements (`transform_and_insert`)
 - **Tool**: `python`
-- **Input**: `input_data: "{{ fetch_posts.data }}"` (array of posts)
+- **Input**: `input_data: "{{ fetch_posts }}"` (references step result directly)
 - **Process**:
   1. Receives posts array directly as `input_data` parameter
   2. Escapes single quotes in title and body (replace `'` with `''`)
@@ -65,9 +65,10 @@ This is ideal for moderate-sized datasets (hundreds to thousands of records) whe
           body = (post.get('body') or '').replace("'", "''")
           sql = f"INSERT INTO ... VALUES (...) ON CONFLICT (id) DO NOTHING;"
           insert_statements.append(sql)
-      return {'sql_statements': insert_statements, 'count': len(insert_statements)}
+          return {'sql_statements': insert_statements, 'count': len(insert_statements)}
   ```
-- **Returns**: 
+- **Important**: Reference step results directly as `{{ step_name }}`, not `{{ step_name.data }}`. The TaskResultProxy wrapper automatically provides access to the data.
+- **Returns**:
   ```json
   {
     "status": "success",
@@ -104,14 +105,14 @@ The Python tool receives data through the `data` configuration field:
   tool: python
   code: |
     def main(input_data):
-        # input_data contains the value from data.input_data below
+        # input_data contains the value from args.input_data below
         posts = input_data if isinstance(input_data, list) else []
         ...
-  data:
-    input_data: "{{ fetch_posts.data }}"  # Pass fetch_posts result directly
+  args:
+    input_data: "{{ fetch_posts }}"  # Pass step result directly (not .data)
 ```
 
-**Important**: The parameter name in `data:` must match what the Python function expects. Use `input_data` as the standard parameter name for the Python tool.
+**Important**: Reference step results as `{{ step_name }}`, not `{{ step_name.data }}`. NoETL's TaskResultProxy automatically unwraps the data when passing to Python functions.
 
 ### Jinja2 Join Filter for SQL Batching
 The `join` filter concatenates list elements into a single string:
@@ -257,13 +258,13 @@ Alternative: `ON CONFLICT (id) DO UPDATE SET ...` for upsert behavior.
 ## Troubleshooting
 
 ### Issue: Python Step Fails with `'NoneType' object has no attribute 'get'`
-**Cause**: The `data` field parameter name doesn't match the function parameter.
+**Cause**: Incorrect template reference - using `{{ step.data }}` instead of `{{ step }}`.
 
-**Solution**: Ensure the `data` field uses `input_data`:
+**Solution**: Reference step results directly without `.data`:
 ```yaml
-data:
-  input_data: "{{ fetch_posts.data }}"  # ✓ Correct
-  posts: "{{ fetch_posts.data }}"       # ✗ Wrong - input_data will be None
+args:
+  input_data: "{{ fetch_posts }}"     # ✓ Correct
+  input_data: "{{ fetch_posts.data }}" # ✗ Wrong - renders as string "[{...}]"
 ```
 
 ### Issue: SQL Syntax Error with Single Quotes
