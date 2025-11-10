@@ -69,7 +69,7 @@ workflow:
               'sql_statements': insert_statements,
               'count': len(insert_statements)
           }
-    data:
+    args:
       input_data: "{{ fetch_posts.data }}"
     next:
       - step: execute_inserts
