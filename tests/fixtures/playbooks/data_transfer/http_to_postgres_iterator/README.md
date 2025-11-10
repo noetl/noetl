@@ -136,10 +136,8 @@ collection: "{{ fetch_http_data.data }}"
 
 PostgreSQL dollar quoting (`$$`) is used to safely handle text containing single quotes:
 ```sql
-$${{ item.title }}$$  -- Handles: It's a "special" title
+$${{ item.title }}$$  -- Handles: It's a "special" title.
 ```
-
-This prevents SQL injection and escaping issues with user-generated content.
 
 ## Expected Results
 
@@ -179,24 +177,24 @@ For stricter error handling, set iterator `stop_on_error: true` (if supported).
 
 ### Check Record Count
 ```sql
-SELECT COUNT(*) as total_records 
+SELECT COUNT(*) as total_records
 FROM public.http_to_postgres_iterator;
 -- Expected: 100
 ```
 
 ### View Sample Data
 ```sql
-SELECT post_id, user_id, 
-       LEFT(title, 40) as title, 
+SELECT post_id, user_id,
+       LEFT(title, 40) as title,
        LEFT(body, 50) as body,
        fetched_at
-FROM public.http_to_postgres_iterator 
+FROM public.http_to_postgres_iterator
 LIMIT 5;
 ```
 
 ### Check Data Range
 ```sql
-SELECT 
+SELECT
   MIN(post_id) as first_post,
   MAX(post_id) as last_post,
   COUNT(DISTINCT user_id) as unique_users,
