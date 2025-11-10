@@ -29,14 +29,14 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      CREATE TABLE IF NOT EXISTS public.http_posts (
+      CREATE TABLE IF NOT EXISTS public.http_to_postgres_simple (
         id INTEGER PRIMARY KEY,
         user_id INTEGER,
         title TEXT,
         body TEXT
       );
-      
-      TRUNCATE TABLE public.http_posts;
+
+      TRUNCATE TABLE public.http_to_postgres_simple;
     next:
       - step: transform_and_insert
 
@@ -46,31 +46,31 @@ workflow:
     code: |
       def main(input_data):
           """Transform JSON posts and insert into PostgreSQL."""
-          # Get posts directly from input_data
-          posts = input_data.get('posts', [])
-          
+          # Get posts - input_data is the posts array directly
+          posts = input_data if isinstance(input_data, list) else []
+
           if not posts:
               return {'status': 'error', 'message': 'No posts found', 'count': 0}
-          
+
           # Prepare SQL statements
           insert_statements = []
           for post in posts:
               if not post or not post.get('id'):
                   continue
-              
+
               title = (post.get('title') or '').replace("'", "''")
               body = (post.get('body') or '').replace("'", "''")
-              
-              sql = f"INSERT INTO public.http_posts (id, user_id, title, body) VALUES ({post['id']}, {post.get('userId', 0)}, '{title}', '{body}') ON CONFLICT (id) DO NOTHING;"
+
+              sql = f"INSERT INTO public.http_to_postgres_simple (id, user_id, title, body) VALUES ({post['id']}, {post.get('userId', 0)}, '{title}', '{body}') ON CONFLICT (id) DO NOTHING;"
               insert_statements.append(sql)
-          
+
           return {
               'status': 'success',
               'sql_statements': insert_statements,
               'count': len(insert_statements)
           }
     data:
-      posts: "{{ fetch_posts.data }}"
+      input_data: "{{ fetch_posts.data }}"
     next:
       - step: execute_inserts
 
@@ -87,11 +87,11 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT 
+      SELECT
         COUNT(*) as total_posts,
         COUNT(DISTINCT user_id) as unique_users,
         MAX(id) as max_post_id
-      FROM public.http_posts;
+      FROM public.http_to_postgres_simple;
     next:
       - step: show_sample
 
@@ -101,7 +101,7 @@ workflow:
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT id, user_id, title, LEFT(body, 50) || '...' as body_preview
-      FROM public.http_posts
+      FROM public.http_to_postgres_simple
       ORDER BY id
       LIMIT 5;
     next:
