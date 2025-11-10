@@ -1,25 +1,88 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PlaybooksNode.less';
+import { Modal, Input, Button, Tooltip } from 'antd';
+import { EditOutlined } from '@ant-design/icons';
 
-interface PlaybooksData { name?: string; catalogPath?: string;[key: string]: unknown; }
+interface PlaybooksData {
+    name?: string;
+    path?: string;
+    [key: string]: unknown;
+}
 
-function PlaybooksNodeInternal({ id, data }: NodeProps<Node<PlaybooksData>>) {
+function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>) {
     const { updateNodeData } = useReactFlow();
-    const name = data?.name || 'playbooks';
-    const path = data?.catalogPath || '';
+    const [modalOpen, setModalOpen] = useState(false);
+    const [draft, setDraft] = useState({ path: '' });
+
+    const openEditor = () => {
+        setDraft({
+            path: data.path || ''
+        });
+        setModalOpen(true);
+    };
+
+    const commit = () => {
+        updateNodeData(id, {
+            path: draft.path
+        });
+        setModalOpen(false);
+    };
+
+    const summaryPath = (() => {
+        const p = (data.path || '').trim();
+        return !p ? '' : p.length < 30 ? p : p.slice(0, 27) + '…';
+    })();
+
+    const preventNodeDrag = (e: React.MouseEvent | React.PointerEvent) => {
+        (window as any).__skipNextNodeModal = true;
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
     return (
-        <div className="PlaybooksNode">
+        <div className="PlaybooksNode" onDoubleClick={openEditor}>
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
-            <div className="PlaybooksNode__title">📚 {name}</div>
-            <input
-                className="xy-theme__input PlaybooksNode__input"
-                value={path}
-                placeholder="catalog path"
-                onChange={(e) => updateNodeData(id, { catalogPath: e.target.value })}
-            />
-            {path && <div className="PlaybooksNode__path">{path}</div>}
+            <div className="PlaybooksNode__header">
+                <span className="PlaybooksNode__header-text">� {data.name || 'playbooks'}</span>
+                <Tooltip title="Edit Playbook path">
+                    <Button
+                        className="playbooks-edit-btn"
+                        size="small"
+                        type="text"
+                        icon={<EditOutlined />}
+                        onPointerDown={preventNodeDrag}
+                        onMouseDown={preventNodeDrag}
+                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                    />
+                </Tooltip>
+            </div>
+            <div className="PlaybooksNode__summary">
+                {summaryPath || <span className="PlaybooksNode__empty-path">(no path)</span>}
+            </div>
+            <div className="PlaybooksNode__hint">double-click or edit icon</div>
+
+            <Modal
+                open={modalOpen}
+                onCancel={() => setModalOpen(false)}
+                title={data.name ? `Playbook Config: ${data.name}` : 'Playbook Config'}
+                width={640}
+                footer={[
+                    <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
+                    <Button key="save" type="primary" onClick={commit}>Save</Button>
+                ]}
+            >
+                <div className="PlaybooksNodeModal__container">
+                    <div className="PlaybooksNodeModal__section-title">Catalog Path</div>
+                    <Input
+                        className="PlaybooksNodeModal__path"
+                        value={draft.path}
+                        placeholder='catalog/example/playbook'
+                        onChange={e => setDraft(d => ({ ...d, path: e.target.value }))}
+                    />
+                </div>
+            </Modal>
         </div>
     );
 }

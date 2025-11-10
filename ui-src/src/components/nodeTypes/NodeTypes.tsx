@@ -36,14 +36,40 @@ export const nodeTypes = {
 };
 
 export const initNodes = [
-    { id: 'start', type: 'start', data: { name: 'start' }, position: { x: 0, y: 0 } },
-    { id: 'http1', type: 'http', data: { name: 'http', url: 'https://example.com', method: 'GET' }, position: { x: 200, y: 0 } },
-    { id: 'end', type: 'end', data: { name: 'end' }, position: { x: 400, y: 0 } },
+    // Start node
+    { id: 'start', type: 'start', data: { name: 'start' }, position: { x: 0, y: 200 } },
+
+    // Data processing nodes (row 1)
+    { id: 'http1', type: 'http', data: { name: 'http-api', method: 'GET', endpoint: '{{ api }}/users/{{ user_id }}', headers: { Authorization: 'Bearer {{ token }}' }, params: { limit: 10 }, payload: { query: '{{ search_term }}' } }, position: { x: 250, y: 50 } },
+    { id: 'python1', type: 'python', data: { name: 'transform', code: 'def main(data):\n    return data' }, position: { x: 250, y: 150 } },
+    { id: 'duckdb1', type: 'duckdb', data: { name: 'analytics', query: 'SELECT * FROM data' }, position: { x: 250, y: 250 } },
+
+    // Database and orchestration nodes (row 2)
+    { id: 'postgres1', type: 'postgres', data: { name: 'db-query', query: 'SELECT * FROM users' }, position: { x: 500, y: 50 } },
+    { id: 'playbooks1', type: 'playbooks', data: { name: 'sub-playbook', path: 'catalog/example' }, position: { x: 500, y: 150 } },
+    { id: 'workbook1', type: 'workbook', data: { name: 'example_task' }, position: { x: 500, y: 250 } },
+    { id: 'loop1', type: 'loop', data: { name: 'iterator', collection: '{{ items }}' }, position: { x: 500, y: 350 } },
+
+    // End node
+    { id: 'end', type: 'end', data: { name: 'end' }, position: { x: 750, y: 200 } },
 ];
 
 export const initEdges: Edge[] = [
+    // Start to processing nodes
     { id: 'e-start-http', source: 'start', target: 'http1' },
-    { id: 'e-http-end', source: 'http1', target: 'end' },
+    { id: 'e-start-python', source: 'start', target: 'python1' },
+    { id: 'e-start-duckdb', source: 'start', target: 'duckdb1' },
+
+    // Processing to orchestration nodes
+    { id: 'e-http-postgres', source: 'http1', target: 'postgres1' },
+    { id: 'e-python-playbooks', source: 'python1', target: 'playbooks1' },
+    { id: 'e-duckdb-workbook', source: 'duckdb1', target: 'workbook1' },
+    { id: 'e-workbook-loop', source: 'workbook1', target: 'loop1' },
+
+    // Orchestration to end
+    { id: 'e-postgres-end', source: 'postgres1', target: 'end' },
+    { id: 'e-playbooks-end', source: 'playbooks1', target: 'end' },
+    { id: 'e-loop-end', source: 'loop1', target: 'end' },
 ];
 
 const FlowCanvas = () => {

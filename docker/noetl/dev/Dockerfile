@@ -7,12 +7,15 @@ RUN cd ui-src && npm run build
 
 FROM python:3.12-slim AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
+# Install uv directly instead of copying from ghcr.io
 RUN apt-get update && apt-get --no-install-recommends install -y \
+    curl \
     build-essential \
     libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /bin/uv \
+    && mv /root/.local/bin/uvx /bin/uvx
 
 WORKDIR /opt/noetl
 

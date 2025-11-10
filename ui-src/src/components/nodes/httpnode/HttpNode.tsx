@@ -7,79 +7,103 @@ import { EditOutlined } from '@ant-design/icons';
 interface HttpData {
     name?: string;
     method?: string;
-    url?: string;
-    query?: string;
+    endpoint?: string;
     headers?: Record<string, any>;
-    body?: string;
-    timeout?: number | string;
+    params?: Record<string, any>;
+    payload?: Record<string, any>;
     [key: string]: unknown;
 }
 
 function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ method: 'GET', url: '', query: '', headers: {}, body: '', timeout: '' as string | number });
+    const [draft, setDraft] = useState({
+        method: 'GET',
+        endpoint: '',
+        headers: {} as Record<string, any>,
+        params: {} as Record<string, any>,
+        payload: {} as Record<string, any>
+    });
     const [headerInput, setHeaderInput] = useState('');
+    const [paramsInput, setParamsInput] = useState('');
+    const [payloadInput, setPayloadInput] = useState('');
     const [headerError, setHeaderError] = useState<string | null>(null);
+    const [paramsError, setParamsError] = useState<string | null>(null);
+    const [payloadError, setPayloadError] = useState<string | null>(null);
 
-    const serializeHeaders = (headers?: Record<string, any>) => {
+    const serializeObject = (obj?: Record<string, any>) => {
         try {
-            return headers && Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '';
+            return obj && Object.keys(obj).length ? JSON.stringify(obj, null, 2) : '';
         } catch { return ''; }
     };
 
     const openEditor = () => {
         setDraft({
             method: (data.method || 'GET').toUpperCase(),
-            url: data.url || '',
-            query: data.query || '',
+            endpoint: data.endpoint || '',
             headers: data.headers || {},
-            body: data.body || '',
-            timeout: data.timeout ?? '' as string | number,
+            params: data.params || {},
+            payload: data.payload || {},
         });
-        setHeaderInput(serializeHeaders(data.headers));
+        setHeaderInput(serializeObject(data.headers));
+        setParamsInput(serializeObject(data.params));
+        setPayloadInput(serializeObject(data.payload));
         setHeaderError(null);
+        setParamsError(null);
+        setPayloadError(null);
         setModalOpen(true);
     };
 
     const commit = () => {
         let headersObj = draft.headers;
+        let paramsObj = draft.params;
+        let payloadObj = draft.payload;
+
         if (headerInput && !headerError) {
             try { headersObj = JSON.parse(headerInput); } catch { }
         }
+        if (paramsInput && !paramsError) {
+            try { paramsObj = JSON.parse(paramsInput); } catch { }
+        }
+        if (payloadInput && !payloadError) {
+            try { payloadObj = JSON.parse(payloadInput); } catch { }
+        }
+
         updateNodeData(id, {
             method: draft.method || 'GET',
-            url: draft.url,
-            query: draft.query,
+            endpoint: draft.endpoint,
             headers: headersObj,
-            body: draft.body,
-            timeout: draft.timeout === '' ? undefined : Number(draft.timeout)
+            params: paramsObj,
+            payload: payloadObj
         });
         setModalOpen(false);
     };
 
-    const handleHeaderChange = (val: string) => {
-        setHeaderInput(val);
+    const handleJSONChange = (val: string, field: 'headers' | 'params' | 'payload') => {
+        const setInput = field === 'headers' ? setHeaderInput : field === 'params' ? setParamsInput : setPayloadInput;
+        const setError = field === 'headers' ? setHeaderError : field === 'params' ? setParamsError : setPayloadError;
+
+        setInput(val);
         if (!val.trim()) {
-            setHeaderError(null);
-            setDraft(d => ({ ...d, headers: {} }));
+            setError(null);
+            setDraft(d => ({ ...d, [field]: {} }));
             return;
         }
         try {
             const parsed = JSON.parse(val);
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                setHeaderError(null);
-                setDraft(d => ({ ...d, headers: parsed }));
+                setError(null);
+                setDraft(d => ({ ...d, [field]: parsed }));
             } else {
-                setHeaderError('Headers must be a JSON object');
+                setError(`${field} must be a JSON object`);
             }
         } catch (e: any) {
-            setHeaderError(e.message || 'Invalid JSON');
+            setError(e.message || 'Invalid JSON');
         }
     };
 
-    const summaryUrl = (() => {
-        const u = (data.url || '').trim();
+    const summaryEndpoint = (() => {
+        const u = (data.endpoint || '').trim();
         return !u ? '' : u.length < 34 ? u : u.slice(0, 31) + '…';
     })();
 
@@ -108,7 +132,7 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                 </Tooltip>
             </div>
             <div className="HttpNode__summary">
-                {summaryUrl || <span className="HttpNode__empty-url">(no url)</span>}
+                {summaryEndpoint || <span className="HttpNode__empty-url">(no endpoint)</span>}
             </div>
             <div className="HttpNode__method">{(data.method || 'GET').toUpperCase()}</div>
             <div className="HttpNode__hint">double-click or edit icon</div>
@@ -120,7 +144,7 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                 width={640}
                 footer={[
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
-                    <Button key="save" type="primary" onClick={commit} disabled={!!headerError}>Save</Button>
+                    <Button key="save" type="primary" onClick={commit} disabled={!!(headerError || paramsError || payloadError)}>Save</Button>
                 ]}
             >
                 <div className="HttpNodeModal__container">
@@ -132,46 +156,43 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                             options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map(m => ({ value: m, label: m }))}
                         />
                         <Input
-                            value={draft.url}
-                            placeholder="https://api.example.com"
-                            onChange={e => setDraft(d => ({ ...d, url: e.target.value }))}
+                            value={draft.endpoint}
+                            placeholder='{{ api }}/users/{{ user_id }}'
+                            onChange={e => setDraft(d => ({ ...d, endpoint: e.target.value }))}
                         />
                     </div>
-                    <Input
-                        value={draft.query}
-                        placeholder="query string (?k=v&k2=v2) or custom"
-                        onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
-                    />
                     <div>
                         <div className="HttpNodeModal__section-title">Headers (JSON object)</div>
                         <Input.TextArea
                             className="HttpNodeModal__headers"
                             value={headerInput}
                             rows={4}
-                            placeholder='{"Authorization":"Bearer ..."}'
-                            onChange={e => handleHeaderChange(e.target.value)}
+                            placeholder='{"Authorization": "Bearer {{ token }}"}'
+                            onChange={e => handleJSONChange(e.target.value, 'headers')}
                         />
                         {headerError && <div className="HttpNodeModal__error">{headerError}</div>}
                     </div>
                     <div>
-                        <div className="HttpNodeModal__section-title">Body (raw / JSON)</div>
+                        <div className="HttpNodeModal__section-title">Params (JSON object)</div>
                         <Input.TextArea
-                            className="HttpNodeModal__body"
-                            value={draft.body}
-                            rows={5}
-                            placeholder='{"key":"value"} or raw text'
-                            onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
+                            className="HttpNodeModal__params"
+                            value={paramsInput}
+                            rows={3}
+                            placeholder='{"limit": 10}'
+                            onChange={e => handleJSONChange(e.target.value, 'params')}
                         />
+                        {paramsError && <div className="HttpNodeModal__error">{paramsError}</div>}
                     </div>
-                    <div className="HttpNodeModal__timeout-row">
-                        <Input
-                            className="HttpNodeModal__timeout-input"
-                            type="number"
-                            value={draft.timeout}
-                            placeholder="timeout ms"
-                            onChange={e => setDraft(d => ({ ...d, timeout: e.target.value }))}
+                    <div>
+                        <div className="HttpNodeModal__section-title">Payload (JSON object)</div>
+                        <Input.TextArea
+                            className="HttpNodeModal__payload"
+                            value={payloadInput}
+                            rows={4}
+                            placeholder='{"query": "{{ search_term }}"}'
+                            onChange={e => handleJSONChange(e.target.value, 'payload')}
                         />
-                        <div className="HttpNodeModal__timeout-hint">Leave blank for default</div>
+                        {payloadError && <div className="HttpNodeModal__error">{payloadError}</div>}
                     </div>
                 </div>
             </Modal>

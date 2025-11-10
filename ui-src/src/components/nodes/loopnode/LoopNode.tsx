@@ -1,34 +1,88 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './LoopNode.less';
+import { Modal, Input, Button, Tooltip } from 'antd';
+import { EditOutlined } from '@ant-design/icons';
 
-interface LoopData { name?: string; scope?: string; overJSON?: string;[key: string]: unknown; }
+interface LoopData {
+    name?: string;
+    collection?: string;
+    [key: string]: unknown;
+}
 
-function LoopNodeInternal({ id, data }: NodeProps<Node<LoopData>>) {
+function LoopNodeInternal({ id, data = {} }: NodeProps<Node<LoopData>>) {
     const { updateNodeData } = useReactFlow();
-    const name = data?.name || 'loop';
-    const scope = data?.scope || '';
-    const over = data?.overJSON || '';
-    const overPreview = over ? (over.length > 42 ? over.slice(0, 39) + '…' : over) : '';
+    const [modalOpen, setModalOpen] = useState(false);
+    const [draft, setDraft] = useState({ collection: '' });
+
+    const openEditor = () => {
+        setDraft({
+            collection: data.collection || ''
+        });
+        setModalOpen(true);
+    };
+
+    const commit = () => {
+        updateNodeData(id, {
+            collection: draft.collection
+        });
+        setModalOpen(false);
+    };
+
+    const summaryCollection = (() => {
+        const c = (data.collection || '').trim();
+        return !c ? '' : c.length < 30 ? c : c.slice(0, 27) + '…';
+    })();
+
+    const preventNodeDrag = (e: React.MouseEvent | React.PointerEvent) => {
+        (window as any).__skipNextNodeModal = true;
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
     return (
-        <div className="LoopNode">
+        <div className="LoopNode" onDoubleClick={openEditor}>
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
-            <div className="LoopNode__title">🔁 {name}</div>
-            <input
-                className="xy-theme__input LoopNode__scope"
-                value={scope}
-                placeholder="scope"
-                onChange={(e) => updateNodeData(id, { scope: e.target.value })}
-            />
-            <textarea
-                className="xy-theme__input LoopNode__collection"
-                rows={3}
-                value={over}
-                placeholder="collection JSON"
-                onChange={(e) => updateNodeData(id, { overJSON: e.target.value })}
-            />
-            {overPreview && <div className="LoopNode__preview">{overPreview}</div>}
+            <div className="LoopNode__header">
+                <span className="LoopNode__header-text">🔁 {data.name || 'loop'}</span>
+                <Tooltip title="Edit Loop collection">
+                    <Button
+                        className="loop-edit-btn"
+                        size="small"
+                        type="text"
+                        icon={<EditOutlined />}
+                        onPointerDown={preventNodeDrag}
+                        onMouseDown={preventNodeDrag}
+                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                    />
+                </Tooltip>
+            </div>
+            <div className="LoopNode__summary">
+                {summaryCollection || <span className="LoopNode__empty-collection">(no collection)</span>}
+            </div>
+            <div className="LoopNode__hint">double-click or edit icon</div>
+
+            <Modal
+                open={modalOpen}
+                onCancel={() => setModalOpen(false)}
+                title={data.name ? `Loop Config: ${data.name}` : 'Loop Config'}
+                width={640}
+                footer={[
+                    <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
+                    <Button key="save" type="primary" onClick={commit}>Save</Button>
+                ]}
+            >
+                <div className="LoopNodeModal__container">
+                    <div className="LoopNodeModal__section-title">Collection</div>
+                    <Input
+                        className="LoopNodeModal__collection"
+                        value={draft.collection}
+                        placeholder='{{ items }}'
+                        onChange={e => setDraft(d => ({ ...d, collection: e.target.value }))}
+                    />
+                </div>
+            </Modal>
         </div>
     );
 }

@@ -1,51 +1,88 @@
 import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
-import { Button, Modal } from 'antd';
+import { Button, Modal, Input, Tooltip } from 'antd';
+import { EditOutlined } from '@ant-design/icons';
 import './WorkbookNode.less';
 
-interface WorkbookData { name?: string; task?: string; withJSON?: string;[key: string]: unknown; }
+interface WorkbookData {
+    name?: string;
+    [key: string]: unknown;
+}
 
-function WorkbookNodeInternal({ id, data }: NodeProps<Node<WorkbookData>>) {
+function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) {
     const { updateNodeData } = useReactFlow();
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const name = data?.name || 'workbook';
-    const task = data?.task || '';
-    const withJSON = data?.withJSON || '';
-    const withPreview = withJSON ? (withJSON.length > 40 ? withJSON.slice(0, 37) + '…' : withJSON) : '';
+    const [modalOpen, setModalOpen] = useState(false);
+    const [draft, setDraft] = useState({ name: '' });
+
+    const openEditor = () => {
+        setDraft({
+            name: data.name || ''
+        });
+        setModalOpen(true);
+    };
+
+    const commit = () => {
+        updateNodeData(id, {
+            name: draft.name
+        });
+        setModalOpen(false);
+    };
+
+    const summaryName = (() => {
+        const n = (data.name || '').trim();
+        return !n ? '' : n.length < 30 ? n : n.slice(0, 27) + '…';
+    })();
+
+    const preventNodeDrag = (e: React.MouseEvent | React.PointerEvent) => {
+        (window as any).__skipNextNodeModal = true;
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
     return (
-        <>
-            <div className="WorkbookNode">
-                <Handle type="target" position={Position.Left} />
-                <Handle type="source" position={Position.Right} />
-                <Button onClick={() => setIsModalOpen(true)} className="edit-node-btn">Edit</Button>
-                <div className="WorkbookNode__title">📊 {name}</div>
-                {withPreview && <div className="WorkbookNode__preview">{withPreview}</div>}
+        <div className="WorkbookNode" onDoubleClick={openEditor}>
+            <Handle type="target" position={Position.Left} />
+            <Handle type="source" position={Position.Right} />
+            <div className="WorkbookNode__header">
+                <span className="WorkbookNode__header-text">📊 {data.name || 'workbook'}</span>
+                <Tooltip title="Edit Workbook task">
+                    <Button
+                        className="workbook-edit-btn"
+                        size="small"
+                        type="text"
+                        icon={<EditOutlined />}
+                        onPointerDown={preventNodeDrag}
+                        onMouseDown={preventNodeDrag}
+                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                    />
+                </Tooltip>
             </div>
+            <div className="WorkbookNode__summary">
+                {summaryName || <span className="WorkbookNode__empty-name">(no task name)</span>}
+            </div>
+            <div className="WorkbookNode__hint">double-click or edit icon</div>
+
             <Modal
-                title={`test title`}
-                open={isModalOpen}
-                forceRender={false}
-                destroyOnHidden={true}
-                onOk={() => { console.log('Added folder:'); }}
-                onCancel={() => setIsModalOpen(false)}
-                okText="Edit"
-                cancelText="Cancel"
+                open={modalOpen}
+                onCancel={() => setModalOpen(false)}
+                title={data.name ? `Workbook Config: ${data.name}` : 'Workbook Config'}
+                width={640}
+                footer={[
+                    <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
+                    <Button key="save" type="primary" onClick={commit}>Save</Button>
+                ]}
             >
-                <input
-                    className="xy-theme__input WorkbookNode__input"
-                    value={task}
-                    placeholder="task name"
-                    onChange={(e) => updateNodeData(id, { task: e.target.value })}
-                />
-                <textarea
-                    className="xy-theme__input WorkbookNode__textarea"
-                    rows={3}
-                    value={withJSON}
-                    placeholder="with JSON"
-                    onChange={(e) => updateNodeData(id, { withJSON: e.target.value })}
-                />
+                <div className="WorkbookNodeModal__container">
+                    <div className="WorkbookNodeModal__section-title">Task Name</div>
+                    <Input
+                        className="WorkbookNodeModal__name"
+                        value={draft.name}
+                        placeholder='example_task'
+                        onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                    />
+                </div>
             </Modal>
-        </>
+        </div>
     );
 }
 
