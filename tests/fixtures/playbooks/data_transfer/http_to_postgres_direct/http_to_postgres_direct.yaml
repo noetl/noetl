@@ -2,11 +2,11 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: http_to_postgres_direct
-  path: examples/data_transfer/http_to_postgres_direct
+  path: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
 
 workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"
-  pg_credential: pg_local
+  pg_auth: pg_local
 
 workflow:
   - step: start
@@ -17,13 +17,15 @@ workflow:
   - step: create_table
     desc: Create table for storing HTTP data
     tool: postgres
-    auth: "{{ workload.pg_credential }}"
+    auth: "{{ workload.pg_auth }}"
     command: |
-      CREATE TABLE IF NOT EXISTS public.http_posts (
+      CREATE TABLE IF NOT EXISTS public.http_to_postgres_direct (
         id SERIAL PRIMARY KEY,
         data JSONB NOT NULL,
         fetched_at TIMESTAMPTZ DEFAULT NOW()
       );
+
+      TRUNCATE TABLE public.http_to_postgres_direct;
     next:
       - step: fetch_and_store
 
@@ -34,19 +36,20 @@ workflow:
     url: "{{ workload.api_url }}"
     save:
       storage: postgres
-      auth: "{{ workload.pg_credential }}"
-      table: http_posts
-      data:
-        data: data
+      auth: "{{ workload.pg_auth }}"
+      statement: |
+        {% for item in result.data %}
+        INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
+        {% endfor %}
     next:
       - step: show_count
 
   - step: show_count
     desc: Verify record count
     tool: postgres
-    auth: "{{ workload.pg_credential }}"
+    auth: "{{ workload.pg_auth }}"
     command: |
-      SELECT COUNT(*) as records FROM public.http_posts;
+      SELECT COUNT(*) as records FROM public.http_to_postgres_direct;
     next:
       - step: end
 
