@@ -68,8 +68,8 @@ class ExecutionRequest(BaseModel):
     # Execution type and configuration
     args: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Input args for execution (also accepts 'parameters' or 'input_payload' as aliases)",
-        alias="parameters"
+        description="Input args for execution",
+        alias="args"
     )
     
     # Execution options
@@ -109,21 +109,6 @@ class ExecutionRequest(BaseModel):
         if v is None:
             return v
         return str(v)
-    
-    @model_validator(mode='before')
-    @classmethod
-    def normalize_input_fields(cls, data):
-        """
-        Normalize input fields for backward compatibility.
-        Handle legacy field names: input_payload -> args, and ignore sync_to_postgres.
-        """
-        if isinstance(data, dict):
-            # Handle input_payload alias (legacy UI compatibility)
-            if 'input_payload' in data and 'args' not in data and 'parameters' not in data:
-                data['args'] = data.pop('input_payload')
-            # Remove legacy sync_to_postgres field if present
-            data.pop('sync_to_postgres', None)
-        return data
     
     @model_validator(mode='after')
     def validate_and_normalize(self):

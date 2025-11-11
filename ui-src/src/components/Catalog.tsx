@@ -197,7 +197,7 @@ const Catalog: React.FC = () => {
     };
 
     if (payloadObject) {
-      requestBody.parameters = payloadObject;
+      requestBody.args = payloadObject;
     }
 
     try {
