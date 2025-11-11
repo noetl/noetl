@@ -193,12 +193,11 @@ const Catalog: React.FC = () => {
     const requestBody: any = {
       path: selectedPlaybookId,
       version: selectedPlaybookVersion,
-      sync_to_postgres: true,
       merge: mergePayload,
     };
 
     if (payloadObject) {
-      requestBody.input_payload = payloadObject;
+      requestBody.args = payloadObject;
     }
 
     try {

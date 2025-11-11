@@ -180,7 +180,7 @@ class APIService {
   async executePlaybookWithPayload(
     requestBody: any,
   ): Promise<{ execution_id: string }> {
-    const response = await apiClient.post("/execute", requestBody);
+    const response = await apiClient.post("/run/playbook", requestBody);
     return response.data;
   }
 
