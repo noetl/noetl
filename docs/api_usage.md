@@ -16,44 +16,8 @@ By default, the API is accessible at `http://localhost:8082`.
 
 ### Playbook Execution
 
-NoETL provides multiple endpoints for executing playbooks with identical functionality:
-
-- `POST /api/run/playbook` - Primary execution endpoint for playbooks
-- `POST /api/run/{resource_type}` - Generic resource execution (resource_type: playbook, tool, model, workflow)
-- `POST /api/execute` - **UI-compatible alias** for playbook execution (same as /api/run/playbook)
-
-All endpoints support the same unified request schema with flexible field naming:
-
-**Request Body:**
-```json
-{
-  "path": "examples/weather/forecast",
-  "version": "1.0.0",
-  "args": {"city": "New York"},
-  "merge": false
-}
-```
-
-**Supported Field Name Variants:**
-- `args`, `parameters`, or `input_payload` - All three are accepted for execution parameters
-- `path` + `version` OR `catalog_id` - Either strategy for identifying the playbook
-- `merge` - Optional boolean to merge parameters with existing workload (default: false)
-
-**Legacy Fields** (ignored for backward compatibility):
-- `sync_to_postgres` - No longer needed, automatically handled by the system
-
-**Response:**
-```json
-{
-  "execution_id": "exec_1234567890",
-  "path": "examples/weather/forecast",
-  "version": "1.0.0",
-  "status": "started",
-  "timestamp": "2024-11-11T10:30:00Z"
-}
-```
-
-- `POST /playbook/execute-async`: Execute a playbook asynchronously (deprecated, use /api/run/playbook instead)
+- `POST /playbook/execute`: Execute a playbook synchronously
+- `POST /playbook/execute-async`: Execute a playbook asynchronously
 
 ### Catalog Management
 
