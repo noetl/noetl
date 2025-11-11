@@ -1,11 +1,23 @@
 # db/pool.py
+"""
+PostgreSQL connection pool management.
+
+This module provides:
+1. Global pool for NoETL's internal database (server use)
+2. Per-credential pool registry for plugin executions (worker use)
+"""
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row, DictRow
 import asyncio
-from typing import Optional
+import hashlib
+from typing import Optional, Dict
 from contextlib import asynccontextmanager
+from noetl.core.logger import setup_logger
 
+logger = setup_logger(__name__, include_location=True)
+
+# Global pool for NoETL's internal database
 _pool: Optional[AsyncConnectionPool[AsyncConnection[DictRow]]] = None
 _lock = asyncio.Lock()
 
@@ -70,3 +82,4 @@ async def close_pool():
         if _pool is not None:
             await _pool.close()
             _pool = None
+
