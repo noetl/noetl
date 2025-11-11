@@ -4,7 +4,6 @@ kind: Playbook
 metadata:
   name: json_serialization_save
   path: tests/fixtures/playbooks/json_serialization_save
-  version: "1.0.0"
 
 workload:
   pg_auth: pg_local

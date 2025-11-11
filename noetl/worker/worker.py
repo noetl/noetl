@@ -1144,17 +1144,30 @@ class QueueWorker:
                                 # Keep envelope valid; prefer adding under meta
                                 result["meta"] = {"save": save_out}
                     except Exception as _e:
-                        # Attach error under meta.save_error but do not fail the action
+                        # Save failure should fail the entire action
                         logger.exception("WORKER: Inline save operation failed")
                         if isinstance(result, dict):
                             if "meta" in result and isinstance(result["meta"], dict):
                                 result["meta"]["save_error"] = str(_e)
                             else:
                                 result["meta"] = {"save_error": str(_e)}
+                        # Mark result as error if save failed
+                        if isinstance(result, dict):
+                            result["status"] = "error"
+                            result["error"] = f"Save operation failed: {str(_e)}"
 
+                # Check if save failed (stored in meta.save)
                 res_status = (
                     (result or {}).get("status", "") if isinstance(result, dict) else ""
                 )
+                # Also check if save block reported error
+                if isinstance(result, dict) and "meta" in result and isinstance(result["meta"], dict):
+                    save_result = result["meta"].get("save")
+                    if isinstance(save_result, dict) and save_result.get("status") == "error":
+                        # Save failed, treat as action failure
+                        res_status = "error"
+                        if not result.get("error"):
+                            result["error"] = f"Save operation failed: {save_result.get('error', 'Unknown save error')}"
                 emitted_error = False
                 if isinstance(res_status, str) and res_status.lower() == "error":
                     err_msg = (
