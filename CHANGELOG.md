@@ -2,6 +2,14 @@
 
 ## [Unreleased] - Unified Kubernetes Deployment
 
+### Fixed
+- **UI Execute Endpoint (Issue #97)**: Fixed 405 Method Not Allowed error when executing playbooks with payload from UI
+  - Updated UI to call existing `/api/run/playbook` endpoint instead of non-existent `/execute` endpoint
+  - Added backward compatibility for `input_payload` field name (normalizes to `args`)
+  - Schema now accepts `args`, `parameters`, or `input_payload` for execution parameters
+  - Legacy `sync_to_postgres` field is now removed during validation
+  - Files modified: `ui-src/src/services/api.ts`, `noetl/server/api/run/schema.py`
+
 ### Security
 
 #### JavaScript Dependencies
