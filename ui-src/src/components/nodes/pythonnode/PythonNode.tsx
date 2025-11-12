@@ -7,24 +7,34 @@ import { EditOutlined } from '@ant-design/icons';
 interface PythonData {
     name?: string;
     code?: string;
+    module?: string;
+    callable?: string;
     [key: string]: unknown;
 }
 
 function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ code: '' });
+    const [draft, setDraft] = useState({
+        code: '',
+        module: '',
+        callable: ''
+    });
 
     const openEditor = () => {
         setDraft({
-            code: data.code || ''
+            code: data.code || '',
+            module: data.module || '',
+            callable: data.callable || ''
         });
         setModalOpen(true);
     };
 
     const commit = () => {
         updateNodeData(id, {
-            code: draft.code
+            code: draft.code,
+            module: draft.module,
+            callable: draft.callable
         });
         setModalOpen(false);
     };
@@ -74,15 +84,34 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                 ]}
             >
                 <div className="PythonNodeModal__container">
-                    <div className="PythonNodeModal__section-title">Code</div>
-                    <Input.TextArea
-                        className="PythonNodeModal__code"
-                        value={draft.code}
-                        rows={15}
-                        placeholder='def main(data):\n    # Transform data\n    return data'
-                        onChange={e => setDraft(d => ({ ...d, code: e.target.value }))}
-                        style={{ fontFamily: 'monospace' }}
-                    />
+                    <div>
+                        <div className="PythonNodeModal__section-title">Code</div>
+                        <Input.TextArea
+                            className="PythonNodeModal__code"
+                            value={draft.code}
+                            rows={10}
+                            placeholder='def main(user_data):\n    return {"score": user_data["rating"] * 10}'
+                            onChange={e => setDraft(d => ({ ...d, code: e.target.value }))}
+                            style={{ fontFamily: 'monospace' }}
+                        />
+                    </div>
+                    <div className="PythonNodeModal__section-title" style={{ marginTop: 16 }}>Or use module reference:</div>
+                    <div>
+                        <div className="PythonNodeModal__section-title">Module</div>
+                        <Input
+                            value={draft.module}
+                            placeholder='scoring.calculator'
+                            onChange={e => setDraft(d => ({ ...d, module: e.target.value }))}
+                        />
+                    </div>
+                    <div>
+                        <div className="PythonNodeModal__section-title">Callable</div>
+                        <Input
+                            value={draft.callable}
+                            placeholder='compute_user_score'
+                            onChange={e => setDraft(d => ({ ...d, callable: e.target.value }))}
+                        />
+                    </div>
                 </div>
             </Modal>
         </div>

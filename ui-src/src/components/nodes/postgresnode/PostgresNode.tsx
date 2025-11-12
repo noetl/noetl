@@ -7,26 +7,71 @@ import { EditOutlined } from '@ant-design/icons';
 interface PostgresData {
     name?: string;
     query?: string;
+    auth?: string;
+    params?: Record<string, any>;
     [key: string]: unknown;
 }
 
 function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ query: '' });
+    const [draft, setDraft] = useState({
+        query: '',
+        auth: '',
+        params: {} as Record<string, any>
+    });
+    const [paramsInput, setParamsInput] = useState('');
+    const [paramsError, setParamsError] = useState<string | null>(null);
+
+    const serializeObject = (obj?: Record<string, any>) => {
+        try {
+            return obj && Object.keys(obj).length ? JSON.stringify(obj, null, 2) : '';
+        } catch { return ''; }
+    };
 
     const openEditor = () => {
         setDraft({
-            query: data.query || ''
+            query: data.query || '',
+            auth: data.auth || '',
+            params: data.params || {}
         });
+        setParamsInput(serializeObject(data.params));
+        setParamsError(null);
         setModalOpen(true);
     };
 
     const commit = () => {
+        let paramsObj = draft.params;
+        if (paramsInput && !paramsError) {
+            try { paramsObj = JSON.parse(paramsInput); } catch { }
+        }
+
         updateNodeData(id, {
-            query: draft.query
+            query: draft.query,
+            auth: draft.auth,
+            params: paramsObj
         });
         setModalOpen(false);
+    };
+
+    const handleJSONChange = (val: string) => {
+        setParamsInput(val);
+        if (!val.trim()) {
+            setParamsError(null);
+            setDraft(d => ({ ...d, params: {} }));
+            return;
+        }
+        try {
+            const parsed = JSON.parse(val);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                setParamsError(null);
+                setDraft(d => ({ ...d, params: parsed }));
+            } else {
+                setParamsError('params must be a JSON object');
+            }
+        } catch (e: any) {
+            setParamsError(e.message || 'Invalid JSON');
+        }
     };
 
     const summaryQuery = (() => {
@@ -70,19 +115,40 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                 width={640}
                 footer={[
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
-                    <Button key="save" type="primary" onClick={commit}>Save</Button>
+                    <Button key="save" type="primary" onClick={commit} disabled={!!paramsError}>Save</Button>
                 ]}
             >
                 <div className="PostgresNodeModal__container">
-                    <div className="PostgresNodeModal__section-title">Query</div>
-                    <Input.TextArea
-                        className="PostgresNodeModal__query"
-                        value={draft.query}
-                        rows={12}
-                        placeholder='SELECT * FROM users WHERE active = true'
-                        onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
-                        style={{ fontFamily: 'monospace' }}
-                    />
+                    <div>
+                        <div className="PostgresNodeModal__section-title">Query</div>
+                        <Input.TextArea
+                            className="PostgresNodeModal__query"
+                            value={draft.query}
+                            rows={8}
+                            placeholder='SELECT * FROM users WHERE id = %(user_id)s'
+                            onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
+                            style={{ fontFamily: 'monospace' }}
+                        />
+                    </div>
+                    <div>
+                        <div className="PostgresNodeModal__section-title">Auth (credential reference)</div>
+                        <Input
+                            value={draft.auth}
+                            placeholder='pg_local'
+                            onChange={e => setDraft(d => ({ ...d, auth: e.target.value }))}
+                        />
+                    </div>
+                    <div>
+                        <div className="PostgresNodeModal__section-title">Params (JSON object)</div>
+                        <Input.TextArea
+                            className="PostgresNodeModal__params"
+                            value={paramsInput}
+                            rows={4}
+                            placeholder='{"user_id": "{{ workload.user_id }}"}'
+                            onChange={e => handleJSONChange(e.target.value)}
+                        />
+                        {paramsError && <div className="PostgresNodeModal__error">{paramsError}</div>}
+                    </div>
                 </div>
             </Modal>
         </div>

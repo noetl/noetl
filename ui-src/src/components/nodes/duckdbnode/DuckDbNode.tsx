@@ -7,24 +7,30 @@ import { EditOutlined } from '@ant-design/icons';
 interface DuckDbData {
     name?: string;
     query?: string;
+    file?: string;
     [key: string]: unknown;
 }
 
 function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ query: '' });
+    const [draft, setDraft] = useState({
+        query: '',
+        file: ''
+    });
 
     const openEditor = () => {
         setDraft({
-            query: data.query || ''
+            query: data.query || '',
+            file: data.file || ''
         });
         setModalOpen(true);
     };
 
     const commit = () => {
         updateNodeData(id, {
-            query: draft.query
+            query: draft.query,
+            file: draft.file
         });
         setModalOpen(false);
     };
@@ -74,15 +80,25 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                 ]}
             >
                 <div className="DuckDbNodeModal__container">
-                    <div className="DuckDbNodeModal__section-title">Query</div>
-                    <Input.TextArea
-                        className="DuckDbNodeModal__query"
-                        value={draft.query}
-                        rows={12}
-                        placeholder='SELECT * FROM data WHERE status = "active"'
-                        onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
-                        style={{ fontFamily: 'monospace' }}
-                    />
+                    <div>
+                        <div className="DuckDbNodeModal__section-title">Query</div>
+                        <Input.TextArea
+                            className="DuckDbNodeModal__query"
+                            value={draft.query}
+                            rows={8}
+                            placeholder="SELECT * FROM read_csv('{{ file_path }}')"
+                            onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
+                            style={{ fontFamily: 'monospace' }}
+                        />
+                    </div>
+                    <div>
+                        <div className="DuckDbNodeModal__section-title">File (Optional DuckDB file path)</div>
+                        <Input
+                            value={draft.file}
+                            placeholder='{{ workload.csv_path }}'
+                            onChange={e => setDraft(d => ({ ...d, file: e.target.value }))}
+                        />
+                    </div>
                 </div>
             </Modal>
         </div>
