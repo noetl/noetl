@@ -1,13 +1,13 @@
 """
-PostgreSQL SQL execution with async connection pooling and transaction handling.
+PostgreSQL SQL execution with direct connections and transaction handling.
 
 This module provides the core execution logic for PostgreSQL operations with:
-- Connection pooling per credential (managed by noetl.core.db.pool)
+- Direct connection per execution (no pooling on worker side)
 - Async/await execution model
-- Transaction management
+- Transaction management with automatic rollback on error
 - CALL statement special handling (autocommit mode)
 - Result data extraction and formatting
-- Automatic connection retry via pool
+- Proper connection cleanup
 """
 
 from typing import Dict, List, Optional
@@ -15,7 +15,7 @@ from decimal import Decimal
 from datetime import datetime, date, time
 from psycopg import AsyncConnection
 from noetl.core.logger import setup_logger
-from .pool import get_connection
+
 logger = setup_logger(__name__, include_location=True)
 
 
@@ -27,10 +27,11 @@ async def execute_sql_with_pool(
     database: str = "unknown"
 ) -> Dict[str, Dict]:
     """
-    Execute SQL statements using connection pool.
+    Execute SQL statements using a direct connection (no pooling).
     
-    This is the main async entry point for executing PostgreSQL commands.
-    Uses connection pooling to avoid connection overhead and improve reliability.
+    Opens a fresh connection for each execution, executes commands,
+    and properly closes the connection afterward. This ensures clean
+    state and proper error handling without pool corruption issues.
     
     Args:
         connection_string: PostgreSQL connection string
@@ -45,14 +46,44 @@ async def execute_sql_with_pool(
     Raises:
         Exception: If connection or execution fails
     """
+    from psycopg import AsyncConnection
+    from psycopg.rows import dict_row
+    
     logger.debug(f"Executing {len(commands)} SQL commands on {host}:{port}/{database}")
     
+    conn = None
     try:
-        async with get_connection(connection_string, pool_name=f"pg_{database}") as conn:
-            return await execute_sql_statements_async(conn, commands)
+        # Open a fresh connection for this execution
+        conn = await AsyncConnection.connect(
+            connection_string,
+            autocommit=False,
+            row_factory=dict_row
+        )
+        
+        # Execute commands
+        results = await execute_sql_statements_async(conn, commands)
+        
+        return results
+        
     except Exception as e:
-        logger.exception(f"Failed to execute SQL with pool: {e}")
+        logger.exception(f"Failed to execute SQL: {e}")
+        # Attempt rollback on error
+        if conn is not None:
+            try:
+                await conn.rollback()
+                logger.debug("Rolled back transaction after error")
+            except Exception as rollback_error:
+                logger.error(f"Failed to rollback transaction: {rollback_error}")
         raise
+        
+    finally:
+        # Always close the connection
+        if conn is not None:
+            try:
+                await conn.close()
+                logger.debug(f"Closed connection to {host}:{port}/{database}")
+            except Exception as close_error:
+                logger.error(f"Failed to close connection: {close_error}")
 
 
 async def execute_sql_statements_async(
@@ -137,12 +168,12 @@ async def execute_sql_statements_async(
                             }
 
         except Exception as cmd_error:
-            logger.error(f"Error executing Postgres command: {cmd_error}")
-            logger.error(f"Exception type: {type(cmd_error).__name__}, repr: {repr(cmd_error)}")
+            logger.error(f"Error executing Postgres command {i}: {cmd_error}")
             results[f"command_{i}"] = {
                 "status": "error",
                 "message": str(cmd_error)
             }
+            # Continue to next command - don't break
         finally:
             await conn.set_autocommit(original_autocommit)
 
