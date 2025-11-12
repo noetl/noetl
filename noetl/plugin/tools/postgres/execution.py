@@ -51,39 +51,26 @@ async def execute_sql_with_pool(
     
     logger.debug(f"Executing {len(commands)} SQL commands on {host}:{port}/{database}")
     
-    conn = None
-    try:
-        # Open a fresh connection for this execution
-        conn = await AsyncConnection.connect(
-            connection_string,
-            autocommit=False,
-            row_factory=dict_row
-        )
-        
-        # Execute commands
-        results = await execute_sql_statements_async(conn, commands)
-        
-        return results
-        
-    except Exception as e:
-        logger.exception(f"Failed to execute SQL: {e}")
-        # Attempt rollback on error
-        if conn is not None:
+    # Use async with for automatic connection management
+    async with await AsyncConnection.connect(
+        connection_string,
+        autocommit=False,
+        row_factory=dict_row
+    ) as conn:
+        try:
+            # Execute commands
+            results = await execute_sql_statements_async(conn, commands)
+            logger.debug(f"Closed connection to {host}:{port}/{database}")
+            return results
+        except Exception as e:
+            # Log and rollback on error
+            logger.exception(f"Failed to execute SQL: {e}")
             try:
                 await conn.rollback()
                 logger.debug("Rolled back transaction after error")
             except Exception as rollback_error:
-                logger.error(f"Failed to rollback transaction: {rollback_error}")
-        raise
-        
-    finally:
-        # Always close the connection
-        if conn is not None:
-            try:
-                await conn.close()
-                logger.debug(f"Closed connection to {host}:{port}/{database}")
-            except Exception as close_error:
-                logger.error(f"Failed to close connection: {close_error}")
+                logger.error(f"Failed to rollback: {rollback_error}")
+            raise
 
 
 async def execute_sql_statements_async(
