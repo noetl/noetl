@@ -1,0 +1,354 @@
+# NoETL DSL v2 API Design Proposal
+# Structured examples demonstrating key patterns with result-based variable assignment
+
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: v2_api_design_proposal
+  path: tests/v2api/design_proposal
+  description: "Comprehensive examples of DSL v2 patterns with result variables"
+
+workload:
+  pg_auth: pg_local
+  api_url: "https://jsonplaceholder.typicode.com/posts"
+  items:
+    - name: "item1"
+      value: 100
+    - name: "item2"
+      value: 200
+    - name: "item3"
+      value: 300
+
+workflow:
+  # ========================================
+  # CASE 01: Simple Python Tool with Context
+  # ========================================
+  - step: case01_python_context
+    desc: "Python tool accessing context.workload and context.get()"
+    result: python_result          # Step-level result
+    tool:
+      kind: python
+      code: |
+        def main(context):
+          # Access immutable workload
+          pg_auth = context.workload.get('pg_auth')
+          
+          # Access dynamic context
+          items = context.get('items', [])
+          
+          print(f"Using auth: {pg_auth}")
+          print(f"Processing {len(items)} items")
+          
+          return {"auth": pg_auth, "item_count": len(items)}
+      args:
+        items: "{{ context.workload.items }}"
+    next:
+      - step: case02_http_with_chunk
+
+  # ========================================
+  # CASE 02: HTTP with Tool Result and Sinks
+  # ========================================
+  - step: case02_http_with_chunk
+    desc: "HTTP with tool-level result accessible in sinks"
+    result: http_summary            # Step-level result for next steps
+    tool:
+      kind: http
+      result: http_response         # Tool-level result for sinks
+      url: "{{ context.workload.api_url }}"
+      method: GET
+      chunk:
+        size: 10
+        path: "data"
+      sink:
+        - kind: postgres
+          auth: "{{ context.workload.pg_auth }}"
+          table: public.http_chunks
+          mode: append
+          args:
+            chunk_index: "{{ chunk.index }}"
+            chunk_size: "{{ chunk.size }}"
+            data: "{{ http_response.body }}"
+    next:
+      - step: case03_loop_sequential
+
+  # ========================================
+  # CASE 03: Loop with Step Result Collection
+  # ========================================
+  - step: case03_loop_sequential
+    desc: "Loop with step-level result collecting all iterations"
+    result: loop_results            # Step-level: array of all iteration results
+    loop:
+      collection: "{{ context.workload.items }}"
+      element: item
+      mode: sequential
+    tool:
+      kind: python
+      result: item_result           # Tool-level result for sinks
+      code: |
+        def main(context):
+          item = context.get('item')
+          
+          result = {
+            'name': item['name'],
+            'value': item['value'] * 2
+          }
+          
+          print(f"Processing {item['name']}")
+          return result
+      args:
+        item: "{{ item }}"
+      sink:
+        - kind: postgres
+          auth: "{{ context.workload.pg_auth }}"
+          table: public.loop_results
+          mode: insert
+          args:
+            item_name: "{{ item.name }}"
+            doubled_value: "{{ item_result.value }}"
+    next:
+      - step: case04_loop_parallel
+
+  # ========================================
+  # CASE 04: Loop with Parallel Execution
+  # ========================================
+  - step: case04_loop_parallel
+    desc: "Loop in parallel mode with result collection"
+    result: parallel_results        # Step-level: array of all parallel results
+    loop:
+      collection: "{{ context.workload.items }}"
+      element: item
+      mode: parallel
+    tool:
+      kind: http
+      result: api_result            # Tool-level result for sinks
+      url: "{{ context.workload.api_url }}/{{ item.name }}"
+      method: POST
+      body:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+      sink:
+        - kind: postgres
+          auth: "{{ context.workload.pg_auth }}"
+          table: public.parallel_results
+          mode: insert
+          args:
+            item_name: "{{ item.name }}"
+            api_response: "{{ api_result }}"
+    next:
+      - step: case05_transfer_with_result
+
+  # ========================================
+  # CASE 05: Transfer with Tool and Step Results
+  # ========================================
+  - step: case05_transfer_with_result
+    desc: "Transfer with tool result for sinks, step result for next steps"
+    result: transfer_summary        # Step-level result
+    tool:
+      kind: transfer
+      result: transfer_data         # Tool-level result for sinks
+      source:
+        kind: postgres
+        auth: "{{ context.workload.pg_auth }}"
+        query: "SELECT * FROM public.source_table LIMIT 1000"
+        chunk:
+          size: 100
+      sink:
+        - kind: postgres
+          auth: "{{ context.workload.pg_auth }}"
+          table: public.target_table
+          mode: append
+          args:
+            rows: "{{ transfer_data.rows }}"
+        - kind: duckdb
+          auth: "{{ context.workload.duckdb_auth }}"
+          table: analytics.facts
+          mode: append
+          args:
+            data: "{{ transfer_data }}"
+    next:
+      - step: case06_postgres_query
+
+  # ========================================
+  # CASE 06: Postgres Query with Multiple Sinks
+  # ========================================
+  - step: case06_postgres_query
+    desc: "Execute postgres query with tool result in sinks"
+    result: query_summary           # Step-level result
+    tool:
+      kind: postgres
+      result: query_data            # Tool-level result for sinks
+      auth: "{{ context.workload.pg_auth }}"
+      query: |
+        SELECT
+          id,
+          name,
+          value,
+          created_at
+        FROM public.test_table
+        WHERE active = true
+      chunk:
+        size: 500
+      sink:
+        - kind: postgres
+          auth: "{{ context.workload.pg_auth }}"
+          table: public.query_results
+          mode: replace
+          args:
+            rows: "{{ query_data.rows }}"
+        - kind: s3
+          auth: "{{ context.workload.s3_auth }}"
+          path: "exports/query_results_{{ execution_id }}.parquet"
+          format: parquet
+    next:
+      - step: case07_accessing_step_results
+
+  # ========================================
+  # CASE 07: Accessing Previous Step Results
+  # ========================================
+  - step: case07_accessing_step_results
+    desc: "Access step results from previous steps"
+    result: analysis_result         # Step-level result
+    tool:
+      kind: python
+      code: |
+        def main(context):
+          # Access step results from previous steps
+          python_result = context.get('python_result')
+          http_summary = context.get('http_summary')
+          loop_results = context.get('loop_results', [])
+          parallel_results = context.get('parallel_results', [])
+          transfer_summary = context.get('transfer_summary')
+          query_summary = context.get('query_summary')
+          
+          # Access immutable workload
+          pg_auth = context.workload.get('pg_auth')
+          
+          analysis = {
+            "python_result": python_result,
+            "http_chunks_processed": http_summary.get('chunks', 0) if http_summary else 0,
+            "loop_count": len(loop_results),
+            "parallel_count": len(parallel_results),
+            "transfer_rows": transfer_summary.get('rows', 0) if transfer_summary else 0,
+            "query_rows": query_summary.get('rows', 0) if query_summary else 0,
+            "workload_auth": pg_auth
+          }
+          
+          print(f"Analysis: {analysis}")
+          return analysis
+      args:
+        python_result: "{{ context.python_result }}"
+        http_summary: "{{ context.http_summary }}"
+        loop_results: "{{ context.loop_results }}"
+        parallel_results: "{{ context.parallel_results }}"
+        transfer_summary: "{{ context.transfer_summary }}"
+        query_summary: "{{ context.query_summary }}"
+      sink:
+        - kind: postgres
+          auth: "{{ context.workload.pg_auth }}"
+          table: public.analysis_results
+          mode: insert
+    next:
+      - step: case08_conditional_routing
+
+  # ========================================
+  # CASE 08: Conditional Routing Based on Results
+  # ========================================
+  - step: case08_conditional_routing
+    desc: "Route based on step result values"
+    result: routing_decision        # Step-level result
+    tool:
+      kind: python
+      code: |
+        def main(context):
+          analysis_result = context.get('analysis_result', {})
+          loop_count = analysis_result.get('loop_count', 0)
+          
+          return {
+            "count": loop_count,
+            "high_count": loop_count > 2
+          }
+      args:
+        analysis_result: "{{ context.analysis_result }}"
+    next:
+      - step: case09_high_count_branch
+        when: "{{ context.routing_decision.high_count }}"
+      - step: case10_low_count_branch
+        when: "{{ not context.routing_decision.high_count }}"
+
+  # ========================================
+  # CASE 09: High Count Branch
+  # ========================================
+  - step: case09_high_count_branch
+    desc: "Process high count scenario"
+    result: high_count_result       # Step-level result
+    tool:
+      kind: python
+      code: |
+        def main(context):
+          print("Processing high count items")
+          routing = context.get('routing_decision', {})
+          return {"status": "high_count_processed", "count": routing.get('count', 0)}
+      args:
+        routing_decision: "{{ context.routing_decision }}"
+    next:
+      - step: case11_final_summary
+
+  # ========================================
+  # CASE 10: Low Count Branch
+  # ========================================
+  - step: case10_low_count_branch
+    desc: "Process low count scenario"
+    result: low_count_result        # Step-level result
+    tool:
+      kind: python
+      code: |
+        def main(context):
+          print("Processing low count items")
+          routing = context.get('routing_decision', {})
+          return {"status": "low_count_processed", "count": routing.get('count', 0)}
+      args:
+        routing_decision: "{{ context.routing_decision }}"
+    next:
+      - step: case11_final_summary
+
+  # ========================================
+  # CASE 11: Final Summary
+  # ========================================
+  - step: case11_final_summary
+    desc: "Summarize all results from workflow"
+    result: final_summary           # Step-level result
+    tool:
+      kind: python
+      code: |
+        def main(context):
+          # Collect all step results
+          summary = {
+            "python_result": context.get('python_result'),
+            "http_summary": context.get('http_summary'),
+            "loop_results_count": len(context.get('loop_results', [])),
+            "parallel_results_count": len(context.get('parallel_results', [])),
+            "transfer_summary": context.get('transfer_summary'),
+            "query_summary": context.get('query_summary'),
+            "analysis_result": context.get('analysis_result'),
+            "routing_decision": context.get('routing_decision'),
+            "high_count_result": context.get('high_count_result'),
+            "low_count_result": context.get('low_count_result'),
+            "workload": context.workload
+          }
+          
+          print(f"Final Summary: {summary}")
+          return summary
+      sink:
+        - kind: postgres
+          auth: "{{ context.workload.pg_auth }}"
+          table: public.workflow_summary
+          mode: insert
+    next:
+      - step: end
+
+  # ========================================
+  # END
+  # ========================================
+  - step: end
+    desc: "End of workflow"

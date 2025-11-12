@@ -1,0 +1,320 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: iterator_save_test
+  path: tests/iterator_save_test
+
+workload:
+  pg_auth: pg_local
+  items:
+    - name: "item1"
+      value: 100
+    - name: "item2"
+      value: 200
+    - name: "item3"
+      value: 300
+
+workflow:
+- step: start
+  desc: Start test
+  next:
+  - step: create_table
+  
+- step: create_table
+  desc: Create test table
+  tool:
+    kind: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      CREATE TABLE IF NOT EXISTS public.iterator_save_test (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT,
+        item_name TEXT,
+        item_value INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+  next:
+  - step: process_items
+
+- step: process_items
+  desc: Process items with save
+  loop:
+    collection: "{{ workload.items }}"
+    element: item
+    mode: sequential
+  tool:
+    kind: python
+    code: |
+      def main(input_data):
+          return {
+              'item_name': input_data.get('name'),
+              'item_value': input_data.get('value')
+          }
+    save:
+      storage: postgres
+      args:
+        id: "{{ execution_id }}:{{ item.name }}"
+        execution_id: "{{ execution_id }}"
+        item_name: "{{ item.name }}"
+        item_value: "{{ item.value }}"
+      auth: "{{ workload.pg_auth }}"
+      table: public.iterator_save_test
+      mode: upsert
+      key: id
+  next:
+  - step: end
+    
+- step: end
+  desc: End test
+
+
+
+- step: transfer_http_to_pg
+  desc: Transfer HTTP API data to PostgreSQL
+  loop:
+    collection: "{{ workload.items }}"
+    element: item
+    mode: parallel
+  tool:
+    kind: transfer
+    source:
+      type: http
+      url: "{{ workload.api_url }}"
+      method: GET
+    sink:
+      - type: postgres
+        auth: "{{ workload.pg_auth }}"
+        table: public.http_to_postgres_transfer
+        mode: insert
+        mapping:
+          post_id: id
+          user_id: userId
+          title: title
+          body: body
+  next:
+    - step: show_count
+
+
+- step: transfer_http_to_pg
+  desc: Transfer HTTP API data to PostgreSQL
+  loop:
+    collection: "{{ workload.items }}"
+    element: item
+    mode: parallel
+  tool:
+    source:
+      kind: transfer
+      source:
+        type: http
+        url: "{{ workload.api_url }}"
+        method: GET
+    mapping:
+      post_id: id
+      user_id: userId
+      title: title
+      body: body
+    target:
+      - type: postgres
+        auth: "{{ workload.pg_auth }}"
+        table: public.http_to_postgres_transfer
+        mode: insert
+        mapping:
+          post_id: id
+          user_id: userId
+          title: title
+          body: body
+  next:
+    - step: show_count
+
+
+- step: transfer_http_to_pg
+  desc: Transfer HTTP API data to PostgreSQL
+  loop:
+    collection: "{{ workload.items }}"
+    element: item
+    mode: parallel
+  tool:
+    kind: http
+    type: http
+    url: "{{ workload.api_url }}"
+    method: GET
+    chunk:
+      size: 10
+    sink:
+      - kind: postgres
+        auth: "{{ workload.pg_auth }}"
+        table: public.http_to_postgres_transfer
+        mode: insert
+        mapping:
+          post_id: id
+          user_id: userId
+          title: title
+          body: body
+      - kind: context
+        collect:
+          mode: array
+          variable: my_value_list # after execution of step this variable will be available in context
+        assignment:
+          my_value: "{{ result.data }}"
+
+  next:
+    - step: show_count
+      args:
+        var1: data1
+        var2: data2
+
+
+
+workload:
+  my_value_list: []               # Initialize context array
+  processed_count: 0              # Initialize counter
+  items: [1, 2, 3, 4, 5]
+  patient: []
+
+workflow:
+  - step: start
+    next:
+      - step: process_items
+
+  - step: process_items
+    loop:
+      collection: "{{ workload.items }}"
+      element: item
+      mode: parallel
+    result: may_value_list
+    tool:
+      kind: http
+      url: "/api/item/{{ item }}"
+      result: lalal1 # api response
+      sink:
+        - kind: postgres
+          table: items
+          args:
+            item_id: "{{ item }}"
+            data: "{{ lalal1.data }}"
+
+    next:
+      - step: summarize
+
+  - step: summarize
+    tool:
+      kind: python
+      code: |
+        def main(context ):
+          count = get_val(context, ['count'])
+          print(f"Processed {context.count} items")
+          print(f"Collected {len(context.items)} results")
+        print(context.workload.get('pg_auth'))
+          print(context.get('may_value_list'))
+          return {"total": count}
+    args:
+      items: "{{ my_value_list }}"              # Context access
+      count: "{{ processed_count }}"            # Context access
+      # OR
+      items_alt: "{{ process_items.all_items }}" # Step result access
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
+
+
+    ### TODO context should be wrapper for context and workload (immutable attribute)
+
+
+
+  - step: process_items1
+    tool:
+      kind: http
+      method: POST
+      url: "/api/item/{{ item }}"
+    result: process_items1_result
+
+    next:
+      - step: summarize
+
+
+  - step: process_items2
+    result: may_value_list
+    tool:
+      kind: http
+      url: "/api/item/{{ item }}"
+      result: lalal1 # api response
+      chunk: 100 # make ready for insert - have to be array of objects
+      sink:
+        - kind: postgres
+          table: items
+          args:
+            item_id: "{{ item }}"
+            data: "{{ lalal1.data }}"
+        - kind: postgres
+          auth:
+            source: credential
+            tool: postgres
+            key: "{{ workload.pg_auth }}"
+          table: public.http_to_postgres_bulk
+          mapping:
+            post_id: id
+            user_id: userId
+            title: title
+            body: body
+        - kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          statement: |
+            {% for item in lalal1.data %}
+            INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
+            {% endfor %}
+        - kind: http
+          method: POST
+          url: "/api/item/{{ item }}"
+          args: lalal1 # api response
+
+
+    next:
+      - step: summarize
+
+
+
+
+  - step: process_items3
+    result: may_value_list
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT
+          COUNT(*) as row_count,
+          MIN(id) as min_id,
+          MAX(id) as max_id,
+          SUM(value) as total_value
+        FROM {{ workload.test_table_pg }};
+      result: lalal1 # api response
+      chunk: 100
+      sink:
+        - kind: postgres
+          table: items
+          args:
+            item_id: "{{ item }}"
+            data: "{{ lalal1.data }}"
+        - kind: postgres
+          auth:
+            source: credential
+            tool: postgres
+            key: "{{ workload.pg_auth }}"
+          table: public.http_to_postgres_bulk
+          mapping:
+            post_id: id
+            user_id: userId
+            title: title
+            body: body
+        - kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          statement: |
+            {% for item in lalal1.data %}
+            INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
+            {% endfor %}
+        - kind: http
+          method: POST
+          url: "/api/item/{{ item }}"
+          args: lalal1 # api response
