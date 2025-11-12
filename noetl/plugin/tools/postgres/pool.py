@@ -37,12 +37,12 @@ _plugin_global_lock = asyncio.Lock()
 async def get_or_create_plugin_pool(
         connection_string: str,
         pool_name: str = "postgres_plugin",
-        min_size: int = 2,
-        max_size: int = 10,
+        min_size: int = 1,
+        max_size: int = 5,
         timeout: float = 30.0,
         max_waiting: int = 20,
-        max_lifetime: float = 3600.0,
-        max_idle: float = 600.0,
+        max_lifetime: float = 300.0,  # 30 minutes instead of 60
+        max_idle: float = 150.0,  # 5 minutes instead of 10
 ) -> AsyncConnectionPool[AsyncConnection[DictRow]]:
     """
     Get existing pool or create new one for the connection string.
@@ -233,12 +233,12 @@ def get_plugin_pool_stats() -> Dict[str, Dict]:
 async def get_or_create_pool(
     connection_string: str,
     pool_name: str = "postgres_plugin",
-    min_size: int = 2,
-    max_size: int = 10,
+    min_size: int = 1,
+    max_size: int = 5,
     timeout: float = 30.0,
     max_waiting: int = 20,
-    max_lifetime: float = 3600.0,
-    max_idle: float = 600.0,
+    max_lifetime: float = 1800.0,
+    max_idle: float = 300.0,
 ):
     """
     Get existing pool or create new one for the connection string.

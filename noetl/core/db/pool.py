@@ -32,9 +32,11 @@ async def init_pool(conninfo: str):
         if _pool is None:
             _pool = AsyncConnectionPool(
                 conninfo,
-                min_size=2,
-                max_size=10,
+                min_size=1,
+                max_size=5,
                 timeout=10,
+                max_lifetime=1800.0,
+                max_idle=300.0,
                 kwargs={"row_factory": dict_row},
                 name="noetl_server",
                 open=False
