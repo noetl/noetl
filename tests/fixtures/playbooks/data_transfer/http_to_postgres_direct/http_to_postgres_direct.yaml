@@ -19,6 +19,7 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
+      DROP TABLE IF EXISTS public.http_to_postgres_direct; 
       CREATE TABLE IF NOT EXISTS public.http_to_postgres_direct (
         id SERIAL PRIMARY KEY,
         data JSONB NOT NULL,
