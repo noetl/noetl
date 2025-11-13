@@ -1,0 +1,43 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: duckdb_gcs_workload_identity
+  path: tests/fixtures/playbooks/duckdb_gcs/workload_identity
+
+workload:
+  gcs_bucket: noetl-demo-19700101
+  upload_file: test_file_{{ execution_id }}.parquet
+  download_file: test_file_downloaded_{{ execution_id }}.parquet
+
+workflow:
+  - step: start
+    desc: Upload file to GCS bucket
+    tool: duckdb
+    commands: |
+      INSTALL httpfs;
+      LOAD httpfs;
+      
+      CREATE TABLE test_data AS 
+      SELECT 'test data' AS message, '{{ execution_id }}' AS id;
+      
+      COPY test_data TO 'gs://{{ workload.gcs_bucket }}/{{ workload.upload_file }}' (FORMAT PARQUET);
+    next:
+      - step: download_file
+
+  - step: download_file
+    desc: Download file from GCS with different name
+    tool: duckdb
+    commands: |
+      INSTALL httpfs;
+      LOAD httpfs;
+      
+      CREATE TABLE downloaded_data AS 
+      SELECT * FROM 'gs://{{ workload.gcs_bucket }}/{{ workload.upload_file }}';
+      
+      COPY downloaded_data TO 'gs://{{ workload.gcs_bucket }}/{{ workload.download_file }}' (FORMAT PARQUET);
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
