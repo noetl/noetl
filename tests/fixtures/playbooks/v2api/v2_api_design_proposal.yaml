@@ -211,6 +211,8 @@ workflow:
     result: analysis_result         # Step-level result
     tool:
       kind: python
+      args:
+        context: "{{ context }}"
       code: |
         def main(context):
           # Access step results from previous steps
@@ -268,8 +270,6 @@ workflow:
             "count": loop_count,
             "high_count": loop_count > 2
           }
-      args:
-        analysis_result: "{{ context.analysis_result }}"
     next:
       - step: case09_high_count_branch
         when: "{{ context.routing_decision.high_count }}"
@@ -289,8 +289,6 @@ workflow:
           print("Processing high count items")
           routing = context.get('routing_decision', {})
           return {"status": "high_count_processed", "count": routing.get('count', 0)}
-      args:
-        routing_decision: "{{ context.routing_decision }}"
     next:
       - step: case11_final_summary
 
@@ -307,8 +305,6 @@ workflow:
           print("Processing low count items")
           routing = context.get('routing_decision', {})
           return {"status": "low_count_processed", "count": routing.get('count', 0)}
-      args:
-        routing_decision: "{{ context.routing_decision }}"
     next:
       - step: case11_final_summary
 
@@ -351,4 +347,32 @@ workflow:
   # END
   # ========================================
   - step: end
+    tool:
+      kind: http
+    result: end_result
+    desc: "End of workflow"
+
+
+
+  # =======================================
+  # run playbook composition example
+  - step: process_users
+    desc: "Process each user through profile scoring sub-playbook"
+    result: user_results
+    tool:
+      # Provide an explicit task identifier so nested playbook propagates correct parent_step
+      kind: playbook
+      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+      args:
+        user_data: "{{ context.user }}"
+        execution_context: "{{ execution_id }}"
+    next:
+      - step: validate_results
+
+  # =======================================
+  # inner playbook composition example
+  - step: end # final step returning context value 'end' reserved
+    tool:
+      kind: http
+    return: "{{ context.end_result }}" # only for end step
     desc: "End of workflow"
