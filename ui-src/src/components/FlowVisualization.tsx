@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -11,6 +11,8 @@ import {
   Edge,
   Connection,
   BackgroundVariant,
+  useReactFlow,
+  ReactFlowProvider,
 } from "@xyflow/react";
 import { Modal, Button, Spin, message, Select } from "antd";
 import {
@@ -24,6 +26,8 @@ import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
 import { nodeTypes } from './nodeTypes'; // simplified source
 import { EditableTaskNode, TaskNode } from "./types";
+import { DnDProvider, useDnD } from "./DnDContext";
+import Sidebar from "./Sidebar";
 // @ts-ignore
 import yaml from 'js-yaml';
 
@@ -53,7 +57,12 @@ const nodeMeta: Record<string, { icon: string; color: string; label: string }> =
   log: { icon: '📝', color: '#64748b', label: 'log' },
 };
 
-const FlowVisualization: React.FC<FlowVisualizationProps> = ({
+// Generate unique IDs for new nodes
+let nodeId = 0;
+const getNodeId = () => `node_${nodeId++}_${Date.now()}`;
+
+// Inner component that has access to React Flow hooks
+const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   visible,
   onClose,
   playbookId,
@@ -63,22 +72,55 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   hideTitle,
   onUpdateContent,
 }) => {
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  // Minimal global edit modal state (only type change + delete)
   const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
-
-  // Provide nodeTypes directly (already a stable object export)
-  // React Flow expects a mapping of type -> React component receiving {id, data, ...}; our adapted components satisfy this
+  const { screenToFlowPosition } = useReactFlow();
+  const [type] = useDnD();
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges]
+  );
+
+  // Drag and drop handlers
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+
+      if (!type || readOnly) {
+        return;
+      }
+
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      const newTask: EditableTaskNode = {
+        id: getNodeId(),
+        name: `${type} node`,
+        type: type as any,
+        enabled: true,
+        position,
+      };
+
+      setTasks((prev) => [...prev, newTask]);
+      setHasChanges(true);
+      messageApi.success(`${type} node added`);
+    },
+    [screenToFlowPosition, type, readOnly, messageApi]
   );
 
   // Map legacy or unknown types to supported widget types
@@ -469,29 +511,22 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   const flowInner = (
-    <div className="FlowVisualization flow-layout-root">
+    <div className="FlowVisualization flow-layout-root" style={{ display: 'flex', height: fullscreen ? '100vh' : '600px' }}>
       {contextHolder}
-      {/* Content container now full-width; dock moved inside canvas wrapper */}
-      <div className="flow-content-container">
+      {/* Sidebar for drag and drop */}
+      {!readOnly && <Sidebar />}
+
+      {/* Main flow content */}
+      <div className="flow-content-container" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {loading ? (
           <div className="flow-loading-container">
             <Spin size="large" />
             <div className="flow-loading-text">Loading playbook flow...</div>
           </div>
         ) : (
-          <div className="react-flow-wrapper">
-            {/* Left Vertical Dock now inside bordered wrapper */}
-            <div className="flow-dock">
-              {!readOnly && (
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  onClick={handleAddTask}
-                  size="small"
-                  className="flow-dock-btn"
-                  title="Add Component"
-                />
-              )}
+          <div className="react-flow-wrapper" ref={reactFlowWrapper} style={{ flex: 1, position: 'relative' }}>
+            {/* Control buttons moved to top right */}
+            <div className="flow-controls" style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, display: 'flex', gap: 8 }}>
               {!readOnly && hasChanges && (
                 <Button
                   type="primary"
@@ -499,42 +534,35 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
                   onClick={handleSaveWorkflow}
                   loading={loading}
                   size="small"
-                  className="flow-dock-btn"
                   title="Save Workflow"
-                />
+                >
+                  Save
+                </Button>
               )}
-              <div className="flow-dock-separator" />
               <Button
-                type="text"
+                type="default"
                 icon={<FullscreenOutlined />}
                 onClick={handleFullscreen}
                 title="Toggle Fullscreen"
-                className="flow-dock-btn"
                 size="small"
               />
               <Button
-                type="text"
+                type="default"
                 icon={<CloseOutlined />}
                 onClick={onClose}
                 title="Close"
-                className="flow-dock-btn"
                 size="small"
               />
             </div>
-            <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '500px' }}>
+            <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '100%' }}>
               <ReactFlow
                 nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                // onNodeClick={(e, node) => {
-                //   const target = e.target as HTMLElement;
-                //   console.log('Node click target:', target);
-                //   if (target && target.closest('.edit-node-btn')) return;
-                //   const task = (node.data as any)?.task;
-                //   if (task) setActiveTask(task);
-                // }}
+                onDrop={onDrop}
+                onDragOver={onDragOver}
                 nodeTypes={nodeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
                 connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
@@ -602,6 +630,17 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       )}
     </Modal>
   </>;
+};
+
+// Main wrapper component with providers
+const FlowVisualization: React.FC<FlowVisualizationProps> = (props) => {
+  return (
+    <ReactFlowProvider>
+      <DnDProvider>
+        <FlowVisualizationInner {...props} />
+      </DnDProvider>
+    </ReactFlowProvider>
+  );
 };
 
 export default FlowVisualization;

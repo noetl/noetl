@@ -1,0 +1,86 @@
+/* Sidebar Styles */
+.workflow-sidebar {
+    width: 260px;
+    border-right: 1px solid #e5e7eb;
+    padding: 16px;
+    background: #fafafa;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-header {
+    margin-bottom: 16px;
+}
+
+.sidebar-header h3 {
+    margin: 0 0 8px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.sidebar-description {
+    margin: 0;
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.sidebar-nodes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.dndnode {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 2px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    cursor: grab;
+    transition: all 0.2s ease;
+    font-size: 14px;
+    user-select: none;
+}
+
+.dndnode:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.dndnode:active {
+    cursor: grabbing;
+    transform: scale(0.98);
+}
+
+.node-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
+.node-label {
+    font-weight: 500;
+    color: #374151;
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 768px) {
+    .workflow-sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #e5e7eb;
+        max-height: 200px;
+    }
+
+    .sidebar-nodes {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .dndnode {
+        flex: 1 1 calc(50% - 4px);
+        min-width: 120px;
+    }
+}
