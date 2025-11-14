@@ -6,6 +6,7 @@ A comprehensive integration test demonstrating:
 - **PostgreSQL storage** with upsert capabilities
 - **DuckDB analytics** with cross-database queries
 - **GCS cloud storage** output using unified authentication
+- **Excel export** via Polars-powered DuckDB COPY commands
 - **Multi-stage pipeline** with data transformation and aggregation
 
 ## Pipeline Flow
@@ -16,7 +17,7 @@ A comprehensive integration test demonstrating:
 4. **Analytics**: Uses DuckDB to:
    - Connect to PostgreSQL data
    - Flatten and aggregate results by city
-   - Export processed data to GCS as Parquet files
+   - Export processed data to GCS as Parquet files and an Excel workbook (`gs://…/weather/weather_<execution_id>.xlsx`)
 5. **Metrics**: Records pipeline metrics back to PostgreSQL
 
 ## Key Features Tested

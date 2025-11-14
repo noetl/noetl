@@ -43,6 +43,7 @@ dependencies = [
     "duckdb-engine>=0.17.0",
     "snowflake-connector-python>=4.0.0",
     "polars[pyarrow]>=1.30.0",
+    "xlsxwriter>=3.2.9",
     "networkx>=3.5",
     "pydot>=4.0.1",
     "fsspec>=2025.5.1",

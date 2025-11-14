@@ -2,7 +2,7 @@
 SQL execution and result handling for DuckDB commands.
 """
 
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 import json
 import datetime
 
@@ -10,7 +10,8 @@ from noetl.core.common import DateTimeEncoder
 from noetl.core.logger import setup_logger
 
 from noetl.plugin.tools.duckdb.types import TaskResult
-from noetl.plugin.tools.duckdb.errors import SQLExecutionError
+from noetl.plugin.tools.duckdb.errors import SQLExecutionError, ExcelExportError
+from noetl.plugin.tools.duckdb.excel import ExcelExportManager
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -18,7 +19,8 @@ logger = setup_logger(__name__, include_location=True)
 def execute_sql_commands(
     connection: Any, 
     commands: List[str],
-    task_id: str
+    task_id: str,
+    excel_manager: Optional[ExcelExportManager] = None
 ) -> Dict[str, Any]:
     """
     Execute a list of SQL commands against a DuckDB connection.
@@ -45,7 +47,17 @@ def execute_sql_commands(
             last_sql_command = command
             logger.debug(f"Executing SQL command {i+1}/{len(commands)}: {command[:100]}...")
             
-            # Execute the command
+            # Check for Excel COPY commands handled via Polars
+            try:
+                if excel_manager and excel_manager.try_capture_command(connection, command, i):
+                    results["excel_commands"] = results.get("excel_commands", 0) + 1
+                    continue
+            except ExcelExportError as exc:
+                error_msg = f"Excel export failed for command {i+1}: {exc}"
+                logger.error(error_msg)
+                raise SQLExecutionError(error_msg) from exc
+
+            # Execute the command inside DuckDB
             result = connection.execute(command)
             
             # Try to fetch results if available
@@ -63,6 +75,11 @@ def execute_sql_commands(
                 # Many DuckDB commands don't return fetchable results
                 pass
                 
+        if excel_manager:
+            excel_summary = excel_manager.finalize()
+            if excel_summary:
+                results["excel_exports"] = excel_summary
+
         logger.info(f"Successfully executed {len(commands)} SQL commands")
         return results
         
