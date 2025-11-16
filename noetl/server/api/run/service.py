@@ -71,143 +71,135 @@ class ExecutionService:
         Raises:
             HTTPException: If execution fails
         """
-        try:
             # Add timestamp to requestor info
-            if requestor_info:
-                requestor_info['timestamp'] = datetime.utcnow().isoformat()
-            
-            # Step 1: Resolve catalog entry
-            catalog_entry = await CatalogService.get(
-                catalog_id=request.catalog_id,
-                path=request.path,
-                version=request.version
+        if requestor_info:
+            requestor_info['timestamp'] = datetime.utcnow().isoformat()
+        
+        # Step 1: Resolve catalog entry
+        catalog_entry = await CatalogService.get(
+            catalog_id=request.catalog_id,
+            path=request.path,
+            version=request.version
+        )
+        
+        if not catalog_entry:
+            identifier = request.catalog_id or f"{request.path}@{request.version or 'latest'}"
+            raise HTTPException(
+                status_code=404,
+                detail=f"Catalog entry not found: {identifier}"
             )
-            
-            if not catalog_entry:
-                identifier = request.catalog_id or f"{request.path}@{request.version or 'latest'}"
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Catalog entry not found: {identifier}"
-                )
-            
-            logger.debug(
-                f"Executing: path={catalog_entry.path}, version={catalog_entry.version}, "
-                f"catalog_id={catalog_entry.catalog_id}"
-            )
-            
-            # Step 2: Generate execution_id from database snowflake function
-            # This ensures the ID is available for caching/evaluation throughout the execution
-            execution_id = await get_snowflake_id()
-            logger.debug(f"Generated execution_id from database: {execution_id}")
-            
-            # Step 3: Validate playbook content
-            try:
-                playbook = PlaybookValidator.validate_and_parse(catalog_entry.content)
-            except PlaybookValidationError as e:
-                logger.error(f"Playbook validation failed: {e}")
-                raise HTTPException(status_code=400, detail=f"Invalid playbook: {e}")
-            
-            # Step 4: Build execution plan
-            execution_plan = ExecutionPlanner.build_plan(playbook, execution_id)
-            
-            # Step 5: Merge workload data
-            base_workload = PlaybookValidator.extract_workload(playbook)
-            args = request.args or {}
-            
-            if request.merge and args:
-                merged_workload = deep_merge(base_workload, args)
-            else:
-                merged_workload = {**base_workload, **args}
-            
-            # Step 6: Persist workload to workload table
-            await ExecutionService._persist_workload(
-                execution_id,
-                catalog_entry.path,
-                catalog_entry.version,
-                merged_workload
-            )
-            
-            # Step 7: Emit execution start event
-            start_event_id = await ExecutionEventEmitter.emit_execution_start(
-                execution_id=execution_id,
-                catalog_id=catalog_entry.catalog_id,
-                path=catalog_entry.path,
-                version=str(catalog_entry.version),
-                workload=merged_workload,
-                parent_execution_id=request.context.parent_execution_id if request.context else None,
-                parent_event_id=request.context.parent_event_id if request.context else None,
-                requestor_info=requestor_info,
-                metadata=request.metadata
-            )
-            
-            # Step 8: Persist workflow/workbook/transitions
-            await ExecutionEventEmitter.persist_workflow(execution_plan.workflow_steps)
-            await ExecutionEventEmitter.persist_workbook(execution_plan.workbook_tasks)
-            await ExecutionEventEmitter.persist_transitions(
-                execution_id,
-                execution_plan.transitions
-            )
-            
-            # Step 9: Emit workflow initialized event
-            workflow_event_id = await ExecutionEventEmitter.emit_workflow_initialized(
-                execution_id=execution_id,
-                catalog_id=catalog_entry.catalog_id,
-                parent_event_id=start_event_id,
-                step_count=len(execution_plan.workflow_steps),
-                transition_count=len(execution_plan.transitions)
-            )
-            
-            # Step 10: Publish initial steps to queue
-            context = {
-                "workload": merged_workload,
-                "path": catalog_entry.path,
-                "version": str(catalog_entry.version)
+        
+        logger.debug(
+            f"Executing: path={catalog_entry.path}, version={catalog_entry.version}, "
+            f"catalog_id={catalog_entry.catalog_id}"
+        )
+        
+        # Step 2: Generate execution_id from database snowflake function
+        # This ensures the ID is available for caching/evaluation throughout the execution
+        execution_id = await get_snowflake_id()
+        logger.debug(f"Generated execution_id from database: {execution_id}")
+        
+        # Step 3: Validate playbook content
+        try:
+            playbook = PlaybookValidator.validate_and_parse(catalog_entry.content)
+        except PlaybookValidationError as e:
+            logger.error(f"Playbook validation failed: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid playbook: {e}")
+        
+        # Step 4: Build execution plan
+        execution_plan = ExecutionPlanner.build_plan(playbook, execution_id)
+        
+        # Step 5: Merge workload data
+        base_workload = PlaybookValidator.extract_workload(playbook)
+        args = request.args or {}
+        
+        if request.merge and args:
+            merged_workload = deep_merge(base_workload, args)
+        else:
+            merged_workload = {**base_workload, **args}
+        
+        # Step 6: Persist workload to workload table
+        await ExecutionService._persist_workload(
+            execution_id,
+            catalog_entry.path,
+            catalog_entry.version,
+            merged_workload
+        )
+        
+        # Step 7: Emit execution start event
+        start_event_id = await ExecutionEventEmitter.emit_execution_start(
+            execution_id=execution_id,
+            catalog_id=catalog_entry.catalog_id,
+            path=catalog_entry.path,
+            version=str(catalog_entry.version),
+            workload=merged_workload,
+            parent_execution_id=request.context.parent_execution_id if request.context else None,
+            parent_event_id=request.context.parent_event_id if request.context else None,
+            requestor_info=requestor_info,
+            metadata=request.metadata
+        )
+        
+        # Step 8: Persist workflow/workbook/transitions
+        await ExecutionEventEmitter.persist_workflow(execution_plan.workflow_steps)
+        await ExecutionEventEmitter.persist_workbook(execution_plan.workbook_tasks)
+        await ExecutionEventEmitter.persist_transitions(
+            execution_id,
+            execution_plan.transitions
+        )
+        
+        # Step 9: Emit workflow initialized event
+        workflow_event_id = await ExecutionEventEmitter.emit_workflow_initialized(
+            execution_id=execution_id,
+            catalog_id=catalog_entry.catalog_id,
+            parent_event_id=start_event_id,
+            step_count=len(execution_plan.workflow_steps),
+            transition_count=len(execution_plan.transitions)
+        )
+        
+        # Step 10: Publish initial steps to queue
+        context = {
+            "workload": merged_workload,
+            "path": catalog_entry.path,
+            "version": str(catalog_entry.version)
+        }
+        
+        queue_ids = await QueuePublisher.publish_initial_steps(
+            execution_id=execution_id,
+            catalog_id=catalog_entry.catalog_id,
+            initial_steps=execution_plan.initial_steps,
+            workflow_steps=execution_plan.workflow_steps,
+            parent_event_id=workflow_event_id,
+            context=context,
+            metadata=request.metadata
+        )
+        
+        logger.info(
+            f"Execution initiated: execution_id={execution_id}, "
+            f"published {len(queue_ids)} initial tasks to queue"
+        )
+        
+        # Build response
+        execution_response = ExecutionResponse(
+            execution_id=execution_id,
+            catalog_id=catalog_entry.catalog_id,
+            path=catalog_entry.path,
+            name=catalog_entry.path.split("/")[-1],
+            version=str(catalog_entry.version),
+            type="playbook",
+            status="running",
+            timestamp=datetime.utcnow().isoformat(),
+            progress=0,
+            result={
+                "execution_id": execution_id,
+                "start_event_id": start_event_id,
+                "workflow_event_id": workflow_event_id,
+                "queue_ids": queue_ids,
+                "initial_steps": execution_plan.initial_steps
             }
-            
-            queue_ids = await QueuePublisher.publish_initial_steps(
-                execution_id=execution_id,
-                catalog_id=catalog_entry.catalog_id,
-                initial_steps=execution_plan.initial_steps,
-                workflow_steps=execution_plan.workflow_steps,
-                parent_event_id=workflow_event_id,
-                context=context,
-                metadata=request.metadata
-            )
-            
-            logger.info(
-                f"Execution initiated: execution_id={execution_id}, "
-                f"published {len(queue_ids)} initial tasks to queue"
-            )
-            
-            # Build response
-            execution_response = ExecutionResponse(
-                execution_id=execution_id,
-                catalog_id=catalog_entry.catalog_id,
-                path=catalog_entry.path,
-                name=catalog_entry.path.split("/")[-1],
-                version=str(catalog_entry.version),
-                type="playbook",
-                status="running",
-                timestamp=datetime.utcnow().isoformat(),
-                progress=0,
-                result={
-                    "execution_id": execution_id,
-                    "start_event_id": start_event_id,
-                    "workflow_event_id": workflow_event_id,
-                    "queue_ids": queue_ids,
-                    "initial_steps": execution_plan.initial_steps
-                }
-            )
+        )
+        logger.debug(f"Execution created: execution_id={execution_id}")
+        return execution_response
 
-            logger.debug(f"Execution created: execution_id={execution_id}")
-            return execution_response
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Error executing request: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-    
     @staticmethod
     async def _persist_workload(
         execution_id: str,
@@ -246,17 +238,3 @@ class ExecutionService:
         
         logger.debug(f"Persisted workload for execution {execution_id}")
 
-
-
-async def execute_request(request: ExecutionRequest, requestor_info: Optional[Dict[str, Any]] = None) -> ExecutionResponse:
-    """
-    Main entry point for execution service.
-    
-    Args:
-        request: Validated execution request
-        requestor_info: Optional requestor details (IP, user agent, etc.)
-    
-    Returns:
-        ExecutionResponse with execution details
-    """
-    return await ExecutionService.execute(request, requestor_info)

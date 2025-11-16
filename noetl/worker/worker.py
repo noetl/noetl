@@ -688,6 +688,8 @@ class QueueWorker:
             if isinstance(action_cfg, dict) and original_task_cfg:
                 placeholder_codes = {"", "def main(**kwargs):\n    return {}"}
                 orig_tool = original_task_cfg.get("tool")
+                logger.info(f"orig_tool: {json.dumps(orig_tool, indent=2, default=str)}")
+                logger.info(f"original_task_cfg: {json.dumps(original_task_cfg, indent=2, default=str)}")
                 rendered_tool = action_cfg.get("tool")
                 orig_tool_norm = str(orig_tool).strip().lower() if orig_tool else None
                 rendered_tool_norm = (
@@ -737,15 +739,17 @@ class QueueWorker:
                         merged_with.update(action_cfg.get("with") or {})
                     action_cfg["with"] = merged_with
         except Exception:
-            logger.debug(
+            logger.error(
                 "WORKER: Failed to merge original task config after server render",
                 exc_info=True,
             )
 
         if isinstance(action_cfg, dict):
             # Handle broker/maintenance jobs that are not standard task executions
+            logger.info(f"action_cfg: {json.dumps(action_cfg, indent=2, default=str)}")
             act_tool = action_cfg.get("tool")
             if not isinstance(act_tool, str) or not act_tool.strip():
+                logger.error("Task configuration must include a non-empty 'tool' field")
                 raise ValueError(
                     "Task configuration must include a non-empty 'tool' field"
                 )
