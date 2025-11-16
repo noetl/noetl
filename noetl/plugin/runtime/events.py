@@ -8,6 +8,7 @@ NoETL server API with automatic enrichment of worker metadata and tracing.
 import os
 import socket
 import json
+import uuid
 import httpx
 from decimal import Decimal
 from typing import Dict, Any, Optional
@@ -30,6 +31,7 @@ def _get_worker_settings() -> Optional[WorkerSettings]:
         try:
             _cached_worker_settings = get_worker_settings()
         except Exception:
+            logger.exception("Worker settings not available in current context")
             # Worker settings not available (e.g., running in server context)
             pass
     return _cached_worker_settings
@@ -52,7 +54,12 @@ def _decimal_serializer(obj):
         TypeError: If object type is not handled
     """
     if isinstance(obj, Decimal):
+        logger.error(f"Decimal type found during JSON serialization, converting to float. Value: {obj}")
         return float(obj)
+
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
@@ -86,7 +93,7 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
     
     # Serialize event data with Decimal handling
     json_data = json.dumps(event_data, default=_decimal_serializer)
-    
+   
     # Send the event to the server
     with httpx.Client(timeout=10.0) as client:
         response = client.post(
