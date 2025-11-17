@@ -489,3 +489,13 @@ NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for det
 ## Noetl register
 - `uv pip install --editable .`
 - `noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8084`
+
+## DOcumentation UI from md
+
+https://docusaurus.io/docs/versioning
+
+`cd documentation`
+
+`npm run start`
+
+
