@@ -1,0 +1,31 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: should_error_tool_is_required
+  path: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
+workload:
+  pg_auth: pg_local
+  pg_schema: "my_schema"
+
+workflow:
+  - step: start
+    desc: Start data transfer pipeline
+    next:
+      - step: insert_report
+
+  - step: insert_report
+    desc: Create PostgreSQL target table
+    type: postgres # tool is required should error generation in execution
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      INSERT INTO {{ workload.pg_schema }}.reports (id, created_at)
+        VALUES (gen_random_uuid(), NOW())
+        RETURNING id;
+       
+    next:
+      -step: end
+  - step: end
+    desc: End data transfer test pipeline
+
+# noetl register tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required.yaml --host localhost --port 8083

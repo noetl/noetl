@@ -29,6 +29,7 @@ import { apiService } from "../services/api";
 import { PlaybookData } from "../types";
 import "../styles/Catalog.css";
 import { useNavigate } from "react-router-dom";
+import { AxiosError } from "axios";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -149,11 +150,26 @@ const Catalog: React.FC = () => {
 
   const handleExecutePlaybook = async (catalog_id: string) => {
     try {
-      await apiService.executePlaybook(catalog_id);
+      let executePlaybookResponse = await apiService.executePlaybook(catalog_id);
+      // console.log("Playbook execution started: ", executePlaybookResponse);
       message.success("Playbook execution started successfully!");
       // Redirect to execution page
-      navigate("/execution");
-    } catch (err) {
+      const execution_id = executePlaybookResponse.execution_id;
+      navigate(`/execution/${execution_id}`);
+    } catch (err: AxiosError<any, any> | any) {
+
+      if (err instanceof AxiosError && err.response) {
+        const data = err.response?.data?.detail as any;
+        if (data?.code === "validation_error") {
+          message.error(
+            `Failed to execute playbook Validation Error: ${data.error} at ${JSON.stringify(data.place, null, 2)}`,
+          );
+          return;
+        }
+        console.error("Execution API error: ", err.response?.data);
+        message.error(`Failed to execute playbook. ${err.response?.data?.detail}.`);
+        return;
+      }
       console.error("Failed to execute playbooks:", err);
       message.error("Failed to execute playbooks. Please try again.");
     }

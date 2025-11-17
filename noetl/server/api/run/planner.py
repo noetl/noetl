@@ -213,6 +213,7 @@ class ExecutionPlanner:
         for step in workflow:
             step_name = step.get("step")
             if not step_name:
+                logger.error(f"Skipping workflow step with missing 'step' field required for identification {json.dumps(step, default=str)}")
                 continue
 
             # Determine step type
@@ -248,7 +249,7 @@ class ExecutionPlanner:
         # Special control steps handling
         # - start: router if no explicit type; otherwise use explicit type (actionable)
         # - end: remains a terminal control step
-        if step_name == "start" and not step.get("tool"):
+        if step_name == "start":
             return "router"
         if step_name == "end":
             return "end"
@@ -256,9 +257,11 @@ class ExecutionPlanner:
         tool = step.get("tool")
         if tool:
             return tool
+        
+        raise ValueError(f"Workflow step '{step_name}' must define a 'tool' field", step)
 
-        # Default to router for steps without an explicit tool
-        return "router"
+        # # Default to router for steps without an explicit tool
+        # return "router"
 
     @staticmethod
     def _prepare_workbook_tasks(

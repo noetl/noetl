@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, HTTPException, Request, Path
 from fastapi.openapi.models import Example
 from noetl.core.logger import setup_logger
@@ -77,6 +78,13 @@ async def execute_resource(
         # (Currently all resources go through the same execution flow)
         
         return await ExecutionService.execute(payload, requestor_info)
+    except ValueError as e:
+        logger.error(f"Validation error executing resource: {e}")
+        raise HTTPException(status_code=400, detail={
+            "code": "validation_error",
+            "error": e.args[0] if len(e.args) > 0 else None,
+            "place": e.args[1] if len(e.args) > 1 else None
+        })
     except HTTPException:
         raise
     except Exception as e:

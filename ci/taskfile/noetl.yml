@@ -365,8 +365,8 @@ tasks:
     desc: Stop both server and worker processes
     aliases: [stop-all]
     cmds:
-      - task: noetl:local:server-stop
       - task: noetl:local:worker-stop
+      - task: noetl:local:server-stop
 
   noetl:local:kill-all:
     desc: Force kill ALL noetl server and worker processes (including orphaned ones)

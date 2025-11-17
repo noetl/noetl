@@ -16,7 +16,7 @@ Public API:
 import warnings
 import datetime
 import traceback
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, Tuple
 
 from noetl.core.logger import setup_logger
 from noetl.worker.auth_compatibility import validate_auth_transition, transform_credentials_to_auth
@@ -28,6 +28,7 @@ from noetl.plugin.tools.duckdb.extensions import get_required_extensions, instal
 from noetl.plugin.tools.duckdb.auth import resolve_unified_auth, resolve_credentials, generate_duckdb_secrets
 from noetl.plugin.tools.duckdb.sql import render_commands, execute_sql_commands, serialize_results, create_task_result
 from noetl.plugin.tools.duckdb.cloud import detect_uri_scopes, configure_cloud_credentials, validate_cloud_output_requirement
+from noetl.plugin.tools.duckdb.excel import ExcelExportManager
 from noetl.plugin.tools.duckdb.types import JinjaEnvironment, ContextDict, LogEventCallback
 from noetl.plugin.tools.duckdb.errors import DuckDBPluginError
 
@@ -92,10 +93,13 @@ def execute_duckdb_task(
             
             # Process authentication and create secrets
             secrets_created = 0
+            resolved_auth_map = {}
             if task_cfg.auto_secrets:
-                secrets_created = _setup_authentication(
+                secrets_created, resolved_auth_map = _setup_authentication(
                     conn, task_config, processed_task_with, jinja_env, context
                 )
+            else:
+                resolved_auth_map = {}
             
             # Install database extensions for basic database types
             db_type = processed_task_with.get('db_type', 'postgres')
@@ -125,7 +129,13 @@ def execute_duckdb_task(
             validate_cloud_output_requirement(rendered_commands, require_cloud)
             
             # Execute SQL commands
-            results = execute_sql_commands(conn, rendered_commands, task_id)
+            excel_manager = ExcelExportManager(auth_map=resolved_auth_map)
+            results = execute_sql_commands(
+                conn,
+                rendered_commands,
+                task_id,
+                excel_manager=excel_manager
+            )
             
             # Add metadata to results
             results.update({
@@ -189,14 +199,15 @@ def _setup_authentication(
     processed_task_with: Dict[str, Any],
     jinja_env: JinjaEnvironment,
     context: ContextDict
-) -> int:
+) -> Tuple[int, Dict[str, Any]]:
     """
     Setup authentication for DuckDB connection.
     
     Returns:
-        Number of secrets created
+        Tuple of (number of secrets created, resolved auth map)
     """
     secrets_created = 0
+    resolved_auth_map: Dict[str, Any] = {}
     
     try:
         # Try unified auth system first
@@ -239,7 +250,7 @@ def _setup_authentication(
     except Exception as e:
         logger.warning(f"Authentication setup failed: {e}")
         
-    return secrets_created
+    return secrets_created, resolved_auth_map
 
 
 def get_duckdb_connection(duckdb_file_path: str):

@@ -137,6 +137,19 @@ workflow:
       -- Write results using the GCS credential
       COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
       COPY weather_agg  TO 'gs://{{ workload.gcs_bucket }}/weather/agg_{{ execution_id }}.parquet'  (FORMAT PARQUET);
+
+      -- Excel workbook now stored in GCS alongside parquet outputs
+      COPY (
+        SELECT city, source_url, elapsed_sec
+        FROM weather_flat
+        ORDER BY city
+      ) TO 'gs://{{ workload.gcs_bucket }}/weather/weather_{{ execution_id }}.xlsx' (FORMAT 'xlsx', SHEET 'Flat');
+
+      COPY (
+        SELECT city, rows_per_city
+        FROM weather_agg
+        ORDER BY city
+      ) TO 'gs://{{ workload.gcs_bucket }}/weather/weather_{{ execution_id }}.xlsx' (FORMAT 'xlsx', SHEET 'Aggregates', WRITE_MODE 'overwrite_sheet');
     next:
       - step: ensure_metrics_table
   - step: ensure_metrics_table

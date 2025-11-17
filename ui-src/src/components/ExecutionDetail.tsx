@@ -84,7 +84,28 @@ const ExecutionDetail: React.FC = () => {
         setLoading(false);
       }
     };
+    const fetchExecutionForTimeout = async () => {
+      try {
+
+        const data = await apiService.getExecution(id!);
+        setError(null);
+        setExecution(data);
+
+        // Extract events from execution data or create demo events if not available
+        const executionEvents = data.events || [];
+
+        setEvents(executionEvents);
+        setFilteredEvents(executionEvents);
+      } catch (err) {
+        setError("Failed to load execution details.");
+      }
+    };
     fetchExecution();
+    const interval = setInterval(() => {
+      console.log('Refreshing execution data for id:', id);
+      fetchExecutionForTimeout();
+    }, 2000); // Refresh every 2 seconds
+    return () => clearInterval(interval);
   }, [id]);
 
   useEffect(() => {

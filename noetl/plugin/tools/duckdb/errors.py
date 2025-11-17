@@ -35,3 +35,8 @@ class CloudStorageError(DuckDBPluginError):
 class ExtensionError(DuckDBPluginError):
     """Error with DuckDB extension management."""
     pass
+
+
+class ExcelExportError(DuckDBPluginError):
+    """Error raised while processing Excel export commands."""
+    pass
