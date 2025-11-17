@@ -27,6 +27,9 @@ includes:
     taskfile: ci/taskfile/docker.yml
     dir: .
     flatten: true
+  tools:
+    taskfile: ci/taskfile/tools.yml
+    flatten: true
 tasks:
   default:
     silent: true
