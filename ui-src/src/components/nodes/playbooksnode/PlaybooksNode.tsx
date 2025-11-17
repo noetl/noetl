@@ -2,13 +2,15 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PlaybooksNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
 interface PlaybooksData {
     name?: string;
     path?: string;
     entry_step?: string;
     return_step?: string;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
     [key: string]: unknown;
 }
 
@@ -56,17 +58,33 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
             <Handle type="source" position={Position.Right} />
             <div className="PlaybooksNode__header">
                 <span className="PlaybooksNode__header-text">� {data.name || 'playbooks'}</span>
-                <Tooltip title="Edit Playbook path">
-                    <Button
-                        className="playbooks-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <div className="PlaybooksNode__header-buttons">
+                    <Tooltip title="Edit Playbook path">
+                        <Button
+                            className="playbooks-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="playbooks-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="PlaybooksNode__summary">
                 {summaryPath || <span className="PlaybooksNode__empty-path">(no path)</span>}

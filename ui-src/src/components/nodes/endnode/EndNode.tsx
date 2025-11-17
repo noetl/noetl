@@ -2,9 +2,16 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './EndNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
-function EndNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>) {
+interface EndNodeData {
+    name?: string;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
+    [key: string]: unknown;
+}
+
+function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState({ name: '' });
@@ -34,17 +41,33 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>) 
             <Handle type="target" position={Position.Left} />
             <div className="EndNode__header">
                 <span className="EndNode__header-text">🏁 {data.name || 'end'}</span>
-                <Tooltip title="Edit End node">
-                    <Button
-                        className="end-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <div className="EndNode__header-buttons">
+                    <Tooltip title="Edit End node">
+                        <Button
+                            className="end-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="end-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="EndNode__label">End</div>
             <div className="EndNode__hint">double-click or edit icon</div>

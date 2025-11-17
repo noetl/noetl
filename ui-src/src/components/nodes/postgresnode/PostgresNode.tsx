@@ -2,13 +2,15 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PostgresNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
 interface PostgresData {
     name?: string;
     query?: string;
     auth?: string;
     params?: Record<string, any>;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
     [key: string]: unknown;
 }
 
@@ -91,17 +93,33 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
             <Handle type="source" position={Position.Right} />
             <div className="PostgresNode__header">
                 <span className="PostgresNode__header-text">🐘 {data.name || 'postgres'}</span>
-                <Tooltip title="Edit Postgres query">
-                    <Button
-                        className="postgres-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <div className="PostgresNode__header-buttons">
+                    <Tooltip title="Edit Postgres query">
+                        <Button
+                            className="postgres-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="postgres-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="PostgresNode__summary">
                 {summaryQuery || <span className="PostgresNode__empty-query">(no query)</span>}

@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './HttpNode.less';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
 interface HttpData {
     name?: string;
@@ -11,6 +11,8 @@ interface HttpData {
     headers?: Record<string, any>;
     params?: Record<string, any>;
     payload?: Record<string, any>;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
     [key: string]: unknown;
 }
 
@@ -119,17 +121,33 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
             <Handle type="source" position={Position.Right} />
             <div className="HttpNode__header">
                 <span className="HttpNode__header-text">🌐 {data.name || 'http'}</span>
-                <Tooltip title="Edit HTTP config">
-                    <Button
-                        className="http-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <div className="HttpNode__header-buttons">
+                    <Tooltip title="Edit HTTP config">
+                        <Button
+                            className="http-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="http-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="HttpNode__summary">
                 {summaryEndpoint || <span className="HttpNode__empty-url">(no endpoint)</span>}

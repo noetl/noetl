@@ -2,9 +2,16 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './StartNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
-function StartNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>) {
+interface StartNodeData {
+    name?: string;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
+    [key: string]: unknown;
+}
+
+function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState({ name: '' });
@@ -34,17 +41,33 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>
             <Handle type="source" position={Position.Right} />
             <div className="StartNode__header">
                 <span className="StartNode__header-text">🚀 {data.name || 'start'}</span>
-                <Tooltip title="Edit Start node">
-                    <Button
-                        className="start-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <div className="StartNode__header-buttons">
+                    <Tooltip title="Edit Start node">
+                        <Button
+                            className="start-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="start-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="StartNode__label">Start</div>
             <div className="StartNode__hint">double-click or edit icon</div>
