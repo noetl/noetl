@@ -1,4 +1,10 @@
-# HTTP to PostgreSQL Bulk Transfer Test
+---
+sidebar_position: 1
+---
+
+# HTTP to PostgreSQL Bulk
+
+From Http API to PostgreSQL Bulk Transfer
 
 ## Purpose
 
@@ -113,15 +119,15 @@ This playbook validates NoETL's `transfer` tool for bulk data movement from HTTP
 
 ### 1. Register Playbook
 ```bash
-.venv/bin/noetl register \
-  tests/fixtures/playbooks/data_transfer/http_to_postgres_bulk/http_to_postgres_bulk.yaml \
+noetl register \
+  examples/http_to_postgres_bulk/http_to_postgres_bulk.yaml \
   --host localhost --port 8083
 ```
 
 ### 2. Execute Playbook
 ```bash
-.venv/bin/noetl execute playbook \
-  "tests/fixtures/playbooks/data_transfer/http_to_postgres_bulk" \
+noetl execute playbook \
+  "examples/http_to_postgres_bulk/http_to_postgres_bulk" \
   --host localhost --port 8083 --json
 ```
 
@@ -297,3 +303,76 @@ tests/fixtures/playbooks/data_transfer/http_to_postgres_bulk/
 - **Approach**: Declarative (transfer tool)
 - **Last Updated**: 2025-11-09
 - **Status**: Tested and working (100 records successfully transferred)
+
+
+```yaml title="http_duckdb_postgres.yaml"
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: http_to_postgres_bulk
+  path: examples/http_to_postgres_bulk
+
+workload:
+  api_url: "https://jsonplaceholder.typicode.com/posts"
+  pg_auth: pg_local
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: create_table
+
+  - step: create_table
+    desc: Create table for storing HTTP data
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS public.http_to_postgres_bulk;
+
+      CREATE TABLE public.http_to_postgres_bulk (
+        id SERIAL PRIMARY KEY,
+        post_id INTEGER,
+        user_id INTEGER,
+        title TEXT,
+        body TEXT,
+        fetched_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    next:
+      - step: transfer_http_to_pg
+
+  - step: transfer_http_to_pg
+    desc: Transfer HTTP API data to PostgreSQL using bulk transfer
+    tool: transfer
+    source:
+      type: http
+      url: "{{ workload.api_url }}"
+      method: GET
+    target:
+      type: postgres
+      auth:
+        source: credential
+        tool: postgres
+        key: "{{ workload.pg_auth }}"
+      table: public.http_to_postgres_bulk
+      mapping:
+        post_id: id
+        user_id: userId
+        title: title
+        body: body
+    chunk_size: 10
+    next:
+      - step: show_count
+
+  - step: show_count
+    desc: Verify record count
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT COUNT(*) as records FROM public.http_to_postgres_bulk;
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
+
+```

@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: http_to_postgres_bulk
-  path: tests/fixtures/playbooks/data_transfer/http_to_postgres_bulk
+  path: examples/http_to_postgres_bulk
 
 workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"

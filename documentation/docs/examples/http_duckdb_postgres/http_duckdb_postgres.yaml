@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: http_duckdb_postgres
-  path: tests/fixtures/playbooks/http_duckdb_postgres # catalog path; do not change in tests
+  path: examples/http_duckdb_postgres # catalog path; do not change in tests
 
 workload:
   pg_auth: pg_local
