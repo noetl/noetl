@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import traceback
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional, Union
 
 from jinja2 import Environment
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +48,29 @@ class PreparedJob(BaseModel):
     use_process: bool = False
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class EventPayload(BaseModel):
+    """Structured payload for worker->server event emission."""
+
+    event_type: str
+    status: str
+    node_type: str
+    execution_id: str
+    catalog_id: Optional[str] = None
+    node_id: Optional[str] = None
+    node_name: Optional[str] = None
+    duration: Optional[float] = None
+    context: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    stack_trace: Optional[str] = None
+    trace_component: Optional[Dict[str, Any]] = None
+    parent_event_id: Optional[str] = None
+    parent_execution_id: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(extra="allow")
 
 
 class JobExecutor:
@@ -162,70 +185,64 @@ class JobExecutor:
     async def _emit_prepare_failure(
         self, job: QueueJob, exc: Exception, stack_trace: str
     ) -> None:
-        event = {
-            "execution_id": job.execution_id,
-            "catalog_id": job.catalog_id,
-            "event_type": "action_failed",
-            "status": "FAILED",
-            "node_id": job.effective_node_id,
-            "node_name": job.step_name or job.effective_node_id,
-            "node_type": job.context.get("step_type") or "task",
-            "error": f"{type(exc).__name__}: {exc}",
-            "stack_trace": stack_trace,
-            "context": {
+        event = EventPayload(
+            execution_id=job.execution_id,
+            catalog_id=job.catalog_id,
+            event_type="action_failed",
+            status="FAILED",
+            node_id=job.effective_node_id,
+            node_name=job.step_name or job.effective_node_id,
+            node_type=job.context.get("step_type") or "task",
+            error=f"{type(exc).__name__}: {exc}",
+            stack_trace=stack_trace,
+            context={
                 "work": job.context,
                 "task": job.action.model_dump(),
             },
-        }
+        )
         await self._emit_event(event)
 
     async def _emit_router_events(self, prepared: PreparedJob) -> None:
-        base_event = self._base_event(prepared)
-        start_event = {
-            **base_event,
-            "event_type": "action_started",
-            "status": "RUNNING",
-            "node_type": "task",
-            "context": {
+        start_event = self._build_event_payload(
+            prepared,
+            event_type="action_started",
+            status="RUNNING",
+            node_type="task",
+            context={
                 "work": prepared.context,
                 "task": prepared.action_cfg.model_dump(),
             },
-        }
-        start_response = await self._emit_event(start_event)
-        parent_event_id = (
-            start_response.get("event_id")
-            if isinstance(start_response, dict)
-            else None
         )
-        complete_event = {
-            **base_event,
-            "event_type": "action_completed",
-            "status": "COMPLETED",
-            "node_type": "task",
-            "parent_event_id": parent_event_id,
-            "context": {"result": {"skipped": True, "reason": "router"}},
-        }
+        start_response = await self._emit_event(start_event)
+        parent_event_id = start_response.get("event_id") if isinstance(start_response, dict) else None
+        complete_event = self._build_event_payload(
+            prepared,
+            event_type="action_completed",
+            status="COMPLETED",
+            node_type="task",
+            parent_event_override=parent_event_id,
+            context={"result": {"skipped": True, "reason": "router"}},
+        )
         await self._emit_event(complete_event)
 
     async def _execute_action(self, prepared: PreparedJob) -> None:
         node_type = "iterator" if prepared.action_type == "iterator" else "task"
-        base_event = self._base_event(prepared)
-        start_event = {
-            **base_event,
-            "event_type": "action_started",
-            "status": "RUNNING",
-            "node_type": node_type,
-            "context": {
+        start_event = self._build_event_payload(
+            prepared,
+            event_type="action_started",
+            status="RUNNING",
+            node_type=node_type,
+            context={
                 "work": prepared.context,
-                    "task": prepared.action_cfg.model_dump(),
-                    "retry": {
-                        "attempt": prepared.attempts,
-                        "max_attempts": prepared.max_attempts,
-                        "is_retry": prepared.is_retry,
-                    },
+                "task": prepared.action_cfg.model_dump(),
+                "retry": {
+                    "attempt": prepared.attempts,
+                    "max_attempts": prepared.max_attempts,
+                    "is_retry": prepared.is_retry,
                 },
-            "trace_component": {"worker_raw_context": prepared.raw_context},
-        }
+            },
+            trace_component={"worker_raw_context": prepared.raw_context},
+        )
         start_response = await self._emit_event(start_event)
         action_started_event_id = None
         if isinstance(start_response, dict):
@@ -245,7 +262,7 @@ class JobExecutor:
                 prepared.use_process,
             )
             action_duration = time.time() - action_start_time
-            result = await self._maybe_run_inline_save(prepared, exec_ctx, result)
+            result = await self._run_inline_save_if_needed(prepared, exec_ctx, result)
             if self._result_indicates_error(result):
                 err_msg = self._extract_error_message(result)
                 tb_text = self._extract_traceback(result)
@@ -318,7 +335,7 @@ class JobExecutor:
         )
         return exec_ctx
 
-    async def _maybe_run_inline_save(
+    async def _run_inline_save_if_needed(
         self,
         prepared: PreparedJob,
         exec_ctx: Dict[str, Any],
@@ -383,6 +400,36 @@ class JobExecutor:
             return str(result.get("traceback") or "")
         return ""
 
+    def _validate_step_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"Step result must be a dictionary, got {type(result).__name__}"
+            )
+        data = result.get("data")
+        if data is not None and not isinstance(data, dict):
+            raise ValueError("Step result 'data' field must be a dictionary")
+        return data if data is not None else result
+
+    def _extract_step_status(self, result: Dict[str, Any]) -> str:
+        if not isinstance(result, dict):
+            raise ValueError("Step result must be a dictionary with 'status'")
+        raw_status = result.get("status")
+        if not isinstance(raw_status, str):
+            raise ValueError("Step result must include a string 'status' field")
+        upper = raw_status.strip().upper()
+        if upper in {"COMPLETED", "FAILED", "RUNNING", "PENDING"}:
+            return upper
+        legacy_map = {
+            "SUCCESS": "COMPLETED",
+            "OK": "COMPLETED",
+            "ERROR": "FAILED",
+            "FAIL": "FAILED",
+            "FAILURE": "FAILED",
+        }
+        if upper in legacy_map:
+            return legacy_map[upper]
+        raise ValueError(f"Unsupported step result status: {raw_status}")
+
     def _base_event(self, prepared: PreparedJob) -> Dict[str, Any]:
         event = {
             "execution_id": prepared.execution_id,
@@ -401,6 +448,29 @@ class JobExecutor:
             event["parent_execution_id"] = prepared.parent_execution_id
         return event
 
+    def _build_event_payload(
+        self,
+        prepared: PreparedJob,
+        *,
+        event_type: str,
+        status: str,
+        node_type: str,
+        parent_event_override: Optional[str] = None,
+        **extra: Any,
+    ) -> EventPayload:
+        base = self._base_event(prepared)
+        if parent_event_override is not None:
+            base["parent_event_id"] = parent_event_override
+        base.update(
+            {
+                "event_type": event_type,
+                "status": status,
+                "node_type": node_type,
+            }
+        )
+        base.update({k: v for k, v in extra.items() if v is not None})
+        return EventPayload.model_validate(base)
+
     def _build_error_event(
         self,
         prepared: PreparedJob,
@@ -410,18 +480,20 @@ class JobExecutor:
         stack_trace: str,
         result: Dict[str, Any],
     ) -> Dict[str, Any]:
-        event = {
-            **self._base_event(prepared),
-            "event_type": "action_failed",
-            "status": "FAILED",
-            "node_type": node_type,
+        extra = {
+            "result": result,
             "error": error_message,
             "stack_trace": stack_trace,
-            "result": result,
         }
         if duration is not None:
-            event["duration"] = duration
-        return event
+            extra["duration"] = duration
+        return self._build_event_payload(
+            prepared,
+            event_type="action_failed",
+            status="FAILED",
+            node_type=node_type,
+            **extra,
+        )
 
     def _build_complete_event(
         self,
@@ -431,17 +503,15 @@ class JobExecutor:
         result: Dict[str, Any],
         action_started_event_id: Optional[str],
     ) -> Dict[str, Any]:
-        event = {
-            **self._base_event(prepared),
-            "event_type": "action_completed",
-            "status": "COMPLETED",
-            "node_type": node_type,
-            "duration": duration,
-            "result": result,
-        }
-        if action_started_event_id:
-            event["parent_event_id"] = action_started_event_id
-        return event
+        return self._build_event_payload(
+            prepared,
+            event_type="action_completed",
+            status="COMPLETED",
+            node_type=node_type,
+            duration=duration,
+            result=result,
+            parent_event_override=action_started_event_id,
+        )
 
     async def _emit_step_result(
         self,
@@ -451,25 +521,30 @@ class JobExecutor:
         result: Dict[str, Any],
         action_started_event_id: Optional[str],
     ) -> None:
-        norm_result = result
-        if isinstance(result, dict) and result.get("data") is not None:
-            norm_result = result["data"]
-        event = {
-            **self._base_event(prepared),
-            "event_type": "step_result",
-            "status": "COMPLETED",
-            "node_type": node_type,
-            "duration": duration,
-            "result": norm_result,
-        }
-        if action_started_event_id:
-            event["parent_event_id"] = action_started_event_id
+        normalized = self._validate_step_result(result)
+        status = self._extract_step_status(result)
+        event = self._build_event_payload(
+            prepared,
+            event_type="step_result",
+            status=status,
+            node_type=node_type,
+            duration=duration,
+            result=normalized,
+            parent_event_override=action_started_event_id or prepared.parent_event_id,
+        )
         await self._emit_event(event)
 
-    async def _emit_event(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _emit_event(
+        self, event_data: Union[Dict[str, Any], EventPayload]
+    ) -> Dict[str, Any]:
         from noetl.plugin.runtime import report_event_async
 
-        status = event_data.get("status")
+        payload = (
+            event_data.model_dump(exclude_none=True)
+            if isinstance(event_data, EventPayload)
+            else event_data
+        )
+        status = payload.get("status")
         if status:
-            event_data["status"] = validate_status(status)
-        return await report_event_async(event_data, self._server_url)
+            payload["status"] = validate_status(status)
+        return await report_event_async(payload, self._server_url)
