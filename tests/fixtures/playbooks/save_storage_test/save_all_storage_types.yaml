@@ -18,7 +18,7 @@ workbook:
   - name: generate_test_data
     tool: python
     code: |
-      def main(**kwargs):
+      def main(context):
           import json
           from datetime import datetime
           
@@ -46,7 +46,7 @@ workbook:
   - name: prepare_postgres_data
     tool: python
     code: |
-      def main(**kwargs):
+      def main(context):
           # Extract records and prepare for postgres INSERT
           # Get data from previous step via context
           source_data = context.get("generate_data", {}).get("data", {})
@@ -73,7 +73,7 @@ workbook:
   - name: prepare_duckdb_analytics
     tool: python
     code: |
-      def main(**kwargs):
+      def main(context):
           import json
           
           # Get postgres results and create analytics dataset
@@ -167,7 +167,7 @@ workflow:
     desc: "Test postgres save with flat storage structure"
     tool: python
     code: |
-      def main(**kwargs):
+      def main(context: dict = {}, **kwargs):
           # Simple pass-through to test flat save structure
           return {
               "status": "success", 

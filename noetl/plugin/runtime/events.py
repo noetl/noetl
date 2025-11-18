@@ -63,55 +63,64 @@ def _decimal_serializer(obj):
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
+def _prepare_event_payload(
+    event_data: Dict[str, Any], server_url: str
+) -> tuple[str, str]:
+    """Apply metadata enrichment and serialize payload for transport."""
+    _enrich_event_metadata(event_data)
+    _enrich_trace_component(event_data)
+    url = _build_event_url(server_url)
+    logger.debug(f"Reporting event to {url}: {event_data.get('event_type', 'unknown')}")
+    json_data = json.dumps(event_data, default=_decimal_serializer)
+    return url, json_data
+
+
 def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
     """
-    Report an event to the NoETL server.
-    
-    Enriches the event with worker metadata including:
-    - Worker pool name and runtime
-    - Process ID and hostname
-    - Worker ID
-    
-    Args:
-        event_data: Event data to report
-        server_url: Base URL of the NoETL server
-        
-    Returns:
-        Response from the server
+    Report an event to the NoETL server synchronously.
     """
-    # try:
-    # Enrich metadata with worker pool/runtime hints
-    _enrich_event_metadata(event_data)
-    
-    # Attach trace component with worker details
-    _enrich_trace_component(event_data)
-    
-    # Build the API URL
-    url = _build_event_url(server_url)
-    
-    logger.debug(f"Reporting event to {url}: {event_data.get('event_type', 'unknown')}")
-    
-    # Serialize event data with Decimal handling
-    json_data = json.dumps(event_data, default=_decimal_serializer)
-   
-    # Send the event to the server
+    url, json_data = _prepare_event_payload(event_data, server_url)
     with httpx.Client(timeout=10.0) as client:
         response = client.post(
-            url, 
+            url,
             content=json_data,
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
         )
-        # response.raise_for_status()
         if response.status_code == 200:
             return response.json()
-        else:
-            logger.error(f"Failed to report event, status code: {response.status_code}, response: {response.text}")
-            raise RuntimeError(f"Failed to report event, status code: {response.status_code}")
+        logger.error(
+            "Failed to report event, status code: %s, response: %s",
+            response.status_code,
+            response.text,
+        )
+        raise RuntimeError(
+            f"Failed to report event, status code: {response.status_code}"
+        )
 
-            
-    # except Exception as e:
-    #     logger.exception(f"Failed to report event: {e}")
-    #     return {"status": "error", "message": str(e)}
+
+async def report_event_async(
+    event_data: Dict[str, Any], server_url: str
+) -> Dict[str, Any]:
+    """
+    Report an event to the NoETL server asynchronously.
+    """
+    url, json_data = _prepare_event_payload(event_data, server_url)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            url,
+            content=json_data,
+            headers={"Content-Type": "application/json"},
+        )
+        if response.status_code == 200:
+            return response.json()
+        logger.error(
+            "Failed to report event, status code: %s, response: %s",
+            response.status_code,
+            response.text,
+        )
+        raise RuntimeError(
+            f"Failed to report event, status code: {response.status_code}"
+        )
 
 
 def _enrich_event_metadata(event_data: Dict[str, Any]) -> None:

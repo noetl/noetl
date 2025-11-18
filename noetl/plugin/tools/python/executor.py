@@ -70,7 +70,7 @@ def execute_python_task(
     # This allows 'args' field in YAML to be used
     if not args:
         args = task_config.get('args', {})
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Extracted args from task_config: {list(args.keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Extracted args from task_config: {args}")
     else:
         # Merge task_config args with provided args (provided args take precedence)
         config_args = task_config.get('args', {})
@@ -84,7 +84,7 @@ def execute_python_task(
 
     try:
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task config keys: {list(task_config.keys())}")
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Args keys: {list(args.keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Args keys: {args}")
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Context keys: {list((context or {}).keys())}")
 
         # Get and decode the code
