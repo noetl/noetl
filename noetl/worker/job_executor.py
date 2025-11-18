@@ -70,7 +70,12 @@ class JobExecutor:
         self._run_action = run_action
 
     async def run(self, job: QueueJob) -> None:
-        prepared = await self._prepare_job(job)
+        try:
+            prepared = await self._prepare_job(job)
+        except Exception as exc:
+            tb_text = traceback.format_exc()
+            await self._emit_prepare_failure(job, exc, tb_text)
+            raise
 
         if prepared.action_type in {"router", "start"}:
             await self._emit_router_events(prepared)
@@ -85,7 +90,7 @@ class JobExecutor:
         await self._execute_action(prepared)
 
     async def _prepare_job(self, job: QueueJob) -> PreparedJob:
-        action_cfg = await self._maybe_render_server_context(job)
+        action_cfg = await self._render_server_context(job)
         raw_context = dict(job.context)
 
         job_meta = job.meta or {}
@@ -124,7 +129,7 @@ class JobExecutor:
             use_process=job.use_process,
         )
 
-    async def _maybe_render_server_context(self, job: QueueJob) -> ActionConfig:
+    async def _render_server_context(self, job: QueueJob) -> ActionConfig:
         try:
             payload = {
                 "execution_id": job.execution_id,
@@ -151,8 +156,28 @@ class JobExecutor:
                     return ActionConfig.model_validate(task_cfg)
             return job.action
         except Exception as exc:
-            logger.exception(f"Failed to render context on server; falling back: {exc}")
-            return job.action
+            logger.exception(f"Failed to render context on server: {exc}")
+            raise RuntimeError("Server-side context rendering failed") from exc
+
+    async def _emit_prepare_failure(
+        self, job: QueueJob, exc: Exception, stack_trace: str
+    ) -> None:
+        event = {
+            "execution_id": job.execution_id,
+            "catalog_id": job.catalog_id,
+            "event_type": "action_failed",
+            "status": "FAILED",
+            "node_id": job.effective_node_id,
+            "node_name": job.step_name or job.effective_node_id,
+            "node_type": job.context.get("step_type") or "task",
+            "error": f"{type(exc).__name__}: {exc}",
+            "stack_trace": stack_trace,
+            "context": {
+                "work": job.context,
+                "task": job.action.model_dump(),
+            },
+        }
+        await self._emit_event(event)
 
     async def _emit_router_events(self, prepared: PreparedJob) -> None:
         base_event = self._base_event(prepared)

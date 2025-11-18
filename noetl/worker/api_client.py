@@ -92,8 +92,8 @@ class WorkerAPIClient:
                 if isinstance(rendered, dict):
                     return rendered
         except Exception as exc:
-            logger.exception(f"Server render failed, falling back to raw context: {exc}")
-        return {}
+            logger.exception(f"Server render failed: {exc}")
+            raise
 
     async def fetch_catalog_id(self, execution_id: Optional[str]) -> Optional[str]:
         if not execution_id:
