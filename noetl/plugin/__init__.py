@@ -32,6 +32,7 @@ from noetl.plugin.runtime import (
     execute_task,
     execute_task_resolved,
     report_event,
+    report_event_async,
     sql_split,
 )
 from noetl.plugin.shared.secrets import execute_secrets_task
@@ -72,6 +73,7 @@ __all__ = [
     "process_loop_aggregation_job",
     "get_duckdb_connection",
     "report_event",
+    "report_event_async",
     "sql_split",
     "RetryPolicy",
     "REGISTRY",
