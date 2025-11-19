@@ -19,8 +19,10 @@ workflow:
   - step: test_step
     desc: "Hello world test step"
     tool: python
+    args:
+      message: "{{ workload.message }}"
     code: |
-      def main(message):
+      async def main(message):
           print(f"HELLO_WORLD: {message}")
           # Required envelope: {status, data, meta?}
           return {"status": "success", "data": {"message": message}}
