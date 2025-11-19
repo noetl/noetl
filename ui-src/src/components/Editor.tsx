@@ -46,6 +46,7 @@ import { apiService } from "../services/api";
 import { PlaybookData } from "../types";
 import MonacoEditor from "@monaco-editor/react";
 import FlowVisualization from "./FlowVisualization";
+import { useNavigate } from "react-router-dom";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -129,6 +130,7 @@ const PlaybookEditor: React.FC = () => {
   const [editorHeight, setEditorHeight] = useState(500);
   const [showFlowVisualization, setShowFlowVisualization] = useState(false);
   const editorRef = useRef<any>(null);
+  const navigate = useNavigate();
 
   // Get playbooks ID from URL parameters
   const urlParams = new URLSearchParams(window.location.search);
@@ -189,15 +191,10 @@ const PlaybookEditor: React.FC = () => {
         message.success("Playbook saved successfully");
       } else {
         // Create new playbooks
-        const newPlaybook = await apiService.createPlaybook({
-          path: "new/playbook",
-          version: "1.0.0",
-          status: "draft",
-        });
-        await apiService.savePlaybookContent(newPlaybook.catalog_id, content);
-        setPlaybook(newPlaybook);
-        window.history.pushState({}, "", `/editor?id=${newPlaybook.catalog_id}`);
-        message.success("New playbooks created and saved");
+        const newPlaybook = await apiService.createPlaybook(content);
+
+        navigate(`/editor?id=${newPlaybook.path}`);
+        message.success(newPlaybook.message);
       }
     } catch (err) {
       console.error("Failed to save playbooks:", err);
@@ -234,10 +231,16 @@ const PlaybookEditor: React.FC = () => {
 
     try {
       setExecuting(true);
-      await apiService.executePlaybook(playbook.catalog_id);
-      message.success("Playbook execution started");
-      // Redirect to execution page
-      window.location.href = "/execution";
+      const response = await apiService.executePlaybookWithPayload({
+        path: playbook.path,
+        version: playbook.version,
+        // merge: mergePayload,
+      });
+      message.success(`Execution started. ID: ${response.execution_id}`);
+
+      // Navigate to execution page
+      navigate(`/execution/${response.execution_id}`);
+
     } catch (err) {
       console.error("Failed to execute playbooks:", err);
       message.error("Failed to execute playbooks");
@@ -310,6 +313,7 @@ const PlaybookEditor: React.FC = () => {
                 icon={<SaveOutlined />}
                 loading={saving}
                 onClick={handleSave}
+                data-e2e="save-playbook-button"
               >
                 Save
               </Button>

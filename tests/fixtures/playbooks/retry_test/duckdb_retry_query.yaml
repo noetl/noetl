@@ -10,6 +10,10 @@ workload:
   
 workflow:
   - step: start
+    next:
+      - step: retry
+
+  - step: retry
     desc: Execute DuckDB query with retry
     tool: duckdb
     query: "{{ workload.test_query }}"
@@ -21,6 +25,6 @@ workflow:
       retry_when: "{{ error != None }}"
     next:
       - step: end
-        
+
   - step: end
     desc: End workflow
