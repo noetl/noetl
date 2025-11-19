@@ -1,0 +1,7 @@
+# --- Playwright ---
+/test-results
+/videos
+/screenshots
+/traces
+/.auth
+/scratches/

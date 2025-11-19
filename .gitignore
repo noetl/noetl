@@ -57,11 +57,3 @@ env/
 # Ignore folder with postgres data
 ci/kind/cache
 
-
-# --- Playwright ---
-/test-results
-/tests/playwright/videos
-/tests/playwright/screenshots
-/tests/playwright/traces
-/tests/playwright/.auth
-/scratches/
