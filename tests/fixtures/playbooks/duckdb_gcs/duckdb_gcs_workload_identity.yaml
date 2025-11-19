@@ -3,69 +3,66 @@ kind: Playbook
 
 metadata:
   name: duckdb_gcs_workload_identity
-  path: tests/fixtures/playbooks/duckdb_gcs/workload_identity2
+  path: tests/fixtures/playbooks/duckdb_gcs/workload_identity
 
 workload:
+  pg_auth: pg_local
   gcs_bucket: noetl-demo-19700101
   upload_file: test_file_{{ execution_id }}.parquet
   download_file: test_file_downloaded_{{ execution_id }}.parquet
 
 workflow:
-  - step: get_gcp_token
-    desc: Request an OAuth access token using workload identity
-    type: http
-    method: POST
-    url: "{{ noetl_server_url }}/api/credentials/gcp/token"
-    headers:
-      Content-Type: application/json
-    body: |
-      {
-        "use_metadata": true,
-        "scopes": ["https://www.googleapis.com/auth/cloud-platform"]
-      }
-    save:
-      storage: memory
-      key: gcp_token_response
-
   - step: start
+    desc: Start workflow
+    next:
+      - step: test_data
+
+
+  - step: test_data
     desc: Upload a parquet file to GCS via DuckDB
     tool: duckdb
+    auth:
+      pg_db:
+        source: credential
+        tool: postgres
+        key: "{{ workload.pg_auth }}"
+      gcs_secret:
+        source: credential
+        tool: hmac
+        key: gcs_hmac_local
+        scope: gs://{{ workload.gcs_bucket }}
     commands: |
       INSTALL httpfs;
       LOAD httpfs;
 
-      -- Configure DuckDB's HTTPFS adapter to talk to GCS using gs:// URLs
-      SET s3_endpoint='storage.googleapis.com';
-      SET s3_url_style='path';
-      SET s3_use_ssl=true;
-
-      -- Use workload identity OAuth token for authentication
-      SET s3_session_token='{{ step.get_gcp_token.data.access_token }}';
-
       CREATE TABLE test_data AS
       SELECT 'test data' AS message, '{{ execution_id }}' AS id;
 
-      COPY test_data TO 'gs://{{ workload.gcs_bucket }}/{{ workload.upload_file }}' (FORMAT PARQUET);
+      COPY test_data TO 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}' (FORMAT PARQUET);
     next:
       - step: download_file
 
   - step: download_file
     desc: Read the file back and upload under a different name
     tool: duckdb
+    auth:
+      pg_db:
+        source: credential
+        tool: postgres
+        key: "{{ workload.pg_auth }}"
+      gcs_secret:
+        source: credential
+        tool: hmac
+        key: gcs_hmac_local
+        scope: gs://{{ workload.gcs_bucket }}
     commands: |
       INSTALL httpfs;
       LOAD httpfs;
 
-      SET s3_endpoint='storage.googleapis.com';
-      SET s3_url_style='path';
-      SET s3_use_ssl=true;
-
-      SET s3_session_token='{{ step.get_gcp_token.data.access_token }}';
-
       CREATE TABLE downloaded_data AS
-      SELECT * FROM 'gs://{{ workload.gcs_bucket }}/{{ workload.upload_file }}';
+      SELECT * FROM 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}';
 
-      COPY downloaded_data TO 'gs://{{ workload.gcs_bucket }}/{{ workload.download_file }}' (FORMAT PARQUET);
+      COPY downloaded_data TO '{{ workload.download_file }}' (FORMAT PARQUET);
     next:
       - step: end
 
