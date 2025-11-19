@@ -1,5 +1,6 @@
 from pydantic import ValidationError
-from noetl.server.api.catalog import PlaybookResourceResponse, transform
+from noetl.server.api.catalog import CatalogEntry
+from noetl.core.common import transform
 
 
 a = [
@@ -25,6 +26,6 @@ a = [
     }
 ]
 try:
-    a = transform(PlaybookResourceResponse, a[0])
+    a = transform(CatalogEntry, a[0])
 except ValidationError as e:
     pass

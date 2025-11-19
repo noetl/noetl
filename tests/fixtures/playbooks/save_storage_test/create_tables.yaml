@@ -16,7 +16,7 @@ workflow:
         
   - step: create_flat_table
     desc: Create flat test table
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS simple_test_flat (
@@ -31,7 +31,7 @@ workflow:
         
   - step: create_nested_table  
     desc: Create nested test table
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS simple_test_nested (
@@ -46,7 +46,7 @@ workflow:
         
   - step: create_summary_table
     desc: Create test summary table
-    type: postgres
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       CREATE TABLE IF NOT EXISTS test_summary (

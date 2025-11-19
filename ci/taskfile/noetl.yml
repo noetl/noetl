@@ -14,11 +14,38 @@ tasks:
       - task: kubectl:local:context-set-kind
       - kubectl apply -f ci/manifests/noetl/namespace/namespace.yaml
       - sleep 2
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
+      # Update server deployment image (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/server-deployment.yaml > ci/manifests/noetl/server-deployment.yaml.tmp
+          mv ci/manifests/noetl/server-deployment.yaml.tmp ci/manifests/noetl/server-deployment.yaml
+        fi
+      # Update worker deployment image (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"$REGISTRY/$IMAGE_NAME:$IMAGE_TAG\"" ci/manifests/noetl/worker-deployment.yaml > ci/manifests/noetl/worker-deployment.yaml.tmp
+          mv ci/manifests/noetl/worker-deployment.yaml.tmp ci/manifests/noetl/worker-deployment.yaml
+        fi
       - kubectl apply -f ci/manifests/noetl/
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
-      - yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+      # Restore original image placeholders (compatible with both yq versions)
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/server-deployment.yaml > ci/manifests/noetl/server-deployment.yaml.tmp
+          mv ci/manifests/noetl/server-deployment.yaml.tmp ci/manifests/noetl/server-deployment.yaml
+        fi
+      - |
+        if yq --version 2>&1 | grep -q "mikefarah"; then
+          yq -i ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml
+        else
+          yq -y ".spec.template.spec.containers[0].image = \"image_name:image_tag\"" ci/manifests/noetl/worker-deployment.yaml > ci/manifests/noetl/worker-deployment.yaml.tmp
+          mv ci/manifests/noetl/worker-deployment.yaml.tmp ci/manifests/noetl/worker-deployment.yaml
+        fi
 
   noetl:k8s:remove:
     desc: Remove noetl from the noetl kind cluster
@@ -52,6 +79,25 @@ tasks:
       - task: test:k8s:create-tables
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"
+
+  noetl:local:venv-create:
+    desc: Create virtual environment and install NoETL with dev dependencies
+    aliases: [venv-create, create-venv]
+    cmds:
+      - |
+        set -e
+        if [ -d ".venv" ]; then
+          echo "Virtual environment already exists at .venv"
+          echo "To recreate, remove it first: rm -rf .venv"
+        else
+          echo "Creating virtual environment at .venv..."
+          uv venv --python 3.13
+          echo "Virtual environment created successfully"
+        fi
+        echo "Installing NoETL in editable mode with dev dependencies..."
+        uv pip install --editable .
+        echo "Installation complete"
+        echo "Activate with: source .venv/bin/activate"
 
   noetl:local:install:
     desc: Install NoETL in editable mode
@@ -116,10 +162,10 @@ tasks:
         pidfile="logs/server.pid"
 
         if "$py" -c "import uvicorn" >/dev/null 2>&1; then
-          bash -c "exec \"$py\" -m uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level debug > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
+          bash -c "exec \"$py\" -m uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level error --no-access-log > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
           server_pid=$(cat "$pidfile")
         elif command -v uvicorn >/dev/null 2>&1; then
-          bash -c "exec uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level debug > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
+          bash -c "exec uvicorn noetl.server:create_app --factory --host \"$host\" --port \"$port\" --log-level error --no-access-log > \"$logfile\" 2>&1 & echo \$! > \"$pidfile\""
           server_pid=$(cat "$pidfile")
         else
           echo "uvicorn is not installed in the active interpreter or PATH."
@@ -319,8 +365,8 @@ tasks:
     desc: Stop both server and worker processes
     aliases: [stop-all]
     cmds:
-      - task: noetl:local:server-stop
       - task: noetl:local:worker-stop
+      - task: noetl:local:server-stop
 
   noetl:local:kill-all:
     desc: Force kill ALL noetl server and worker processes (including orphaned ones)
@@ -440,7 +486,7 @@ tasks:
           exit 1
         fi
 
-        # Install deps if missing
+        # Install deps if missing or incomplete
         if [ ! -d node_modules ]; then
           echo "node_modules not found; installing dependencies"
           if ! command -v npm >/dev/null 2>&1; then
@@ -455,6 +501,14 @@ tasks:
             echo "No package-lock.json -> running: npm install"
             npm install
           fi
+        elif [ ! -d node_modules/less ]; then
+          echo "Dependencies incomplete (less preprocessor missing); reinstalling"
+          if ! command -v npm >/dev/null 2>&1; then
+            echo "npm is not installed. Please install Node.js and npm."
+            exit 1
+          fi
+          echo "Running: npm install"
+          npm install
         fi
 
         # Determine API base URL - always use local server on port 8083
@@ -500,6 +554,7 @@ tasks:
     desc: Setup test environment, reset postgres, register credentials and playbooks
     aliases: [local-setup-test, lste]
     cmds:
+      - task: noetl:local:venv-create
       - |
         set -e
         echo "=== Setting up test environment using local NoETL service (port 8083) ==="
@@ -630,3 +685,12 @@ tasks:
         echo ""
         echo "To start UI in a new terminal:"
         echo "  task noetl:local:ui-dev-start"
+
+  noetl_server:local:restart:
+    desc: Complete local setup - test environment, services, and tables (everything except UI)
+    aliases: [local-full-setup, lfs, noetl-local-full-setup]
+    cmds:
+      - |
+        set -e
+        task noetl:local:stop || true 
+        task noetl:local:start

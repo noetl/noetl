@@ -41,18 +41,35 @@ async def render_context_endpoint(request: Request) -> Dict[str, Any]:
     """
     try:
         body = await request.json()
-        execution_id = body.get("execution_id")
+        execution_id_raw = body.get("execution_id")
         template = body.get("template")
         extra_context = body.get("extra_context")
         strict = body.get("strict", True)
         
-        logger.info(f"Received render request for execution {execution_id}")
+        logger.info(f"Received render request for execution {execution_id_raw}")
         
         # Validate required fields
-        if not execution_id:
+        if execution_id_raw is None or (isinstance(execution_id_raw, str) and not execution_id_raw.strip()):
             raise HTTPException(status_code=400, detail="execution_id is required")
         if "template" not in body:
             raise HTTPException(status_code=400, detail="template is required")
+        
+        # Normalize execution_id to integer for DB access
+        if isinstance(execution_id_raw, int):
+            execution_id = execution_id_raw
+        elif isinstance(execution_id_raw, str):
+            try:
+                execution_id = int(execution_id_raw.strip())
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"execution_id must be an integer value, got '{execution_id_raw}'",
+                )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"execution_id must be an integer or numeric string, got {type(execution_id_raw).__name__}",
+            )
         
         # Render template
         rendered, context_keys = await render_context(

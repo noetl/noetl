@@ -1,1 +1,0 @@
-export { defaultNode } from './default';

@@ -6,6 +6,7 @@ metadata:
   description: "Test playbook for save storage edge cases and error scenarios"
 
 workload:
+  pg_auth: pg_local
   test_scenarios:
     - "mixed_data_types"
     - "large_payload"
@@ -16,40 +17,40 @@ workflow:
   # Test mixed data types
   - step: start
     desc: "Test save with mixed data types"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           import datetime
           import decimal
           
-          mixed_data = {
-              "string_field": "test_string",
-              "integer_field": 12345,
-              "float_field": 3.14159,
-              "boolean_field": True,
-              "null_field": None,
-              "datetime_field": datetime.datetime.now().isoformat(),
-              "list_field": [1, 2, 3, "mixed", True],
-              "dict_field": {"nested": "value", "count": 42},
-              "decimal_field": float(decimal.Decimal("99.99"))
+          mixed_data = { 
+            "string_field": "test_string",
+            "integer_field": 12345,
+            "float_field": 3.14159,
+            "boolean_field": True,
+            "null_field": None,
+            "datetime_field": datetime.datetime.now().isoformat(),
+            "list_field": [1, 2, 3, "mixed", True],
+            "dict_field": {"nested": "value", "count": 42},
+            "decimal_field": float(decimal.Decimal("99.99"))
           }
           
           return {"status": "success", "data": mixed_data}
+    args:
+      input_data: {}
     save:
       storage:
-        type: postgres
+        tool: postgres
         args: "{{ result.data }}"
         table: test_mixed_types
-        auth:
-          type: postgres
-          credential: pg_k8s
+        auth: "{{ workload.pg_auth }}"
     next:
       - step: test_special_characters
 
   # Test special characters and unicode
   - step: test_special_characters
     desc: "Test save with special characters and unicode"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           special_data = {
@@ -62,23 +63,22 @@ workflow:
           }
           
           return {"status": "success", "data": special_data}
-    args: "{{ start }}"
+    args:
+      input_data: "{{ start }}"
     save:
       storage:
-        type: postgres
+        tool: postgres
         args: "{{ result.data }}"
         table: test_special_chars
         mode: insert
-        auth:
-          type: postgres
-          credential: pg_k8s
+        auth: "{{ workload.pg_auth }}"
     next:
       - step: test_empty_data
 
   # Test empty and null data scenarios
   - step: test_empty_data
     desc: "Test save with empty and null data"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           empty_scenarios = {
@@ -95,7 +95,7 @@ workflow:
       input_data: "{{ test_special_characters }}"
     save:
       storage:
-        type: python
+        tool: python
         code: |
           def main(data):
               import json
@@ -128,7 +128,7 @@ workflow:
   # Test large payload handling
   - step: test_large_payload
     desc: "Test save with large data payload"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           # Generate moderately large dataset
@@ -155,7 +155,7 @@ workflow:
       input_data: "{{ test_empty_data }}"
     save:
       storage:
-        type: duckdb
+        tool: duckdb
         commands: |
           -- Create table for large dataset
           CREATE OR REPLACE TABLE test_large_payload AS
@@ -176,7 +176,7 @@ workflow:
   # Test error recovery scenarios
   - step: test_error_recovery
     desc: "Test save error handling and recovery"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           # Data that might cause issues but should be handled gracefully
@@ -191,7 +191,7 @@ workflow:
       input_data: "{{ test_large_payload }}"
     save:
       storage:
-        type: http
+        tool: http
         endpoint: "https://httpbin.org/status/200"  # This should succeed
         method: POST
         headers:
@@ -204,7 +204,7 @@ workflow:
   # Final summary
   - step: test_completion_summary
     desc: "Summarize edge case testing results"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           summary = {

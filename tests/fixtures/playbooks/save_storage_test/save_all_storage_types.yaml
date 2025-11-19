@@ -16,9 +16,9 @@ workload:
 workbook:
   # Generate initial test data
   - name: generate_test_data
-    type: python
+    tool: python
     code: |
-      def main(**kwargs):
+      def main(context):
           import json
           from datetime import datetime
           
@@ -44,9 +44,9 @@ workbook:
 
   # Transform data for postgres storage
   - name: prepare_postgres_data
-    type: python
+    tool: python
     code: |
-      def main(**kwargs):
+      def main(context):
           # Extract records and prepare for postgres INSERT
           # Get data from previous step via context
           source_data = context.get("generate_data", {}).get("data", {})
@@ -71,9 +71,9 @@ workbook:
 
   # Prepare data for DuckDB analytics
   - name: prepare_duckdb_analytics
-    type: python
+    tool: python
     code: |
-      def main(**kwargs):
+      def main(context):
           import json
           
           # Get postgres results and create analytics dataset
@@ -94,7 +94,7 @@ workbook:
 
   # Prepare HTTP API payload
   - name: prepare_http_payload
-    type: python
+    tool: python
     code: |
       def main(input_data):
           # Simulate API payload preparation
@@ -128,7 +128,7 @@ workflow:
   # Initialize test data
   - step: initialize_test_data
     desc: "Generate initial test data"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           import json
@@ -165,9 +165,9 @@ workflow:
   # Test 1: Flat structure postgres save
   - step: test_flat_postgres_save
     desc: "Test postgres save with flat storage structure"
-    type: python
+    tool: python
     code: |
-      def main(**kwargs):
+      def main(context: dict = {}, **kwargs):
           # Simple pass-through to test flat save structure
           return {
               "status": "success", 
@@ -194,7 +194,7 @@ workflow:
   # Test 2: Nested structure postgres save with upsert
   - step: test_nested_postgres_save
     desc: "Test postgres save with nested storage structure and upsert"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           # Simple pass-through to test nested save structure
@@ -208,7 +208,7 @@ workflow:
     args: "{{ test_flat_postgres_save }}"
     save:
       storage:
-        type: postgres
+        tool: postgres
         args:
           test_id: "{{ execution_id }}_nested"
           test_name: "Test Employee Nested"
@@ -225,7 +225,7 @@ workflow:
   # Test 3: Postgres with custom SQL statement
   - step: test_postgres_statement_save
     desc: "Test postgres save with custom SQL statement"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           return {
@@ -239,7 +239,7 @@ workflow:
       input_data: "{{ test_nested_postgres_save }}"
     save:
       storage:
-        type: postgres
+        tool: postgres
         statement: |
           INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
           SELECT 
@@ -257,7 +257,7 @@ workflow:
   # Test 4: Python storage (custom code execution)
   - step: test_python_save
     desc: "Test python storage with custom processing code"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           return {
@@ -272,7 +272,7 @@ workflow:
       input_data: "{{ test_postgres_statement_save }}"
     save:
       storage:
-        type: python
+        tool: python
         code: |
           def main(data):
               import json
@@ -302,7 +302,7 @@ workflow:
   # Test 5: DuckDB storage with analytics
   - step: test_duckdb_save
     desc: "Test DuckDB storage with analytics queries"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -315,7 +315,7 @@ workflow:
     args: "{{ test_python_save }}"
     save:
       storage:
-        type: duckdb
+        tool: duckdb
         commands: |
           -- Create analytics table
           CREATE OR REPLACE TABLE test_analytics AS
@@ -343,7 +343,7 @@ workflow:
   # Test 6: HTTP storage (webhook/API call)
   - step: test_http_save
     desc: "Test HTTP storage with webhook notification"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -356,7 +356,7 @@ workflow:
     args: "{{ test_duckdb_save }}"
     save:
       storage:
-        type: http
+        tool: http
         endpoint: "https://httpbin.org/post"
         method: POST
         headers:
@@ -384,7 +384,7 @@ workflow:
   # Final step: Test completion summary
   - step: test_completion
     desc: "Complete save storage comprehensive test"
-    type: python
+    tool: python
     code: |
       def main(input_data):
           import json

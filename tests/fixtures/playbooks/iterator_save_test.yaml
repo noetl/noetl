@@ -23,7 +23,7 @@ workflow:
   
 - step: create_table
   desc: Create test table
-  type: postgres
+  tool: postgres
   auth: "{{ workload.pg_auth }}"
   command: |
     CREATE TABLE IF NOT EXISTS public.iterator_save_test (
@@ -38,12 +38,12 @@ workflow:
 
 - step: process_items
   desc: Process items with save
-  type: iterator
+  tool: iterator
   collection: "{{ workload.items }}"
   element: item
   mode: sequential
   task:
-    type: python
+    tool: python
     code: |
       def main(input_data):
           return {

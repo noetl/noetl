@@ -1,0 +1,72 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: http_to_postgres_iterator
+  path: examples/data_transfer/http_to_postgres_iterator
+
+workload:
+  api_url: "https://jsonplaceholder.typicode.com/posts"
+  pg_auth: pg_local
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: create_table
+
+  - step: create_table
+    desc: Create table for storing HTTP data
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS public.http_to_postgres_iterator;
+
+      CREATE TABLE public.http_to_postgres_iterator (
+        id SERIAL PRIMARY KEY,
+        post_id INTEGER,
+        user_id INTEGER,
+        title TEXT,
+        body TEXT,
+        fetched_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    next:
+      - step: fetch_http_data
+
+  - step: fetch_http_data
+    desc: Fetch data from HTTP API
+    tool: http
+    method: GET
+    url: "{{ workload.api_url }}"
+    next:
+      - step: insert_posts
+
+  - step: insert_posts
+    desc: Insert posts into PostgreSQL
+    tool: iterator
+    collection: "{{ fetch_http_data.data }}"
+    element: item
+    task:
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        INSERT INTO public.http_to_postgres_iterator (post_id, user_id, title, body)
+        VALUES (
+          {{ item.id }},
+          {{ item.userId }},
+          $${{ item.title }}$$,
+          $${{ item.body }}$$
+        );
+    next:
+      - step: show_count
+
+  - step: show_count
+    desc: Verify record count
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT COUNT(*) as records FROM public.http_to_postgres_iterator;
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

@@ -1,0 +1,201 @@
+"""
+Query builder and data access layer for orchestrator operations.
+
+Provides centralized SQL query construction and execution
+following the pattern from catalog/service.py.
+"""
+from typing import Dict, Any, List, Optional, Tuple
+from noetl.core.db.pool import get_pool_connection
+
+
+class OrchestratorQueries:
+    """SQL query builder and executor for orchestration operations."""
+    
+    # ==================== Query Builder ====================
+    
+    @staticmethod
+    def _build_event_check_query(
+        execution_id: int,
+        event_type: Optional[str] = None,
+        event_types: Optional[List[str]] = None,
+        status_filter: Optional[str] = None
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Build query to check for events with various conditions.
+        
+        Args:
+            execution_id: Execution ID to check
+            event_type: Single event type to match
+            event_types: Multiple event types to match (OR condition)
+            status_filter: Status pattern to match (uses LIKE with %%)
+        """
+        params = {"execution_id": execution_id}
+        clauses = ["execution_id = %(execution_id)s"]
+        
+        if event_type:
+            clauses.append("event_type = %(event_type)s")
+            params["event_type"] = event_type
+        elif event_types:
+            placeholders = [f"%(event_type_{i})s" for i in range(len(event_types))]
+            clauses.append(f"event_type IN ({', '.join(placeholders)})")
+            for i, et in enumerate(event_types):
+                params[f"event_type_{i}"] = et
+        
+        if status_filter:
+            clauses.append("(LOWER(status) LIKE %(status_pattern)s OR event_type = 'error')")
+            params["status_pattern"] = f"%{status_filter.lower()}%"
+        
+        query = f"SELECT 1 FROM noetl.event WHERE {' AND '.join(clauses)} LIMIT 1"
+        return query, params
+    
+    @staticmethod
+    def _build_queue_check_query(
+        execution_id: int,
+        statuses: Optional[List[str]] = None
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Build query to check for queue jobs with status filter."""
+        params = {"execution_id": execution_id}
+        clauses = ["execution_id = %(execution_id)s"]
+        
+        if statuses:
+            placeholders = [f"%(status_{i})s" for i in range(len(statuses))]
+            clauses.append(f"status IN ({', '.join(placeholders)})")
+            for i, status in enumerate(statuses):
+                params[f"status_{i}"] = status
+        
+        query = f"SELECT 1 FROM noetl.queue WHERE {' AND '.join(clauses)} LIMIT 1"
+        return query, params
+    
+    # ==================== Public Query Executors ====================
+    
+    @staticmethod
+    async def has_execution_failed(execution_id: int) -> bool:
+        """Check if execution has failed."""
+        query, params = OrchestratorQueries._build_event_check_query(
+            execution_id=execution_id,
+            event_types=["playbook_failed", "workflow_failed"]
+        )
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return await cur.fetchone() is not None
+    
+    @staticmethod
+    async def has_workflow_initialized(execution_id: int) -> bool:
+        """Check if workflow has been initialized."""
+        query, params = OrchestratorQueries._build_event_check_query(
+            execution_id=execution_id,
+            event_type="workflow_initialized"
+        )
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return await cur.fetchone() is not None
+    
+    @staticmethod
+    async def has_pending_queue_jobs(execution_id: int) -> bool:
+        """Check if execution has pending queue jobs."""
+        query, params = OrchestratorQueries._build_queue_check_query(
+            execution_id=execution_id,
+            statuses=["queued", "active"]
+        )
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return await cur.fetchone() is not None
+    
+    @staticmethod
+    async def count_completed_steps(execution_id: int) -> int:
+        """Count number of completed steps."""
+        query = """
+            SELECT COUNT(DISTINCT node_name) as count
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type = 'step_completed'
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, {"execution_id": execution_id})
+                result = await cur.fetchone()
+                return result['count'] if result else 0
+    
+    @staticmethod
+    async def get_completed_steps_without_step_completed(execution_id: int) -> List[str]:
+        """Get steps with action_completed but no step_completed event."""
+        query = """
+            SELECT DISTINCT node_name
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type = 'action_completed'
+              AND node_name NOT IN (
+                  SELECT node_name FROM noetl.event
+                  WHERE execution_id = %(execution_id)s AND event_type = 'step_completed'
+              )
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, {"execution_id": execution_id})
+                rows = await cur.fetchall()
+                return [row["node_name"] for row in rows]
+    
+    @staticmethod
+    async def get_execution_metadata(execution_id: int) -> Optional[Dict[str, Any]]:
+        """Get execution metadata from playbook_started event."""
+        query = """
+            SELECT meta FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type = 'playbook_started'
+            ORDER BY created_at LIMIT 1
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, {"execution_id": execution_id})
+                row = await cur.fetchone()
+                return row["meta"] if row else None
+    
+    @staticmethod
+    async def get_transitions(execution_id: int) -> List[Dict[str, Any]]:
+        """Get all workflow transitions for execution."""
+        query = """
+            SELECT from_step, to_step, condition, with_params
+            FROM noetl.transition
+            WHERE execution_id = %(execution_id)s
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, {"execution_id": execution_id})
+                return await cur.fetchall()
+    
+    @staticmethod
+    async def get_step_results(execution_id: int) -> List[Dict[str, Any]]:
+        """Get all step results for evaluation context."""
+        query = """
+            SELECT node_name, result
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type IN ('action_completed', 'step_result')
+              AND result IS NOT NULL
+            ORDER BY created_at
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, {"execution_id": execution_id})
+                return await cur.fetchall()
+    
+    @staticmethod
+    async def get_action_completed_meta(execution_id: int, node_name: str) -> Optional[Dict[str, Any]]:
+        """Get meta from action_completed event for parent_event_id extraction."""
+        query = """
+            SELECT meta
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND node_name = %(node_name)s
+              AND event_type = 'action_completed'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, {"execution_id": execution_id, "node_name": node_name})
+                row = await cur.fetchone()
+                return row["meta"] if row else None

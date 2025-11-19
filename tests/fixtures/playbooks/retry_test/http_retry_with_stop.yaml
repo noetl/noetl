@@ -11,7 +11,7 @@ workload:
 workflow:
   - step: start
     desc: Fetch URL and stop retrying when status is 200
-    type: http
+    tool: http
     method: GET
     url: "{{ workload.test_url }}"
     retry:

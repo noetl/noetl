@@ -1,33 +1,22 @@
 from noetl.server.api.catalog.schema import (
-    PlaybookResourceResponse,
-    CatalogListResponse,
-    PlaybookSummaryResponse,
-    transform,
+    CatalogEntry,
+    CatalogEntryRequest,
+    CatalogEntriesRequest,
+    CatalogEntries,
 )
 from .service import CatalogService, get_catalog_service
-from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
-import json
-import yaml
-from noetl.core.common import (
-    get_async_db_connection,
-)
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
 
-# FastAPI dependency for catalog service
-def get_catalog_service_dependency() -> CatalogService:
-    return get_catalog_service()
-
-
 @router.post("/catalog/register", response_class=JSONResponse, tags=["Catalog"])
 async def register_resource(
     request: Request,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
+    catalog_service: CatalogService = Depends(get_catalog_service),
     content_base64: str = None,
     content: str = None,
     resource_type: str = "Playbook"
@@ -62,22 +51,62 @@ async def register_resource(
         )
 
 
-@router.get(
+@router.post(
     "/catalog/list",
-    response_model=CatalogListResponse,
+    response_model=CatalogEntries,
     tags=["Catalog"],
     summary="List all catalog resources",
-    description="Retrieve a list of all catalog entries, optionally filtered by resource type"
+    description="""
+Retrieve a list of all catalog entries, optionally filtered by resource type.
+
+**Request Body:**
+- `resource_type` (optional): Filter by resource kind (e.g., "Playbook", "Tool", "Model")
+
+**Returns:**
+- List of catalog entries ordered by creation date (newest first)
+- Each entry includes: path, kind, version, content, layout, payload, meta, created_at
+
+**Examples:**
+
+Get all resources:
+```json
+POST /catalog/list
+{}
+```
+
+Get only Playbooks:
+```json
+POST /catalog/list
+{
+  "resource_type": "Playbook"
+}
+```
+
+**Response:**
+```json
+{
+  "entries": [
+    {
+      "path": "examples/hello_world",
+      "kind": "Playbook",
+      "version": 2,
+      "content": "apiVersion: noetl.io/v1...",
+      "payload": {...},
+      "meta": {...},
+      "created_at": "2025-10-24T12:00:00Z"
+    }
+  ]
+}
+```
+    """
 )
 async def list_resources(
     request: Request,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
-    resource_type: str = None
+    payload: CatalogEntriesRequest,
+    catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
-        entries = await catalog_service.list_entries(resource_type)
-        return {"entries": entries}
-
+        return await catalog_service.fetch_entries(payload.resource_type)
     except Exception as e:
         logger.exception(f"Error listing resources: {e}")
         raise HTTPException(
@@ -86,363 +115,92 @@ async def list_resources(
         )
 
 
-@router.get("/playbooks", response_class=JSONResponse)
-async def get_playbooks():
-    """Get all playbooks (legacy endpoint)"""
-    return await get_catalog_playbooks()
-
-
-@router.get(
+@router.post(
     "/catalog/resource",
-    response_model=list[PlaybookResourceResponse],
+    response_model=CatalogEntry,
     tags=["Catalog"],
-)
-async def get_catalog_resource(
-    resource_path: str,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency)
-):
-    """Get resource by path all versions"""
-    try:
-        entries = await catalog_service.entry_all_versions(resource_path)
-        return [transform(PlaybookResourceResponse, entry) for entry in entries]
-    except Exception as e:
-        logger.error(f"Error getting playbooks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    summary="Get catalog resource versions",
+    description="""
+Retrieve catalog resource(s) using unified lookup strategies.
 
+**Supported Lookup Strategies** (priority order):
+1. `catalog_id`: Direct catalog entry lookup (highest priority)
+2. `path` + `version`: Version-controlled path-based lookup
 
-@router.get(
-    "/catalog/playbooks",
-    response_model=list[PlaybookSummaryResponse],
-    tags=["Catalog"]
-)
-async def get_catalog_playbooks(
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency)
-):
-    """Get all playbooks"""
-    try:
-        entries = await catalog_service.list_entries('Playbook')
+**Request Body:**
+- **Identifiers** (at least one required):
+  - `catalog_id`: Direct catalog entry ID
+  - `path`: Catalog path for resource
+  - `version`: Version identifier (default: "latest")
 
-        playbooks = []
-        for entry in entries:
-            meta = entry.get('meta', {}) or {}
+**Returns:**
+- Single resource if `catalog_id` or `path`+`version` specified
+- Latest version if only `path` specified
+- Each entry includes: path, kind, version, content, layout, payload, meta, created_at
 
-            description = ""
-            payload = entry.get('payload', {})
+**Examples:**
 
-            if isinstance(payload, str):
-                try:
-                    payload_data = json.loads(payload)
-                    description = payload_data.get('description', '')
-                except json.JSONDecodeError:
-                    description = ""
-            elif isinstance(payload, dict):
-                description = payload.get('description', '')
+Get specific version by catalog_id:
+```json
+POST /catalog/resource
+{
+  "catalog_id": "123456789"
+}
+```
 
-            if not description:
-                description = meta.get('description', '')
+Get specific version by path and version:
+```json
+POST /catalog/resource
+{
+  "path": "examples/hello_world",
+  "version": 2
+}
+```
 
-            path = entry.get('path', '')
-            created_at = entry.get('created_at')
+Get latest version:
+```json
+POST /catalog/resource
+{
+  "path": "examples/hello_world",
+  "version": "latest"
+}
+```
 
-            playbook = PlaybookSummaryResponse(
-                id=path,
-                name=path.split('/')[-1] if path else '',
-                kind=entry.get('kind', ''),
-                version=entry.get('version', 1),
-                meta=meta,
-                created_at=created_at,
-                description=description,
-                updated_at=created_at,
-                status=meta.get('status', 'active'),
-                tasks_count=meta.get('tasks_count', 0)
-            )
-            playbooks.append(playbook)
+Get all versions of a resource:
+```json
+POST /catalog/resource
+{
+  "path": "examples/hello_world"
+}
+```
 
-        return playbooks
-    except Exception as e:
-        logger.error(f"Error getting playbooks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/catalog/playbook/content", response_class=JSONResponse, tags=["Catalog"])
-async def get_catalog_playbook_content(
-    playbook_id: str,
-    request: Request,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
-    version: Optional[str] = None
-):
-    """Get playbook raw content"""
-    try:
-        logger.info(f"Received playbook_id for content: '{playbook_id}'")
-        # Accept any path structure - no prefix validation required
-        body = None
-        try:
-            body = await request.json()
-        except Exception:
-            pass
-        if not version and isinstance(body, dict):
-            version = body.get('version')
-        if not version:
-            version = await catalog_service.get_latest_version(playbook_id)
-        entry = await catalog_service.fetch_entry(playbook_id, version)
-        if not entry:
-            raise HTTPException(
-                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
-
-        return {
-            "path": playbook_id,
-            "version": version,
-            "content": entry.get('content')
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting playbook content: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/catalog/playbook", response_class=JSONResponse, tags=["Catalog"])
-async def get_catalog_playbook(
-    playbook_id: str,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
-    version: Optional[str] = None
-):
-    """Get playbook by ID, optionally by version"""
-    try:
-        logger.info(f"Received playbook_id: '{playbook_id}'")
-        # Accept any path structure - no prefix validation required
-
-        if not version:
-            version = await catalog_service.get_latest_version(playbook_id)
-
-        entry = await catalog_service.fetch_entry(playbook_id, version)
-        if not entry:
-            raise HTTPException(
-                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
-
-        try:
-            content = entry.get('content') or ''
-            if isinstance(content, bytes):
-                content = content.decode('utf-8', errors='ignore')
-            entry['payload'] = yaml.safe_load(content) or {}
-        except Exception:
-            pass
-
-        return entry
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting playbook: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/catalog/playbook/content", response_class=JSONResponse, tags=["Catalog"])
-async def save_catalog_playbook_content(
-    playbook_id: str,
-    request: Request,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency)
-):
-    """Save playbook content (stores new version)."""
-    try:
-        logger.info(f"Received playbook_id for save: '{playbook_id}'")
-        # Accept any path structure - no prefix validation required
-        body = await request.json()
-        content = body.get("content")
-        if not content:
-            raise HTTPException(status_code=400, detail="Content is required.")
-        # Normalize YAML so resource_path matches URL id
-        try:
-            parsed = yaml.safe_load(content) or {}
-            if isinstance(parsed, dict):
-                if 'metadata' in parsed and isinstance(parsed['metadata'], dict):
-                    parsed['metadata']['path'] = playbook_id
-                    parsed['metadata'].setdefault(
-                        'name', playbook_id.split('/')[-1])
-                else:
-                    meta = parsed.get('metadata') if isinstance(
-                        parsed.get('metadata'), dict) else {}
-                    meta['path'] = playbook_id
-                    meta.setdefault('name', playbook_id.split('/')[-1])
-                    parsed['metadata'] = meta
-                parsed['path'] = playbook_id
-                parsed.setdefault('name', playbook_id.split('/')[-1])
-                content = yaml.safe_dump(parsed, sort_keys=False)
-        except Exception as norm_err:
-            logger.warning(
-                f"Failed to normalize playbook path in YAML: {norm_err}")
-        # Use consistent resource type capitalization
-        result = await catalog_service.register_resource(content, "Playbook")
-        return {"status": "success", "message": f"Playbook '{playbook_id}' content updated.", "path": result.get("path"), "version": result.get("version")}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error saving playbooks content: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/catalog/playbook/fallback", response_class=JSONResponse, tags=["Catalog"])
-async def get_catalog_playbook_fallback(
-    playbook_id: str,
-    catalog_service: CatalogService = Depends(get_catalog_service_dependency),
-    version: Optional[str] = None
-):
-    """Get playbook by ID, optionally by version
-
-    Fallback: if a request meant for the /content endpoint is misrouted here (because of
-    path matching order or stale server code) we detect the trailing '/content' segment
-    and internally serve the raw content response to avoid a 404 like:
-      Playbook '.../content' with version 'x.y.z' not found.
+**Response:**
+```json
+[
+  {
+    "path": "examples/hello_world",
+    "kind": "Playbook",
+    "version": 2,
+    "content": "apiVersion: noetl.io/v1...",
+    "payload": {...},
+    "meta": {...},
+    "created_at": "2025-10-24T12:00:00Z"
+  }
+]
+```
     """
-    try:
-        logger.info(f"Received playbook_id: '{playbook_id}'")
-        # Accept any path structure - no prefix validation required
-
-        # Fallback handling for misrouted content requests
-        if playbook_id.endswith("/content") or playbook_id.endswith("/content/"):
-            original_id = playbook_id.rstrip('/').rsplit('/content', 1)[0]
-            logger.warning(
-                "Misrouted playbook content request detected for '%s'; serving content via fallback.",
-                original_id
-            )
-            if not version:
-                version = await catalog_service.get_latest_version(original_id)
-            entry = await catalog_service.fetch_entry(original_id, version)
-            if not entry:
-                raise HTTPException(
-                    status_code=404, detail=f"Playbook '{original_id}' with version '{version}' not found.")
-            return {"path": original_id, "version": version, "content": entry.get('content')}
-
-        if not version:
-            version = await catalog_service.get_latest_version(playbook_id)
-        entry = await catalog_service.fetch_entry(playbook_id, version)
-        if not entry:
-            raise HTTPException(
-                status_code=404, detail=f"Playbook '{playbook_id}' with version '{version}' not found.")
-        try:
-            content = entry.get('content') or ''
-            if isinstance(content, bytes):
-                content = content.decode('utf-8', errors='ignore')
-            entry['payload'] = yaml.safe_load(content) or {}
-        except Exception:
-            pass
-        return entry
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting playbook: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/catalog/widgets", response_class=JSONResponse, tags=["Catalog"])
-async def get_catalog_widgets():
-    """Get catalog visualization widgets"""
-    try:
-        playbook_count = 0
-        active_count = 0
-        draft_count = 0
-
-        try:
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        "SELECT COUNT(DISTINCT path) FROM noetl.catalog WHERE kind = 'Playbook'"
-                    )
-                    row = await cursor.fetchone()
-                    playbook_count = row[0] if row else 0
-
-                    await cursor.execute(
-                        """
- SELECT meta FROM noetl.catalog
- WHERE kind = 'Playbook'
-                        """
-                    )
-                    results = await cursor.fetchall()
-
-                    for row in results:
-                        meta_str = row[0]
-                        if meta_str:
-                            try:
-                                meta = json.loads(meta_str) if isinstance(
-                                    meta_str, str) else meta_str
-                                status = meta.get('status', 'active')
-                                if status == 'active':
-                                    active_count += 1
-                                elif status == 'draft':
-                                    draft_count += 1
-                            except (json.JSONDecodeError, TypeError):
-                                active_count += 1
-                        else:
-                            active_count += 1
-        except Exception as db_error:
-            logger.warning(
-                f"Error getting catalog stats from database: {db_error}")
-            playbook_count = 0
-
-        return [
-            {
-                "id": "catalog-summary",
-                "type": "metric",
-                "title": "Total Playbooks",
-                "data": {
-                    "value": playbook_count
-                },
-                "config": {
-                    "format": "number",
-                    "color": "#1890ff"
-                }
-            },
-            {
-                "id": "active-playbooks",
-                "type": "metric",
-                "title": "Active Playbooks",
-                "data": {
-                    "value": active_count
-                },
-                "config": {
-                    "format": "number",
-                    "color": "#52c41a"
-                }
-            },
-            {
-                "id": "draft-playbooks",
-                "type": "metric",
-                "title": "Draft Playbooks",
-                "data": {
-                    "value": draft_count
-                },
-                "config": {
-                    "format": "number",
-                    "color": "#faad14"
-                }
-            }
-        ]
-    except Exception as e:
-        logger.error(f"Error getting catalog widgets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Dependency/helper for runtime to get playbook entry
-
-
-async def get_playbook_entry_from_catalog(playbook_id: str) -> Dict[str, Any]:
-    logger.info(f"Dependency received playbook_id: '{playbook_id}'")
-    path_to_lookup = playbook_id.replace('%2F', '/')
-    # Accept any path structure - no prefix validation required
-    version_to_lookup = None
-    if ':' in path_to_lookup:
-        path_parts = path_to_lookup.rsplit(':', 1)
-        if path_parts[1].replace('.', '').isdigit():
-            path_to_lookup = path_parts[0]
-            logger.info(
-                f"Parsed and cleaned path to '{path_to_lookup}' from malformed ID.")
-
-    catalog_service = get_catalog_service()
-    latest_version = await catalog_service.get_latest_version(path_to_lookup)
-    logger.info(
-        f"Using latest version for '{path_to_lookup}': {latest_version}")
-
-    entry = await catalog_service.fetch_entry(path_to_lookup, latest_version)
-    if not entry:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Playbook '{path_to_lookup}' with version '{latest_version}' not found in catalog."
-        )
-    return entry
+)
+async def get_catalog_entry(
+    payload: CatalogEntryRequest,
+    catalog_service: CatalogService = Depends(get_catalog_service)
+):
+    """Get catalog resource(s) using unified lookup strategies"""
+    result = await catalog_service.get(
+        path=payload.path, 
+        version=payload.version, 
+        catalog_id=payload.catalog_id
+    )
+    # Return single entry or raise 404
+    if not result:
+        raise HTTPException(status_code=404, detail="Catalog entry not found")
+    return result

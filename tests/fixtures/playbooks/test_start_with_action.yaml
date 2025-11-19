@@ -11,9 +11,11 @@ workload:
 workflow:
   - step: start
     desc: Start step with Python action - should execute first
-    type: python
+    tool: python
+    args:
+      input_data: "{{ workload }}"
     code: |
-      def main(input_data):
+      async def main(input_data):
           return {
               'status': 'success',
               'message': 'Start step executed with action type',
@@ -26,14 +28,16 @@ workflow:
   
   - step: process
     desc: Process step - executed after start
-    type: python
+    tool: python
+    args:
+      from_start: "{{ start.data.executed }}"
     code: |
-      def main(input_data):
+      async def main(from_start):
           return {
               'status': 'success',
               'message': 'Process step executed',
               'data': {
-                  'from_start': input_data.get('from_start'),
+                  'from_start': from_start,
                   'processed': True
               }
           }

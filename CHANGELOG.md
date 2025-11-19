@@ -2,6 +2,46 @@
 
 ## [Unreleased] - Unified Kubernetes Deployment
 
+### Fixed
+- **UI Execute Endpoint (Issue #97)**: Fixed 405 Method Not Allowed error when executing playbooks with payload from UI
+  - Updated UI to call existing `/api/run/playbook` endpoint instead of non-existent `/execute` endpoint
+  - Added backward compatibility for `input_payload` field name (normalizes to `args`)
+  - Schema now accepts `args`, `parameters`, or `input_payload` for execution parameters
+  - Legacy `sync_to_postgres` field is now removed during validation
+  - Files modified: `ui-src/src/services/api.ts`, `noetl/server/api/run/schema.py`
+
+### Security
+
+#### JavaScript Dependencies
+- **[HIGH]** Updated `axios` from 1.6.0 to 1.12.0 to fix DoS vulnerability (GHSA-4hjh-wcwx-xvwj, CVE-2024-XXXXX, CWE-770: Allocation of Resources Without Limits)
+  - Axios was vulnerable to Denial of Service attacks through lack of data size validation
+  - Fixed in axios@1.12.0+
+- **[MODERATE]** Updated `vite` from 7.0.3 to 7.0.8 to fix multiple path traversal vulnerabilities:
+  - GHSA-93m4-6634-74q7: `server.fs.deny` bypass via backslash on Windows (CWE-22)
+  - GHSA-g4jq-h2w9-997c: Middleware may serve files with same name prefix as public directory (CWE-22, CWE-200, CWE-284)
+  - GHSA-jqfw-vq24-v9c3: `server.fs` settings not applied to HTML files (CWE-23, CWE-200, CWE-284)
+  - Fixed in vite@7.0.8+
+
+#### Python Dependencies
+- **[HIGH]** Updated `authlib` from 1.6.4 to 1.6.5 to fix multiple DoS vulnerabilities:
+  - GHSA-pq5p-34cr-23v9: JWS/JWT token DoS via unbounded segment processing (CVSS 7.5, CWE-770)
+  - GHSA-g7f3-828f-7h7m: JWE DEFLATE decompression bomb vulnerability (CVSS 6.5, CWE-409)
+  - Fixed in authlib@1.6.5+
+- **[HIGH]** Updated `starlette` from 0.48.0 to 0.49.3 to fix Range header DoS vulnerability (GHSA-7f5h-v6xp-fcq8, CVSS 7.5, CWE-400)
+  - Starlette was vulnerable to quadratic-time complexity attacks via malicious Range headers
+  - Fixed in starlette@0.49.1+ (upgraded to 0.49.3 via fastapi dependency)
+- **[MODERATE]** Updated `deepdiff` from 8.5.0 to 8.6.1 to fix vulnerability (GHSA-mw26-5g2v-hqw3)
+  - Fixed in deepdiff@8.6.1+
+- **[MODERATE]** Updated `fastapi` from 0.116.1 to 0.120.4 to ensure starlette security fixes
+  - Upgraded to pull in patched starlette version
+
+#### System-Level
+- **[MODERATE]** Updated `pip` from 24.3.1 to 25.3 to fix tarfile path traversal vulnerability (GHSA-4xh5-x5gv-qwph)
+  - Pip was vulnerable to symlink-based path traversal during package installation
+  - Fixed in pip@25.3+ (system-level upgrade)
+
+**Security Status**: ✅ All 8 vulnerabilities resolved - 0 remaining vulnerabilities
+
 ### Added
 - **Unified Kubernetes Deployment**: New deployment architecture that consolidates all NoETL components (server, workers, observability) into a single namespace
 - **Integrated Observability**: Built-in Grafana, VictoriaMetrics, VictoriaLogs, and Vector monitoring stack

@@ -540,7 +540,7 @@ export-event-log:
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
 	if [ -z "$(ID)" ]; then \
 	  echo "ID not provided; selecting latest execution_id..."; \
-	  export ID=$$(psql -Atc "SELECT execution_id FROM noetl.event WHERE event_type IN ('execution_start','execution_started') ORDER BY timestamp DESC LIMIT 1"); \
+	  export ID=$$(psql -Atc "SELECT execution_id FROM noetl.event WHERE event_type IN ('execution_start','playbook_started') ORDER BY timestamp DESC LIMIT 1"); \
 	fi; \
 	psql -v ON_ERROR_STOP=1 -Atc "WITH rows AS (SELECT execution_id, event_id, parent_event_id, parent_execution_id, timestamp, event_type, node_id, node_name, node_type, status, duration, context, result, meta, error, loop_id, loop_name, iterator, items, current_index, current_item, worker_id, distributed_state, context_key, context_value, trace_component, stack_trace FROM noetl.event WHERE execution_id = $(ID) ORDER BY timestamp) SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json) FROM rows;" > logs/event.json; \
 	ln -sf event.json logs/event_log.json; \
@@ -553,7 +553,7 @@ export-queue:
 	export PGHOST=$${POSTGRES_HOST:-$$PGHOST} PGPORT=$${POSTGRES_PORT:-$$PGPORT} PGUSER=$${POSTGRES_USER:-$$PGUSER} PGPASSWORD=$${POSTGRES_PASSWORD:-$$PGPASSWORD} PGDATABASE=$${POSTGRES_DB:-$$PGDATABASE}; \
 	if [ -z "$(ID)" ]; then \
 	  echo "ID not provided; selecting latest execution_id..."; \
-	  export ID=$$(psql -Atc "SELECT execution_id FROM noetl.event WHERE event_type IN ('execution_start','execution_started') ORDER BY timestamp DESC LIMIT 1"); \
+	  export ID=$$(psql -Atc "SELECT execution_id FROM noetl.event WHERE event_type IN ('execution_start','playbook_started') ORDER BY timestamp DESC LIMIT 1"); \
 	fi; \
 	# Include queue rows for the parent execution and any child executions started with meta.parent_execution_id = $(ID)
 	psql -v ON_ERROR_STOP=1 -Atc "WITH all_execs AS ( \

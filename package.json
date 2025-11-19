@@ -1,10 +1,5 @@
 {
-  "dependencies": {
-    "@types/js-yaml": "^4.0.9",
-    "@xyflow/react": "^12.8.2",
-    "js-yaml": "^4.1.0"
-  },
   "devDependencies": {
-    "@playwright/test": "^1.55.1"
+    "less": "^4.4.2"
   }
 }

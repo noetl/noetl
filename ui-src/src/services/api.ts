@@ -117,17 +117,23 @@ class APIService {
   }
 
   async getPlaybooks(): Promise<PlaybookData[]> {
-    const response = await apiClient.get("/catalog/playbooks");
-    return response.data;
-  }
-
-  async getCatalogList(): Promise<PlaybookData[]> {
-    const response = await apiClient.get("/catalog/list");
+    const response = await apiClient.post("/catalog/list", {
+      "resource_type": "Playbook",
+    });
+    // todo: remove once backend is fixed
+    if (response.data.entries) {
+      for (let entry of response.data.entries) {
+        entry.status = entry.status || "active";
+      }
+    }
     return response.data.entries;
   }
 
-  async getPlaybook(id: string): Promise<PlaybookData> {
-    const response = await apiClient.get(`/catalog/playbooks?id=${id}`);
+  async getPlaybook(path: string): Promise<PlaybookData> {
+    const response = await apiClient.post(`/catalog/resource`, {
+      "path": path,
+      "version": "latest"
+    });
     return response.data;
   }
 
@@ -161,11 +167,11 @@ class APIService {
   }
 
   async executePlaybook(
-    playbookId: string,
+    catalog_id: string,
     params?: any,
   ): Promise<ExecutionData> {
-    const response = await apiClient.post(`/executions/run`, {
-      playbook_id: playbookId,
+    const response = await apiClient.post(`/run/playbook`, {
+      catalog_id,
       parameters: params || {},
     });
     return response.data;
@@ -174,7 +180,7 @@ class APIService {
   async executePlaybookWithPayload(
     requestBody: any,
   ): Promise<{ execution_id: string }> {
-    const response = await apiClient.post("/execute", requestBody);
+    const response = await apiClient.post("/run/playbook", requestBody);
     return response.data;
   }
 

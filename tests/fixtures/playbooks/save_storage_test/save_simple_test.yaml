@@ -17,7 +17,7 @@ workflow:
   # Test 1: Event log storage (default)
   - step: start
     desc: "Test event log storage (simplest form)"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -37,7 +37,7 @@ workflow:
   # Test 2: Postgres flat structure
   - step: postgres_flat_test
     desc: "Test postgres save with flat structure"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -62,7 +62,7 @@ workflow:
   # Test 3: Postgres nested structure
   - step: postgres_nested_test
     desc: "Test postgres save with nested structure"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {
@@ -74,7 +74,7 @@ workflow:
           }
     save:
       storage:
-        type: postgres
+        tool: postgres
         table: simple_test_nested
         mode: upsert
         key: test_id
@@ -90,7 +90,7 @@ workflow:
 
   - step: end
     desc: "Test completion"
-    type: python
+    tool: python
     code: |
       def main(**kwargs):
           return {

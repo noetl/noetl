@@ -20,7 +20,7 @@ workload:
 # Workbook actions for calculating profile metrics
 workbook:
   - name: calculate_experience_score
-    type: python
+    tool: python
     assert:
       expects:
         - years_experience
@@ -48,7 +48,7 @@ workbook:
           }
 
   - name: calculate_performance_score
-    type: python
+    tool: python
     assert:
       expects:
         - performance_rating
@@ -68,7 +68,7 @@ workbook:
           }
 
   - name: calculate_department_score
-    type: python
+    tool: python
     assert:
       expects:
         - department
@@ -96,7 +96,7 @@ workbook:
           }
 
   - name: calculate_age_factor
-    type: python
+    tool: python
     assert:
       expects:
         - age
@@ -124,7 +124,7 @@ workbook:
           }
 
   - name: determine_category
-    type: python
+    tool: python
     assert:
       expects:
         - profile_score
@@ -156,7 +156,7 @@ workflow:
 
   - step: extract_user_data
     desc: "Extract and validate user data from input"
-    type: python
+    tool: python
     args:
       input_data: "{{ workload.user_data | tojson }}"
     code: |
@@ -182,7 +182,7 @@ workflow:
 
   - step: score_experience
     desc: "Calculate experience-based score component"
-    type: workbook
+    tool: workbook
     name: calculate_experience_score
     args:
       years_experience: "{{ extract_user_data.years_experience }}"
@@ -191,7 +191,7 @@ workflow:
 
   - step: score_performance
     desc: "Calculate performance-based score component"
-    type: workbook
+    tool: workbook
     name: calculate_performance_score
     args:
       performance_rating: "{{ extract_user_data.performance_rating }}"
@@ -200,7 +200,7 @@ workflow:
 
   - step: score_department
     desc: "Calculate department-based score component"
-    type: workbook
+    tool: workbook
     name: calculate_department_score
     args:
       department: "{{ extract_user_data.department }}"
@@ -209,7 +209,7 @@ workflow:
 
   - step: score_age
     desc: "Calculate age-based score component"
-    type: workbook
+    tool: workbook
     name: calculate_age_factor
     args:
       age: "{{ extract_user_data.age }}"
@@ -218,7 +218,7 @@ workflow:
 
   - step: compute_total_score
     desc: "Compute weighted total profile score"
-    type: python
+    tool: python
     args:
       user_name: "{{ extract_user_data.user_name }}"
       experience_data: "{{ score_experience }}"
@@ -260,7 +260,7 @@ workflow:
 
   - step: determine_score_category
     desc: "Determine user category based on score and experience"
-    type: workbook
+    tool: workbook
     name: determine_category
     args:
       profile_score: "{{ compute_total_score.profile_score }}"
@@ -270,7 +270,7 @@ workflow:
 
   - step: finalize_result
     desc: "Prepare final result for parent playbook"
-    type: python
+    tool: python
     args:
       score_data: "{{ compute_total_score }}"
       category_data: "{{ determine_score_category }}"

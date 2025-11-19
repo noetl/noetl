@@ -460,11 +460,11 @@ def _get_event_failures(execution_id: str) -> int:
                 events = payload.get("events") or []
                 failures = 0
                 consider_types = {
-                    'execution_completed', 'execution_complete',
+                    'playbook_completed', 'execution_complete',
                     'action_completed', 'result', 'loop_completed', 'step_result'
                 }
                 ignore_types = {
-                    'action_error', 'event_emit_error', 'step_error',
+                    'action_failed', 'event_emit_error', 'step_error',
                     'loop_iteration', 'end_loop', 'step_started', 'action_started'
                 }
                 for e in events:

@@ -1,9 +1,9 @@
 import os
 import sys
-from typing import Optional, Dict, Any, ClassVar
+import socket
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from pathlib import Path
-from noetl.core.common import get_bool
 
 
 _ENV_LOADED = False
@@ -35,8 +35,15 @@ def _load_env_file(path: str, allow_override: bool = False) -> None:
                     value = value[1:-1]
                 if allow_override or key not in os.environ:
                     os.environ[key] = value
-    except Exception:
+    except FileNotFoundError:
+        # Silent pass for missing .env files - this is expected
         pass
+    except PermissionError as e:
+        print(f"FATAL: Permission denied reading environment file {path}: {e}", file=sys.stderr)
+        raise
+    except Exception as e:
+        print(f"FATAL: Failed to load environment file {path}: {e}", file=sys.stderr)
+        raise
 
 def load_env_if_present(force_reload: bool = False) -> None:
     """
@@ -83,6 +90,10 @@ def validate_mandatory_env_vars():
         'NOETL_SERVER_URL', 'NOETL_SERVER_NAME',
         # Server runtime
         'NOETL_SERVER', 'NOETL_SERVER_WORKERS', 'NOETL_SERVER_RELOAD',
+        # Server runtime tuning (required)
+        'NOETL_AUTO_RECREATE_RUNTIME', 'NOETL_HEARTBEAT_RETRY_AFTER',
+        'NOETL_RUNTIME_SWEEP_INTERVAL', 'NOETL_RUNTIME_OFFLINE_SECONDS',
+        'NOETL_DISABLE_METRICS', 'NOETL_SERVER_METRICS_INTERVAL',
         # Drop schema control
         'NOETL_DROP_SCHEMA'
     ]
@@ -127,6 +138,8 @@ class Settings(BaseModel):
     """
     model_config = ConfigDict(validate_assignment=True)
 
+    raw_env: Dict[str, str] = Field(default_factory=dict, exclude=True)
+
     app_name: str = "NoETL"
     app_version: str = "0.1.39"
 
@@ -162,8 +175,14 @@ class Settings(BaseModel):
     server_runtime: str = Field(..., alias="NOETL_SERVER")            # "uvicorn" | "gunicorn" | "auto"
     server_workers: int = Field(..., alias="NOETL_SERVER_WORKERS")    # >= 1
     server_reload: bool = Field(..., alias="NOETL_SERVER_RELOAD")     # true/false
-    auto_recreate_runtime: bool = Field(False, alias="NOETL_AUTO_RECREATE_RUNTIME")
-    heartbeat_retry_after: int = Field(3, alias="NOETL_HEARTBEAT_RETRY_AFTER")
+    auto_recreate_runtime: bool = Field(..., alias="NOETL_AUTO_RECREATE_RUNTIME")
+    heartbeat_retry_after: int = Field(..., alias="NOETL_HEARTBEAT_RETRY_AFTER")
+    runtime_sweep_interval: float = Field(..., alias="NOETL_RUNTIME_SWEEP_INTERVAL")
+    runtime_offline_seconds: int = Field(..., alias="NOETL_RUNTIME_OFFLINE_SECONDS")
+    disable_metrics: bool = Field(..., alias="NOETL_DISABLE_METRICS")
+    server_metrics_interval: float = Field(..., alias="NOETL_SERVER_METRICS_INTERVAL")
+    server_labels_raw: Optional[str] = Field(None, alias="NOETL_SERVER_LABELS")
+    hostname_env: Optional[str] = Field(None, alias="HOSTNAME")
 
     @field_validator('postgres_user', 'postgres_password', 'postgres_db', 'postgres_host',
                      'postgres_port', 'noetl_user', 'noetl_password', 'noetl_schema', 'host', 'server_runtime', 'server_url', 'server_name', mode='before')
@@ -172,7 +191,15 @@ class Settings(BaseModel):
             raise ValueError("Value cannot be empty or whitespace only")
         return v.strip()
 
-    @field_validator('enable_ui', 'debug', 'noetl_drop_schema', 'server_reload', 'auto_recreate_runtime', mode='before')
+    @field_validator(
+        'enable_ui',
+        'debug',
+        'noetl_drop_schema',
+        'server_reload',
+        'auto_recreate_runtime',
+        'disable_metrics',
+        mode='before'
+    )
     def coerce_bool(cls, v):
         if isinstance(v, bool):
             return v
@@ -184,6 +211,22 @@ class Settings(BaseModel):
         if val in ("false", "0", "no", "n", "off"):
             return False
         raise ValueError(f"Invalid boolean value: {v}")
+
+    @field_validator('runtime_sweep_interval', 'server_metrics_interval', mode='before')
+    def coerce_float(cls, v):
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            return float(v.strip())
+        raise ValueError("Expected float-compatible value")
+
+    @field_validator('runtime_offline_seconds', 'heartbeat_retry_after', 'server_workers', mode='before')
+    def coerce_int(cls, v):
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            return int(v.strip())
+        raise ValueError("Expected integer-compatible value")
 
     @model_validator(mode='after')
     def validate_database_config(self):
@@ -216,6 +259,25 @@ class Settings(BaseModel):
             sys.exit(1)
 
         return self
+
+    @property
+    def hostname(self) -> str:
+        if self.hostname_env and self.hostname_env.strip():
+            return self.hostname_env.strip()
+        return socket.gethostname()
+
+    @property
+    def server_labels(self) -> List[str]:
+        if not self.server_labels_raw:
+            return []
+        return [label.strip() for label in self.server_labels_raw.split(',') if label.strip()]
+
+    @property
+    def server_api_url(self) -> str:
+        url = self.server_url.rstrip('/')
+        if not url.endswith('/api'):
+            url = f"{url}/api"
+        return url
 
     @property
     def admin_conn_string(self) -> str:
@@ -256,7 +318,208 @@ class Settings(BaseModel):
         """
         return os.path.join(self.pid_file_dir, "noetl_server.pid")
 
+    # API Endpoint URLs - centralized endpoint construction
+    @property
+    def endpoint_runtime_register(self) -> str:
+        """Runtime registration endpoint"""
+        return f"{self.server_api_url}/runtime/register"
+
+    @property
+    def endpoint_runtime_deregister(self) -> str:
+        """Runtime deregistration endpoint"""
+        return f"{self.server_api_url}/runtime/deregister"
+
+    @property
+    def endpoint_events(self) -> str:
+        """Events submission endpoint"""
+        return f"{self.server_api_url}/events"
+
+    @property
+    def endpoint_credentials(self) -> str:
+        """Base credentials endpoint"""
+        return f"{self.server_api_url}/credentials"
+
+    def endpoint_credential_by_key(self, key: str, include_data: bool = True) -> str:
+        """Get credential by key endpoint with optional data inclusion"""
+        url = f"{self.endpoint_credentials}/{key}"
+        if include_data:
+            url += "?include_data=true"
+        return url
+
 _settings: Optional[Settings] = None
+class WorkerSettings(BaseModel):
+    """Worker runtime configuration derived from environment variables."""
+    model_config = ConfigDict(validate_assignment=True)
+
+    raw_env: Dict[str, str] = Field(default_factory=dict, exclude=True)
+
+    pool_runtime: str = Field("cpu", alias="NOETL_WORKER_POOL_RUNTIME")
+    pool_name: Optional[str] = Field(None, alias="NOETL_WORKER_POOL_NAME")
+    server_url: str = Field("http://localhost:8082", alias="NOETL_SERVER_URL")
+    worker_base_url: str = Field("http://queue-worker", alias="NOETL_WORKER_BASE_URL")
+    worker_capacity_raw: Optional[str] = Field(None, alias="NOETL_WORKER_CAPACITY")
+    worker_labels_raw: Optional[str] = Field(None, alias="NOETL_WORKER_LABELS")
+    namespace: Optional[str] = Field(None, alias="POD_NAMESPACE")
+    worker_id: Optional[str] = Field(None, alias="NOETL_WORKER_ID")
+    deregister_retries: int = Field(3, alias="NOETL_DEREGISTER_RETRIES")
+    deregister_backoff: float = Field(0.5, alias="NOETL_DEREGISTER_BACKOFF")
+    metrics_disabled: bool = Field(True, alias="NOETL_DISABLE_METRICS")
+    worker_metrics_interval: float = Field(60.0, alias="NOETL_WORKER_METRICS_INTERVAL")
+    worker_heartbeat_interval: float = Field(15.0, alias="NOETL_WORKER_HEARTBEAT_INTERVAL")
+    hostname_env: Optional[str] = Field(None, alias="HOSTNAME")
+    host: str = Field("localhost", alias="NOETL_HOST")
+    port: str = Field("8082", alias="NOETL_PORT")
+    server_name: Optional[str] = Field(None, alias="NOETL_SERVER_NAME")
+    max_workers: int = Field(8, alias="NOETL_MAX_WORKERS")
+
+    @field_validator('pool_runtime', mode='before')
+    def normalize_runtime(cls, v):
+        if v is None:
+            return "cpu"
+        return str(v).strip().lower()
+
+    @field_validator('metrics_disabled', mode='before')
+    def coerce_bool(cls, v):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            val = v.strip().lower()
+            if val in {"true", "1", "yes", "y", "on"}:
+                return True
+            if val in {"false", "0", "no", "n", "off"}:
+                return False
+        raise ValueError("Invalid boolean value")
+
+    @field_validator(
+        'deregister_retries',
+        'max_workers',
+        'deregister_backoff',
+        'worker_metrics_interval',
+        'worker_heartbeat_interval',
+        mode='before'
+    )
+    def coerce_numeric(cls, v, info):
+        target = info.field_name
+        if target in {'deregister_retries', 'max_workers'}:
+            if isinstance(v, int):
+                return v
+            if isinstance(v, str):
+                return int(v.strip())
+            if isinstance(v, float):
+                return int(v)
+            raise ValueError("Invalid integer value")
+        # float targets
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            return float(v.strip())
+        raise ValueError("Invalid numeric value")
+
+    @property
+    def hostname(self) -> str:
+        if self.hostname_env and self.hostname_env.strip():
+            return self.hostname_env.strip()
+        return socket.gethostname()
+
+    @property
+    def worker_capacity(self) -> Optional[int]:
+        if not self.worker_capacity_raw:
+            return None
+        try:
+            return int(str(self.worker_capacity_raw).strip())
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid NOETL_WORKER_CAPACITY value: {self.worker_capacity_raw}")
+
+    @property
+    def worker_labels(self) -> List[str]:
+        if not self.worker_labels_raw:
+            return []
+        return [label.strip() for label in self.worker_labels_raw.split(',') if label.strip()]
+
+    @property
+    def resolved_pool_name(self) -> str:
+        if self.pool_name and self.pool_name.strip():
+            return self.pool_name.strip()
+        return f"worker-{self.pool_runtime}"
+
+    @property
+    def server_api_url(self) -> str:
+        url = self.server_url.rstrip('/')
+        if not url.endswith('/api'):
+            url = f"{url}/api"
+        return url
+
+    @property
+    def normalized_server_url(self) -> str:
+        url = self.server_url.strip()
+        if not url.startswith(("http://", "https://")):
+            url = f"http://{url}"
+        return url.rstrip('/')
+
+    # Worker API Endpoint URLs - centralized endpoint construction
+    @property
+    def endpoint_worker_pool_register(self) -> str:
+        """Worker pool registration endpoint"""
+        return f"{self.server_api_url}/worker/pool/register"
+
+    @property
+    def endpoint_worker_pool_deregister(self) -> str:
+        """Worker pool deregistration endpoint"""
+        return f"{self.server_api_url}/worker/pool/deregister"
+
+    @property
+    def endpoint_worker_pool_heartbeat(self) -> str:
+        """Worker pool heartbeat endpoint"""
+        return f"{self.server_api_url}/worker/pool/heartbeat"
+
+    @property
+    def endpoint_queue_lease(self) -> str:
+        """Queue job lease endpoint"""
+        return f"{self.server_api_url}/queue/lease"
+
+    @property
+    def endpoint_queue_complete(self) -> str:
+        """Queue job completion endpoint"""
+        return f"{self.server_api_url}/queue/complete"
+
+    def endpoint_queue_complete_by_id(self, queue_id: int) -> str:
+        """Queue job completion endpoint by queue ID"""
+        return f"{self.server_api_url}/queue/{queue_id}/complete"
+
+    @property
+    def endpoint_queue_fail(self) -> str:
+        """Queue job failure endpoint"""
+        return f"{self.server_api_url}/queue/fail"
+
+    def endpoint_queue_fail_by_id(self, queue_id: int) -> str:
+        """Queue job failure endpoint by queue ID"""
+        return f"{self.server_api_url}/queue/{queue_id}/fail"
+
+    @property
+    def endpoint_queue_size(self) -> str:
+        """Queue size endpoint"""
+        return f"{self.server_api_url}/queue/size"
+
+    @property
+    def endpoint_events(self) -> str:
+        """Events submission endpoint"""
+        return f"{self.server_api_url}/events"
+
+    @property
+    def endpoint_credentials(self) -> str:
+        """Base credentials endpoint"""
+        return f"{self.server_api_url}/credentials"
+
+    def endpoint_credential_by_key(self, key: str, include_data: bool = True) -> str:
+        """Get credential by key endpoint with optional data inclusion"""
+        url = f"{self.endpoint_credentials}/{key}"
+        if include_data:
+            url += "?include_data=true"
+        return url
+
+
+_settings: Optional[Settings] = None
+_worker_settings: Optional[WorkerSettings] = None
 
 def get_settings(reload: bool = False) -> Settings:
     """
@@ -279,6 +542,7 @@ def get_settings(reload: bool = False) -> Settings:
                 raise RuntimeError("Missing required environment variable NOETL_SCHEMA_VALIDATE (true/false)")
 
             _settings = Settings(
+                raw_env=dict(os.environ),
                 # Admin DB
                 POSTGRES_USER=os.environ['POSTGRES_USER'],
                 POSTGRES_PASSWORD=os.environ['POSTGRES_PASSWORD'],
@@ -289,26 +553,64 @@ def get_settings(reload: bool = False) -> Settings:
                 NOETL_USER=os.environ['NOETL_USER'],
                 NOETL_PASSWORD=os.environ['NOETL_PASSWORD'],
                 NOETL_SCHEMA=os.environ['NOETL_SCHEMA'],
-                # Runtime (cast to proper types)
+                # Runtime
                 NOETL_HOST=os.environ['NOETL_HOST'],
-                NOETL_PORT=int(os.environ['NOETL_PORT']),
-                NOETL_ENABLE_UI=get_bool(os.environ['NOETL_ENABLE_UI']),
-                NOETL_DEBUG=get_bool(os.environ['NOETL_DEBUG']),
+                NOETL_PORT=os.environ['NOETL_PORT'],
+                NOETL_ENABLE_UI=os.environ['NOETL_ENABLE_UI'],
+                NOETL_DEBUG=os.environ['NOETL_DEBUG'],
                 # Server identity
                 NOETL_SERVER_URL=os.environ['NOETL_SERVER_URL'],
                 NOETL_SERVER_NAME=os.environ['NOETL_SERVER_NAME'],
                 # Server runtime config
                 NOETL_SERVER=os.environ['NOETL_SERVER'],
-                NOETL_SERVER_WORKERS=int(os.environ['NOETL_SERVER_WORKERS']),
-                NOETL_SERVER_RELOAD=get_bool(os.environ['NOETL_SERVER_RELOAD']),
-                # Drop schema flag
-                NOETL_DROP_SCHEMA=get_bool(os.environ['NOETL_DROP_SCHEMA']),
-                NOETL_SCHEMA_VALIDATE=get_bool(os.environ['NOETL_SCHEMA_VALIDATE']),
-                NOETL_AUTO_RECREATE_RUNTIME=get_bool(os.environ.get('NOETL_AUTO_RECREATE_RUNTIME', 'false')),
-                NOETL_HEARTBEAT_RETRY_AFTER=int(os.environ.get('NOETL_HEARTBEAT_RETRY_AFTER', '3'))
+                NOETL_SERVER_WORKERS=os.environ['NOETL_SERVER_WORKERS'],
+                NOETL_SERVER_RELOAD=os.environ['NOETL_SERVER_RELOAD'],
+                # Drop schema & validation
+                NOETL_DROP_SCHEMA=os.environ['NOETL_DROP_SCHEMA'],
+                NOETL_SCHEMA_VALIDATE=os.environ['NOETL_SCHEMA_VALIDATE'],
+                NOETL_AUTO_RECREATE_RUNTIME=os.environ['NOETL_AUTO_RECREATE_RUNTIME'],
+                NOETL_HEARTBEAT_RETRY_AFTER=os.environ['NOETL_HEARTBEAT_RETRY_AFTER'],
+                NOETL_RUNTIME_SWEEP_INTERVAL=os.environ['NOETL_RUNTIME_SWEEP_INTERVAL'],
+                NOETL_RUNTIME_OFFLINE_SECONDS=os.environ['NOETL_RUNTIME_OFFLINE_SECONDS'],
+                NOETL_DISABLE_METRICS=os.environ['NOETL_DISABLE_METRICS'],
+                NOETL_SERVER_METRICS_INTERVAL=os.environ['NOETL_SERVER_METRICS_INTERVAL'],
+                NOETL_SERVER_LABELS=os.environ.get('NOETL_SERVER_LABELS'),
+                HOSTNAME=os.environ.get('HOSTNAME'),
             )
         except Exception as e:
             print(f"FATAL: Failed to initialize settings: {e}", file=sys.stderr)
             sys.exit(1)
 
     return _settings
+
+
+def get_worker_settings(reload: bool = False) -> WorkerSettings:
+    """
+    Retrieve worker runtime settings with validation.
+    """
+    global _worker_settings
+    if _worker_settings is None or reload:
+        load_env_if_present(force_reload=True)
+        env = os.environ
+        _worker_settings = WorkerSettings(
+            raw_env=dict(env),
+            NOETL_WORKER_POOL_RUNTIME=env.get('NOETL_WORKER_POOL_RUNTIME', 'cpu'),
+            NOETL_WORKER_POOL_NAME=env.get('NOETL_WORKER_POOL_NAME'),
+            NOETL_SERVER_URL=env.get('NOETL_SERVER_URL', 'http://localhost:8082'),
+            NOETL_WORKER_BASE_URL=env.get('NOETL_WORKER_BASE_URL', 'http://queue-worker'),
+            NOETL_WORKER_CAPACITY=env.get('NOETL_WORKER_CAPACITY'),
+            NOETL_WORKER_LABELS=env.get('NOETL_WORKER_LABELS'),
+            POD_NAMESPACE=env.get('POD_NAMESPACE'),
+            NOETL_WORKER_ID=env.get('NOETL_WORKER_ID'),
+            NOETL_DEREGISTER_RETRIES=env.get('NOETL_DEREGISTER_RETRIES', '3'),
+            NOETL_DEREGISTER_BACKOFF=env.get('NOETL_DEREGISTER_BACKOFF', '0.5'),
+            NOETL_DISABLE_METRICS=env.get('NOETL_DISABLE_METRICS', 'true'),
+            NOETL_WORKER_METRICS_INTERVAL=env.get('NOETL_WORKER_METRICS_INTERVAL', '60'),
+            NOETL_WORKER_HEARTBEAT_INTERVAL=env.get('NOETL_WORKER_HEARTBEAT_INTERVAL', '15'),
+            HOSTNAME=env.get('HOSTNAME'),
+            NOETL_HOST=env.get('NOETL_HOST', 'localhost'),
+            NOETL_PORT=env.get('NOETL_PORT', '8082'),
+            NOETL_SERVER_NAME=env.get('NOETL_SERVER_NAME'),
+            NOETL_MAX_WORKERS=env.get('NOETL_MAX_WORKERS', '8'),
+        )
+    return _worker_settings

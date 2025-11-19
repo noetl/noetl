@@ -1,0 +1,72 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: json_serialization_save
+  path: tests/fixtures/playbooks/json_serialization_save
+
+workload:
+  pg_auth: pg_local
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: create_test_table
+
+  - step: create_test_table
+    desc: Create test table with JSONB column
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS public.json_bug_test;
+      CREATE TABLE public.json_bug_test (
+        id INTEGER PRIMARY KEY,
+        payload JSONB
+      );
+    next:
+      - step: save_dict_to_jsonb
+
+  - step: save_dict_to_jsonb
+    desc: Save a Python dict to JSONB column (triggers bug)
+    tool: python
+    args:
+      input_data: {}
+    code: |
+      async def main(input_data):
+          # Return a dict that will be saved to JSONB
+          return {
+              "data": {
+                  "string_field": "test_value",
+                  "number_field": 42,
+                  "nested_object": {
+                      "key1": "value1",
+                      "key2": "value2"
+                  },
+                  "array_field": [1, 2, 3, 4, 5]
+              }
+          }
+    save:
+      storage: postgres
+      args:
+        id: 1
+      statement: >
+        INSERT INTO public.json_bug_test (id, payload)
+        VALUES ({{ data.id }}, '{{ result.data | tojson | replace("'", "''") }}'::jsonb)
+      auth: "{{ workload.pg_auth }}"
+      table: public.json_bug_test
+      mode: insert
+    next:
+      - step: verify_save
+
+  - step: verify_save
+    desc: Verify the saved data
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT id, payload FROM public.json_bug_test WHERE id = 1;
+    next:
+      - step: end
+
+  - step: end
+    desc: Finish workflow
