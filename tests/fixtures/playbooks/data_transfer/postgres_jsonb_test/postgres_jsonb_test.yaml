@@ -77,17 +77,17 @@ workflow:
   - step: insert_jsonb_data
     desc: Insert rows with JSONB data
     tool: python
+    args:
+      test_table: "{{ workload.test_table }}"
+      sample_json_data: "{{ workload.sample_json_data }}"
     code: |
       import json
       
-      def main(input_data):
+      async def main(test_table, sample_json_data):
           """Insert JSONB data into PostgreSQL."""
-          if input_data is None:
-              input_data = {}
-          
-          sample_data = input_data.get('sample_json_data', [])
-          test_table = input_data.get('test_table', 'postgres_jsonb_test')
-          
+          sample_data = sample_json_data or []
+          test_table = test_table or 'postgres_jsonb_test'
+
           # Build SQL insert statements
           insert_statements = []
           for item in sample_data:
@@ -112,9 +112,6 @@ workflow:
               'commands': '\n'.join(insert_statements),
               'count': len(insert_statements)
           }
-    data:
-      test_table: "{{ workload.test_table }}"
-      sample_json_data: "{{ workload.sample_json_data }}"
     next:
       - step: execute_inserts
 
@@ -245,14 +242,14 @@ workflow:
   - step: validate_and_cleanup
     desc: Validate JSONB operations and cleanup test table
     tool: python
+    args:
+      query_jsonb_data: "{{ query_jsonb_data }}"
+      test_truncate: "{{ test_truncate }}"
     code: |
-      def main(input_data):
+      async def main(query_jsonb_data, test_truncate):
           """Validate JSONB test results."""
-          if input_data is None:
-              input_data = {}
-          
-          query_result = input_data.get('query_jsonb_data', {})
-          truncate_result = input_data.get('test_truncate', {})
+          query_result = query_jsonb_data or {}
+          truncate_result = test_truncate or {}
           
           # Validate query results
           validations = {
@@ -276,9 +273,6 @@ workflow:
               'validations': validations,
               'message': 'JSONB test completed successfully'
           }
-    data:
-      query_jsonb_data: "{{ query_jsonb_data }}"
-      test_truncate: "{{ test_truncate }}"
     next:
       - step: end
 

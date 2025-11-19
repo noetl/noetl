@@ -30,8 +30,10 @@ workflow:
   - step: save_dict_to_jsonb
     desc: Save a Python dict to JSONB column (triggers bug)
     tool: python
+    args:
+      input_data: {}
     code: |
-      def main(input_data):
+      async def main(input_data):
           # Return a dict that will be saved to JSONB
           return {
               "data": {
@@ -48,7 +50,9 @@ workflow:
       storage: postgres
       args:
         id: 1
-        payload: "{{ result.data }}"
+      statement: >
+        INSERT INTO public.json_bug_test (id, payload)
+        VALUES ({{ data.id }}, '{{ result.data | tojson | replace("'", "''") }}'::jsonb)
       auth: "{{ workload.pg_auth }}"
       table: public.json_bug_test
       mode: insert

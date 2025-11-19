@@ -406,9 +406,11 @@ class JobExecutor:
                 f"Step result must be a dictionary, got {type(result).__name__}"
             )
         data = result.get("data")
-        if data is not None and not isinstance(data, dict):
-            raise ValueError("Step result 'data' field must be a dictionary")
-        return data if data is not None else result
+        if data is None:
+            return result
+        if isinstance(data, (dict, list)):
+            return data
+        raise ValueError("Step result 'data' field must be a dictionary or list")
 
     def _extract_step_status(self, result: Dict[str, Any]) -> str:
         if not isinstance(result, dict):
@@ -522,6 +524,8 @@ class JobExecutor:
         action_started_event_id: Optional[str],
     ) -> None:
         normalized = self._validate_step_result(result)
+        if not isinstance(normalized, dict):
+            normalized = {"value": normalized}
         status = self._extract_step_status(result)
         event = self._build_event_payload(
             prepared,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import Dict, Optional, Any
@@ -47,6 +48,7 @@ class QueueWorker:
         self.server_url = normalize_server_url(resolved_server_url, ensure_api=True)
         self.worker_id = worker_id or self._settings.worker_id or str(uuid.uuid4())
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
+        self._jinja.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
         if process_pool is not None:
             self._process_pool = process_pool
@@ -136,6 +138,14 @@ class QueueWorker:
         task_data: Dict[str, Any],
         use_process: bool,
     ) -> Dict[str, Any]:
+        tool = str(action_cfg.get("tool") or "").strip().lower()
+        if tool == "python":
+            from noetl.plugin.tools.python import execute_python_task_async
+
+            return await execute_python_task_async(
+                action_cfg, exec_ctx, self._jinja, task_data, None
+            )
+
         from noetl.plugin import execute_task
 
         loop = asyncio.get_running_loop()
