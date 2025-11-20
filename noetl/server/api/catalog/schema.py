@@ -156,6 +156,7 @@ class CatalogRegisterRequest(AppBaseModel):
     )
 
     @field_validator('content', mode="before")
+    @classmethod
     def decode_data(cls, val):
         try:
             return base64.b64decode(val).decode("utf-8")
