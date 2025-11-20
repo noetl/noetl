@@ -1,39 +1,26 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 
+const NOETL_HOST = process.env.NOETL_HOST ?? 'localhost';
+const NOETL_PORT = process.env.NOETL_PORT ?? '8082';
+const NOETL_BASE_URL = process.env.NOETL_BASE_URL ?? `http://${NOETL_HOST}:${NOETL_PORT}`;
+const PLAYBOOK_ID = 'tests/fixtures/playbooks/control_flow_workbook';
+const PLAYBOOK_PATH = 'tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml';
+
 test.describe('Control flow workbook', () => {
 
-    // Run the registration command before all tests in this suite
     test.beforeAll(() => {
-        console.log('Registering control_flow_workbook...');
-        execSync('noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host localhost --port 8082', { stdio: 'inherit' });
+        console.log(`Registering ${PLAYBOOK_ID}...`);
+        execSync(`noetl register ${PLAYBOOK_PATH} --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
     });
 
-    test('should open catalog page', async ({ page }) => {
-        // Navigate to the catalog page
-        await page.goto('http://localhost:8082/catalog');
+    test('should open catalog page and validate execution events', async ({ page }) => {
 
-        // Check that the page title contains "NoETL Dashboard"
-        await expect(page).toHaveTitle('NoETL Dashboard');
+        let executionRowData: Record<string, string>;
+        let updatedExecutionRowData: Record<string, string>;
+        let eventTableData: Record<string, string>[] = [];
 
-        // Locate the first element that contains the text "control_flow_workbook"
-        const exampleItem = page.locator("(//*[text()='control_flow_workbook']/following::button[normalize-space()='Execute'])[1]");
-
-        // Inside that element, find the child with text "Execute" and click it
-        await exampleItem.click();
-
-        // wait until URL contains "/execution"
-        await page.waitForURL('**/execution', { timeout: 60000 });
-
-        // now check
-        await expect(page.url()).toContain('/execution');
-
-        const loader = page.locator("//*[text()='Loading executions...']");
-        await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        // Wait for the loader to disappear
-        await loader.waitFor({ state: 'detached' });
-
-        const headers = [
+        const executionHeaders = [
             'Execution ID',
             'Playbook',
             'Status',
@@ -43,50 +30,7 @@ test.describe('Control flow workbook', () => {
             'Actions'
         ];
 
-        // Choose the first row of the table
-        const row = page.locator('.ant-table-tbody > tr:first-child');
-        const cells = row.locator('td');
-
-        // Get all text contents of the cells in the row
-        const values = await cells.allTextContents();
-
-        // Map headers to their corresponding values
-        const rowData = Object.fromEntries(headers.map((key, i) => [key, values[i]]));
-
-        console.log(rowData);
-
-        // Assertions
-        await expect(rowData.Playbook).toBe('control_flow_workbook');
-        await expect(rowData.Status).toBe('STARTED');
-        await expect(rowData.Duration).toBe('8h 0m');
-
-        // Wait a bit for the execution to complete
-        await page.waitForTimeout(10000);
-        // Refresh the page
-        await page.reload();
-
-        // Choose the first row of the table again
-        const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
-        const updatedCells = updatedRow.locator('td');
-        // Get all text contents of the cells in the row
-        const updatedValues = await updatedCells.allTextContents();
-        // Map headers to their corresponding values
-        const updatedRowData = Object.fromEntries(headers.map((key, i) => [key, updatedValues[i]]));
-
-        console.log(updatedRowData);
-
-        // Assert changes
-        await expect(page).toHaveTitle('NoETL Dashboard');
-        await expect(updatedRowData.Status).toBe('Completed');
-        // await expect(updatedRowData.Playbook).toBe('control_flow_workbook');
-
-        // Click the "View" button for the "control_flow_workbook" task
-        // TODO fix the selector below from "Unknown" to "control_flow_workbook"
-        const viewButton = await page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
-        await viewButton.click();
-
-        // View table headers
-        const viewHeaders = [
+        const eventHeaders = [
             'Event Type',
             'Node Name',
             'Status',
@@ -94,73 +38,124 @@ test.describe('Control flow workbook', () => {
             'Duration'
         ];
 
-        // Choose all rows of the table
-        const rows = page.locator('.ant-table-wrapper .ant-table-row');
-        const rowCount = await rows.count();
+        await test.step('Navigate to catalog page', async () => {
+            await page.goto(`${NOETL_BASE_URL}/catalog`);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-        const tableData: Record<string, string>[] = [];
+        await test.step('Find playbook and execute it', async () => {
+            const executeBtn = page.locator(`(//*[text()='control_flow_workbook']/following::button[normalize-space()='Execute'])[1]`);
+            await executeBtn.click();
+            await page.waitForURL('**/execution', { timeout: 60000 });
+            await expect(page.url()).toContain('/execution');
+        });
 
-        for (let i = 0; i < rowCount; i++) {
-            const cells = rows.nth(i).locator('td');
+        await test.step('Wait for execution table to load and read first row', async () => {
+            const loader = page.locator("//*[text()='Loading executions...']");
+            await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+            await loader.waitFor({ state: 'detached' });
+
+            const row = page.locator('.ant-table-tbody > tr:first-child');
+            const cells = row.locator('td');
             const values = await cells.allTextContents();
+            executionRowData = Object.fromEntries(executionHeaders.map((k, i) => [k, values[i]]));
+            console.log(executionRowData);
 
-            // Create an object mapping headers to their corresponding values
-            const rowData = Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]]));
-            tableData.push(rowData);
-        }
+            await expect(executionRowData.Playbook).toBe(PLAYBOOK_ID);
+            await expect(executionRowData.Status).toBe('RUNNING');
+            await expect(executionRowData.Duration).toBe('3h 0m');
+        });
 
-        // Output the resulting table data
-        console.log(tableData);
+        await test.step('Wait for completion and refresh table', async () => {
+            await page.waitForTimeout(10000);
+            await page.reload();
 
-        // Example assert control_flow_workbook
-        await expect(tableData[0]['Event Type']).toBe('execution_start');
-        await expect(tableData[0]['Node Name']).toBe('control_flow_workbook');
-        await expect(tableData[0].Status).toBe('IN_PROGRESS');
+            const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
+            const updatedCells = updatedRow.locator('td');
+            const updatedValues = await updatedCells.allTextContents();
+            updatedExecutionRowData = Object.fromEntries(executionHeaders.map((k, i) => [k, updatedValues[i]]));
 
-        // Example assert step_started
-        await expect(tableData[1]['Event Type']).toBe('step_started');
-        await expect(tableData[1]['Node Name']).toBe('eval_flag');
-        await expect(tableData[1].Status).toBe('STARTED');
+            console.log(updatedExecutionRowData);
 
-        // Example assert action_started
-        await expect(tableData[2]['Event Type']).toBe('action_started');
-        await expect(tableData[2]['Node Name']).toBe('compute_flag');
-        await expect(tableData[2].Status).toBe('STARTED');
+            await expect(page).toHaveTitle('NoETL Dashboard');
+            await expect(updatedExecutionRowData.Status).toBe('COMPLETED');
+        });
 
-        // Example assert action_completed
-        await expect(tableData[3]['Event Type']).toBe('action_completed');
-        await expect(tableData[3]['Node Name']).toBe('compute_flag');
-        await expect(tableData[3].Status).toBe('COMPLETED');
+        await test.step('Open execution detail view', async () => {
+            const viewButton = page.locator(`(//*[text()='${PLAYBOOK_ID}']/following::button[normalize-space()='View'])[1]`);
+            await viewButton.click();
+            // Wait for URL change (adjust if another path is used)
+            await page.waitForURL(/.*\/execution\/.+/, { timeout: 15000 }).catch(() => { });
+            // Wait for table skeleton/spinner to disappear if present
+            const loading = page.locator("//*[text()='Loading events...']");
+            if (await loading.first().isVisible()) {
+                await loading.first().waitFor({ state: 'detached', timeout: 20000 }).catch(() => { });
+            }
+        });
 
-        // Example assert step_completed (compute_flag)
-        await expect(tableData[4]['Event Type']).toBe('step_completed');
-        await expect(tableData[4]['Node Name']).toBe('compute_flag');
-        await expect(tableData[4].Status).toBe('COMPLETED');
+        await test.step('Wait for events table to populate', async () => {
+            await test.step('Open all events', async () => {
+                await page.click("//span[text()='10 / page']");
+                const allOption = page.locator("//div[text()='100 / page']");
+                await allOption.click();
+            });
+            await page.waitForSelector('.ant-table-wrapper .ant-table-row', { timeout: 20000 });
+            // Now expect at least 20 events
+            await expect.poll(async () => {
+                return await page.locator('.ant-table-wrapper .ant-table-row').count();
+            }, { timeout: 30000, intervals: [500] }).toBeGreaterThanOrEqual(20);
+        });
 
-        // Example assert step_result (compute_flag)
-        await expect(tableData[5]['Event Type']).toBe('step_result');
-        await expect(tableData[5]['Node Name']).toBe('compute_flag');
-        await expect(tableData[5].Status).toBe('COMPLETED');
+        await test.step('Collect execution events table data', async () => {
+            const rows = page.locator('.ant-table-wrapper .ant-table-row');
+            const count = await rows.count();
+            eventTableData = [];
+            for (let i = 0; i < count; i++) {
+                const cells = rows.nth(i).locator('td');
+                const values = await cells.allTextContents();
+                const obj = Object.fromEntries(eventHeaders.map((h, idx) => [h, values[idx] || '']));
+                eventTableData.push(obj);
+            }
+            expect(eventTableData.length).toBeGreaterThanOrEqual(20);
+        });
 
-        // Example assert step_completed (eval_flag) — first occurrence
-        await expect(tableData[6]['Event Type']).toBe('step_completed');
-        await expect(tableData[6]['Node Name']).toBe('eval_flag');
-        await expect(tableData[6].Status).toBe('COMPLETED');
+        await test.step('Validate full execution event sequence', async () => {
+            const expected = [
+                { type: 'playbook_started', node: PLAYBOOK_ID, status: 'STARTED' },
+                { type: 'workflow_initialized', node: 'workflow', status: 'COMPLETED' },
+                { type: 'step_started', node: 'eval_flag', status: 'RUNNING' },
+                { type: 'action_started', node: 'eval_flag', status: 'RUNNING' },
+                { type: 'action_completed', node: 'eval_flag', status: 'COMPLETED' },
+                { type: 'step_completed', node: 'eval_flag', status: 'COMPLETED' },
+                { type: 'step_completed', node: 'hot_path', status: 'COMPLETED' },
+                { type: 'step_started', node: 'hot_task_a', status: 'RUNNING' },
+                { type: 'step_started', node: 'hot_task_b', status: 'RUNNING' },
+                { type: 'step_result', node: 'eval_flag', status: 'COMPLETED' },
+                { type: 'action_started', node: 'hot_task_a', status: 'RUNNING' },
+                { type: 'action_completed', node: 'hot_task_a', status: 'COMPLETED' },
+                { type: 'step_completed', node: 'hot_task_a', status: 'COMPLETED' },
+                { type: 'step_result', node: 'hot_task_a', status: 'COMPLETED' },
+                { type: 'action_started', node: 'hot_task_b', status: 'RUNNING' },
+                { type: 'action_completed', node: 'hot_task_b', status: 'COMPLETED' },
+                { type: 'step_completed', node: 'hot_task_b', status: 'COMPLETED' },
+                { type: 'workflow_completed', node: 'workflow', status: 'COMPLETED' },
+                { type: 'playbook_completed', node: PLAYBOOK_ID, status: 'COMPLETED' },
+                { type: 'step_result', node: 'hot_task_b', status: 'COMPLETED' },
+            ];
 
-        // Example assert step_completed (eval_flag) — second occurrence
-        await expect(tableData[7]['Event Type']).toBe('step_completed');
-        await expect(tableData[7]['Node Name']).toBe('eval_flag');
-        await expect(tableData[7].Status).toBe('COMPLETED');
+            for (let i = 0; i < expected.length; i++) {
+                await expect(eventTableData[i]['Event Type']).toBe(expected[i].type);
+                await expect(eventTableData[i]['Node Name']).toBe(expected[i].node);
+                await expect(eventTableData[i].Status).toBe(expected[i].status);
+            }
 
-        // Example assert step_completed (hot_path) — first occurrence
-        await expect(tableData[8]['Event Type']).toBe('step_completed');
-        await expect(tableData[8]['Node Name']).toBe('hot_path');
-        await expect(tableData[8].Status).toBe('COMPLETED');
+            // Duration sanity checks (where durations appear)
+            const hasEvalResult = eventTableData.find(e => e['Event Type'] === 'step_result' && e['Node Name'] === 'eval_flag');
+            if (hasEvalResult) {
+                expect(hasEvalResult.Duration === '' || /s$/.test(hasEvalResult.Duration)).toBeTruthy();
+            }
+        });
 
-        // Example assert step_completed (hot_path) — second occurrence
-        await expect(tableData[9]['Event Type']).toBe('step_completed');
-        await expect(tableData[9]['Node Name']).toBe('hot_path');
-        await expect(tableData[9].Status).toBe('COMPLETED');
     });
 
 });
