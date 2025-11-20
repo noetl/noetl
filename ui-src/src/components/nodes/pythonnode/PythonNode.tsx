@@ -3,6 +3,7 @@ import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyfl
 import './PythonNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CodeEditor } from '../../CodeEditor';
 
 interface PythonData {
     name?: string;
@@ -104,13 +105,12 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                 <div className="PythonNodeModal__container">
                     <div>
                         <div className="PythonNodeModal__section-title">Code</div>
-                        <Input.TextArea
-                            className="PythonNodeModal__code"
+                        <CodeEditor
                             value={draft.code}
-                            rows={10}
+                            onChange={value => setDraft(d => ({ ...d, code: value }))}
+                            language="python"
+                            height={300}
                             placeholder='def main(user_data):\n    return {"score": user_data["rating"] * 10}'
-                            onChange={e => setDraft(d => ({ ...d, code: e.target.value }))}
-                            style={{ fontFamily: 'monospace' }}
                         />
                     </div>
                     <div className="PythonNodeModal__section-title" style={{ marginTop: 16 }}>Or use module reference:</div>

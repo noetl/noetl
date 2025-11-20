@@ -3,6 +3,7 @@ import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyfl
 import './DuckDbNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CodeEditor } from '../../CodeEditor';
 
 interface DuckDbData {
     name?: string;
@@ -100,13 +101,12 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                 <div className="DuckDbNodeModal__container">
                     <div>
                         <div className="DuckDbNodeModal__section-title">Query</div>
-                        <Input.TextArea
-                            className="DuckDbNodeModal__query"
+                        <CodeEditor
                             value={draft.query}
-                            rows={8}
+                            onChange={value => setDraft(d => ({ ...d, query: value }))}
+                            language="sql"
+                            height={250}
                             placeholder="SELECT * FROM read_csv('{{ file_path }}')"
-                            onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
-                            style={{ fontFamily: 'monospace' }}
                         />
                     </div>
                     <div>

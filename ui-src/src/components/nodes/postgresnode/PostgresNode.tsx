@@ -3,6 +3,7 @@ import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyfl
 import './PostgresNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CodeEditor } from '../../CodeEditor';
 
 interface PostgresData {
     name?: string;
@@ -139,13 +140,12 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                 <div className="PostgresNodeModal__container">
                     <div>
                         <div className="PostgresNodeModal__section-title">Query</div>
-                        <Input.TextArea
-                            className="PostgresNodeModal__query"
+                        <CodeEditor
                             value={draft.query}
-                            rows={8}
+                            onChange={value => setDraft(d => ({ ...d, query: value }))}
+                            language="sql"
+                            height={250}
                             placeholder='SELECT * FROM users WHERE id = %(user_id)s'
-                            onChange={e => setDraft(d => ({ ...d, query: e.target.value }))}
-                            style={{ fontFamily: 'monospace' }}
                         />
                     </div>
                     <div>
@@ -158,12 +158,12 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                     </div>
                     <div>
                         <div className="PostgresNodeModal__section-title">Params (JSON object)</div>
-                        <Input.TextArea
-                            className="PostgresNodeModal__params"
+                        <CodeEditor
                             value={paramsInput}
-                            rows={4}
+                            onChange={handleJSONChange}
+                            language="json"
+                            height={120}
                             placeholder='{"user_id": "{{ workload.user_id }}"}'
-                            onChange={e => handleJSONChange(e.target.value)}
                         />
                         {paramsError && <div className="PostgresNodeModal__error">{paramsError}</div>}
                     </div>

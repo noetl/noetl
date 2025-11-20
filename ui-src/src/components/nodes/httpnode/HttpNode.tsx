@@ -3,6 +3,7 @@ import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyfl
 import './HttpNode.less';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CodeEditor } from '../../CodeEditor';
 
 interface HttpData {
     name?: string;
@@ -181,34 +182,34 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Headers (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__headers"
+                        <CodeEditor
                             value={headerInput}
-                            rows={4}
+                            onChange={val => handleJSONChange(val, 'headers')}
+                            language="json"
+                            height={120}
                             placeholder='{"Authorization": "Bearer {{ token }}"}'
-                            onChange={e => handleJSONChange(e.target.value, 'headers')}
                         />
                         {headerError && <div className="HttpNodeModal__error">{headerError}</div>}
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Params (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__params"
+                        <CodeEditor
                             value={paramsInput}
-                            rows={3}
+                            onChange={val => handleJSONChange(val, 'params')}
+                            language="json"
+                            height={100}
                             placeholder='{"limit": 10}'
-                            onChange={e => handleJSONChange(e.target.value, 'params')}
                         />
                         {paramsError && <div className="HttpNodeModal__error">{paramsError}</div>}
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Payload (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__payload"
+                        <CodeEditor
                             value={payloadInput}
-                            rows={4}
+                            onChange={val => handleJSONChange(val, 'payload')}
+                            language="json"
+                            height={120}
                             placeholder='{"query": "{{ search_term }}"}'
-                            onChange={e => handleJSONChange(e.target.value, 'payload')}
                         />
                         {payloadError && <div className="HttpNodeModal__error">{payloadError}</div>}
                     </div>

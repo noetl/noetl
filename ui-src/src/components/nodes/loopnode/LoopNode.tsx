@@ -3,6 +3,7 @@ import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyfl
 import './LoopNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CodeEditor } from '../../CodeEditor';
 
 interface LoopData {
     name?: string;
@@ -93,11 +94,12 @@ function LoopNodeInternal({ id, data = {} }: NodeProps<Node<LoopData>>) {
             >
                 <div className="LoopNodeModal__container">
                     <div className="LoopNodeModal__section-title">Collection</div>
-                    <Input
-                        className="LoopNodeModal__collection"
+                    <CodeEditor
                         value={draft.collection}
+                        onChange={value => setDraft(d => ({ ...d, collection: value }))}
+                        language="jinja2"
+                        height={100}
                         placeholder='{{ items }}'
-                        onChange={e => setDraft(d => ({ ...d, collection: e.target.value }))}
                     />
                 </div>
             </Modal>
