@@ -62,10 +62,10 @@ task monitoring:k8s:deploy   # Deploy monitoring stack
 
 **Services available after bootstrap:**
 - **NoETL Server**: http://localhost:8082 (API & UI)
-- **Postgres**: localhost:54321 (user: demo, password: demo, database: noetl)
 - **Grafana Dashboard**: http://localhost:3000 (admin credentials via `task grafana`)
 - **VictoriaMetrics**: http://localhost:9428/ 
 - **VictoriaLogs**: http://localhost:9428/select/vmui/
+- **Postgres**: `jdbc:postgresql://localhost:54321/demo_noetl` (user: demo, password: demo, database: demo_noetl)
 
 **Cleanup:**
 ```bash
@@ -166,71 +166,67 @@ make destroy                 # Clean up all resources (cluster, Docker, caches)
 
 ## Basic Usage
 
-After installing NoETL:
+NoETL is primarily deployed as a Kubernetes-based service. After running `make bootstrap`, the server and workers are already running in your Kind cluster.
 
-### 1. Run the NoETL Server
-
-Start the NoETL server to access the web UI and REST API:
+### Working with Playbooks
 
 ```bash
-# Start the server with default settings
-noetl server
+# Register a playbook to the catalog
+noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8082
 
-#  use the explicit start command with options
-noetl server start --host 0.0.0.0 --port 8080 --workers 4 --debug
+# List registered playbooks
+noetl catalog list playbook --host localhost --port 8082
 
-# Stop the server
-noetl server stop
+# Execute a registered playbook by path
+noetl execute playbook "tests/fixtures/playbooks/hello_world" --host localhost --port 8082
 
-# Force stop without confirmation
-noetl server stop --force
+# Execute with custom payload data (merged with workload)
+noetl execute playbook "tests/fixtures/playbooks/hello_world" \
+  --host localhost --port 8082 \
+  --payload '{"custom_var": "value"}' --merge
 ```
 
-The server starts on http://localhost:8080 by default. You can customize the host, port, number of workers, and enable debug mode using command options.
+### Local Development Mode (Optional)
 
-### 2. Running Workers (Optional)
-
-For distributed execution, you can run worker processes that execute playbooks:
+For rapid iteration without K8s, you can run the server and workers locally:
 
 ```bash
-# Start a worker
-make worker-start
+# Start server and worker locally
+task noetl:local:start
 
-# Start multiple workers with different configurations
-NOETL_WORKER_POOL_NAME=worker-cpu-01 NOETL_WORKER_POOL_RUNTIME=cpu make worker-start
-NOETL_WORKER_POOL_NAME=worker-gpu-01 NOETL_WORKER_POOL_RUNTIME=gpu make worker-start
+# Check status
+task noetl:local:status
 
-# Quick start multiple workers using provided scripts
-./bin/start_multiple_workers.sh
+# Stop server and worker
+task noetl:local:stop
 
-# Stop workers
-./bin/stop_multiple_workers.sh
+# Restart both
+task noetl:local:restart
+
+# Full reset: drops schema, recreates tables, reloads credentials and test playbooks
+task noetl:local:reset
 ```
 
-See [Multiple Workers Guide](docs/multiple_workers.md) for detailed instructions on running and managing multiple worker instances.
+The local server runs on http://localhost:8083 by default.
 
-NoETL provides a command-line interface for managing and executing playbooks:
+### CLI Reference
 
-- Register a playbook in the catalog
 ```bash
-noetl register ./path/to/playbook.yaml
+# Server management (local mode)
+noetl server start              # Start server
+noetl server stop               # Stop server gracefully
+noetl server stop --force       # Force stop
+
+# Catalog operations
+noetl register <playbook.yaml>  # Register playbook
+noetl catalog list playbook     # List all playbooks
+noetl catalog list credential   # List all credentials
+
+# Execution
+noetl execute playbook "<path>" # Execute by catalog path
 ```
 
-- List playbooks in the catalog
-```bash
-noetl catalog list playbook
-```
-
-- Execute a registered playbook
-```bash
-noetl execute my_playbook --version 1.0.0
-```
-
-- Register and execute with the catalog command
-```bash
-noetl catalog register ./path/to/playbook.yaml
-noetl catalog execute my_playbook --version 1.0.0
-```
+For distributed execution patterns and worker pool management, see [Multiple Workers Guide](docs/multiple_workers.md).
 
 ## Workflow DSL Structure
 
@@ -404,28 +400,62 @@ For information about contributing to NoETL or building from source:
 
 NoETL is released under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-## For UI developers
+## Quick Start for Developers
 
-- `uv pip install --editable .`
-- `task kind:local:cluster-delete`
-- `task docker:local:cleanup-all`
-- `task cache:local:clear-all`
-- `task dev:k8s:bootstrap`
-- `task test:k8s:setup-environment`
-- `task noetl:local:ui-dev-start`
-- `cd ui-src`
-- before commit in ui use `npx prettier  . --write`
+### Environment Setup
+```bash
+# Bootstrap complete environment (installs tools + deploys infrastructure)
+make bootstrap
 
-## Noetl register
-- `uv pip install --editable .`
-- `noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8084`
+# Or manually:
+task tools:local:verify           # Verify required tools
+task noetl:k8s:bootstrap          # Deploy complete K8s environment
+```
 
-## DOcumentation UI from md
+### UI Development
+```bash
+# Start NoETL backend
+task noetl:k8s:deploy             # Deploy to K8s (recommended)
+# OR
+task noetl:local:start            # Run server+worker locally
 
-https://docusaurus.io/docs/versioning
+# Start UI dev server (in separate terminal)
+task noetl:local:ui-dev-start     # Auto-connects to backend
 
-`cd documentation`
+# Format UI code before commit
+cd ui-src && npx prettier . --write
+```
 
-`npm run start`
+### Register Test Playbooks
+```bash
+# Register a playbook to the catalog
+noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8082
+
+# Execute a registered playbook
+noetl execute playbook "tests/fixtures/playbooks/hello_world" --host localhost --port 8082
+```
+
+### Cleanup
+```bash
+# Destroy environment and clean all resources
+make destroy
+
+# Or selective cleanup:
+task kind:local:cluster-delete    # Delete K8s cluster
+task docker:local:cleanup-all     # Clean Docker resources
+task noetl:local:clear-all        # Clear NoETL cache
+```
+
+## Documentation
+
+### Build Documentation Site
+The documentation uses [Docusaurus](https://docusaurus.io/docs/versioning):
+
+```bash
+cd documentation
+npm install
+npm run start                     # Local dev server
+npm run build                     # Production build
+```
 
 
