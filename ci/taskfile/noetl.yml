@@ -700,11 +700,15 @@ tasks:
         echo "To start UI in a new terminal:"
         echo "  task noetl:local:ui-dev-start"
 
-  noetl_server:local:restart:
-    desc: Complete local setup - test environment, services, and tables (everything except UI)
-    aliases: [local-full-setup, lfs, noetl-local-full-setup]
+  noetl:local:restart:
+    desc: Restart local NoETL server and worker
+    aliases: [restart]
     cmds:
       - |
         set -e
-        task noetl:local:stop || true 
+        echo "=== Stopping NoETL server and worker ==="
+        task noetl:local:stop || true
+        sleep 2
+        echo "=== Starting NoETL server and worker ==="
         task noetl:local:start
+        echo "✓ NoETL restarted successfully"

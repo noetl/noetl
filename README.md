@@ -1,13 +1,13 @@
 # Not Only ETL
 
-__NoETL__ is an automation framework for data processing and MLOps orchestration.
+__NoETL__ is an automation framework for Data Mash and MLOps orchestration.
 
 [![PyPI version](https://badge.fury.io/py/noetl.svg)](https://badge.fury.io/py/noetl)
 
 
 ## System Architecture
 
-The following diagram illustrates the main components and intent of the NoETL system:
+The following diagram illustrates the main parts and intent of the NoETL system:
 
 ![NoETL System Diagram](docs/images/NoETL.png)
 
@@ -27,25 +27,122 @@ The following diagram illustrates the main components and intent of the NoETL sy
   ```bash
   pip install noetl
   ```
+- Install a specific version:
+  ```bash
+  pip install noetl==1.0.4
+  ```
 
-For development or specific versions:
-- Install in a virtual environment
-  ```bash
-  python -m venv .venv
-  source .venv/bin/activate
-  pip install noetl
-  ```
-- For Windows users (in PowerShell)
-  ```bash
-  python -m venv .venv
-  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-  .venv\Scripts\Activate.ps1
-  pip install noetl
-  ```
-- Install a specific version
-  ```bash
-  pip install noetl==1.0.0
-  ```
+### Local Development Environment
+
+For a complete local development environment with server, workers, postgres, and monitoring stack:
+
+```bash
+# Clone repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Bootstrap: Install all tools and provision complete environment
+# This runs Taskfile commands under the hood (task bootstrap)
+make bootstrap
+
+# What bootstrap does:
+# 1. Installs required tools: Docker, kubectl, helm, kind, task, psql, pyenv, tfenv, uv
+# 2. Creates Kind Kubernetes cluster
+# 3. Builds NoETL Docker image
+# 4. Deploys PostgreSQL database
+# 5. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
+# 6. Deploys NoETL server and workers
+
+# After bootstrap, you can use task commands directly:
+task --list                  # Show all available tasks
+task noetl:k8s:deploy        # Deploy NoETL components
+task postgres:k8s:deploy     # Deploy PostgreSQL
+task monitoring:k8s:deploy   # Deploy monitoring stack
+```
+
+**Services available after bootstrap:**
+- **NoETL Server**: http://localhost:8082 (API & UI)
+- **Postgres**: localhost:54321 (user: demo, password: demo, database: noetl)
+- **Grafana Dashboard**: http://localhost:3000 (admin credentials via `task grafana`)
+- **VictoriaMetrics**: http://localhost:9428/ 
+- **VictoriaLogs**: http://localhost:9428/select/vmui/
+
+**Cleanup:**
+```bash
+# Destroy environment and clean up all resources
+# This runs multiple Taskfile commands under the hood:
+# - task kind:local:cluster-delete (delete Kind cluster)
+# - task docker:local:cleanup-all (clean Docker resources)
+# - task cache:local:clean (clear cache directories)
+# - task noetl:local:clear-all (clear NoETL data/logs)
+make destroy
+```
+
+**Development Workflow:**
+```bash
+# Quick development cycle (build + reload)
+task dev                     # Executes: task docker:local:build → task kind:local:image-load → task noetl:k8s:restart
+
+# Fast rebuild without cache
+task dev-fast
+
+# Deploy all components
+task deploy-all              # Executes: task postgres:k8s:deploy → task monitoring:k8s:deploy → task noetl:k8s:deploy
+
+# Check cluster health
+task test-cluster-health
+```
+
+All `make` commands execute Taskfile automation under the hood. Use `task --list` to see all available tasks.
+
+### Using NoETL as a Submodule
+
+If you're integrating NoETL into another project as a Git submodule and want to use its full development infrastructure (Kind cluster, PostgreSQL, monitoring, task automation), use the automated bootstrap system:
+
+```bash
+# Initialize NoETL submodule (if already added to your project)
+git submodule update --init --recursive
+
+# Run bootstrap to install all tools and provision environment
+# This executes .noetl/ci/bootstrap/bootstrap.sh under the hood
+make -C .noetl bootstrap
+```
+
+The bootstrap automatically:
+- Installs all required tools (Docker, kubectl, helm, kind, **task**, psql, pyenv, tfenv, uv, Python 3.12+)
+- Sets up Python virtual environment with your project + NoETL dependencies
+- Creates project Taskfile.yml that imports all NoETL tasks
+- Deploys Kind cluster with PostgreSQL and monitoring stack
+- Copies template files (.env.local, pyproject.toml, .gitignore, credentials/)
+- Creates project directories (credentials/, playbooks/, data/, logs/, secrets/)
+
+**Important:** The bootstrap installs `task` (Taskfile automation tool), so run it before using any `task` commands.
+
+After bootstrap completes, all NoETL infrastructure tasks are available with `noetl:` prefix:
+
+```bash
+# Use NoETL tasks from your project root
+task noetl:postgres:k8s:deploy      # Deploy PostgreSQL
+task noetl:noetl:k8s:deploy         # Deploy NoETL server and workers
+task noetl:test:k8s:cluster-health  # Check cluster health
+
+# Your project-specific tasks (defined in Taskfile.yml)
+task dev:run                         # Run your application
+task credentials:register            # Register your credentials
+```
+
+**Cleanup:**
+```bash
+# Destroy NoETL environment and clean up all resources
+make -C .noetl destroy
+```
+
+**Documentation:**
+- [Bootstrap README](.noetl/ci/bootstrap/README.md) - Complete guide and reference
+- [Bootstrap Quickstart](.noetl/ci/bootstrap/QUICKSTART.md) - Step-by-step tutorial
+- [Bootstrap Implementation](.noetl/ci/bootstrap/IMPLEMENTATION.md) - Technical deep dive
+
+The bootstrap system creates a clean separation between your project and NoETL infrastructure while providing access to all development tools.
 
 ### Prerequisites
 
@@ -54,66 +151,25 @@ For development or specific versions:
   - Postgres database (mandatory, for the event-sourcing persistent storage and NoETL system metadata)
   - Docker (optional, for containerized development and deployment)
 
-### Kubernetes Development Environment (Recommended)
-
-For a complete development environment with server, workers, and observability:
-
-```bash
-# Clone repository
-git clone https://github.com/noetl/noetl.git
-cd noetl
-
-# Deploy unified platform (requires Docker, Kind, kubectl, Helm)
-make unified-deploy
-
-# Or complete recreation from scratch
-make unified-recreate-all
-
-# Check health status
-make unified-health-check
-
-# Manage port forwarding
-make unified-port-forward-start
-make unified-port-forward-status
-make unified-port-forward-stop
-```
-
-**Services available:**
-- **NoETL Server**: http://localhost:30082 (API & UI)
-- **Grafana Dashboard**: http://localhost:3000 (admin/admin)
-- **VictoriaMetrics**: http://localhost:8428/vmui/
-- **VictoriaLogs**: http://localhost:9428
-
-**Management Commands:**
-```bash
-# Get Grafana credentials
-make unified-grafana-credentials
-
-# View all available commands
-make help
-
-# Clean up when done
-kind delete cluster --name noetl-cluster
-```
-
-See [k8s/README.md](k8s/README.md) for detailed deployment documentation.
-
 ## Quick Reference
 
-### Unified Kubernetes Platform
+### Local Development (Taskfile-based)
 ```bash
-make unified-deploy          # Deploy complete platform
-make unified-health-check    # Check platform health
-make unified-recreate-all    # Rebuild everything from scratch
+make bootstrap               # Provision complete environment (runs task bootstrap)
+make destroy                 # Destroy environment and clean all resources
+task --list                  # Show all available tasks
+task dev                     # Quick development cycle
+task deploy-all              # Deploy all components
 ```
 
 ### Makefile Commands
 ```bash
-make help                    # Show all available commands
-make unified-*              # Unified deployment commands
-make test                   # Run test suite
-make install-dev            # Development setup
+make help                    # Show help
+make bootstrap               # Bootstrap environment (installs tools + deploys everything)
+make destroy                 # Clean up all resources (cluster, Docker, caches)
 ```
+
+**Note:** All `make` commands execute Taskfile tasks under the hood. The Makefile provides convenient shortcuts.
 
 ## Basic Usage
 

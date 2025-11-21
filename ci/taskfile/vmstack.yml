@@ -20,6 +20,7 @@ tasks:
         helm upgrade --install metrics-server metrics-server/metrics-server \
           --values ci/vmstack/mericsserver-values.yaml --version 3.13.0 \
           --namespace metrics-server --create-namespace \
+          --timeout 5m \
           --wait --wait-for-jobs
 
   monitoring:k8s:remove-metrics-server:
@@ -44,6 +45,7 @@ tasks:
         helm upgrade --install vmoperator vm/victoria-metrics-operator \
           --values ci/vmstack/vmoperator-values.yaml --version 0.54.0 \
           --namespace vmoperator --create-namespace \
+          --timeout 5m \
           --wait --wait-for-jobs
 
   monitoring:k8s:remove-vmstack-operator:
@@ -62,6 +64,7 @@ tasks:
         helm upgrade --install vmstack vm/victoria-metrics-k8s-stack \
           --values ci/vmstack/vmstack-values.yaml --version 0.60.1 \
           --namespace vmstack --create-namespace \
+          --timeout 5m \
           --wait --wait-for-jobs
 
   monitoring:k8s:remove-vmstack:
@@ -80,6 +83,7 @@ tasks:
         helm upgrade --install vmlogs vm/victoria-logs-single \
           --values ci/vmstack/vmlogs-values.yaml --version 0.11.11 \
           --namespace vmlogs --create-namespace \
+          --timeout 5m \
           --wait --wait-for-jobs
 
   monitoring:k8s:remove-vmlogs:
@@ -104,6 +108,7 @@ tasks:
         helm upgrade --install vector vector/vector \
           --values ci/vmstack/vector-values.yaml --version 0.46.0 \
           --namespace vector --create-namespace \
+          --timeout 5m \
           --wait --wait-for-jobs
 
   monitoring:k8s:remove-vector:
