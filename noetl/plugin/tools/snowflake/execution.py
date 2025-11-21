@@ -2,11 +2,14 @@
 Snowflake SQL execution module.
 
 Handles database connections and SQL statement execution for Snowflake.
+Supports both password-based and key-pair authentication.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import snowflake.connector
 from snowflake.connector import DictCursor
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 
 from noetl.core.logger import setup_logger
 
@@ -16,7 +19,9 @@ logger = setup_logger(__name__, include_location=True)
 def connect_to_snowflake(
     account: str,
     user: str,
-    password: str,
+    password: Optional[str] = None,
+    private_key: Optional[str] = None,
+    private_key_passphrase: Optional[str] = None,
     warehouse: str = 'COMPUTE_WH',
     database: str = None,
     schema: str = 'PUBLIC',
@@ -26,10 +31,16 @@ def connect_to_snowflake(
     """
     Establish connection to Snowflake.
     
+    Supports two authentication methods:
+    1. Password-based: Provide password parameter
+    2. Key-pair: Provide private_key (and optional private_key_passphrase)
+    
     Args:
         account: Snowflake account identifier (e.g., 'xy12345.us-east-1')
         user: Snowflake username
-        password: Snowflake password
+        password: Snowflake password (for password auth)
+        private_key: RSA private key in PEM format (for key-pair auth)
+        private_key_passphrase: Optional passphrase for encrypted private key
         warehouse: Snowflake warehouse name (default: COMPUTE_WH)
         database: Snowflake database name (optional)
         schema: Snowflake schema name (default: PUBLIC)
@@ -41,14 +52,52 @@ def connect_to_snowflake(
         
     Raises:
         snowflake.connector.Error: If connection fails
+        ValueError: If neither password nor private_key is provided
     """
     connection_params = {
         'account': account,
         'user': user,
-        'password': password,
         'warehouse': warehouse,
-        'authenticator': authenticator,
     }
+    
+    # Determine authentication method
+    if private_key:
+        logger.info(f"Using key-pair authentication for Snowflake account: {account}")
+        
+        # Parse private key
+        try:
+            # Handle passphrase if provided
+            passphrase_bytes = private_key_passphrase.encode() if private_key_passphrase else None
+            
+            # Load the private key
+            private_key_bytes = private_key.encode()
+            p_key = serialization.load_pem_private_key(
+                private_key_bytes,
+                password=passphrase_bytes,
+                backend=default_backend()
+            )
+            
+            # Convert to DER format for Snowflake connector
+            pkb = p_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            
+            connection_params['private_key'] = pkb
+            logger.debug("Private key successfully parsed and converted to DER format")
+            
+        except Exception as e:
+            logger.error(f"Failed to parse private key: {e}")
+            raise ValueError(f"Invalid private key format: {e}")
+    
+    elif password:
+        logger.info(f"Using password authentication for Snowflake account: {account}")
+        connection_params['password'] = password
+        connection_params['authenticator'] = authenticator
+    
+    else:
+        raise ValueError("Either 'password' or 'private_key' must be provided for Snowflake authentication")
     
     if database:
         connection_params['database'] = database

@@ -183,15 +183,52 @@ def _create_connection(db_type: str, auth_data: Dict[str, Any]):
     """Create database connection based on type and auth data."""
     if db_type == 'snowflake':
         import snowflake.connector
-        return snowflake.connector.connect(
-            account=auth_data.get('sf_account') or auth_data.get('account'),
-            user=auth_data.get('sf_user') or auth_data.get('user'),
-            password=auth_data.get('sf_password') or auth_data.get('password'),
-            warehouse=auth_data.get('sf_warehouse') or auth_data.get('warehouse'),
-            database=auth_data.get('sf_database') or auth_data.get('database'),
-            schema=auth_data.get('sf_schema') or auth_data.get('schema', 'PUBLIC'),
-            role=auth_data.get('sf_role') or auth_data.get('role')
-        )
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.backends import default_backend
+        
+        # Extract auth parameters
+        account = auth_data.get('sf_account') or auth_data.get('account')
+        user = auth_data.get('sf_user') or auth_data.get('user')
+        password = auth_data.get('sf_password') or auth_data.get('password')
+        private_key_pem = auth_data.get('sf_private_key') or auth_data.get('private_key')
+        private_key_passphrase = auth_data.get('sf_private_key_passphrase') or auth_data.get('private_key_passphrase')
+        warehouse = auth_data.get('sf_warehouse') or auth_data.get('warehouse')
+        database = auth_data.get('sf_database') or auth_data.get('database')
+        schema = auth_data.get('sf_schema') or auth_data.get('schema', 'PUBLIC')
+        role = auth_data.get('sf_role') or auth_data.get('role')
+        
+        # Build connection params
+        conn_params = {
+            'account': account,
+            'user': user,
+            'warehouse': warehouse,
+            'database': database,
+            'schema': schema,
+        }
+        if role:
+            conn_params['role'] = role
+        
+        # Prefer key-pair authentication over password
+        if private_key_pem:
+            # Parse PEM private key and convert to DER format
+            passphrase_bytes = private_key_passphrase.encode('utf-8') if private_key_passphrase else None
+            private_key = serialization.load_pem_private_key(
+                private_key_pem.encode('utf-8'),
+                password=passphrase_bytes,
+                backend=default_backend()
+            )
+            private_key_der = private_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            conn_params['private_key'] = private_key_der
+        elif password:
+            conn_params['password'] = password
+        else:
+            raise ValueError("Snowflake authentication requires either 'password' or 'private_key'")
+        
+        return snowflake.connector.connect(**conn_params)
     
     elif db_type == 'postgres':
         import psycopg

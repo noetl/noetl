@@ -159,3 +159,16 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - ✅ "Deploy complete monitoring stack"
 
 When working with this codebase, prioritize understanding the event-driven execution model and the playbook → events → worker execution flow. The architecture is designed for distributed execution with careful state management through Postgres system state storage.
+
+## Current Development Focus
+
+**Active Task: Token-Based Authentication Implementation**
+
+See `docs/token_auth_implementation.md` for detailed requirements and implementation plan. Key focus areas:
+
+1. **Snowflake MFA/TOTP Issue**: Tests failing due to MFA requirement - need OAuth token-based auth
+2. **Google OAuth Integration**: Replace gcloud CLI token fetching with Python SDK (`google.auth.transport.requests`, `google.oauth2.id_token`)
+3. **HTTP Plugin Token Injection**: Support dynamic Bearer token resolution in HTTP actions
+4. **Credential Schema Extension**: Add token-based credential types alongside existing password-based auth
+
+When working on authentication, credentials, or plugin improvements, refer to the token auth implementation document for context and requirements.
