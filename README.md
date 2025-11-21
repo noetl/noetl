@@ -11,9 +11,9 @@ The following diagram illustrates the main parts and intent of the NoETL system:
 
 ![NoETL System Diagram](docs/images/NoETL.png)
 
-- Worker (worker.py): background worker pool, no HTTP endpoints
-- Server (server.py): orchestration + API endpoints (credential lookup, catalog, events)
-- CLI (clictl.py): manages worker pools and server lifecycle
+- Server: orchestration + API endpoints (catalog, credentials, events)
+- Worker: background worker pool, no HTTP endpoints
+- Noetl CLI: manages worker pools and server lifecycle
 
 ## Quick Start
 
@@ -144,13 +144,6 @@ make -C .noetl destroy
 
 The bootstrap system creates a clean separation between your project and NoETL infrastructure while providing access to all development tools.
 
-### Prerequisites
-
-- Python 3.11+
-- For full functionality:
-  - Postgres database (mandatory, for the event-sourcing persistent storage and NoETL system metadata)
-  - Docker (optional, for containerized development and deployment)
-
 ## Quick Reference
 
 ### Local Development (Taskfile-based)
@@ -239,120 +232,102 @@ noetl catalog register ./path/to/playbook.yaml
 noetl catalog execute my_playbook --version 1.0.0
 ```
 
-## Credential Handling
-
-NoETL provides three distinct approaches for handling credentials and secrets in workflows:
-
-- **`auth:`** single credential reference resolved by the Server at runtime
-- **`credentials:`** multiple credential bindings with developer-chosen aliases (for steps needing several creds at once)  
-- **`secret:`** resolve values from an external secret manager at render/exec time (used inside templates like `{{ secret.NAME }}`)
-
-### Quick Examples
-
-**Single Credential (Postgres):**
-```yaml
-- step: create_table
-  type: postgres
-  auth:
-    pg:
-      type: postgres
-      key: pg_local
-  command: CREATE TABLE users (id SERIAL, name TEXT);
-```
-
-**Multiple Credentials (DuckDB):**
-```yaml
-- step: aggregate_data
-  type: duckdb
-  credentials:
-    pg_db:      { key: pg_local }
-    gcs_secret: { key: gcs_hmac_local }
-  commands: |
-    ATTACH '{{ credentials.pg_db.connstr }}' AS pg_db (TYPE postgres);
-    CREATE SECRET gcs_secret (
-      TYPE gcs,
-      KEY_ID '{{ credentials.gcs_secret.key_id }}',
-      SECRET '{{ credentials.gcs_secret.secret_key }}'
-    );
-```
-
-**External Secrets (HTTP):**
-```yaml
-- step: api_call
-  type: http
-  method: GET
-  endpoint: "https://api.example.com/data"
-  headers:
-    Authorization: "Bearer {{ secret.api_service_token }}"
-```
-
-### Why This Works
-- **No ambiguity**: each keyword has a distinct role
-- **Separation of concerns**:
-  - `auth` → lookup credential record (single)
-  - `credentials` → bind multiple credentials via aliases
-  - `secret` → resolve external secret value at runtime
-- **Native SQL**: DuckDB aliases and secret names are unchanged and under your control
-
-For detailed documentation, see [Credential Management Guide](docs/concepts/credentials.md).
-
-### Unified Authentication System (v1.0+)
-
-NoETL v1.0+ introduces a unified authentication system that consolidates authentication patterns under a single `auth` attribute:
-
-```yaml
-# New unified syntax
-- step: postgres_task
-  type: postgres
-  auth:
-    type: postgres
-    credential: pg_local
-  
-- step: http_task
-  type: http
-  auth:
-    type: bearer
-    env: API_TOKEN
-    
-- step: duckdb_task
-  type: duckdb
-  auth:
-    db: {type: postgres, credential: pg_main}
-    storage: {type: gcs, credential: gcs_hmac}
-```
-
-**Key Features:**
-- Single `auth` syntax across all plugins
-- Multiple sources: credential store, environment variables, secret managers, inline
-- Plugin-specific validation (single vs multi-auth)
-- Automatic security redaction in logs
-- Full backwards compatibility with deprecation warnings
-
-For complete migration guide, see [Unified Auth Migration Guide](docs/migration/auth_unified.md).
-
 ## Workflow DSL Structure
 
 NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key components of a NoETL playbook include:
 
 - **Metadata**: Version, path, and description of the playbook
-- **Workload**: Input data and parameters for the workflow
+- **Workload**: Input data and parameters for the workflow (Jinja2 templated)
 - **Workflow**: A list of steps that make up the workflow, where each step is defined with `step: step_name`, including:
-  - **Steps**: Individual operations in the workflow
-  - **Tasks**: Actions performed at each step (HTTP requests, database operations, Python code)
-  - **Transitions**: Rules for moving between steps
-  - **Conditions**: Logic for branching the workflow
-- **Workbook**: Reusable task definitions that can be called from workflow steps, including:
-  - **Task Types**: Python, HTTP, DuckDB, PostgreSQL, Secret.
-  - **Parameters**: Input parameters for the tasks
-  - **Code**: Implementation of the tasks
+  - **Step**: Individual operations with unique names
+  - **Tool**: Action types performed at each step (http, postgres, duckdb, python)
+  - **Next**: Conditional routing to subsequent steps with `when` clauses
+  - **Args**: Parameters passed to the next step using templating (Jinja2)
+- **Workbook** (optional): Reusable task definitions that can be called from workflow steps via `tool: workbook` and `name: task_name`
 
 For examples of NoETL playbooks and detailed explanations, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
 
-To run a playbook:
+To execute a playbook:
 
 ```bash
-noetl agent -f path/to/playbooks.yaml
+noetl execute playbook "path/to/playbook" --host localhost --port 8082
 ```
+
+## Credential Handling
+
+NoETL provides a unified authentication system for handling credentials in workflows:
+
+### Simple Credential Reference
+
+For single credential authentication, use a direct string reference:
+
+```yaml
+- step: create_table
+  desc: Create test table
+  tool: postgres
+  auth: "{{ workload.pg_auth }}"
+  command: |
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255)
+    )
+```
+
+### Structured Authentication
+
+For more complex scenarios (multiple credentials, scoped access), use structured auth:
+
+```yaml
+- step: upload_to_gcs
+  desc: Upload parquet file to GCS via DuckDB
+  tool: duckdb
+  auth:
+    pg_db:
+      source: credential
+      tool: postgres
+      key: "{{ workload.pg_auth }}"
+    gcs_secret:
+      source: credential
+      tool: hmac
+      key: gcs_hmac_local
+      scope: gs://{{ workload.gcs_bucket }}
+  commands: |
+    INSTALL httpfs;
+    LOAD httpfs;
+    
+    CREATE TABLE test_data AS
+    SELECT 'test data' AS message;
+    
+    COPY test_data TO 'gs://{{ workload.gcs_bucket }}/data.parquet' (FORMAT PARQUET);
+```
+
+### OAuth Token Authentication
+
+For OAuth-based APIs (Google Cloud, Interactive Brokers, etc.), use the `token()` function:
+
+```yaml
+- step: list_buckets
+  desc: List GCS buckets using OAuth token
+  tool: http
+  method: GET
+  url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
+  headers:
+    Authorization: "Bearer {{ token(workload.google_auth) }}"
+    Content-Type: application/json
+```
+
+### Authentication Patterns
+
+- **Simple string reference**: `auth: "{{ workload.pg_auth }}"` - resolves credential by name
+- **Structured auth**: `auth: { pg_db: {...}, gcs_secret: {...} }` - multiple credentials with specific tools
+- **OAuth tokens**: `{{ token(credential_name) }}` - generates OAuth access tokens at runtime
+- **Source types**: 
+  - `credential` - lookup from NoETL credential store
+  - `env` - resolve from environment variables (future)
+
+For detailed documentation, see [Credential Management Guide](docs/concepts/credentials.md).
+
+
 
 ## CP-SAT Scheduler (experimental)
 
