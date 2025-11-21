@@ -34,19 +34,17 @@ def resolve_token(credential_name: str, audience: Optional[str] = None) -> str:
     try:
         logger.debug(f"Resolving token for credential: {credential_name}")
         
-        # Fetch credential from database
+        # Fetch credential from database (with decrypted data)
         credential = fetch_credential_by_key(credential_name)
         if not credential:
             raise ValueError(f"Credential not found: {credential_name}")
         
         credential_type = credential.get('type', 'generic')
         
-        # Decrypt credential data
-        encrypted_data = credential.get('data_encrypted')
-        if not encrypted_data:
-            raise ValueError(f"Credential {credential_name} has no encrypted data")
-        
-        credential_data = decrypt_json(encrypted_data)
+        # Get credential data (already decrypted by fetch_credential_by_key)
+        credential_data = credential.get('data')
+        if not credential_data:
+            raise ValueError(f"Credential {credential_name} has no data")
         
         # Get appropriate token provider
         provider = get_token_provider(credential_type, credential_data)

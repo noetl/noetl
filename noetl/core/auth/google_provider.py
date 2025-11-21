@@ -16,6 +16,7 @@ import google.auth
 import google.auth.transport.requests
 from google.auth import impersonated_credentials
 from google.oauth2 import service_account
+from google.oauth2 import credentials as oauth2_credentials
 from google.oauth2 import id_token as id_token_module
 
 from noetl.core.logger import setup_logger
@@ -77,6 +78,22 @@ class GoogleTokenProvider(TokenProvider):
                     ])
                 )
                 logger.info("Google service account credentials initialized")
+            
+            # Check if this is authorized_user (OAuth user credentials)
+            elif self.credential_data.get('type') == 'authorized_user':
+                logger.debug("Initializing Google credentials from authorized_user (OAuth)")
+                # Create OAuth2 credentials from user tokens
+                self._credentials = oauth2_credentials.Credentials(
+                    token=None,  # Will be refreshed
+                    refresh_token=self.credential_data.get('refresh_token'),
+                    token_uri='https://oauth2.googleapis.com/token',
+                    client_id=self.credential_data.get('client_id'),
+                    client_secret=self.credential_data.get('client_secret'),
+                    scopes=self.credential_data.get('scopes', [
+                        'https://www.googleapis.com/auth/cloud-platform'
+                    ])
+                )
+                logger.info("Google authorized_user credentials initialized")
             
             # Check if this is service account impersonation
             elif 'impersonate_service_account' in self.credential_data:

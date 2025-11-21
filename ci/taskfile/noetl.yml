@@ -597,6 +597,13 @@ tasks:
           curl -sS -X POST "http://localhost:8083/api/credentials" \
             -H 'Content-Type: application/json' \
             --data-binary @tests/fixtures/credentials/sf_test.json | jq -C . || echo "sf_test credential registration failed"
+          # Optional: Register OAuth credentials if they exist
+          if [ -f tests/fixtures/credentials/google_oauth.json ]; then
+            echo "Found google_oauth.json - registering..."
+            curl -sS -X POST "http://localhost:8083/api/credentials" \
+              -H 'Content-Type: application/json' \
+              --data-binary @tests/fixtures/credentials/google_oauth.json | jq -C . || echo "google_oauth credential registration failed"
+          fi
         else
           curl -sS -X POST "http://localhost:8083/api/credentials" \
             -H 'Content-Type: application/json' \
@@ -607,6 +614,13 @@ tasks:
           curl -sS -X POST "http://localhost:8083/api/credentials" \
             -H 'Content-Type: application/json' \
             --data-binary @tests/fixtures/credentials/sf_test.json || echo "sf_test credential registration failed"
+          # Optional: Register OAuth credentials if they exist
+          if [ -f tests/fixtures/credentials/google_oauth.json ]; then
+            echo "Found google_oauth.json - registering..."
+            curl -sS -X POST "http://localhost:8083/api/credentials" \
+              -H 'Content-Type: application/json' \
+              --data-binary @tests/fixtures/credentials/google_oauth.json || echo "google_oauth credential registration failed"
+          fi
         fi
         echo "✓ Test credentials registered"
         

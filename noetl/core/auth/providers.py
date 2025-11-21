@@ -82,11 +82,15 @@ def get_token_provider(credential_type: str, credential_data: Dict[str, Any]) ->
         ValueError: If credential type is not supported
     """
     from .google_provider import GoogleTokenProvider
+    from .ib_provider import IBTokenProvider
     
     provider_map = {
         'google_service_account': GoogleTokenProvider,
         'google_oauth': GoogleTokenProvider,
         'gcp': GoogleTokenProvider,
+        'ib_oauth': IBTokenProvider,
+        'ibkr_oauth': IBTokenProvider,
+        'interactive_brokers_oauth': IBTokenProvider,
     }
     
     provider_class = provider_map.get(credential_type)

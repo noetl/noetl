@@ -32,6 +32,7 @@ dependencies = [
     "Jinja2>=3.1.6",
     "pycryptodome>=3.21",
     "cryptography>=44.0.0",
+    "PyJWT>=2.8.0",
     "urllib3>=2.3",
     "Authlib>=1.6.5",
     "typer>=0.15.3",
