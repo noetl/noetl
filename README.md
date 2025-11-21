@@ -367,69 +367,19 @@ For more detailed information, please refer to the following documentation:
 
 ### Examples
 
-NoETL includes several example playbooks that demonstrate some capabilities:
+NoETL includes test playbooks in `tests/fixtures/playbooks/` that demonstrate various capabilities:
 
-- **Weather API Integration** - Fetches and processes weather data from external APIs
-- **Database Operations** - Demonstrates Postgres and DuckDB integration
-- **Google Cloud Storage** - A secure cloud storage operations with Google Cloud
-- **Secrets Management** - Illustrates secure handling of credentials and sensitive data
-- **Multi-Playbook Workflows** - Complex workflow orchestration
+- **OAuth Integration** (`oauth/`) - Google Cloud (GCS, Secret Manager), Interactive Brokers OAuth 2.0 with JWT
+- **Database Operations** (`save_storage_test/`, `python_psycopg/`) - Postgres and DuckDB integration patterns
+- **Cloud Storage** (`duckdb_gcs/`) - Google Cloud Storage operations with HMAC and Workload Identity
+- **Retry Logic** (`retry_test/`) - HTTP, Postgres, DuckDB, and Python exception retry patterns
+- **Playbook Composition** (`playbook_composition/`) - Multi-playbook workflows and task reuse
+- **Data Transfer** (`data_transfer/`) - ETL patterns for moving data between systems
+- **Hello World** (`hello_world/`) - Simple getting started examples
 
-For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
+Each directory contains working playbooks with detailed comments. See [tests/fixtures/playbooks/README.md](tests/fixtures/playbooks/README.md) for complete fixture inventory and setup instructions.
 
-### After-refactor example (end-to-end)
-
-```yaml
-- step: ensure_pg_table
-  type: postgres
-  auth:
-    pg:
-      type: postgres
-      key: pg_local
-  command: |
-    CREATE TABLE IF NOT EXISTS public.weather_http_raw (
-      id TEXT PRIMARY KEY,
-      execution_id TEXT,
-      iter_index INTEGER,
-      city TEXT,
-      url TEXT,
-      elapsed DOUBLE PRECISION,
-      payload TEXT,
-      created_at TIMESTAMPTZ DEFAULT now()
-    );
-
-- step: aggregate_with_duckdb
-  type: duckdb
-  credentials:
-    pg_db:      { key: pg_local }
-    gcs_secret: { key: gcs_hmac_local }
-  commands: |
-    INSTALL postgres; LOAD postgres;
-    INSTALL httpfs;  LOAD httpfs;
-
-    ATTACH '{{ credentials.pg_db.connstr }}' AS pg_db (TYPE postgres);
-
-    CREATE OR REPLACE SECRET gcs_secret (
-      TYPE gcs,
-      KEY_ID  '{{ credentials.gcs_secret.key_id }}',
-      SECRET  '{{ credentials.gcs_secret.secret_key }}',
-      SCOPE   'gs://{{ workload.gcs_bucket }}'
-    );
-
-    CREATE OR REPLACE TABLE weather_flat AS
-    SELECT id, city, url, elapsed, payload
-    FROM   pg_db.public.weather_http_raw
-    WHERE  execution_id = '{{ execution_id }}';
-
-    COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
-
-- step: call_api
-  type: http
-  method: GET
-  endpoint: "https://api.example.com/data"
-  headers:
-    Authorization: "Bearer {{ secret.api_service_token }}"
-```
+~~For conceptual guides and API documentation, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).~~
 
 ## Security & Redaction
 
@@ -442,7 +392,7 @@ For detailed examples, see the [Examples Guide](https://github.com/noetl/noetl/b
 For information about contributing to NoETL or building from source:
 
 - [Development Guide](https://github.com/noetl/noetl/blob/master/docs/development.md) - Setting up a development environment
-- [PyPI Publishing Guide](https://github.com/noetl/noetl/blob/master/docs/pypi_manual.md) - Building and publishing to PyPI
+- [PyPI Publishing Guide—](https://github.com/noetl/noetl/blob/master/docs/pypi_manual.md)Building and publishing to PyPI
 
 ## Community & Support
 
