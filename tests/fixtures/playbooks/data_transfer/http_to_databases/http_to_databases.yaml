@@ -101,10 +101,10 @@ workflow:
       def main(fetch_http_data):
           """Transform HTTP API response and prepare for database insertion."""
 
-          # fetch_http_data is the full result object
+          # fetch_http_data is the full result object with structure: {'url': ..., 'data': [...], ...}
           # Extract the actual data array
           if isinstance(fetch_http_data, dict):
-              users = fetch_http_data.get('data', {}).get('data', [])
+              users = fetch_http_data.get('data', [])
           elif isinstance(fetch_http_data, list):
               users = fetch_http_data
           else:

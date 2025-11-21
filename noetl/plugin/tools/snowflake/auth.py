@@ -9,6 +9,7 @@ This module handles:
 """
 
 from typing import Dict, Tuple, Optional
+from pydantic import BaseModel, Field
 from jinja2 import Environment
 from noetl.core.logger import setup_logger
 from noetl.core.dsl.render import render_template
@@ -17,6 +18,53 @@ from noetl.worker.auth_compatibility import transform_credentials_to_auth, valid
 from noetl.worker.secrets import fetch_credential_by_key
 
 logger = setup_logger(__name__, include_location=True)
+
+
+class SnowflakeFieldMapping(BaseModel):
+    """
+    Pydantic model for Snowflake field name mapping configuration.
+    
+    Maps alternative field names (source) to canonical field names (target).
+    Supports both direct field names and prefixed alternatives (e.g., sf_*).
+    """
+    # Disable protected namespace warning for 'schema' field
+    class Config:
+        # Allow field names that shadow parent attributes
+        pass
+    
+    # Connection parameters
+    account: str = Field(default="account", description="Snowflake account identifier")
+    user: str = Field(default="user", description="Username for authentication")
+    password: str = Field(default="password", description="Password for authentication")
+    private_key: str = Field(default="private_key", description="RSA private key for key-pair auth")
+    private_key_passphrase: str = Field(default="private_key_passphrase", description="Private key passphrase")
+    
+    # Session parameters
+    warehouse: str = Field(default="warehouse", description="Snowflake warehouse")
+    database: str = Field(default="database", description="Database name")
+    schema: str = Field(default="schema", description="Schema name")
+    role: str = Field(default="role", description="User role")
+    authenticator: str = Field(default="authenticator", description="Authentication method")
+    
+    # Alternative mappings (sf_ prefix)
+    sf_account: str = Field(default="account", description="Alternative: sf_account -> account")
+    sf_user: str = Field(default="user", description="Alternative: sf_user -> user")
+    sf_password: str = Field(default="password", description="Alternative: sf_password -> password")
+    sf_private_key: str = Field(default="private_key", description="Alternative: sf_private_key -> private_key")
+    sf_private_key_passphrase: str = Field(default="private_key_passphrase", description="Alternative: sf_private_key_passphrase -> private_key_passphrase")
+    sf_warehouse: str = Field(default="warehouse", description="Alternative: sf_warehouse -> warehouse")
+    sf_database: str = Field(default="database", description="Alternative: sf_database -> database")
+    sf_schema: str = Field(default="schema", description="Alternative: sf_schema -> schema")
+    sf_role: str = Field(default="role", description="Alternative: sf_role -> role")
+    sf_authenticator: str = Field(default="authenticator", description="Alternative: sf_authenticator -> authenticator")
+    
+    # Common alternatives
+    username: str = Field(default="user", description="Alternative: username -> user")
+
+
+# Global field mapping configuration
+# The model_dump() method returns all field mappings as a dictionary
+SNOWFLAKE_FIELD_MAPPING = SnowflakeFieldMapping().model_dump()
 
 
 def resolve_snowflake_auth(
@@ -61,31 +109,8 @@ def resolve_snowflake_auth(
                     snowflake_auth = resolved_auth.payload
                     logger.debug(f"SNOWFLAKE: Using snowflake auth with fields: {list(snowflake_auth.keys())}")
                     
-                    # Map auth fields to Snowflake connection parameters
-                    field_mapping = {
-                        # Direct field names
-                        'account': 'account',
-                        'user': 'user',
-                        'password': 'password',
-                        'warehouse': 'warehouse',
-                        'database': 'database',
-                        'schema': 'schema',
-                        'role': 'role',
-                        'authenticator': 'authenticator',
-                        # Alternative field names
-                        'username': 'user',
-                        'sf_account': 'account',
-                        'sf_user': 'user',
-                        'sf_password': 'password',
-                        'sf_warehouse': 'warehouse',
-                        'sf_database': 'database',
-                        'sf_schema': 'schema',
-                        'sf_role': 'role',
-                        'sf_authenticator': 'authenticator',
-                    }
-                    
-                    # Apply resolved auth to task_with
-                    for src_field, target_field in field_mapping.items():
+                    # Apply resolved auth to task_with using Pydantic model_dump()
+                    for src_field, target_field in SNOWFLAKE_FIELD_MAPPING.items():
                         if src_field in snowflake_auth:
                             # Only set if not already explicitly set in task_with
                             if target_field not in task_with:
@@ -109,20 +134,8 @@ def resolve_snowflake_auth(
             try:
                 credential_data = fetch_credential_by_key(credential_key)
                 if credential_data:
-                    # Map credential fields to connection parameters
-                    field_mapping = {
-                        'account': 'account',
-                        'user': 'user',
-                        'username': 'user',
-                        'password': 'password',
-                        'warehouse': 'warehouse',
-                        'database': 'database',
-                        'schema': 'schema',
-                        'role': 'role',
-                        'authenticator': 'authenticator',
-                    }
-                    
-                    for src_field, target_field in field_mapping.items():
+                    # Use Pydantic model_dump() for legacy field mapping
+                    for src_field, target_field in SNOWFLAKE_FIELD_MAPPING.items():
                         if src_field in credential_data:
                             if target_field not in task_with:
                                 task_with[target_field] = credential_data[src_field]
@@ -138,9 +151,11 @@ def validate_and_render_connection_params(
     task_with: Dict,
     jinja_env: Environment,
     context: Dict
-) -> Tuple[str, str, str, str, str, str, str, str]:
+) -> Tuple[str, str, Optional[str], Optional[str], Optional[str], str, str, str, str, str]:
     """
     Validate and render Snowflake connection parameters.
+    
+    Supports both password-based and key-pair authentication.
     
     Args:
         task_with: Task 'with' parameters containing connection details
@@ -148,22 +163,37 @@ def validate_and_render_connection_params(
         context: Execution context for rendering
         
     Returns:
-        Tuple of (account, user, password, warehouse, database, schema, role, authenticator)
+        Tuple of (account, user, password, private_key, private_key_passphrase, 
+                  warehouse, database, schema, role, authenticator)
         
     Raises:
-        ValueError: If required parameters are missing
+        ValueError: If required parameters are missing or invalid auth combination
     """
     # Required parameters
     account = task_with.get('account') or task_with.get('sf_account')
     user = task_with.get('user') or task_with.get('sf_user')
+    
+    # Authentication parameters (password OR private_key)
     password = task_with.get('password') or task_with.get('sf_password')
+    private_key = task_with.get('private_key') or task_with.get('sf_private_key')
+    private_key_passphrase = task_with.get('private_key_passphrase') or task_with.get('sf_private_key_passphrase')
     
     if not account:
         raise ValueError("Snowflake 'account' parameter is required")
     if not user:
         raise ValueError("Snowflake 'user' parameter is required")
-    if not password:
-        raise ValueError("Snowflake 'password' parameter is required")
+    
+    # Validate authentication method
+    if not password and not private_key:
+        raise ValueError(
+            "Snowflake authentication requires either 'password' or 'private_key'. "
+            "For key-pair auth, provide 'private_key' (and optionally 'private_key_passphrase'). "
+            "For password auth, provide 'password'."
+        )
+    
+    if password and private_key:
+        logger.warning("Both 'password' and 'private_key' provided. Using key-pair authentication (private_key).")
+        password = None  # Prefer key-pair auth
     
     # Optional parameters with defaults
     warehouse = task_with.get('warehouse') or task_with.get('sf_warehouse', 'COMPUTE_WH')
@@ -177,8 +207,12 @@ def validate_and_render_connection_params(
         account = render_template(str(account), jinja_env, context)
     if '{{' in str(user) or '{%' in str(user):
         user = render_template(str(user), jinja_env, context)
-    if '{{' in str(password) or '{%' in str(password):
+    if password and ('{{' in str(password) or '{%' in str(password)):
         password = render_template(str(password), jinja_env, context)
+    if private_key and ('{{' in str(private_key) or '{%' in str(private_key)):
+        private_key = render_template(str(private_key), jinja_env, context)
+    if private_key_passphrase and ('{{' in str(private_key_passphrase) or '{%' in str(private_key_passphrase)):
+        private_key_passphrase = render_template(str(private_key_passphrase), jinja_env, context)
     if '{{' in str(warehouse) or '{%' in str(warehouse):
         warehouse = render_template(str(warehouse), jinja_env, context)
     if database and ('{{' in str(database) or '{%' in str(database)):
@@ -190,6 +224,8 @@ def validate_and_render_connection_params(
     if authenticator and ('{{' in str(authenticator) or '{%' in str(authenticator)):
         authenticator = render_template(str(authenticator), jinja_env, context)
     
-    logger.debug(f"Snowflake connection params validated: account={account}, warehouse={warehouse}, database={database}")
+    auth_method = "key-pair" if private_key else "password"
+    logger.debug(f"Snowflake connection params validated: account={account}, warehouse={warehouse}, "
+                f"database={database}, auth_method={auth_method}")
     
-    return account, user, password, warehouse, database, schema, role, authenticator
+    return account, user, password, private_key, private_key_passphrase, warehouse, database, schema, role, authenticator

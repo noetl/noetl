@@ -49,6 +49,15 @@ class QueueWorker:
         self.worker_id = worker_id or self._settings.worker_id or str(uuid.uuid4())
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self._jinja.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
+        
+        # Register token resolution function for OAuth/service account auth
+        try:
+            from noetl.core.auth.token_resolver import register_token_functions
+            register_token_functions(self._jinja, {})
+            logger.debug("Registered token resolution functions in Jinja environment")
+        except Exception as e:
+            logger.warning(f"Failed to register token functions (non-critical): {e}")
+        
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
         if process_pool is not None:
             self._process_pool = process_pool
