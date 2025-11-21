@@ -57,3 +57,5 @@ env/
 # Ignore folder with postgres data
 ci/kind/cache
 
+/tests/fixtures/credentials/sf_rsa_key.p8
+/tests/fixtures/credentials/sf_rsa_key.pub
