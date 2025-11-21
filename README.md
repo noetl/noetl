@@ -239,57 +239,6 @@ noetl catalog register ./path/to/playbook.yaml
 noetl catalog execute my_playbook --version 1.0.0
 ```
 
-### 3. Docker Deployment
-
-For containerized deployment:
-
-```bash
-# Pull the latest image
-docker pull noetl/noetl:latest
-
-# Start the server
-docker run -p 8080:8080 noetl/noetl:latest
-
-# with environment variables
-docker run -p 8080:8080 -e NOETL_RUN_MODE=server noetl/noetl:latest
-
-# Stop the server
-docker run -e NOETL_RUN_MODE=server-stop -e NOETL_FORCE_STOP=true noetl/noetl:latest
-```
-
-### 4. Kubernetes Deployment
-
-For Kubernetes deployment using Kind (Kubernetes in Docker):
-
-```bash
-# Follow the instructions in k8s/README.md
-# Or use the automated deployment script
-./k8s/deploy-kind.sh
-
-# To stop the server in Kubernetes, create a job:
-kubectl apply -f - <<EOF
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: noetl-server-stop
-spec:
-  template:
-    spec:
-      containers:
-      - name: noetl-stop
-        image: noetl:latest
-        env:
-        - name: NOETL_RUN_MODE
-          value: "server-stop"
-        - name: NOETL_FORCE_STOP
-          value: "true"
-      restartPolicy: Never
-  backoffLimit: 1
-EOF
-```
-
-See [Kubernetes Deployment Guide](k8s/README.md) for detailed instructions.
-
 ## Credential Handling
 
 NoETL provides three distinct approaches for handling credentials and secrets in workflows:
