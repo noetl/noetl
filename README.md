@@ -97,15 +97,25 @@ All `make` commands execute Taskfile automation under the hood. Use `task --list
 
 ### Using NoETL as a Submodule
 
-If you're integrating NoETL into another project as a Git submodule and want to use its full development infrastructure (Kind cluster, PostgreSQL, monitoring, task automation), use the automated bootstrap system:
+If you're integrating NoETL into another project as a Git submodule and want to use its full development infrastructure (Kind cluster, PostgreSQL, monitoring, task automation), follow these steps:
 
 ```bash
-# Initialize NoETL submodule (if already added to your project)
+# Add NoETL as a submodule (name it .noetl to keep it hidden)
+git submodule add https://github.com/noetl/noetl.git .noetl
 git submodule update --init --recursive
 
 # Run bootstrap to install all tools and provision environment
 # This executes .noetl/ci/bootstrap/bootstrap.sh under the hood
 make -C .noetl bootstrap
+```
+
+**Note:** The submodule must be named `.noetl` (hidden directory) for the bootstrap to work correctly. If you already added it as `noetl`, rename it:
+
+```bash
+# If you already have it as 'noetl', rename it
+git mv noetl .noetl
+# Update .gitmodules to change the path from 'noetl' to '.noetl'
+# Then run: make -C .noetl bootstrap
 ```
 
 The bootstrap automatically:
