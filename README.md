@@ -109,14 +109,7 @@ git submodule update --init --recursive
 make -C .noetl bootstrap
 ```
 
-**Note:** The submodule must be named `.noetl` (hidden directory) for the bootstrap to work correctly. If you already added it as `noetl`, rename it:
-
-```bash
-# If you already have it as 'noetl', rename it
-git mv noetl .noetl
-# Update .gitmodules to change the path from 'noetl' to '.noetl'
-# Then run: make -C .noetl bootstrap
-```
+**Note:** The submodule must be named `.noetl` (hidden directory) for the bootstrap to work correctly. 
 
 The bootstrap automatically:
 - Installs all required tools (Docker, kubectl, helm, kind, **task**, psql, pyenv, tfenv, uv, Python 3.12+)
