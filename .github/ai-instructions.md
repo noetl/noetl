@@ -89,6 +89,63 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - `credentials: {alias: {key: credential_name}}` - Multiple credential binding
 - `secret: "{{ secret.NAME }}"` - External secret manager resolution
 
+**Script Attribute** (External Code Execution - ADF-aligned):
+All action tools support loading code from external sources (GCS, S3, file, HTTP) similar to Azure Data Factory's linked services:
+```yaml
+script:
+  path: scripts/transform.py          # Script path/key
+  source:
+    type: file|gcs|s3|http           # Source type
+    bucket: bucket-name               # For gcs/s3
+    region: aws-region                # For s3
+    auth: credential-reference        # For gcs/s3
+    endpoint: https://url             # For http
+    method: GET                       # For http (default: GET)
+    headers: {}                       # For http
+    timeout: 30                       # For http (seconds)
+```
+
+**Priority Order**: `script` > `code_b64`/`command_b64` > `code`/`command`
+
+**Supported Plugins**: python, postgres, duckdb, snowflake, http
+
+**Examples**:
+```yaml
+# Python with file source
+- step: transform
+  tool: python
+  script:
+    path: ./scripts/transform.py
+    source:
+      type: file
+  args:
+    data: input
+
+# Postgres with GCS source
+- step: migration
+  tool: postgres
+  auth: pg_prod
+  script:
+    path: migrations/v2.5/upgrade.sql
+    source:
+      type: gcs
+      bucket: sql-scripts
+      auth: gcp_service_account
+
+# Python with HTTP source
+- step: fetch_script
+  tool: python
+  script:
+    path: script.py
+    source:
+      type: http
+      endpoint: https://api.example.com/scripts/transform.py
+      headers:
+        Authorization: "Bearer {{ secret.api_token }}"
+```
+
+See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_design.md` for complete details.
+
 **Plugin Development** (`noetl/plugin/`):
 - Inherit from base classes in `base.py`
 - Use `report_event()` for execution tracking

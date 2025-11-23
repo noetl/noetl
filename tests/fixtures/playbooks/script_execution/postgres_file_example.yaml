@@ -1,0 +1,47 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: postgres_file_script_example
+  path: tests/script_execution/postgres_file
+
+workload:
+  script_path: ./tests/fixtures/playbooks/script_execution/scripts/create_test_table.sql
+  pg_auth: pg_local
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: run_postgres_from_file
+
+  - step: run_postgres_from_file
+    desc: Execute SQL script from local file
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    script:
+      path: "{{ workload.script_path }}"
+      source:
+        type: file
+    next:
+      - step: verify_records
+
+  - step: verify_records
+    desc: Verify table was created and populated
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT * FROM public.script_test ORDER BY id;
+    next:
+      - step: cleanup
+
+  - step: cleanup
+    desc: Clean up test table
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS public.script_test;
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

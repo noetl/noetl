@@ -1,0 +1,52 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: python_file_script_example
+  path: tests/script_execution/python_file
+
+workload:
+  script_path: ./tests/fixtures/playbooks/script_execution/scripts/hello_world.py
+  greeting_name: NoETL
+  greeting_count: 3
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: run_python_from_file
+
+  - step: run_python_from_file
+    desc: Execute Python script from local file
+    tool: python
+    script:
+      path: "{{ workload.script_path }}"
+      source:
+        type: file
+    args:
+      name: "{{ workload.greeting_name }}"
+      count: "{{ workload.greeting_count }}"
+    next:
+      - step: verify_result
+
+  - step: verify_result
+    desc: Verify script execution result
+    tool: python
+    code: |
+      def main(result):
+          assert result['status'] == 'success', f"Expected success, got {result['status']}"
+          assert result['total_greetings'] == 3, f"Expected 3 greetings, got {result['total_greetings']}"
+          assert result['script_source'] == 'file', f"Expected file source, got {result['script_source']}"
+          assert len(result['messages']) == 3, f"Expected 3 messages, got {len(result['messages'])}"
+          
+          return {
+              "status": "verified",
+              "checks_passed": 4,
+              "result": result
+          }
+    args:
+      result: "{{ run_python_from_file.data }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
