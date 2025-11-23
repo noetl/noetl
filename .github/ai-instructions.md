@@ -50,8 +50,8 @@ workbook:                 # Named reusable tasks (optional)
     code: |               # Type-specific configuration
       def main(input_data):
         return result
-    save:                 # Optional: save task result to storage
-      storage: postgres
+    sink:                 # Optional: save task result to storage
+      tool: postgres
       table: table_name
 workflow:                 # Execution flow (required, must have 'start' step)
   - step: start           # Required entry point

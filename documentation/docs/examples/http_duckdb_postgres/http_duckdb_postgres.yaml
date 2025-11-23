@@ -72,8 +72,8 @@ workflow:
           - data.url
           - data.elapsed
           - data.payload
-      save:
-        storage: postgres
+  sink:
+        tool: postgres
         args:
           id: "{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}"
           execution_id: "{{ execution_id }}"

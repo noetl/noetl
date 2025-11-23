@@ -53,7 +53,7 @@ def handle_python_storage(
 def main(data):
     import json
     result = json.dumps(data, indent=2, default=str)
-    print(f"PYTHON_SAVE: {result}")
+    print(f"PYTHON_SINK: {result}")
     return {"status": "success", "data": {"saved_data": data, "serialized": result}}
 """
 
@@ -86,7 +86,7 @@ def main(data):
     elif credential_ref and "auth" not in py_with:
         py_with["auth"] = credential_ref
 
-    logger.debug("SAVE: Calling python plugin for storage")
+    logger.debug("SINK: Calling python plugin for storage")
 
     # Delegate to python plugin
     try:
@@ -96,7 +96,7 @@ def main(data):
             py_task, context, jinja_env, py_with, log_event_callback
         )
     except Exception as e:
-        logger.error(f"SAVE: Failed delegating to python plugin: {e}")
+        logger.error(f"SINK: Failed delegating to python plugin: {e}")
         py_result = {"status": "error", "error": str(e)}
 
     # Normalize into save envelope
@@ -105,7 +105,7 @@ def main(data):
             "status": "success",
             "data": {"saved": "python", "task_result": py_result.get("data")},
             "meta": {
-                "storage_kind": "python",
+                "tool_kind": "python",
                 "credential_ref": credential_ref,
             },
         }
@@ -113,7 +113,7 @@ def main(data):
         return {
             "status": "error",
             "data": None,
-            "meta": {"storage_kind": "python"},
+            "meta": {"tool_kind": "python"},
             "error": (
                 (py_result or {}).get("error")
                 if isinstance(py_result, dict)

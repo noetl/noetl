@@ -45,14 +45,14 @@ Usage patterns (fragments)
       type: http
       endpoint: "{{ workload.base_url }}/forecast"
       data: { latitude: "{{ city.lat }}", longitude: "{{ city.lon }}", hourly: temperature_2m, forecast_days: 1 }
-      save:
+      sink:
         data:
           id: "{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}"
           execution_id: "{{ execution_id }}"
           iter_index: "{{ http_loop.result_index }}"
           city: "{{ city.name }}"
           payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
-        storage: postgres
+        tool: postgres
         auth: pg_local
         table: public.weather_http_raw
         mode: upsert
@@ -70,8 +70,8 @@ Usage patterns (fragments)
         type: http
         url: "{{ it.url }}"
         method: GET
-        save: { name: content, data: "{{ this.data }}" }
-    save:
+        sink: { name: content, data: "{{ this.data }}" }
+    sink:
       - name: http_loop
         data: "{{ this.result }}"
   ```

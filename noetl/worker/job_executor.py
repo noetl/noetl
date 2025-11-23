@@ -262,7 +262,7 @@ class JobExecutor:
                 prepared.use_process,
             )
             action_duration = time.time() - action_start_time
-            result = await self._run_inline_save_if_needed(prepared, exec_ctx, result)
+            result = await self._run_inline_sink_if_needed(prepared, exec_ctx, result)
             if self._result_indicates_error(result):
                 err_msg = self._extract_error_message(result)
                 tb_text = self._extract_traceback(result)
@@ -335,14 +335,14 @@ class JobExecutor:
         )
         return exec_ctx
 
-    async def _run_inline_save_if_needed(
+    async def _run_inline_sink_if_needed(
         self,
         prepared: PreparedJob,
         exec_ctx: Dict[str, Any],
         result: Dict[str, Any],
     ) -> Dict[str, Any]:
-        inline_save = prepared.action_cfg.save
-        if not inline_save:
+        inline_sink = prepared.action_cfg.sink
+        if not inline_sink:
             return result
 
         try:
@@ -358,17 +358,17 @@ class JobExecutor:
         except Exception:
             exec_ctx_with_result = exec_ctx
 
-        from noetl.plugin.shared.storage import execute_save_task as _do_save
+        from noetl.plugin.shared.storage import execute_sink_task as _do_sink
 
-        save_payload = {"save": inline_save}
+        sink_payload = {"sink": inline_sink}
         loop = None
         loop = asyncio.get_running_loop()
-        save_out = await loop.run_in_executor(
-            None, _do_save, save_payload, exec_ctx_with_result, self._jinja
+        sink_out = await loop.run_in_executor(
+            None, _do_sink, sink_payload, exec_ctx_with_result, self._jinja
         )
         if isinstance(result, dict):
             result.setdefault("meta", {})
-            result["meta"]["save"] = save_out
+            result["meta"]["sink"] = sink_out
         return result
 
     def _result_indicates_error(self, result: Dict[str, Any]) -> bool:
@@ -379,9 +379,9 @@ class JobExecutor:
             return True
         meta = result.get("meta")
         if isinstance(meta, dict):
-            save_result = meta.get("save")
-            if isinstance(save_result, dict):
-                return save_result.get("status") == "error"
+            sink_result = meta.get("sink")
+            if isinstance(sink_result, dict):
+                return sink_result.get("status") == "error"
         return False
 
     def _extract_error_message(self, result: Dict[str, Any]) -> str:
@@ -390,9 +390,9 @@ class JobExecutor:
                 return str(result["error"])
             meta = result.get("meta")
             if isinstance(meta, dict):
-                save_result = meta.get("save")
-                if isinstance(save_result, dict):
-                    return save_result.get("error", "Unknown save error")
+                sink_result = meta.get("sink")
+                if isinstance(sink_result, dict):
+                    return sink_result.get("error", "Unknown sink error")
         return "Unknown error"
 
     def _extract_traceback(self, result: Dict[str, Any]) -> str:

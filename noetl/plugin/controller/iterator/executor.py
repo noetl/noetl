@@ -58,8 +58,8 @@ def execute_loop_task(
       - chunk: int — batch size; body executes per batch
       - order_by: expression used to sort items before processing
       - task: nested task configuration (required)
-        - save: optional per-item save block
-      - save: optional step-level save for aggregated results
+        - sink: optional per-item sink block
+      - sink: optional step-level sink for aggregated results
     
     Args:
         task_config: Task configuration
@@ -247,32 +247,32 @@ def execute_loop_task(
             )
         
         # Step 8: Optional step-level aggregated save (single transaction)
-        step_save = task_config.get('save')
-        if step_save:
+        step_sink = task_config.get('sink')
+        if step_sink:
             try:
-                from noetl.plugin.shared.storage import execute_save_task as _do_save
-                save_ctx = dict(context) if isinstance(context, dict) else {}
+                from noetl.plugin.shared.storage import execute_sink_task as _do_sink
+                sink_ctx = dict(context) if isinstance(context, dict) else {}
                 try:
-                    save_ctx['results'] = final
-                    save_ctx['items'] = final
-                    save_ctx['result'] = final
-                    save_ctx['errors'] = errors
-                    save_ctx.setdefault('count', len(final))
+                    sink_ctx['results'] = final
+                    sink_ctx['items'] = final
+                    sink_ctx['result'] = final
+                    sink_ctx['errors'] = errors
+                    sink_ctx.setdefault('count', len(final))
                 except Exception:
                     pass
                 
-                save_result = _do_save({'save': step_save}, save_ctx, jinja_env, task_with)
+                sink_result = _do_sink({'sink': step_sink}, sink_ctx, jinja_env, task_with)
                 
-                # Check save result and fail entire iterator if save failed
-                if isinstance(save_result, dict) and save_result.get('status') == 'error':
-                    error_msg = save_result.get('error', 'Step-level save operation failed')
-                    logger.error(f"LOOP: step-level aggregated save failed: {error_msg}")
-                    raise Exception(f"Step-level save failed: {error_msg}")
+                # Check sink result and fail entire iterator if sink failed
+                if isinstance(sink_result, dict) and sink_result.get('status') == 'error':
+                    error_msg = sink_result.get('error', 'Step-level sink operation failed')
+                    logger.error(f"LOOP: step-level aggregated sink failed: {error_msg}")
+                    raise Exception(f"Step-level sink failed: {error_msg}")
                     
-            except Exception as e_save:
-                logger.error("LOOP: step-level aggregated save failed", exc_info=True)
+            except Exception as e_sink:
+                logger.error("LOOP: step-level aggregated sink failed", exc_info=True)
                 # Re-raise to fail the entire iterator task
-                raise e_save
+                raise e_sink
         
         # Return canonical result
         logger.debug(

@@ -34,8 +34,8 @@ workflow:
     tool: http
     method: GET
     url: "{{ workload.api_url }}"
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       auth: "{{ workload.pg_auth }}"
       statement: |
         {% for item in result.data %}

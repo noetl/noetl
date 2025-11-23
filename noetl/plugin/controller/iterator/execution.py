@@ -252,7 +252,7 @@ def execute_nested_task(
     return result
 
 
-def execute_per_item_save(
+def execute_per_item_sink(
     nested_task: Dict[str, Any],
     nested_result: Dict[str, Any],
     iter_ctx: Dict[str, Any],
@@ -282,27 +282,27 @@ def execute_per_item_save(
     Raises:
         Exception: If save fails (propagated to caller)
     """
-    nested_save = nested_task.get("save")
+    nested_sink = nested_task.get('sink')
 
     print(
-        f"!!! ITERATOR.SAVE: execute_per_item_save called for iter_index={iter_index}"
+        f"!!! ITERATOR.SINK: execute_per_item_sink called for iter_index={iter_index}"
     )
     print(
-        f"!!! ITERATOR.SAVE: nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
+        f"!!! ITERATOR.SINK: nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
-    print(f"!!! ITERATOR.SAVE: nested_save={nested_save}")
+    print(f"!!! ITERATOR.SINK: nested_sink={nested_sink}")
 
     logger.critical(
-        f"ITERATOR.SAVE: execute_per_item_save called for iter_index={iter_index}"
+        f"ITERATOR.SINK: execute_per_item_sink called for iter_index={iter_index}"
     )
-    logger.critical(f"ITERATOR.SAVE: nested_save={nested_save}")
+    logger.critical(f"ITERATOR.SINK: nested_sink={nested_sink}")
 
-    if not nested_save:
-        logger.critical("ITERATOR.SAVE: No save configuration found - SKIPPING")
+    if not nested_sink:
+        logger.critical("ITERATOR.SINK: No save configuration found - SKIPPING")
         return {"status": "skipped", "data": None, "meta": {}}
 
     logger.critical(
-        f"ITERATOR.SAVE: Executing per-item save for iteration {iter_index}"
+        f"ITERATOR.SINK: Executing per-item save for iteration {iter_index}"
     )
 
     # Emit explicit save_started event
@@ -316,7 +316,7 @@ def execute_per_item_save(
             0,
             iter_ctx,
             None,
-            {"iteration_index": iter_index, "save_config": nested_save},
+            {"iteration_index": iter_index, "sink_config": nested_sink},
             None,
         )
 
@@ -331,26 +331,26 @@ def execute_per_item_save(
 
     # Delegate to storage save executor
     try:
-        from noetl.plugin.shared.storage import execute_save_task as _do_save
+        from noetl.plugin.shared.storage import execute_sink_task as _do_sink
 
-        logger.critical(f"ITERATOR.SAVE: Imported execute_save_task, calling now...")
-        logger.critical(f"ITERATOR.SAVE: Context keys available: {list(ctx_for_save.keys())}")
+        logger.critical(f"ITERATOR.SINK: Imported execute_sink_task, calling now...")
+        logger.critical(f"ITERATOR.SINK: Context keys available: {list(ctx_for_save.keys())}")
         # Check if step name is in context
         step_nm = nested_with.get("name") or nested_with.get("task") or "iterator"
         if step_nm in ctx_for_save:
-            logger.critical(f"ITERATOR.SAVE: {step_nm} = {ctx_for_save[step_nm]}")
-        save_result = _do_save(
-            {"save": nested_save}, ctx_for_save, jinja_env, nested_with
+            logger.critical(f"ITERATOR.SINK: {step_nm} = {ctx_for_save[step_nm]}")
+        sink_result = _do_sink(
+            {'sink': nested_sink}, ctx_for_save, jinja_env, nested_with
         )
-        logger.critical(f"ITERATOR.SAVE: execute_save_task returned: {save_result}")
+        logger.critical(f"ITERATOR.SINK: execute_sink_task returned: {sink_result}")
 
         logger.info(
-            f"ITERATOR: Save completed with status: {save_result.get('status') if isinstance(save_result, dict) else 'unknown'}"
+            f"ITERATOR: Save completed with status: {sink_result.get('status') if isinstance(sink_result, dict) else 'unknown'}"
         )
 
         # Check save result and raise exception if failed
-        if isinstance(save_result, dict) and save_result.get("status") == "error":
-            error_msg = save_result.get("error", "Save operation failed")
+        if isinstance(sink_result, dict) and sink_result.get("status") == "error":
+            error_msg = sink_result.get("error", "Save operation failed")
             logger.error(
                 f"ITERATOR: per-item save failed for iteration {iter_index}: {error_msg}"
             )
@@ -382,12 +382,12 @@ def execute_per_item_save(
                 "success",
                 0,
                 iter_ctx,
-                save_result,
+                sink_result,
                 {"iteration_index": iter_index},
                 None,
             )
 
-        return save_result
+        return sink_result
 
     except Exception as e:
         # Emit explicit save_error event for unexpected failures
@@ -447,16 +447,16 @@ def run_one_iteration(
     print(
         f"!!! nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
-    print(f"!!! has_save={bool(nested_task.get('save'))}\n")
+    print(f"!!! has_sink={bool(nested_task.get('sink'))}\n")
 
     logger.critical(f"ITERATOR.EXECUTION: run_one_iteration iter_index={iter_index}")
     logger.critical(
         f"ITERATOR.EXECUTION: nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
     logger.critical(
-        f"ITERATOR.EXECUTION: nested_task.get('save')={nested_task.get('save')}"
+        f"ITERATOR.EXECUTION: nested_task.get('sink')={nested_task.get('sink')}"
     )
-    logger.critical(f"ITERATOR.EXECUTION: has_save={bool(nested_task.get('save'))}")
+    logger.critical(f"ITERATOR.EXECUTION: has_sink={bool(nested_task.get('sink'))}")
 
     # Emit explicit iteration_started event
     if log_event_callback:
@@ -469,7 +469,7 @@ def run_one_iteration(
             0,
             context,
             None,
-            {"iteration_index": iter_index, "has_save": bool(nested_task.get("save"))},
+            {"iteration_index": iter_index, "has_sink": bool(nested_task.get('sink'))},
             None,
         )
 
@@ -540,18 +540,18 @@ def run_one_iteration(
     print(
         f"!!! nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
-    print(f"!!! has_save={bool(nested_task.get('save'))}")
-    print(f"!!! save_config={nested_task.get('save')}\n")
+    print(f"!!! has_sink={bool(nested_task.get('sink'))}")
+    print(f"!!! sink_config={nested_task.get('sink')}\n")
 
-    logger.critical(f"ITERATOR.EXECUTION: About to call execute_per_item_save")
+    logger.critical(f"ITERATOR.EXECUTION: About to call execute_per_item_sink")
     logger.critical(
         f"ITERATOR.EXECUTION: nested_task keys before save: {list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
     logger.critical(
-        f"ITERATOR.EXECUTION: nested_task['save'] = {nested_task.get('save')}"
+        f"ITERATOR.EXECUTION: nested_task['sink'] = {nested_task.get('sink')}"
     )
     try:
-        save_result = execute_per_item_save(
+        sink_result = execute_per_item_sink(
             nested_task,
             nested_result,
             iter_ctx,
@@ -606,8 +606,8 @@ def run_one_iteration(
     }
 
     # Add save info to result metadata if save was performed
-    if isinstance(save_result, dict) and save_result.get("status") == "success":
-        result_dict["save_meta"] = save_result.get("meta", {})
+    if isinstance(sink_result, dict) and sink_result.get("status") == "success":
+        result_dict["save_meta"] = sink_result.get("meta", {})
 
     # Emit explicit iteration_completed event
     if log_event_callback:
@@ -620,7 +620,7 @@ def run_one_iteration(
             0,
             context,
             result_dict,
-            {"iteration_index": iter_index, "has_save": bool(nested_task.get("save"))},
+            {"iteration_index": iter_index, "has_sink": bool(nested_task.get('sink'))},
             None,
         )
 

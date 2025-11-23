@@ -83,7 +83,7 @@ def handle_http_storage(
     elif credential_ref and "auth" not in http_with:
         http_with["auth"] = credential_ref
 
-    logger.debug(f"SAVE: Calling http plugin for storage to {endpoint}")
+    logger.debug(f"SINK: Calling http plugin for storage to {endpoint}")
 
     # Delegate to http plugin
     try:
@@ -93,7 +93,7 @@ def handle_http_storage(
             http_task, context, jinja_env, http_with, log_event_callback
         )
     except Exception as e:
-        logger.error(f"SAVE: Failed delegating to http plugin: {e}")
+        logger.error(f"SINK: Failed delegating to http plugin: {e}")
         http_result = {"status": "error", "error": str(e)}
 
     # Normalize into save envelope
@@ -106,7 +106,7 @@ def handle_http_storage(
                 "task_result": http_result.get("data"),
             },
             "meta": {
-                "storage_kind": "http",
+                "tool_kind": "http",
                 "credential_ref": credential_ref,
             },
         }
@@ -114,7 +114,7 @@ def handle_http_storage(
         return {
             "status": "error",
             "data": None,
-            "meta": {"storage_kind": "http"},
+            "meta": {"tool_kind": "http"},
             "error": (
                 (http_result or {}).get("error")
                 if isinstance(http_result, dict)

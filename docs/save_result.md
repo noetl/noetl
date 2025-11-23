@@ -2,7 +2,7 @@ Goal: provide a clear, robust way to reference step/playbook results and persist
 
 This spec defines:
 - Canonical result model and references
-- The `save:` block for steps and playbooks
+- The `sink:` block for steps and playbooks
 - Credential references
 - Loop and nested playbook behavior
 
@@ -30,14 +30,14 @@ The engine expects this envelope everywhere. Always reference payloads via `{{ s
 
 - A child playbook should return its final value explicitly at the end (e.g., via `execution_complete` or a final `save`/`return` block). Parent context sees it as `{{ child_step_name }}` or `{{ child_step_name.data }}` depending on the return envelope.
 
-## 2) Persisting Results: `save:` Block
+## 2) Persisting Results: `sink:` Block
 
-Attach `save:` to any step (or the playbook end) to persist values. If omitted, results are only stored in `event_log`.
+Attach `sink:` to any step (or the playbook end) to persist values. If omitted, results are only stored in `event_log`.
 
 Schema (declarative mode):
 
 ```
-save:
+sink:
   when: <expr>                 # optional condition; default true
   on: success|error|always     # default success
   storage: event_log|postgres|duckdb|bigquery|snowflake|s3|gcs|file|kv|vector|graph  # flattened enum
@@ -54,10 +54,10 @@ save:
 Schema (statement mode):
 
 ```
-save:
+sink:
   when: <expr>
   on: success|error|always
-  storage: postgres|duckdb|bigquery|snowflake|graph    # flattened enum
+  tool: postgres|duckdb|bigquery|snowflake|graph    # flattened enum
   auth: <name>               # alias: credentialRef (deprecated)
   spec:
     dialect: sql|cypher|gremlin|sparql   # graph/triple stores
@@ -82,8 +82,8 @@ Guidelines:
 ```
 - step: end
   desc: End simple test
-  save:
-    storage: postgres
+  sink:
+    tool: postgres
     auth: pg_main              # points to a credential record by alias
     table: hello_world
     mode: upsert
@@ -110,7 +110,7 @@ type: postgres
 auth: pg_main
 
 # Save block
-save:
+sink:
   storage: s3
   auth: s3_backup
 ```
@@ -130,8 +130,8 @@ Loop steps emit one result per item and may produce an aggregated result for the
 - Aggregated result: `{{ loop_step.result }}` (array or object), and often `{{ loop_step.data }}` when using the envelope.
 
 Persisting loop results:
-- Use `save:` on the loop step to persist the aggregated result.
-- For per-item saves, attach `save:` to the inner step(s) executed per iteration (they will receive the iterator context).
+- Use `sink:` on the loop step to persist the aggregated result.
+- For per-item saves, attach `sink:` to the inner step(s) executed per iteration (they will receive the iterator context).
 
 Batching options for high‑volume saves:
 - `batch: true` and `chunk_size: 1000` (when supported by the engine/driver)
@@ -146,7 +146,7 @@ When a step calls another playbook (`type: playbook` or a workbook action that i
 {{ child_step_name.data }}      # child result data payload
 ```
 
-You can `save:` at the parent end step to persist the composed/aggregated output.
+You can `sink:` at the parent end step to persist the composed/aggregated output.
 
 ## 6) Example
 
@@ -182,8 +182,8 @@ workflow:
 
   - step: end
     desc: End simple test
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       credentialRef: pg_main
       table: hello_world
       mode: upsert
@@ -198,7 +198,7 @@ workflow:
 1) Key‑Value store e.g., Redis/DynamoDB:
 
 ```
-save:
+sink:
   storage: kv
   auth: redis_main
   spec: { driver: redis, namespace: noetl }
@@ -212,7 +212,7 @@ save:
 2) Vector store (pgvector/Pinecone/Milvus/Weaviate):
 
 ```
-save:
+sink:
   storage: vector
   auth: pg_main
   spec: { driver: pgvector, table: embeddings, id_column: id, vector_column: embedding, meta_column: meta }
@@ -228,7 +228,7 @@ save:
 3) Graph DB (Neo4j/Cypher):
 
 ```
-save:
+sink:
   storage: graph
   auth: neo4j_main
   spec: { dialect: cypher }
@@ -246,8 +246,8 @@ save:
 4) Raw SQL upsert with params:
 
 ```
-save:
-  storage: postgres
+sink:
+  tool: postgres
   auth: pg_main
   statement: |
     INSERT INTO hello_world(execution_id, payload)
@@ -261,7 +261,7 @@ save:
 ## 7) Notes
 
 - Results always land in `noetl.event_log` for lineage and diagnostics.
-- `save:` is an additive persistence directive (to database/object/file) evaluated after the step completes.
-- In loops, the same `save:` schema applies; the engine will render per-item or aggregated contexts accordingly.
+- `sink:` is an additive persistence directive (to database/object/file) evaluated after the step completes.
+- In loops, the same `sink:` schema applies; the engine will render per-item or aggregated contexts accordingly.
 - Credential resolution should happen server‑side; workers receive only what is needed for execution.
 - For statement mode, the engine should default to parameterized execution (`params:`) and support dialect routing (SQL/Cypher/Gremlin/Sparql) according to `storage` value and `spec`.

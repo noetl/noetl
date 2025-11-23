@@ -28,7 +28,7 @@ workflow:
                   "test_id": "evt_001"
               }
           }
-    save:
+  sink:
       storage: event_log
       args: "{{ result.data }}"
     next:
@@ -36,7 +36,7 @@ workflow:
 
   # Test 2: Postgres flat structure
   - step: postgres_flat_test
-    desc: "Test postgres save with flat structure"
+    desc: "Test postgres sink with flat structure"
     tool: python
     code: |
       def main(**kwargs):
@@ -48,8 +48,8 @@ workflow:
                   "source_step": "postgres_flat_test"
               }
           }
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       auth: "{{ workload.pg_auth }}"
       table: simple_test_flat
       args:
@@ -72,7 +72,7 @@ workflow:
                   "nested_id": 200
               }
           }
-    save:
+  sink:
       storage:
         tool: postgres
         table: simple_test_nested

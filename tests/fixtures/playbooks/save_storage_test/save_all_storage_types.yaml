@@ -156,7 +156,7 @@ workflow:
     args:
       execution_id: "{{ execution_id }}"
       workload: "{{ workload }}"
-    save:
+  sink:
       storage: event_log
       args: "{{ result.data }}"
     next:
@@ -177,8 +177,8 @@ workflow:
               }
           }
     args: "{{ start }}"
-    save:
-      storage: postgres
+  sink:
+      tool: postgres
       args:
         test_id: "{{ execution_id }}"
         test_name: "Test Employee Flat"
@@ -206,7 +206,7 @@ workflow:
               }
           }
     args: "{{ test_flat_postgres_save }}"
-    save:
+  sink:
       storage:
         tool: postgres
         args:
@@ -237,7 +237,7 @@ workflow:
           }
     args:
       input_data: "{{ test_nested_postgres_save }}"
-    save:
+  sink:
       storage:
         tool: postgres
         statement: |
@@ -270,7 +270,7 @@ workflow:
           }
     args:
       input_data: "{{ test_postgres_statement_save }}"
-    save:
+  sink:
       storage:
         tool: python
         code: |
@@ -313,7 +313,7 @@ workflow:
               }
           }
     args: "{{ test_python_save }}"
-    save:
+  sink:
       storage:
         tool: duckdb
         commands: |
@@ -354,7 +354,7 @@ workflow:
               }
           }
     args: "{{ test_duckdb_save }}"
-    save:
+  sink:
       storage:
         tool: http
         endpoint: "https://httpbin.org/post"
@@ -412,7 +412,7 @@ workflow:
           return {"status": "success", "data": summary}
     args:
       input_data: "{{ test_http_save }}"
-    save:
+  sink:
       storage: event_log
       args: "{{ result.data }}"
     next:

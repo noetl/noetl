@@ -123,7 +123,7 @@ def execute_task(
     from noetl.plugin.controller.playbook import execute_playbook_task
     from noetl.plugin.controller.workbook import execute_workbook_task
     from noetl.plugin.shared.secrets import execute_secrets_task
-    from noetl.plugin.shared.storage import execute_save_task
+    from noetl.plugin.shared.storage import execute_sink_task
     from noetl.plugin.tools.duckdb import execute_duckdb_task
     from noetl.plugin.tools.http import execute_http_task
     from noetl.plugin.tools.postgres import execute_postgres_task
@@ -191,8 +191,8 @@ def execute_task(
             args,
             log_event_callback,
         )
-    elif task_type == "save":
-        return execute_save_task(
+    elif task_type == 'sink':
+        return execute_sink_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
         )
     elif task_type == "iterator":

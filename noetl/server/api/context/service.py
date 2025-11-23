@@ -324,11 +324,11 @@ def render_template_object(
                 task_tpl_copy = (
                     dict(task_tpl) if isinstance(task_tpl, dict) else task_tpl
                 )
-                save_block = None
+                sink_block = None
                 if isinstance(task_tpl_copy, dict) and "save" in task_tpl_copy:
-                    save_block = task_tpl_copy.pop("save")
+                    sink_block = task_tpl_copy.pop("save")
                     logger.debug(
-                        f"RENDER_TASK_DEBUG: Extracted save block: {save_block}"
+                        f"RENDER_TASK_DEBUG: Extracted save block: {sink_block}"
                     )
                     logger.debug(
                         f"RENDER_TASK_DEBUG: Remaining keys in task_tpl_copy: {list(task_tpl_copy.keys())}"
@@ -340,8 +340,8 @@ def render_template_object(
                 )
 
                 # Re-attach the save block after rendering (unrendered for worker-side processing)
-                if save_block is not None and isinstance(task_rendered, dict):
-                    task_rendered["save"] = save_block
+                if sink_block is not None and isinstance(task_rendered, dict):
+                    task_rendered['sink'] = sink_block
                     logger.debug(
                         "RENDER_TASK_DEBUG: Re-attached save block to rendered task"
                     )
