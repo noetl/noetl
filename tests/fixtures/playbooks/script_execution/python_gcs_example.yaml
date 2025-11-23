@@ -1,0 +1,55 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: python_gcs_script_example
+  path: tests/script_execution/python_gcs
+
+workload:
+  gcs_bucket: noetl-demo-scripts  # Replace with your GCS bucket
+  gcs_script_path: scripts/hello_world.py
+  gcp_credential: google_oauth  # Credential registered in NoETL
+  greeting_name: GCS-Loaded
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: run_python_from_gcs
+
+  - step: run_python_from_gcs
+    desc: Execute Python script from Google Cloud Storage
+    tool: python
+    script:
+      path: "{{ workload.gcs_script_path }}"
+      source:
+        type: gcs
+        bucket: "{{ workload.gcs_bucket }}"
+        auth: "{{ workload.gcp_credential }}"
+    args:
+      name: "{{ workload.greeting_name }}"
+      count: 2
+    next:
+      - step: verify_result
+
+  - step: verify_result
+    desc: Verify GCS-loaded script executed correctly
+    tool: python
+    code: |
+      def main(result):
+          assert result['status'] == 'success', f"Expected success, got {result['status']}"
+          assert result['total_greetings'] == 2, f"Expected 2 greetings, got {result['total_greetings']}"
+          assert len(result['messages']) == 2, f"Expected 2 messages, got {len(result['messages'])}"
+          
+          return {
+              "status": "verified",
+              "source_type": "gcs",
+              "checks_passed": 3,
+              "result": result
+          }
+    args:
+      result: "{{ run_python_from_gcs.data }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

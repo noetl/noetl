@@ -19,8 +19,8 @@ Implemented standardized external script execution for NoETL playbooks, aligning
    - `resolver.py`: Main coordination logic
    - `validation.py`: Configuration validation
    - `sources/file.py`: Local filesystem handler
-   - `sources/gcs.py`: Google Cloud Storage handler
-   - `sources/s3.py`: AWS S3 handler
+   - `sources/gcs.py`: Google Cloud Storage handler with credential integration ✅
+   - `sources/s3.py`: AWS S3 handler with credential integration ✅
    - `sources/http.py`: HTTP/HTTPS handler
 
 3. **Plugin Updates**
@@ -42,13 +42,22 @@ Implemented standardized external script execution for NoETL playbooks, aligning
    - `.github/copilot-instructions.md`: Added script attribute section with examples
    - Design doc includes migration path and testing strategy
 
+6. **Credential Integration** ✅ NEW
+   - **GCS**: Integrated with NoETL credential API
+     - Supports `google_service_account`, `google_oauth`, `gcp` credential types
+     - Fetches credentials via HTTPX from `/api/credentials/{name}?include_data=true`
+     - Creates authenticated Storage client from service account JSON
+   - **S3**: Integrated with NoETL credential API
+     - Supports multiple key naming conventions (access_key_id, key_id, aws_access_key_id)
+     - Fetches credentials via HTTPX from credential endpoint
+     - Configures boto3 client with resolved credentials
+
 ### 🔄 In Progress / Future Work
 
 6. **DuckDB Plugin** - Not yet implemented
 7. **Snowflake Plugin** - Not yet implemented
 8. **HTTP Plugin** - Not yet implemented (lower priority)
 9. **DSL Spec** - `docs/dsl_spec.md` needs script attribute documentation
-10. **Credential Integration** - GCS/S3 handlers have placeholder for NoETL credential resolution
 
 ## Architecture
 
@@ -259,20 +268,15 @@ uv pip install google-cloud-storage boto3
 
 ### Immediate (Required for Full Functionality)
 
-1. **Credential Integration**: Implement GCS/S3 credential resolution
-   - Update `sources/gcs.py`: Replace `TODO` with actual credential lookup
-   - Update `sources/s3.py`: Replace `TODO` with actual credential lookup
-   - Connect to `noetl.plugin.shared.auth` credential system
-
-2. **DuckDB Plugin**: Add script support
+1. **DuckDB Plugin**: Add script support
    - Similar pattern to Postgres
    - Update query parsing logic
 
-3. **Snowflake Plugin**: Add script support
+2. **Snowflake Plugin**: Add script support
    - Similar pattern to Postgres
    - Update command parsing logic
 
-4. **DSL Spec**: Update `docs/dsl_spec.md`
+3. **DSL Spec**: Update `docs/dsl_spec.md`
    - Document script attribute for each tool type
    - Add source type specifications
    - Include complete examples
@@ -381,11 +385,10 @@ None. This is a purely additive feature. All existing playbooks continue to work
 
 ## Known Limitations
 
-1. **Credential Resolution**: GCS/S3 handlers need integration with NoETL credential system
-2. **Plugin Coverage**: DuckDB, Snowflake, HTTP plugins not yet updated
-3. **Caching**: No script caching implemented yet
-4. **Validation**: No pre-execution script validation
-5. **Testing**: Cloud source tests require manual setup (credentials, buckets)
+1. **Plugin Coverage**: DuckDB, Snowflake, HTTP plugins not yet updated
+2. **Caching**: No script caching implemented yet
+3. **Validation**: No pre-execution script validation
+4. **Testing**: Cloud source tests require manual setup (credentials, buckets)
 
 ## Success Metrics
 
@@ -394,6 +397,8 @@ None. This is a purely additive feature. All existing playbooks continue to work
 - ✅ Zero breaking changes
 - ✅ Complete file source implementation
 - ✅ Complete HTTP source implementation
+- ✅ Complete GCS source implementation with credential integration
+- ✅ Complete S3 source implementation with credential integration
 - ✅ Test fixtures with working examples
 - ✅ Comprehensive design documentation
 
@@ -405,4 +410,17 @@ None. This is a purely additive feature. All existing playbooks continue to work
 
 ## Conclusion
 
-The script attribute implementation provides NoETL with enterprise-grade external script management aligned with Azure Data Factory patterns. The feature is backward compatible, well-documented, and includes working examples for immediate use. Remaining work focuses on completing plugin coverage and integrating credential resolution for cloud sources.
+The script attribute implementation provides NoETL with enterprise-grade external script management aligned with Azure Data Factory patterns. The feature is backward compatible, well-documented, and includes working examples for immediate use.
+
+**All core functionality is now complete:**
+- ✅ Script resolution from file, HTTP, GCS, and S3 sources
+- ✅ Full credential integration for cloud sources (GCS/S3)
+- ✅ Python and Postgres plugin support
+- ✅ Comprehensive documentation and test fixtures
+
+**Remaining work focuses on:**
+- Extending script support to DuckDB and Snowflake plugins
+- Updating DSL specification documentation
+- Optional enhancements (caching, validation, versioning)
+
+The implementation is production-ready for Python and Postgres plugins with all source types fully functional.

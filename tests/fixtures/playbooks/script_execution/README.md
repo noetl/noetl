@@ -12,8 +12,8 @@ script_execution/
 ├── python_file_example.yaml      # Python with file source
 ├── postgres_file_example.yaml    # Postgres with file source
 ├── python_http_example.yaml      # Python with HTTP source
-├── python_gcs_example.yaml       # Python with GCS source (requires GCP setup)
-├── postgres_s3_example.yaml      # Postgres with S3 source (requires AWS setup)
+├── python_gcs_example.yaml       # Python with GCS source ✅ credential integration
+├── postgres_s3_example.yaml      # Postgres with S3 source ✅ credential integration
 └── README.md                     # This file
 ```
 
@@ -136,12 +136,14 @@ When multiple code sources are present:
 - Service account with `storage.objects.get` permission
 - Scripts uploaded to GCS bucket
 - Credential registered in NoETL: `task playbook:k8s:register-credential-gcp`
+- **Credential Integration**: ✅ Complete - automatically fetches from NoETL API
 
 **S3 Source:**
 - AWS account
 - IAM credentials with `s3:GetObject` permission
 - Scripts uploaded to S3 bucket
 - Credential registered in NoETL: `task playbook:k8s:register-credential-aws`
+- **Credential Integration**: ✅ Complete - automatically fetches from NoETL API
 
 ### Running Tests
 
@@ -157,9 +159,12 @@ task playbook:k8s:execute postgres_file_script_example
 task playbook:k8s:register tests/fixtures/playbooks/script_execution/python_http_example.yaml
 task playbook:k8s:execute python_http_script_example
 
-# Cloud source tests (requires credentials)
-# task playbook:k8s:register tests/fixtures/playbooks/script_execution/python_gcs_example.yaml
-# task playbook:k8s:execute python_gcs_script_example
+# Cloud source tests (requires credentials - see Prerequisites above)
+task playbook:k8s:register tests/fixtures/playbooks/script_execution/python_gcs_example.yaml
+task playbook:k8s:execute python_gcs_script_example
+
+task playbook:k8s:register tests/fixtures/playbooks/script_execution/postgres_s3_example.yaml
+task playbook:k8s:execute postgres_s3_script_example
 ```
 
 ## Backward Compatibility

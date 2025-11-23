@@ -2,8 +2,10 @@
 AWS S3 script fetcher.
 """
 
+import os
 from typing import Optional, Dict, Any
 from jinja2 import Environment
+import httpx
 
 from noetl.core.logger import setup_logger
 
@@ -58,12 +60,35 @@ def fetch_from_s3(
         aws_secret_access_key = None
         
         if credential:
-            # TODO: Integrate with NoETL credential system
-            # creds = resolve_aws_credential(credential, context, jinja_env)
-            # aws_access_key_id = creds.get('access_key_id')
-            # aws_secret_access_key = creds.get('secret_access_key')
-            logger.warning(f"S3 credential resolution not yet implemented: {credential}")
-            pass
+            try:
+                credential_data = _fetch_credential(credential)
+                if credential_data:
+                    # Support multiple key naming conventions
+                    aws_access_key_id = (
+                        credential_data.get('access_key_id') or
+                        credential_data.get('key_id') or
+                        credential_data.get('aws_access_key_id')
+                    )
+                    aws_secret_access_key = (
+                        credential_data.get('secret_access_key') or
+                        credential_data.get('secret_key') or
+                        credential_data.get('secret') or
+                        credential_data.get('aws_secret_access_key')
+                    )
+                    
+                    # Override region if specified in credential
+                    if not region and 'region' in credential_data:
+                        region = credential_data['region']
+                    
+                    if aws_access_key_id and aws_secret_access_key:
+                        logger.debug(f"Using AWS credentials from '{credential}'")
+                    else:
+                        logger.warning(f"S3 credential '{credential}' missing access_key_id or secret_access_key")
+                else:
+                    logger.warning(f"S3 credential '{credential}' not found or empty")
+            except Exception as e:
+                logger.error(f"Failed to fetch S3 credential '{credential}': {e}")
+                raise PermissionError(f"Failed to resolve S3 credential '{credential}': {e}")
         
         # Create S3 client
         logger.debug(f"Creating S3 client for bucket: {bucket}")
@@ -103,3 +128,46 @@ def fetch_from_s3(
     except Exception as e:
         logger.error(f"Error fetching script from S3: {e}")
         raise ConnectionError(f"Failed to fetch from s3://{bucket}/{path}: {e}")
+
+
+def _fetch_credential(credential_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch credential data from the NoETL server.
+    
+    Args:
+        credential_name: Name of the credential to fetch
+        
+    Returns:
+        Credential data dictionary or None if not found
+        
+    Raises:
+        Exception: If credential fetch fails
+    """
+    try:
+        base_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+        if not base_url.endswith('/api'):
+            base_url = base_url + '/api'
+            
+        url = f"{base_url}/credentials/{credential_name}?include_data=true"
+        
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(url)
+            
+            if response.status_code == 200:
+                body = response.json() or {}
+                raw = body.get('data') or {}
+                
+                # Handle nested data structure
+                if isinstance(raw, dict) and isinstance(raw.get('data'), dict):
+                    payload = raw.get('data')
+                else:
+                    payload = raw
+                    
+                return payload if isinstance(payload, dict) else {}
+            else:
+                logger.warning(f"Failed to fetch credential '{credential_name}': HTTP {response.status_code}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Failed to fetch credential '{credential_name}': {e}")
+        raise

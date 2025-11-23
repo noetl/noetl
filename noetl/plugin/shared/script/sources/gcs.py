@@ -2,8 +2,10 @@
 Google Cloud Storage (GCS) script fetcher.
 """
 
+import os
 from typing import Optional, Dict, Any
 from jinja2 import Environment
+import httpx
 
 from noetl.core.logger import setup_logger
 
@@ -51,17 +53,45 @@ def fetch_from_gcs(
         )
     
     try:
+        from google.oauth2 import service_account
+    except ImportError:
+        pass  # Will use default credentials if service account not available
+    
+    try:
         # Resolve credentials
         credentials = None
+        service_account_info = None
+        
         if credential:
-            # TODO: Integrate with NoETL credential system
-            # credentials = resolve_gcp_credential(credential, context, jinja_env)
-            logger.warning(f"GCS credential resolution not yet implemented: {credential}")
-            pass
+            try:
+                credential_data = _fetch_credential(credential)
+                if credential_data:
+                    # Handle different credential formats
+                    # Service account JSON (google_service_account, google_oauth, gcp types)
+                    if 'type' in credential_data and credential_data.get('type') == 'service_account':
+                        service_account_info = credential_data
+                        logger.debug(f"Using service account credentials from '{credential}'")
+                    # Nested data structure (credential wrapped in 'data' field)
+                    elif 'data' in credential_data and isinstance(credential_data['data'], dict):
+                        if credential_data['data'].get('type') == 'service_account':
+                            service_account_info = credential_data['data']
+                            logger.debug(f"Using service account credentials (nested) from '{credential}'")
+                    else:
+                        logger.warning(f"GCS credential '{credential}' does not contain service account data")
+                else:
+                    logger.warning(f"GCS credential '{credential}' not found or empty")
+            except Exception as e:
+                logger.error(f"Failed to fetch GCS credential '{credential}': {e}")
+                raise PermissionError(f"Failed to resolve GCS credential '{credential}': {e}")
         
         # Create GCS client
         logger.debug(f"Creating GCS client for bucket: {bucket}")
-        client = storage.Client(credentials=credentials)
+        if service_account_info:
+            credentials = service_account.Credentials.from_service_account_info(service_account_info)
+            client = storage.Client(credentials=credentials, project=service_account_info.get('project_id'))
+        else:
+            # Use application default credentials
+            client = storage.Client(credentials=credentials)
         
         # Get bucket and blob
         bucket_obj = client.bucket(bucket)
@@ -88,3 +118,46 @@ def fetch_from_gcs(
     except Exception as e:
         logger.error(f"Error fetching script from GCS: {e}")
         raise ConnectionError(f"Failed to fetch from gs://{bucket}/{path}: {e}")
+
+
+def _fetch_credential(credential_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch credential data from the NoETL server.
+    
+    Args:
+        credential_name: Name of the credential to fetch
+        
+    Returns:
+        Credential data dictionary or None if not found
+        
+    Raises:
+        Exception: If credential fetch fails
+    """
+    try:
+        base_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+        if not base_url.endswith('/api'):
+            base_url = base_url + '/api'
+            
+        url = f"{base_url}/credentials/{credential_name}?include_data=true"
+        
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(url)
+            
+            if response.status_code == 200:
+                body = response.json() or {}
+                raw = body.get('data') or {}
+                
+                # Handle nested data structure
+                if isinstance(raw, dict) and isinstance(raw.get('data'), dict):
+                    payload = raw.get('data')
+                else:
+                    payload = raw
+                    
+                return payload if isinstance(payload, dict) else {}
+            else:
+                logger.warning(f"Failed to fetch credential '{credential_name}': HTTP {response.status_code}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Failed to fetch credential '{credential_name}': {e}")
+        raise
