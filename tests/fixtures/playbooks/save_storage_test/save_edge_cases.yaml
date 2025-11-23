@@ -38,7 +38,7 @@ workflow:
           return {"status": "success", "data": mixed_data}
     args:
       input_data: {}
-  sink:
+    sink:
       storage:
         tool: postgres
         args: "{{ result.data }}"
@@ -65,7 +65,7 @@ workflow:
           return {"status": "success", "data": special_data}
     args:
       input_data: "{{ start }}"
-  sink:
+    sink:
       storage:
         tool: postgres
         args: "{{ result.data }}"
@@ -93,7 +93,7 @@ workflow:
           return {"status": "success", "data": empty_scenarios}
     args:
       input_data: "{{ test_special_characters }}"
-  sink:
+    sink:
       storage:
         tool: python
         code: |
@@ -153,7 +153,7 @@ workflow:
           return {"status": "success", "data": large_data}
     args:
       input_data: "{{ test_empty_data }}"
-  sink:
+    sink:
       storage:
         tool: duckdb
         commands: |
@@ -189,7 +189,7 @@ workflow:
           return {"status": "success", "data": potentially_problematic}
     args:
       input_data: "{{ test_large_payload }}"
-  sink:
+    sink:
       storage:
         tool: http
         endpoint: "https://httpbin.org/status/200"  # This should succeed
@@ -228,8 +228,8 @@ workflow:
           return {"status": "success", "data": summary}
     args:
       input_data: "{{ test_error_recovery }}"
-  sink:
-      storage: event_log
+    sink:
+      tool: event_log
       args: "{{ result.data }}"
     next:
       - step: end

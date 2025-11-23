@@ -67,7 +67,7 @@ workflow:
       args:
         user_data: "{{ user }}"
         execution_context: "{{ execution_id }}"
-  sink:
+      sink:
         args:
           id: "{{ execution_id }}:{{ user.name }}"
           execution_id: "{{ execution_id }}"

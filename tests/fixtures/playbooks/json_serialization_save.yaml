@@ -46,7 +46,7 @@ workflow:
                   "array_field": [1, 2, 3, 4, 5]
               }
           }
-  sink:
+    sink:
       tool: postgres
       args:
         id: 1

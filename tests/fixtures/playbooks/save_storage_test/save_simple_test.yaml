@@ -28,8 +28,8 @@ workflow:
                   "test_id": "evt_001"
               }
           }
-  sink:
-      storage: event_log
+    sink:
+      tool: event_log
       args: "{{ result.data }}"
     next:
       - step: postgres_flat_test
@@ -72,7 +72,7 @@ workflow:
                   "nested_id": 200
               }
           }
-  sink:
+    sink:
       storage:
         tool: postgres
         table: simple_test_nested

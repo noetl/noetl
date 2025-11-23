@@ -60,7 +60,7 @@ workflow:
         latitude: "{{ city.lat }}"
         longitude: "{{ city.lon }}"
         current: temperature_2m
-  sink:
+      sink:
         tool: postgres
         auth: "{{ workload.pg_auth }}"
         table: public.http_iterator_save_test
