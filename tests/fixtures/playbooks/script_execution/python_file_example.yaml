@@ -19,7 +19,7 @@ workflow:
     desc: Execute Python script from local file
     tool: python
     script:
-      path: "{{ workload.script_path }}"
+      uri: "{{ workload.script_path }}"
       source:
         type: file
     args:

@@ -19,7 +19,7 @@ workflow:
     tool: postgres
     auth: "{{ workload.pg_auth }}"
     script:
-      path: "{{ workload.script_path }}"
+      uri: "{{ workload.script_path }}"
       source:
         type: file
     next:

@@ -93,13 +93,13 @@ workflow:                 # Execution flow (required, must have 'start' step)
 All action tools support loading code from external sources (GCS, S3, file, HTTP) similar to Azure Data Factory's linked services:
 ```yaml
 script:
-  path: scripts/transform.py          # Script path/key
+  uri: gs://bucket-name/scripts/transform.py  # Full URI with scheme
   source:
     type: file|gcs|s3|http           # Source type
-    bucket: bucket-name               # For gcs/s3
-    region: aws-region                # For s3
-    auth: credential-reference        # For gcs/s3
-    endpoint: https://url             # For http
+    # Source-specific fields:
+    region: aws-region                # For s3 (optional)
+    auth: credential-reference        # For gcs/s3 authentication
+    endpoint: https://url             # For http (base URL)
     method: GET                       # For http (default: GET)
     headers: {}                       # For http
     timeout: 30                       # For http (seconds)
@@ -109,37 +109,50 @@ script:
 
 **Supported Plugins**: python, postgres, duckdb, snowflake, http
 
+**URI Formats**:
+- GCS: `gs://bucket-name/path/to/script.py` (required format)
+- S3: `s3://bucket-name/path/to/script.sql` (required format)
+- File: `./scripts/transform.py` or `/abs/path/script.py`
+- HTTP: Relative path with `source.endpoint` or full URL
+
 **Examples**:
 ```yaml
-# Python with file source
+# Python with GCS
 - step: transform
   tool: python
   script:
-    path: ./scripts/transform.py
+    uri: gs://data-pipelines/scripts/transform.py
     source:
-      type: file
-  args:
-    data: input
+      type: gcs
+      auth: gcp_service_account
 
-# Postgres with GCS source
+# Postgres with S3
 - step: migration
   tool: postgres
   auth: pg_prod
   script:
-    path: migrations/v2.5/upgrade.sql
+    uri: s3://sql-scripts/migrations/v2.5/upgrade.sql
     source:
-      type: gcs
-      bucket: sql-scripts
-      auth: gcp_service_account
+      type: s3
+      region: us-west-2
+      auth: aws_credentials
+
+# Python with file source
+- step: local_script
+  tool: python
+  script:
+    uri: ./scripts/transform.py
+    source:
+      type: file
 
 # Python with HTTP source
 - step: fetch_script
   tool: python
   script:
-    path: script.py
+    uri: transform.py
     source:
       type: http
-      endpoint: https://api.example.com/scripts/transform.py
+      endpoint: https://api.example.com/scripts
       headers:
         Authorization: "Bearer {{ secret.api_token }}"
 ```

@@ -12,8 +12,8 @@ script_execution/
 ├── python_file_example.yaml      # Python with file source
 ├── postgres_file_example.yaml    # Postgres with file source
 ├── python_http_example.yaml      # Python with HTTP source
-├── python_gcs_example.yaml       # Python with GCS source ✅ credential integration
-├── postgres_s3_example.yaml      # Postgres with S3 source ✅ credential integration
+├── python_gcs_example.yaml       # Python with GCS source 
+├── postgres_s3_example.yaml      # Postgres with S3 source
 └── README.md                     # This file
 ```
 
@@ -23,26 +23,48 @@ All action tools (python, postgres, duckdb, snowflake, http) support the `script
 
 ```yaml
 script:
-  path: path/to/script.py          # Required: Script path/key
-  source:                           # Required: Source configuration
-    type: file|gcs|s3|http         # Required: Source type
+  uri: gs://bucket-name/path/to/script.py  # Required: Full URI with scheme
+  source:                                   # Required: Source configuration
+    type: file|gcs|s3|http                 # Required: Source type
     # Source-specific fields:
-    bucket: bucket-name             # For gcs/s3
-    region: aws-region              # For s3
-    auth: credential-reference      # For gcs/s3
-    endpoint: https://url           # For http
-    method: GET                     # For http (default: GET)
-    headers: {}                     # For http
-    timeout: 30                     # For http (seconds)
+    region: aws-region                      # For s3 (optional)
+    auth: credential-reference              # For gcs/s3 authentication
+    endpoint: https://url                   # For http (base URL)
+    method: GET                             # For http (default: GET)
+    headers: {}                             # For http
+    timeout: 30                             # For http (seconds)
 ```
+
+**URI Formats:**
+- GCS: `gs://bucket-name/path/to/script.py` (required format)
+- S3: `s3://bucket-name/path/to/script.sql` (required format)
+- FILE: `./scripts/script.py` or `/absolute/path/script.py`
+- HTTP: Relative path with `source.endpoint` or full URL
 
 ## Priority Order
 
-When multiple code sources are present:
+When multiple code sources are present in a step, NoETL uses only one based on this priority:
 
-1. **`script`** - External script (highest priority)
-2. **`code_b64`** or **`command_b64`** - Base64 encoded inline
-3. **`code`** or **`command`** - Plain inline
+1. **`script`** - External script (highest priority) - **If present, all other sources are ignored**
+2. **`code_b64`** or **`command_b64`** - Base64 encoded inline - **Used only if `script` is not present**
+3. **`code`** or **`command`** - Plain inline - **Used only if neither `script` nor `code_b64` exist**
+
+**Example:**
+```yaml
+- step: transform
+  tool: python
+  code: |
+    def main():
+        return "This will be IGNORED"
+  code_b64: "VGhpcyB3aWxsIGFsc28gYmUgSUdOT1JFRA=="
+  script:
+    uri: gs://bucket/scripts/transform.py  # This will be executed
+    source:
+      type: gcs
+      auth: google_oauth
+```
+
+In the example above, NoETL will execute the GCS script and completely ignore both `code` and `code_b64` fields.
 
 ## Examples
 
@@ -53,7 +75,7 @@ When multiple code sources are present:
 - step: run_script
   tool: python
   script:
-    path: ./scripts/hello_world.py
+    uri: ./scripts/hello_world.py
     source:
       type: file
   args:
@@ -66,7 +88,7 @@ When multiple code sources are present:
   tool: postgres
   auth: pg_local
   script:
-    path: ./scripts/create_test_table.sql
+    uri: ./scripts/create_test_table.sql
     source:
       type: file
 ```
@@ -77,7 +99,7 @@ When multiple code sources are present:
 - step: fetch_and_run
   tool: python
   script:
-    path: script.py
+    uri: script.py
     source:
       type: http
       endpoint: https://api.example.com/scripts/transform.py
@@ -95,10 +117,9 @@ When multiple code sources are present:
 - step: run_from_gcs
   tool: python
   script:
-    path: analytics/transform.py
+    uri: gs://data-pipelines-scripts/analytics/transform.py
     source:
       type: gcs
-      bucket: data-pipelines-scripts
       auth: gcp_service_account
   args:
     dataset: sales
@@ -111,10 +132,9 @@ When multiple code sources are present:
   tool: postgres
   auth: pg_production
   script:
-    path: migrations/v2.5/upgrade.sql
+    uri: s3://sql-scripts-prod/migrations/v2.5/upgrade.sql
     source:
       type: s3
-      bucket: sql-scripts-prod
       region: us-west-2
       auth: aws_credentials
 ```
@@ -187,7 +207,7 @@ All existing playbooks using inline `code`, `code_b64`, `command`, or `command_b
 - step: transform
   tool: python
   script:
-    path: ./scripts/transform.py
+    uri: ./scripts/transform.py
     source:
       type: file
 ```

@@ -19,7 +19,7 @@ workflow:
     desc: Fetch and execute Python script from HTTP
     tool: python
     script:
-      path: hello_world.py  # Fallback if endpoint not specified
+      uri: hello_world.py  # Fallback if endpoint not specified
       source:
         type: http
         endpoint: "{{ workload.script_url }}"
