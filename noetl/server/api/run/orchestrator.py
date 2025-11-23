@@ -34,6 +34,30 @@ from noetl.server.api.run.queries import OrchestratorQueries
 logger = setup_logger(__name__, include_location=True)
 
 
+def _render_with_params(params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Render with_params (args from next transitions) with Jinja2 templates.
+
+    Args:
+        params: Parameters dict that may contain Jinja2 templates
+        context: Execution context with step results for rendering
+
+    Returns:
+        Rendered parameters dict
+    """
+    try:
+        from noetl.core.dsl.render import render_template
+        from jinja2 import BaseLoader, Environment
+        
+        env = Environment(loader=BaseLoader())
+        rendered = render_template(env, params, context, rules=None, strict_keys=False)
+        logger.debug(f"Rendered with_params: {params} -> {rendered}")
+        return rendered if isinstance(rendered, dict) else params
+    except Exception as e:
+        logger.warning(f"Failed to render with_params: {e}, using original params")
+        return params
+
+
 def _evaluate_jinja_condition(condition: str, context: Dict[str, Any]) -> bool:
     """
     Evaluate a Jinja2 condition expression.
@@ -1057,8 +1081,10 @@ async def _process_transitions(execution_id: int) -> None:
                             step_config, catalog_id
                         )
 
-                        # Merge with_params into step config data field
+                        # Render with_params (args from next) with current execution context
+                        # This ensures templates like {{ process_data.data.temp_table }} are resolved
                         if with_params:
+                            with_params = _render_with_params(with_params, eval_ctx)
                             if "data" not in step_config:
                                 step_config["data"] = {}
                             step_config["data"].update(with_params)
