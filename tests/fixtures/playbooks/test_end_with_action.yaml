@@ -18,7 +18,7 @@ workflow:
     desc: Process data
     tool: python
     code: |
-      def main(input_data):
+      def main():
           return {
               'status': 'success',
               'data': {
