@@ -1085,9 +1085,9 @@ async def _process_transitions(execution_id: int) -> None:
                         # This ensures templates like {{ process_data.data.temp_table }} are resolved
                         if with_params:
                             with_params = _render_with_params(with_params, eval_ctx)
-                            if "data" not in step_config:
-                                step_config["data"] = {}
-                            step_config["data"].update(with_params)
+                            if "args" not in step_config:
+                                step_config["args"] = {}
+                            step_config["args"].update(with_params)
 
                         # Build context for next step
                         context_data = {"workload": workload}
