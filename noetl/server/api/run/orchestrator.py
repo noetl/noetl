@@ -1081,6 +1081,10 @@ async def _process_transitions(execution_id: int) -> None:
                             step_config, catalog_id
                         )
 
+                        # Render step's existing args with current execution context
+                        if "args" in step_config and step_config["args"]:
+                            step_config["args"] = _render_with_params(step_config["args"], eval_ctx)
+                        
                         # Render with_params (args from next) with current execution context
                         # This ensures templates like {{ process_data.data.temp_table }} are resolved
                         if with_params:
