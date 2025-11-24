@@ -314,6 +314,8 @@ class QueuePublisher:
                     step_cfg = await expand_workbook_reference(step_cfg, catalog_id)
 
                     # Render step args with available context (workload for initial steps)
+                    # IMPORTANT: For iterator steps, DO NOT render the nested 'task' block
+                    # because it contains templates like {{ item }} that only exist during iteration
                     if "args" in step_cfg and step_cfg["args"] and context:
                         from noetl.core.dsl.render import render_template
                         from jinja2 import BaseLoader, Environment
@@ -325,6 +327,38 @@ class QueuePublisher:
                             )
                         except Exception as e:
                             logger.warning(f"Failed to render args for step '{step_name}': {e}")
+                    
+                    # For iterator steps, render collection/element/mode but NOT the 'task' block
+                    # The task block contains templates like {{ item }} that only exist during iteration
+                    step_tool = (step_cfg.get("tool") or "").lower()
+                    if step_tool == "iterator" and context:
+                        from noetl.core.dsl.render import render_template
+                        from jinja2 import BaseLoader, Environment
+                        
+                        try:
+                            env = Environment(loader=BaseLoader())
+                            # Save the task block before rendering
+                            task_block = step_cfg.get("task")
+                            
+                            # Remove task block temporarily to prevent rendering
+                            if task_block:
+                                step_cfg_without_task = {k: v for k, v in step_cfg.items() if k != "task"}
+                            else:
+                                step_cfg_without_task = step_cfg
+                            
+                            # Render iterator config (collection, element, mode, etc.)
+                            # This will render {{ workload.items }} in collection
+                            step_cfg_rendered = render_template(
+                                env, step_cfg_without_task, context, rules=None, strict_keys=False
+                            )
+                            
+                            # Restore the task block unrendered
+                            if task_block:
+                                step_cfg_rendered["task"] = task_block
+                            
+                            step_cfg = step_cfg_rendered
+                        except Exception as e:
+                            logger.warning(f"Failed to render iterator config for step '{step_name}': {e}")
 
                     # Encode step config for queue
                     encoded_step_cfg = encode_task_for_queue(step_cfg)

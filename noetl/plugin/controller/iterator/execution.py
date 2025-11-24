@@ -136,12 +136,28 @@ def build_nested_args(
     try:
         for k, v in (nested_task.get("args") or {}).items():
             try:
-                nested_args[k] = (
-                    render_template(jinja_env, v, iter_ctx) if isinstance(v, str) else v
-                )
-            except Exception:
+                # Special handling: if value is exactly "{{ varname }}" and varname exists in context,
+                # pass the object directly without string rendering to preserve types (dicts, lists)
+                if isinstance(v, str):
+                    v_stripped = v.strip()
+                    if v_stripped.startswith("{{") and v_stripped.endswith("}}"):
+                        var_name = v_stripped[2:-2].strip()
+                        logger.info(f"ITERATOR_ARGS_DEBUG: Checking var_name='{var_name}', in context={var_name in iter_ctx}, type={type(iter_ctx.get(var_name))}")
+                        if var_name in iter_ctx:
+                            # Pass the actual object, not string-rendered version
+                            nested_args[k] = iter_ctx[var_name]
+                            logger.info(f"ITERATOR_ARGS_DEBUG: Passed object directly for '{k}': type={type(nested_args[k])}")
+                            continue
+                    # Regular template rendering for string values
+                    nested_args[k] = render_template(jinja_env, v, iter_ctx)
+                    logger.info(f"ITERATOR_ARGS_DEBUG: Rendered string for '{k}': type={type(nested_args[k])}, value={nested_args[k][:100] if isinstance(nested_args[k], str) else nested_args[k]}")
+                else:
+                    nested_args[k] = v
+            except Exception as e:
+                logger.warning(f"ITERATOR_ARGS_DEBUG: Exception for key '{k}': {e}")
                 nested_args[k] = v
-    except Exception:
+    except Exception as e:
+        logger.warning(f"ITERATOR_ARGS_DEBUG: Exception building args: {e}")
         nested_args = {}
 
     return nested_args

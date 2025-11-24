@@ -334,10 +334,27 @@ def render_template_object(
                         f"RENDER_TASK_DEBUG: Remaining keys in task_tpl_copy: {list(task_tpl_copy.keys())}"
                     )
 
+                # For iterator steps, preserve the nested 'task' block unrendered
+                # because it contains templates like {{ item }} that only exist during iteration
+                nested_task_block = None
+                is_iterator = isinstance(task_tpl_copy, dict) and (task_tpl_copy.get("tool") or "").lower() == "iterator"
+                if is_iterator and "task" in task_tpl_copy:
+                    nested_task_block = task_tpl_copy.pop("task")
+                    logger.debug(
+                        f"RENDER_TASK_DEBUG: Extracted nested task block from iterator to preserve unrendered"
+                    )
+
                 # Strict rendering keeps unresolved variables for worker-side rendering
                 task_rendered = render_template(
                     env, task_tpl_copy, context, rules=None, strict_keys=False
                 )
+
+                # Restore the nested task block for iterator (unrendered)
+                if nested_task_block is not None and isinstance(task_rendered, dict):
+                    task_rendered['task'] = nested_task_block
+                    logger.debug(
+                        "RENDER_TASK_DEBUG: Restored unrendered nested task block to iterator"
+                    )
 
                 # Re-attach the save block after rendering (unrendered for worker-side processing)
                 if sink_block is not None and isinstance(task_rendered, dict):
