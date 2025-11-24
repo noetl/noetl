@@ -31,7 +31,7 @@ workflow:
           }
     sink:
       tool: event
-      args: "{{ result.data }}"
+      args: "{{ result }}"
     next:
       - step: postgres_test
 
@@ -56,8 +56,8 @@ workflow:
         auth: "{{ workload.pg_auth }}"
       args:
         test_id: "delegation_test"
-        test_name: "{{ result.data.test }}"
-        test_value: "{{ result.data.value }}"
+        test_name: "{{ result.test }}"
+        test_value: "{{ result.value }}"
     next:
       - step: duckdb_test
 
@@ -81,7 +81,7 @@ workflow:
           CREATE OR REPLACE TABLE test_duckdb AS 
           SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
           SELECT * FROM test_duckdb;
-      args: "{{ result.data }}"
+      args: "{{ result }}"
     next:
       - step: http_test
 
@@ -105,4 +105,4 @@ workflow:
         method: POST
         headers:
           Content-Type: "application/json"
-      args: "{{ result.data }}"
+      args: "{{ result }}"

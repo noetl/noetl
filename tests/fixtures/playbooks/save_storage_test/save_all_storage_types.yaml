@@ -158,7 +158,7 @@ workflow:
       workload: "{{ workload }}"
     sink:
       tool: event_log
-      args: "{{ result.data }}"
+      args: "{{ result }}"
     next:
       - step: test_flat_postgres_save
 
@@ -414,7 +414,7 @@ workflow:
       input_data: "{{ test_http_save }}"
     sink:
       tool: event_log
-      args: "{{ result.data }}"
+      args: "{{ result }}"
     next:
       - step: end
 

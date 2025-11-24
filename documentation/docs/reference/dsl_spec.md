@@ -1,3 +1,15 @@
+---
+sidebar_position: 1
+title: DSL Specification
+description: Complete reference for NoETL DSL syntax, step types, and workflow structure
+---
+
+---
+sidebar_position: 1
+title: DSL Specification
+description: Complete reference for NoETL DSL syntax, step types, and workflow structure
+---
+
 # NoETL DSL Design Specification (Step Widgets v2)
 
 ## Overview
@@ -272,7 +284,7 @@ Inputs:
 - in (array|string, required): Collection/expression to iterate over
 - iterator (string, required): Item variable name
 - task (string, required): Workbook task name
-- with (object, optional): Inputs (may reference `{{ iterator }}`)
+- with (object, optional): Inputs (may reference `&#123;&#123; iterator &#125;&#125;`)
 - as (string, optional): Aggregate results variable
 
 Variant B (playbooks per item):
@@ -322,9 +334,9 @@ Examples:
 ### Step Result References in Workflow
 
 During workflow execution, completed step results are available in subsequent steps via Jinja2 templates:
-- `{{ step_name }}` or `{{ step_name.result }}` - Full result object (envelope with `status`, `data`, `error`, `meta`)
-- `{{ step_name.data }}` - Direct access to the data payload when step returns envelope structure
-- `{{ step_name.data.field }}` - Access specific fields within the data payload
+- `&#123;&#123; step_name &#125;&#125;` or `&#123;&#123; step_name.result &#125;&#125;` - Full result object (envelope with `status`, `data`, `error`, `meta`)
+- `&#123;&#123; step_name.data &#125;&#125;` - Direct access to the data payload when step returns envelope structure
+- `&#123;&#123; step_name.data.field &#125;&#125;` - Access specific fields within the data payload
 
 Example:
 ```yaml
@@ -356,7 +368,7 @@ When a `sink:` block executes, the worker provides a **special context** where r
 - **`execution_id`**: Current execution identifier
 - Prior step results by name
 
-**Important**: Use `{{ result }}` not `{{ result.data }}` in sink blocks, as the worker has already unwrapped the envelope.
+**Important**: Use `&#123;&#123; result &#125;&#125;` not `&#123;&#123; result.data &#125;&#125;` in sink blocks, as the worker has already unwrapped the envelope.
 
 ✅ **Correct sink usage:**
 ```yaml

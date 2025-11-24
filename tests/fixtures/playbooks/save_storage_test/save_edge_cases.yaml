@@ -41,7 +41,7 @@ workflow:
     sink:
       storage:
         tool: postgres
-        args: "{{ result.data }}"
+        args: "{{ result }}"
         table: test_mixed_types
         auth: "{{ workload.pg_auth }}"
     next:
@@ -68,7 +68,7 @@ workflow:
     sink:
       storage:
         tool: postgres
-        args: "{{ result.data }}"
+        args: "{{ result }}"
         table: test_special_chars
         mode: insert
         auth: "{{ workload.pg_auth }}"
@@ -161,7 +161,7 @@ workflow:
           CREATE OR REPLACE TABLE test_large_payload AS
           SELECT 
             'large_payload_test' as test_type,
-            {{ result.data.metadata.record_count }} as record_count,
+            {{ result.metadata.record_count }} as record_count,
             '{{ execution_id }}' as execution_id,
             NOW() as created_at;
           
@@ -197,7 +197,7 @@ workflow:
         headers:
           Content-Type: "application/json"
           X-Test-Type: "error-recovery"
-        args: "{{ result.data }}"
+        args: "{{ result }}"
     next:
       - step: test_completion_summary
 
@@ -230,7 +230,7 @@ workflow:
       input_data: "{{ test_error_recovery }}"
     sink:
       tool: event_log
-      args: "{{ result.data }}"
+      args: "{{ result }}"
     next:
       - step: end
 

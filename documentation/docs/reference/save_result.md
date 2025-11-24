@@ -1,4 +1,12 @@
-Goal: provide a clear, robust way to reference step/playbook results and persist them to external systems in a consistent way (works with loops and nested playbooks, and integrates credentials securely).
+---
+sidebar_position: 2
+title: Save & Sink Reference
+description: Guide to persisting step results with sink blocks, template context, and credential management
+---
+
+# Save & Sink Reference
+
+This guide provides a clear, robust way to reference step/playbook results and persist them to external systems in a consistent way (works with loops and nested playbooks, and integrates credentials securely).
 
 This spec defines:
 - Canonical result model and references
@@ -10,9 +18,9 @@ This spec defines:
 
 - Each actionable step produces a JSON result recorded in `noetl.event_log.result` with `event_type = action_completed`.
 - During template rendering, results are exposed by step name. You can reference:
-  - `{{ step_name }}` or `{{ step_name.result }}` → the full result object
-  - `{{ step_name.data }}` → when your step returns `{ "data": ... }`, this is a common convenience
-  - Any JSON field inside the result: `{{ step_name.field }}`
+  - `&#123;&#123; step_name &#125;&#125;` or `&#123;&#123; step_name.result &#125;&#125;` → the full result object
+  - `&#123;&#123; step_name.data &#125;&#125;` → when your step returns `{ "data": ... }`, this is a common convenience
+  - Any JSON field inside the result: `&#123;&#123; step_name.field &#125;&#125;`
 
 Required envelope: All step results MUST use the envelope below. This is the only supported structure the engine operates on.
 
@@ -24,11 +32,11 @@ Required envelope: All step results MUST use the envelope below. This is the onl
 }
 ```
 
-The engine expects this envelope everywhere. Always reference payloads via `{{ step_name.data }}`; use `{{ step_name.status }}` to branch on outcomes and `{{ step_name.meta }}` for diagnostics.
+The engine expects this envelope everywhere. Always reference payloads via `&#123;&#123; step_name.data &#125;&#125;`; use `&#123;&#123; step_name.status &#125;&#125;` to branch on outcomes and `&#123;&#123; step_name.meta &#125;&#125;` for diagnostics.
 
 ### Nested Playbooks
 
-- A child playbook should return its final value explicitly at the end (e.g., via `execution_complete` or a final `save`/`return` block). Parent context sees it as `{{ child_step_name }}` or `{{ child_step_name.data }}` depending on the return envelope.
+- A child playbook should return its final value explicitly at the end (e.g., via `execution_complete` or a final `save`/`return` block). Parent context sees it as `&#123;&#123; child_step_name &#125;&#125;` or `&#123;&#123; child_step_name.data &#125;&#125;` depending on the return envelope.
 
 ## 2) Persisting Results: `sink:` Block
 
@@ -55,10 +63,10 @@ Schema (statement mode):
 
 ```
 sink:
-  when: <expr>
+  when: &lt;expr&gt;
   on: success|error|always
   tool: postgres|duckdb|bigquery|snowflake|graph    # flattened enum
-  auth: <name>               # alias: credentialRef (deprecated)
+  auth: &lt;name&gt;               # alias: credentialRef (deprecated)
   spec:
     dialect: sql|cypher|gremlin|sparql   # graph/triple stores
   statement: |
@@ -66,8 +74,8 @@ sink:
     VALUES (:execution_id, :payload)
     ON CONFLICT(execution_id) DO UPDATE SET payload = EXCLUDED.payload
   params:
-    execution_id: "{{ execution_id }}"
-    payload: "{{ tojson(test_step.data) }}"
+    execution_id: "&#123;&#123; execution_id &#125;&#125;"
+    payload: "&#123;&#123; tojson(test_step.data) &#125;&#125;"
 ```
 ```
 
@@ -127,7 +135,7 @@ The engine fetches the credential secret material (DSN/token/keys) securely and 
 Loop steps emit one result per item and may produce an aggregated result for the step. References:
 
 - Per-item context: templates receive `<loop_step>.result_index` and `_loop.current_item`.
-- Aggregated result: `{{ loop_step.result }}` (array or object), and often `{{ loop_step.data }}` when using the envelope.
+- Aggregated result: `&#123;&#123; loop_step.result &#125;&#125;` (array or object), and often `&#123;&#123; loop_step.data &#125;&#125;` when using the envelope.
 
 Persisting loop results:
 - Use `sink:` on the loop step to persist the aggregated result.
@@ -264,15 +272,15 @@ When a `sink:` block executes, the worker prepares a special template context wi
 
 ### Context Variables Available in Sink Templates
 
-- **`result`** or **`data`**: The unwrapped step result data (recommended: use `{{ result }}` for clarity)
-  - If step returns `{status: "success", data: {...}}`, `result` contains the unwrapped `{...}` directly
-  - Access fields as `{{ result.field_name }}` not `{{ result.data.field_name }}`
+- **`result`** or **`data`**: The unwrapped step result data (recommended: use `&#123;&#123; result &#125;&#125;` for clarity)
+  - If step returns `{status: "success", data: {...&#125;&#125;`, `result` contains the unwrapped `{...}` directly
+  - Access fields as `&#123;&#123; result.field_name &#125;&#125;` not `&#123;&#123; result.data.field_name &#125;&#125;`
 - **`this`**: The full result envelope with `status`, `data`, `error`, and `meta` fields
-  - Use `{{ this.status }}` to check execution status
-  - Use `{{ this.meta }}` to access metadata
+  - Use `&#123;&#123; this.status &#125;&#125;` to check execution status
+  - Use `&#123;&#123; this.meta &#125;&#125;` to access metadata
 - **`workload`**: Global workflow variables
 - **`execution_id`**: Current execution identifier
-- **All prior step results**: Reference as `{{ step_name.field }}`
+- **All prior step results**: Reference as `&#123;&#123; step_name.field &#125;&#125;`
 
 ### Correct Usage Examples
 
@@ -300,8 +308,8 @@ sink:
 ### Why This Design?
 
 The worker unwraps the result envelope (`{status, data, error}`) before sink execution to simplify template access patterns. This means:
-1. Most templates can use `{{ result.field }}` directly without the `.data` suffix
-2. Advanced cases can access envelope metadata via `{{ this.status }}` or `{{ this.error }}`
+1. Most templates can use `&#123;&#123; result.field &#125;&#125;` directly without the `.data` suffix
+2. Advanced cases can access envelope metadata via `&#123;&#123; this.status &#125;&#125;` or `&#123;&#123; this.error &#125;&#125;`
 3. Templates stay clean and intuitive for the common case
 
 ### Implementation Detail

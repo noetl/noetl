@@ -30,7 +30,7 @@ workflow:
           }
     sink:
       tool: event_log
-      args: "{{ result.data }}"
+      args: "{{ result }}"
     next:
       - step: postgres_flat_test
 
@@ -53,8 +53,8 @@ workflow:
       auth: "{{ workload.pg_auth }}"
       table: simple_test_flat
       args:
-        test_id: "{{ result.data.record_id }}"
-        test_name: "{{ result.data.description }}"
+        test_id: "{{ result.record_id }}"
+        test_name: "{{ result.description }}"
         test_value: 42
     next:
       - step: postgres_nested_test
@@ -80,7 +80,7 @@ workflow:
         key: test_id
         auth: "{{ workload.pg_auth }}"
       args:
-        test_id: "{{ result.data.nested_id }}"
+        test_id: "{{ result.nested_id }}"
         test_name: "nested_structure_test"
         test_value: "{{ workload.test_data.value }}"
         execution_id: "{{ execution_id }}"
