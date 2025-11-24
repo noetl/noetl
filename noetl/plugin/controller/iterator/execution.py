@@ -327,11 +327,33 @@ def execute_per_item_sink(
     ctx_for_save = dict(iter_ctx)
     ctx_for_save["this"] = nested_result
     if isinstance(nested_result, dict):
-        ctx_for_save.setdefault("data", nested_result.get("data"))
-        # Add 'result' to context for template access in save blocks
-        # For HTTP tasks: result.data contains the response body
-        # For other tasks: result contains the full task result
-        ctx_for_save["result"] = nested_result
+        # Extract the actual data from the result wrapper
+        result_data = nested_result.get("data", nested_result)
+        # FORCE override 'data' in context - don't use setdefault as iter_ctx may have stale 'data'
+        ctx_for_save["data"] = result_data
+        # Add 'result' to context pointing to the data, not the wrapper
+        # This allows templates like {{ result.item_name }} to work directly
+        ctx_for_save["result"] = result_data
+        logger.critical(f"ITERATOR.SINK: Set result in context - type={type(result_data)}, value={result_data}")
+        
+        # CRITICAL FIX: Re-inject result data directly into sink args
+        # The sink args may have been pre-rendered to empty strings during worker context rendering
+        # We need to populate them with actual result data here
+        if isinstance(nested_sink, dict) and 'args' in nested_sink and isinstance(result_data, dict):
+            sink_args = nested_sink.get('args', {})
+            if isinstance(sink_args, dict):
+                # Replace any empty string values in sink args with corresponding values from result_data
+                for key, value in list(sink_args.items()):
+                    if value == '' or value is None:
+                        # Try to find matching key in result_data
+                        if key in result_data:
+                            sink_args[key] = result_data[key]
+                            logger.critical(f"ITERATOR.SINK: Populated sink arg '{key}' from result_data: {result_data[key]}")
+                logger.critical(f"ITERATOR.SINK: Updated sink_args = {sink_args}")
+    
+    # DEBUG: Log the sink config BEFORE passing to storage executor
+    logger.critical(f"ITERATOR.SINK: nested_sink BEFORE storage call = {nested_sink}")
+    logger.critical(f"ITERATOR.SINK: nested_sink.args = {nested_sink.get('args') if isinstance(nested_sink, dict) else 'N/A'}")
 
     # Delegate to storage save executor
     try:

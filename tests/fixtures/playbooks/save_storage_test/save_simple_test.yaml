@@ -73,12 +73,11 @@ workflow:
               }
           }
     sink:
-      storage:
-        tool: postgres
-        table: simple_test_nested
-        mode: upsert
-        key: test_id
-        auth: "{{ workload.pg_auth }}"
+      tool: postgres
+      table: simple_test_nested
+      mode: upsert
+      key: test_id
+      auth: "{{ workload.pg_auth }}"
       args:
         test_id: "{{ result.nested_id }}"
         test_name: "nested_structure_test"

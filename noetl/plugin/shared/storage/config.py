@@ -88,12 +88,16 @@ def extract_sink_config(
         - kind: Tool kind (postgres, duckdb, python, http, event)
         - tool_config: Nested tool configuration
         - data_spec: Data specification
-        - statement: SQL statement (if provided)
+        - statement: SQL statement/commands/sql (unified extraction)
         - params: Parameters (legacy)
         - mode, key_cols, fmt, table, batch, chunk_size, concurrency
         - auth_config: Authentication configuration
         - credential_ref: Credential reference (if string auth)
         - spec: Additional specifications
+        
+    Note:
+        'statement' field consolidates 'statement', 'commands', and 'sql' 
+        from the configuration for broader compatibility across tools.
     """
     # Support nested sink: { sink: { tool, data, statement, params, ... } }
     payload = task_config.get('sink') or task_config
@@ -113,10 +117,15 @@ def extract_sink_config(
         data_spec = payload.get('data') or payload.get('args')
     
     # Statement can come from nested tool or top-level
-    if isinstance(tool_value, dict) and 'statement' in tool_value:
-        statement = tool_value.get('statement')
+    # Also support 'commands' and 'sql' aliases (for DuckDB compatibility)
+    if isinstance(tool_value, dict):
+        statement = (tool_value.get('statement') or 
+                    tool_value.get('commands') or 
+                    tool_value.get('sql'))
     else:
-        statement = payload.get('statement')
+        statement = (payload.get('statement') or 
+                    payload.get('commands') or 
+                    payload.get('sql'))
     
     # Extract configuration parameters
     params = get_config_value('params', tool_value, payload, {})

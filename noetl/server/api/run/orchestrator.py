@@ -1044,11 +1044,31 @@ async def _process_transitions(execution_id: int) -> None:
                                 router_step_config, catalog_id
                             )
 
+                            # CRITICAL: Preserve blocks that should not be rendered server-side
+                            # - sink block: contains {{ result }} templates
+                            # - loop block: contains {{ item }} templates and collection config
+                            sink_block = router_step_config.pop("sink", None)
+                            if sink_block is not None:
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Extracted sink block for step '{router_next_step}'")
+                            
+                            loop_block = router_step_config.pop("loop", None)
+                            if loop_block is not None:
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Extracted loop block for step '{router_next_step}'")
+
                             # Render router step's existing args with current execution context
                             if "args" in router_step_config and router_step_config["args"]:
                                 router_step_config["args"] = _render_with_params(
                                     router_step_config["args"], eval_ctx
                                 )
+
+                            # Restore preserved blocks (worker will render them with proper context)
+                            if loop_block is not None:
+                                router_step_config["loop"] = loop_block
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Restored loop block for step '{router_next_step}'")
+                            
+                            if sink_block is not None:
+                                router_step_config["sink"] = sink_block
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Restored sink block for step '{router_next_step}'")
 
                             # Build context for router next step
                             router_context_data = {"workload": workload}
@@ -1076,6 +1096,11 @@ async def _process_transitions(execution_id: int) -> None:
                     try:
                         # Use the step definition directly as the config
                         step_config = dict(next_step_def)
+                        
+                        logger.critical(f"ORCHESTRATOR_DEBUG: step '{to_step}' step_config keys BEFORE processing: {list(step_config.keys())}")
+                        logger.critical(f"ORCHESTRATOR_DEBUG: step '{to_step}' has 'loop': {'loop' in step_config}")
+                        if 'loop' in step_config:
+                            logger.critical(f"ORCHESTRATOR_DEBUG: loop value: {step_config['loop']}")
 
                         # Expand workbook references - resolve the workbook action definition
                         # so the worker doesn't need to fetch from catalog
@@ -1086,6 +1111,22 @@ async def _process_transitions(execution_id: int) -> None:
                         step_config = await expand_workbook_reference(
                             step_config, catalog_id
                         )
+
+                        # CRITICAL: Preserve blocks that should not be rendered server-side
+                        # - sink block: contains {{ result }} templates
+                        # - loop block: contains {{ item }} templates and collection config
+                        sink_block = step_config.pop("sink", None)
+                        if sink_block is not None:
+                            try:
+                                import json
+                                sink_str = json.dumps(sink_block)
+                            except Exception:
+                                sink_str = str(sink_block)
+                            logger.critical(f"ORCHESTRATOR: Extracted sink block for step '{to_step}': {sink_str}")
+                        
+                        loop_block = step_config.pop("loop", None)
+                        if loop_block is not None:
+                            logger.critical(f"ORCHESTRATOR: Extracted loop block for step '{to_step}'")
 
                         # Render step's existing args with current execution context
                         if "args" in step_config and step_config["args"]:
@@ -1100,6 +1141,15 @@ async def _process_transitions(execution_id: int) -> None:
                             if "args" not in step_config:
                                 step_config["args"] = {}
                             step_config["args"].update(with_params)
+
+                        # Restore preserved blocks (worker will render them with proper context)
+                        if loop_block is not None:
+                            step_config["loop"] = loop_block
+                            logger.critical(f"ORCHESTRATOR: Restored loop block for step '{to_step}'")
+                        
+                        if sink_block is not None:
+                            step_config["sink"] = sink_block
+                            logger.critical(f"ORCHESTRATOR: Restored sink block for step '{to_step}'")
 
                         # Build context for next step
                         context_data = {"workload": workload}

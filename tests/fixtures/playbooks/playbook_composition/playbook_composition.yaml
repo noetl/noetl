@@ -54,31 +54,30 @@ workflow:
 
   - step: process_users
     desc: "Process each user through profile scoring sub-playbook"
-    tool: iterator
-    collection: "{{ workload.users }}"
-    element: user
-    mode: sequential
-    task:
-      # Provide an explicit task identifier so nested playbook propagates correct parent_step
-      task: process_users
-      tool: playbook
-      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
-      return_step: finalize_result
+    tool: playbook
+    loop:
+      collection: "{{ workload.users }}"
+      element: user
+      mode: sequential
+    # Provide an explicit task identifier so nested playbook propagates correct parent_step
+    task: process_users
+    path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+    return_step: finalize_result
+    args:
+      user_data: "{{ user }}"
+      execution_context: "{{ execution_id }}"
+    sink:
       args:
-        user_data: "{{ user }}"
-        execution_context: "{{ execution_id }}"
-      sink:
-        args:
-          id: "{{ execution_id }}:{{ user.name }}"
-          execution_id: "{{ execution_id }}"
-          user_name: "{{ user.name }}"
-          profile_score: "{{ this.profile_score or 0.0 }}"
-          score_category: "{{ this.score_category or 'unknown' }}"
-        tool: postgres
-        auth: "{{ workload.pg_auth }}"
-        table: public.user_profile_results
-        mode: upsert
-        key: id
+        id: "{{ execution_id }}:{{ user.name }}"
+        execution_id: "{{ execution_id }}"
+        user_name: "{{ user.name }}"
+        profile_score: "{{ this.profile_score or 0.0 }}"
+        score_category: "{{ this.score_category or 'unknown' }}"
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      table: public.user_profile_results
+      mode: upsert
+      key: id
     next:
       - step: validate_results
 

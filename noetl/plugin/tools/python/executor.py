@@ -248,13 +248,29 @@ async def execute_python_task_async(
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task start event_id={event_id}")
 
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Setting up execution globals")
+        
+        # Import commonly used utilities from noetl.core.common
+        from noetl.core.common import (
+            get_val,
+            make_serializable,
+            now_utc,
+            format_iso8601,
+            deep_merge,
+        )
+        
         exec_globals = {
             '__builtins__': __builtins__,
             'context': context,
             'os': os,
             'json': json,
             'datetime': datetime,
-            'uuid': uuid
+            'uuid': uuid,
+            # Add noetl.core.common utilities
+            'get_val': get_val,
+            'make_serializable': make_serializable,
+            'now_utc': now_utc,
+            'format_iso8601': format_iso8601,
+            'deep_merge': deep_merge,
         }
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution globals keys: {list(exec_globals.keys())}")
 

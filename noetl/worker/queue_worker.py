@@ -147,14 +147,13 @@ class QueueWorker:
         task_data: Dict[str, Any],
         use_process: bool,
     ) -> Dict[str, Any]:
-        tool = str(action_cfg.get("tool") or "").strip().lower()
-        if tool == "python":
-            from noetl.plugin.tools.python import execute_python_task_async
-
-            return await execute_python_task_async(
-                action_cfg, exec_ctx, self._jinja, task_data, None
-            )
-
+        # CRITICAL: Check if loop is in action_cfg
+        has_loop = 'loop' in action_cfg
+        logger.critical(f"WORKER._run_action: task='{task_name}', has_loop={has_loop}, action_cfg_keys={list(action_cfg.keys())}")
+        if has_loop:
+            logger.critical(f"WORKER._run_action: loop block = {action_cfg.get('loop')}")
+        
+        # All tools (including Python) must go through execute_task to support iterator/loop handling
         from noetl.plugin import execute_task
 
         loop = asyncio.get_running_loop()

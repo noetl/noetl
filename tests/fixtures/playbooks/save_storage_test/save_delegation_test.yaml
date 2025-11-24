@@ -50,10 +50,9 @@ workflow:
               }
           }
     sink:
-      storage:
-        tool: postgres
-        table: simple_test_flat
-        auth: "{{ workload.pg_auth }}"
+      tool: postgres
+      table: simple_test_flat
+      auth: "{{ workload.pg_auth }}"
       args:
         test_id: "delegation_test"
         test_name: "{{ result.test }}"
@@ -75,13 +74,11 @@ workflow:
               }
           }
     sink:
-      storage:
-        tool: duckdb
-        commands: |
-          CREATE OR REPLACE TABLE test_duckdb AS 
-          SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
-          SELECT * FROM test_duckdb;
-      args: "{{ result }}"
+      tool: duckdb
+      commands: |
+        CREATE OR REPLACE TABLE test_duckdb AS 
+        SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+        SELECT * FROM test_duckdb;
     next:
       - step: http_test
 
@@ -99,10 +96,11 @@ workflow:
               }
           }
     sink:
-      storage:
-        tool: http
-        url: "https://httpbin.org/post"
-        method: POST
-        headers:
-          Content-Type: "application/json"
-      args: "{{ result }}"
+      tool: http
+      endpoint: "https://httpbin.org/post"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+      payload:
+        test: "{{ result.test }}"
+        message: "{{ result.message }}"

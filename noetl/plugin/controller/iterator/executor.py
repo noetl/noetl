@@ -100,6 +100,7 @@ def execute_loop_task(
         
         iterator_name = config['iterator_name']
         nested_task = config['nested_task']
+        collection_expr = config.get('collection')
         mode = config['mode']
         concurrency = config['concurrency']
         enumerate_flag = config['enumerate_flag']
@@ -108,10 +109,13 @@ def execute_loop_task(
         chunk_n = config['chunk_n']
         order_by_expr = config['order_by_expr']
         
-        # Step 2: Resolve collection
-        items_expr = resolve_collection(
-            task_config, context, task_with, iterator_name
-        )
+        # Step 2: Resolve collection (use from config if available, otherwise resolve from task_config)
+        if collection_expr is not None:
+            items_expr = collection_expr
+        else:
+            items_expr = resolve_collection(
+                task_config, context, task_with, iterator_name
+            )
         
         # Step 3: Build loop context for rendering
         loop_ctx = build_loop_context(context, task_with)
@@ -250,7 +254,11 @@ def execute_loop_task(
             )
         
         # Step 8: Optional step-level aggregated save (single transaction)
-        step_sink = task_config.get('sink')
+        # For NEW format (loop attribute), sink is always per-item only, not aggregated
+        # For OLD format (tool: iterator), sink at step level is aggregated
+        has_loop_attribute = 'loop' in task_config
+        step_sink = task_config.get('sink') if not has_loop_attribute else None
+        
         if step_sink:
             try:
                 from noetl.plugin.shared.storage import execute_sink_task as _do_sink

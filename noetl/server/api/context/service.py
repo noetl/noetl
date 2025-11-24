@@ -291,103 +291,85 @@ def render_template_object(
 
     env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
 
-    # Handle dict templates with work/task keys specially
+    # Handle dict templates specially
     if isinstance(template, dict):
+        logger.critical(
+            f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}"
+        )
         logger.info(
             f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}"
         )
-        out: Dict[str, Any] = {}
-
-        # Render 'work' with relaxed error handling
-        if "work" in template:
-            try:
-                out["work"] = render_template(
-                    env, template.get("work"), context, rules=None, strict_keys=False
-                )
-            except Exception as e:
-                logger.warning(f"Failed to render work section: {e}")
-                out["work"] = template.get("work")
-
-        # Render 'task' with strict mode
-        if "task" in template:
-            task_tpl = template.get("task")
-            logger.debug(f"RENDER_TASK_DEBUG: Preparing to render task template")
-            logger.debug(
-                f"RENDER_TASK_DEBUG: Context keys available: {list(context.keys())}"
+        
+        # Make a copy to avoid mutating the original
+        template = dict(template)
+        
+        # Determine if this is an iterator step (OLD format)
+        is_iterator = (template.get("tool") or "").lower() == "iterator"
+        has_loop = "loop" in template
+        
+        # Extract blocks that should not be rendered server-side:
+        # 1. For iterator steps (OLD format): the nested 'task' block (contains {{ item }} templates)
+        # 2. For loop steps (NEW format): the 'loop' block (contains {{ item }} templates)
+        # 3. For all steps: the 'sink' block (contains {{ result }} templates)
+        task_block = None
+        loop_block = None
+        sink_block = None
+        
+        logger.critical(f"RENDER_DEBUG: Template keys before extraction: {list(template.keys())}")
+        if isinstance(template.get('task'), dict):
+            logger.critical(f"RENDER_DEBUG: template['task'] keys: {list(template['task'].keys())}")
+            # Extract sink from inside the task dict
+            if 'sink' in template['task']:
+                sink_block = template['task'].pop('sink')
+                logger.critical(f"RENDER_DEBUG: Extracted sink from template['task']: {sink_block}")
+        
+        if is_iterator and "task" in template:
+            task_block = template.pop("task")
+            logger.debug(f"RENDER_DEBUG: Extracted iterator task block to preserve unrendered")
+        
+        if has_loop:
+            loop_block = template.pop("loop")
+            logger.debug(f"RENDER_DEBUG: Extracted loop block to preserve unrendered")
+        
+        # Also check for top-level sink (legacy support)
+        if "sink" in template:
+            top_level_sink = template.pop("sink")
+            if sink_block is None:
+                sink_block = top_level_sink
+            logger.critical(f"RENDER_DEBUG: Extracted top-level sink block: {top_level_sink}")
+            logger.debug(f"RENDER_DEBUG: Extracted sink block to preserve unrendered")
+        
+        # Render the template (everything except extracted blocks)
+        try:
+            out = render_template(
+                env, template, context, rules=None, strict_keys=False
             )
-            logger.debug(
-                f"RENDER_TASK_DEBUG: Workload in context: {'workload' in context}"
-            )
-            try:
-                # Extract and preserve 'save' block for worker-side rendering
-                # The save block may reference 'result' which doesn't exist until after execution
-                task_tpl_copy = (
-                    dict(task_tpl) if isinstance(task_tpl, dict) else task_tpl
-                )
-                sink_block = None
-                if isinstance(task_tpl_copy, dict) and "save" in task_tpl_copy:
-                    sink_block = task_tpl_copy.pop("save")
-                    logger.debug(
-                        f"RENDER_TASK_DEBUG: Extracted save block: {sink_block}"
-                    )
-                    logger.debug(
-                        f"RENDER_TASK_DEBUG: Remaining keys in task_tpl_copy: {list(task_tpl_copy.keys())}"
-                    )
-
-                # For iterator steps, preserve the nested 'task' block unrendered
-                # because it contains templates like {{ item }} that only exist during iteration
-                nested_task_block = None
-                is_iterator = isinstance(task_tpl_copy, dict) and (task_tpl_copy.get("tool") or "").lower() == "iterator"
-                if is_iterator and "task" in task_tpl_copy:
-                    nested_task_block = task_tpl_copy.pop("task")
-                    logger.debug(
-                        f"RENDER_TASK_DEBUG: Extracted nested task block from iterator to preserve unrendered"
-                    )
-
-                # Strict rendering keeps unresolved variables for worker-side rendering
-                task_rendered = render_template(
-                    env, task_tpl_copy, context, rules=None, strict_keys=False
-                )
-
-                # Restore the nested task block for iterator (unrendered)
-                if nested_task_block is not None and isinstance(task_rendered, dict):
-                    task_rendered['task'] = nested_task_block
-                    logger.debug(
-                        "RENDER_TASK_DEBUG: Restored unrendered nested task block to iterator"
-                    )
-
-                # Re-attach the save block after rendering (unrendered for worker-side processing)
-                if sink_block is not None and isinstance(task_rendered, dict):
-                    task_rendered['sink'] = sink_block
-                    logger.debug(
-                        "RENDER_TASK_DEBUG: Re-attached save block to rendered task"
-                    )
-
-                logger.info(
-                    f"RENDER_TASK_DEBUG: Task rendered successfully: {task_rendered}"
-                )
-            except Exception as e:
-                logger.warning(f"Failed to render task section: {e}")
-                logger.warning(f"RENDER_TASK_DEBUG: Exception type: {type(e).__name__}")
-                task_rendered = task_tpl
-
-            # Parse JSON strings for convenience
-            if isinstance(task_rendered, str):
-                try:
-                    import json
-
-                    out["task"] = json.loads(task_rendered)
-                except (json.JSONDecodeError, TypeError, ValueError) as e:
-                    logger.debug(f"Could not parse task as JSON: {e}")
-                    out["task"] = task_rendered
+            if not isinstance(out, dict):
+                out = {"rendered": out}
+        except Exception as e:
+            logger.warning(f"Failed to render template: {e}")
+            out = dict(template)
+        
+        # Restore the unrendered blocks
+        if task_block is not None:
+            out['task'] = task_block
+            logger.debug("RENDER_DEBUG: Restored unrendered iterator task block")
+        
+        if loop_block is not None:
+            out['loop'] = loop_block
+            logger.debug("RENDER_DEBUG: Restored unrendered loop block")
+        
+        if sink_block is not None:
+            # Restore sink into the task dict where it came from
+            if isinstance(out.get('task'), dict):
+                out['task']['sink'] = sink_block
+                logger.critical(f"RENDER_DEBUG: Restored sink into out['task']: {sink_block}")
             else:
-                out["task"] = task_rendered
-
-        # Pass through other keys unchanged
-        for k, v in template.items():
-            if k not in out:
-                out[k] = v
-
+                # Fallback: restore to top level if task dict not found
+                out['sink'] = sink_block
+                logger.critical(f"RENDER_DEBUG: Restored sink to top level: {sink_block}")
+            logger.debug("RENDER_DEBUG: Restored unrendered sink block")
+        
         return out
     else:
         # Render single value

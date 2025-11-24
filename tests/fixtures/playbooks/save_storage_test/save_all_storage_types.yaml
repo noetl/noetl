@@ -207,18 +207,17 @@ workflow:
           }
     args: "{{ test_flat_postgres_save }}"
     sink:
-      storage:
-        tool: postgres
-        args:
-          test_id: "{{ execution_id }}_nested"
-          test_name: "Test Employee Nested"
-          test_data: '{"value": 58000, "type": "nested_structure", "meta": {"test_phase": "save_test"}}'
-          storage_type: "nested_structure"
-          test_execution: "{{ execution_id }}"
-        table: simple_test_nested
-        mode: upsert
-        key: test_id
-        auth: "{{ workload.pg_auth }}"
+      tool: postgres
+      table: simple_test_nested
+      mode: upsert
+      key: test_id
+      auth: "{{ workload.pg_auth }}"
+      args:
+        test_id: "{{ execution_id }}_nested"
+        test_name: "Test Employee Nested"
+        test_data: '{"value": 58000, "type": "nested_structure", "meta": {"test_phase": "save_test"}}'
+        storage_type: "nested_structure"
+        test_execution: "{{ execution_id }}"
     next:
       - step: test_postgres_statement_save
 
@@ -238,19 +237,18 @@ workflow:
     args:
       input_data: "{{ test_nested_postgres_save }}"
     sink:
-      storage:
-        tool: postgres
-        statement: |
-          INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
-          SELECT 
-            '{{ data.summary_type }}' as summary_type,
-            COUNT(*) as total_records,
-            AVG(test_value) as avg_value,
-            '{{ data.execution_id }}' as test_execution,
-            NOW() as created_at
-          FROM simple_test_flat 
-          WHERE test_execution = '{{ data.execution_id }}'
-        auth: "{{ workload.pg_auth }}"
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      statement: |
+        INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
+        SELECT 
+          '{{ result.summary_type }}' as summary_type,
+          COUNT(*) as total_records,
+          AVG(test_value) as avg_value,
+          '{{ result.execution_id }}' as test_execution,
+          NOW() as created_at
+        FROM simple_test_flat 
+        WHERE test_execution = '{{ result.execution_id }}'
     next:
       - step: test_python_save
 
@@ -271,12 +269,11 @@ workflow:
     args:
       input_data: "{{ test_postgres_statement_save }}"
     sink:
-      storage:
-        tool: python
-        code: |
-          def main(data):
-              import json
-              import os
+      tool: python
+      code: |
+        def main(data):
+            import json
+            import os
               
               # Custom python storage logic
               result = {
@@ -314,17 +311,16 @@ workflow:
           }
     args: "{{ test_python_save }}"
     sink:
-      storage:
-        tool: duckdb
-        commands: |
-          -- Create analytics table
-          CREATE OR REPLACE TABLE test_analytics AS
-          SELECT 
-            'duckdb_analytics' as analysis_type,
-            '{{ data.analysis_type }}' as specific_analysis,
-            COUNT(*) as record_count,
-            '{{ execution_id }}' as test_execution,
-            NOW() as analysis_timestamp;
+      tool: duckdb
+      commands: |
+        -- Create analytics table
+        CREATE OR REPLACE TABLE test_analytics AS
+        SELECT 
+          'duckdb_analytics' as analysis_type,
+          '{{ result.analysis_type }}' as specific_analysis,
+          COUNT(*) as record_count,
+          '{{ execution_id }}' as test_execution,
+          NOW() as analysis_timestamp;
           
           -- Insert analysis results
           INSERT INTO test_analytics 
@@ -355,14 +351,17 @@ workflow:
           }
     args: "{{ test_duckdb_save }}"
     sink:
-      storage:
-        tool: http
-        endpoint: "https://httpbin.org/post"
-        method: POST
-        headers:
-          Content-Type: "application/json"
-          X-Test-Suite: "noetl-save-storage"
-          X-Execution-ID: "{{ execution_id }}"
+      tool: http
+      endpoint: "https://httpbin.org/post"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+        X-Test-Suite: "noetl-save-storage"
+        X-Execution-ID: "{{ execution_id }}"
+      payload:
+        webhook_type: "{{ result.webhook_type }}"
+        test_type: "{{ result.test_type }}"
+        execution_id: "{{ execution_id }}"
         args:
           test_completion: true
           storage_tests_completed:
