@@ -50,7 +50,7 @@ workflow:
               'item_name': input_data.get('name'),
               'item_value': input_data.get('value')
           }
-  sink:
+    sink:
       tool: postgres
       args:
         id: "{{ execution_id }}:{{ item.name }}"
