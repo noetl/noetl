@@ -227,11 +227,14 @@ def execute_loop_task(
         # Build aggregated plain list in original logical order
         final = [r.get('result') for r in results]
         
+        # Determine overall status based on errors
+        overall_status = 'error' if errors else 'success'
+        
         # Log completion event
         if log_event_callback:
             log_event_callback(
                 'task_complete', task_id, task_name, 'iterator',
-                'success', duration, context,
+                overall_status, duration, context,
                 {
                     'results': final, 
                     'items': final, 
@@ -279,6 +282,16 @@ def execute_loop_task(
             f"LOOP: Completed iterator '{task_name}' with {len(final)} results "
             f"(errors={len(errors)})"
         )
+        
+        # Return error status if any iteration failed
+        if errors:
+            return {
+                'id': task_id,
+                'status': 'error',
+                'data': final,
+                'error': f"{len(errors)} iteration(s) failed",
+                'errors': errors
+            }
         
         return {
             'id': task_id,

@@ -6,7 +6,7 @@ metadata:
 
 workload:
   # Using GitHub raw URL as example HTTP source
-  script_url: https://raw.githubusercontent.com/noetl/noetl/master/tests/fixtures/playbooks/script_execution/scripts/hello_world.py
+  script_url: https://raw.githubusercontent.com/noetl/noetl/v1.2.0/tests/fixtures/playbooks/script_execution/scripts/hello_world.py
   greeting_name: HTTP-Fetched
 
 workflow:

@@ -45,11 +45,13 @@ workflow:
   task:
     tool: python
     code: |
-      def main(input_data):
+      def main(item):
           return {
-              'item_name': input_data.get('name'),
-              'item_value': input_data.get('value')
+              'item_name': item.get('name'),
+              'item_value': item.get('value')
           }
+    args:
+      item: "{{ item }}"
     sink:
       tool: postgres
       args:

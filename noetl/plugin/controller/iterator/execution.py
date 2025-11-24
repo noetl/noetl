@@ -113,14 +113,14 @@ def build_iteration_context(
     return iter_ctx
 
 
-def build_nested_with_params(
+def build_nested_args(
     nested_task: Dict[str, Any],
     iter_ctx: Dict[str, Any],
     item_for_task: Any,
     jinja_env: Environment,
 ) -> Dict[str, Any]:
     """
-    Build with-parameters for nested task execution.
+    Build args for nested task execution.
 
     Args:
         nested_task: Nested task configuration
@@ -129,34 +129,22 @@ def build_nested_with_params(
         jinja_env: Jinja2 environment
 
     Returns:
-        Nested with-parameters dictionary
+        Nested args dictionary
     """
-    nested_with = {}
+    nested_args = {}
 
     try:
-        for k, v in (nested_task.get("with") or {}).items():
+        for k, v in (nested_task.get("args") or {}).items():
             try:
-                nested_with[k] = (
+                nested_args[k] = (
                     render_template(jinja_env, v, iter_ctx) if isinstance(v, str) else v
                 )
             except Exception:
-                nested_with[k] = v
+                nested_args[k] = v
     except Exception:
-        nested_with = {}
+        nested_args = {}
 
-    # For Python nested tasks, provide conventional kwargs
-    nested_type = _resolve_task_kind(nested_task)
-
-    if nested_type == "python":
-        # Back-compat: expose element as 'value' for simple functions
-        if "value" not in nested_with:
-            nested_with["value"] = item_for_task
-
-        # Expose batch if available
-        if "batch" in iter_ctx and "batch" not in nested_with:
-            nested_with["batch"] = iter_ctx.get("batch")
-
-    return nested_with
+    return nested_args
 
 
 def _encode_nested_task(nested_task: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,7 +194,7 @@ def _encode_nested_task(nested_task: Dict[str, Any]) -> Dict[str, Any]:
 def execute_nested_task(
     nested_task: Dict[str, Any],
     iter_ctx: Dict[str, Any],
-    nested_with: Dict[str, Any],
+    nested_args: Dict[str, Any],
     jinja_env: Environment,
     iter_index: int,
 ) -> Dict[str, Any]:
@@ -216,7 +204,7 @@ def execute_nested_task(
     Args:
         nested_task: Nested task configuration
         iter_ctx: Iteration context
-        nested_with: Nested with-parameters
+        nested_args: Nested args
         jinja_env: Jinja2 environment
         iter_index: Iteration index for logging
 
@@ -241,7 +229,7 @@ def execute_nested_task(
         nested_task.get("name") or nested_task.get("task") or "nested",
         iter_ctx,
         jinja_env,
-        nested_with,
+        nested_args,
     )
 
     logger.info(
@@ -256,7 +244,7 @@ def execute_per_item_sink(
     nested_task: Dict[str, Any],
     nested_result: Dict[str, Any],
     iter_ctx: Dict[str, Any],
-    nested_with: Dict[str, Any],
+    nested_args: Dict[str, Any],
     jinja_env: Environment,
     log_event_callback: Optional[Callable] = None,
     iter_index: int = 0,
@@ -271,7 +259,7 @@ def execute_per_item_sink(
         nested_task: Nested task configuration
         nested_result: Nested task result
         iter_ctx: Iteration context
-        nested_with: Nested with-parameters
+        nested_args: Nested args
         jinja_env: Jinja2 environment
         log_event_callback: Optional callback for event reporting
         iter_index: Current iteration index for event identification
@@ -336,11 +324,11 @@ def execute_per_item_sink(
         logger.critical(f"ITERATOR.SINK: Imported execute_sink_task, calling now...")
         logger.critical(f"ITERATOR.SINK: Context keys available: {list(ctx_for_save.keys())}")
         # Check if step name is in context
-        step_nm = nested_with.get("name") or nested_with.get("task") or "iterator"
+        step_nm = nested_args.get("name") or nested_args.get("task") or "iterator"
         if step_nm in ctx_for_save:
             logger.critical(f"ITERATOR.SINK: {step_nm} = {ctx_for_save[step_nm]}")
         sink_result = _do_sink(
-            {'sink': nested_sink}, ctx_for_save, jinja_env, nested_with
+            {'sink': nested_sink}, ctx_for_save, jinja_env, nested_args
         )
         logger.critical(f"ITERATOR.SINK: execute_sink_task returned: {sink_result}")
 
@@ -497,15 +485,15 @@ def run_one_iteration(
         task_config,
     )
 
-    # Build nested with-parameters
-    nested_with = build_nested_with_params(
+    # Build nested args
+    nested_args = build_nested_args(
         nested_task, iter_ctx, item_for_task, jinja_env
     )
 
     # Execute nested task
     try:
         nested_result = execute_nested_task(
-            nested_task, iter_ctx, nested_with, jinja_env, iter_index
+            nested_task, iter_ctx, nested_args, jinja_env, iter_index
         )
     except Exception as e_nested:
         logger.error(
@@ -555,7 +543,7 @@ def run_one_iteration(
             nested_task,
             nested_result,
             iter_ctx,
-            nested_with,
+            nested_args,
             jinja_env,
             log_event_callback,
             iter_index,
