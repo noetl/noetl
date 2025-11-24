@@ -5,7 +5,7 @@ metadata:
   path: tests/script_execution/python_gcs
 
 workload:
-  gcs_script_uri: gs://noetl-demo-scripts/scripts/hello_world.py  # Full GCS URI
+  gcs_script_uri: gs://noetl-demo-19700101/scripts/hello_world.py  # Full GCS URI
   gcp_credential: google_oauth  # Credential registered in NoETL
   greeting_name: GCS-Loaded
 
