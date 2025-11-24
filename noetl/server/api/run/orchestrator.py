@@ -1044,6 +1044,12 @@ async def _process_transitions(execution_id: int) -> None:
                                 router_step_config, catalog_id
                             )
 
+                            # Render router step's existing args with current execution context
+                            if "args" in router_step_config and router_step_config["args"]:
+                                router_step_config["args"] = _render_with_params(
+                                    router_step_config["args"], eval_ctx
+                                )
+
                             # Build context for router next step
                             router_context_data = {"workload": workload}
                             router_context_data.update(
@@ -1083,7 +1089,9 @@ async def _process_transitions(execution_id: int) -> None:
 
                         # Render step's existing args with current execution context
                         if "args" in step_config and step_config["args"]:
+                            logger.info(f"RENDER_DEBUG: Rendering args for step '{to_step}', before: {step_config['args']}, eval_ctx keys: {list(eval_ctx.keys())}")
                             step_config["args"] = _render_with_params(step_config["args"], eval_ctx)
+                            logger.info(f"RENDER_DEBUG: After rendering: {step_config['args']}")
                         
                         # Render with_params (args from next) with current execution context
                         # This ensures templates like {{ process_data.data.temp_table }} are resolved

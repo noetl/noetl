@@ -313,6 +313,19 @@ class QueuePublisher:
                     # Expand workbook references (if type='workbook')
                     step_cfg = await expand_workbook_reference(step_cfg, catalog_id)
 
+                    # Render step args with available context (workload for initial steps)
+                    if "args" in step_cfg and step_cfg["args"] and context:
+                        from noetl.core.dsl.render import render_template
+                        from jinja2 import BaseLoader, Environment
+                        
+                        try:
+                            env = Environment(loader=BaseLoader())
+                            step_cfg["args"] = render_template(
+                                env, step_cfg["args"], context, rules=None, strict_keys=False
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to render args for step '{step_name}': {e}")
+
                     # Encode step config for queue
                     encoded_step_cfg = encode_task_for_queue(step_cfg)
 
