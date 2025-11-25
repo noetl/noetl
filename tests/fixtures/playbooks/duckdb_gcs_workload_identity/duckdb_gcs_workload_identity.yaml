@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: duckdb_gcs_workload_identity
-  path: tests/fixtures/playbooks/duckdb_gcs/workload_identity
+  path: tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
 
 workload:
   pg_auth: pg_local

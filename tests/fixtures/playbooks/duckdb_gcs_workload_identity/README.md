@@ -133,10 +133,10 @@ gcloud projects get-iam-policy noetl-demo-19700101 \
 ### Register and Execute
 ```bash
 # Register playbook to catalog
-task register-playbook -- tests/fixtures/playbooks/duckdb_gcs/duckdb_gcs_workload_identity.yaml
+task register-playbook -- tests/fixtures/playbooks/duckdb_gcs_workload_identity/duckdb_gcs_workload_identity.yaml
 
 # Execute playbook
-task execute-playbook -- tests/fixtures/playbooks/duckdb_gcs/workload_identity
+task execute-playbook -- tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
 
 # Monitor execution
 task logs-worker
