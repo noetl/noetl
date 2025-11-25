@@ -50,8 +50,9 @@ make bootstrap
 # 2. Creates Kind Kubernetes cluster
 # 3. Builds NoETL Docker image
 # 4. Deploys PostgreSQL database
-# 5. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
-# 6. Deploys NoETL server and workers
+# 5. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
+# 6. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
+# 7. Deploys NoETL server and workers
 
 # After bootstrap, you can use task commands directly:
 task --list                  # Show all available tasks
@@ -66,6 +67,12 @@ task monitoring:k8s:deploy   # Deploy monitoring stack
 - **VictoriaMetrics**: http://localhost:9428/ 
 - **VictoriaLogs**: http://localhost:9428/select/vmui/
 - **Postgres**: `jdbc:postgresql://localhost:54321/demo_noetl` (user: demo, password: demo, database: demo_noetl)
+- **ClickHouse HTTP**: http://localhost:30123 (OLAP database for logs/metrics/traces)
+- **ClickHouse Native**: localhost:30900 (native protocol)
+- **Qdrant HTTP**: http://localhost:30633 (vector database REST API)
+- **Qdrant gRPC**: localhost:30634 (vector database gRPC)
+- **NATS Client**: localhost:30422 (messaging)
+- **NATS Monitoring**: http://localhost:30822 (dashboard)
 
 **Cleanup:**
 ```bash
@@ -115,7 +122,7 @@ The bootstrap automatically:
 - Installs all required tools (Docker, kubectl, helm, kind, **task**, psql, pyenv, tfenv, uv, Python 3.12+)
 - Sets up Python virtual environment with your project + NoETL dependencies
 - Creates project Taskfile.yml that imports all NoETL tasks
-- Deploys Kind cluster with PostgreSQL and monitoring stack
+- Deploys Kind cluster with PostgreSQL, observability (ClickHouse, Qdrant, NATS), and monitoring stack
 - Copies template files (.env.local, pyproject.toml, .gitignore, credentials/)
 - Creates project directories (credentials/, playbooks/, data/, logs/, secrets/)
 
@@ -363,6 +370,10 @@ For more detailed information, please refer to the following documentation:
 - [Environment Configuration](https://github.com/noetl/noetl/blob/master/docs/environment_variables.md) - Setting up environment variables
 - [Credential Management](docs/concepts/credentials.md) - auth vs credentials vs secret
 
+### Infrastructure & Operations
+- [CI/CD Setup](documentation/docs/operations/ci-setup.md) - Kind cluster, PostgreSQL, NoETL deployment
+- [Observability Services](documentation/docs/operations/observability.md) - ClickHouse, Qdrant, NATS JetStream
+
 
 ### Examples
 
@@ -413,6 +424,12 @@ make bootstrap
 # Or manually:
 task tools:local:verify           # Verify required tools
 task noetl:k8s:bootstrap          # Deploy complete K8s environment
+
+# Observability services (automatically deployed with bootstrap)
+task observability:activate-all   # Deploy ClickHouse, Qdrant, NATS
+task observability:deactivate-all # Remove observability services
+task observability:status-all     # Check all services status
+task observability:health-all     # Health check all services
 ```
 
 ### UI Development
