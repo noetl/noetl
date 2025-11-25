@@ -1,14 +1,13 @@
 name: "Build image on Release ⚙️"
 
-# on:
-#   release:
-#     types: [published]
 on:
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   id-token: write
   contents: read
+  packages: write
 
 jobs:
   build_deploy:
@@ -17,8 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # IMAGE_TAG: ${{ github.event.release.tag_name }}
-      IMAGE_TAG: v0.0.0-ci
+      IMAGE_TAG: ${{ github.event.release.tag_name }}
 
     steps:
       - name: Checkout source code
@@ -26,19 +24,14 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}  
 
-      - name: Get token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.SEMANTIC_RELEASE_APP_ID }}
-          private-key: ${{ secrets.SEMANTIC_RELEASE_PRIVATE_KEY }}
-
+      # Access must be provided on the package level
+      # https://github.com/orgs/noetl/packages/container/noetl/settings
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ steps.app-token.outputs.app-slug }}
-          password: ${{ steps.app-token.outputs.token }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -54,5 +47,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/noetl/noetl:${{ env.IMAGE_TAG }}
-
-# $REGISTRY/$IMAGE_NAME:latest
+            ghcr.io/noetl/noetl:latest
